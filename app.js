@@ -19,6 +19,10 @@
     allFiles: [],
     roles: [],
     roleMap: new Map(),
+    // guid -> record（角色/物品/装备），扫描时构建，供掉落行渲染 O(1) 查资源。
+    recordMap: new Map(),
+    // 角色有效属性解析缓存：key = role.guid，entries 变更时按角色失效。
+    actorAttributeCache: new Map(),
     dropCommandId: DROP_COMMAND_ID,
     dropEventType: DROP_EVENT_TYPE,
     items: [],
@@ -71,6 +75,8 @@
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]))
   const cloneJson = (value) => (typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value)))
   const deepEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+  // 高频输入（搜索框）防抖：延迟渲染，避免每个字符都触发全量列表重建 + 预览重绘。
+  const debounce = (fn, delay = 180) => { let timer = null; return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), delay) } }
   const normalizePath = (value) => String(value || '').replace(/\\/g, '/')
   const basename = (value) => normalizePath(value).split('/').pop() || ''
   const extension = (value) => { const match = basename(value).match(/\.[^.]+$/); return match ? match[0].toLowerCase() : '' }
@@ -374,6 +380,8 @@
   // depth=0 表示当前角色本地；depth>=1 表示从第 depth 层父角色继承。
   // 用 seen 防止循环继承。未知属性同样参与解析并保留。
   function resolveEffectiveActorAttributes(role, roleMap, seen = new Set()) {
+    // 顶层调用命中缓存直接返回；递归（seen 非空）不参与缓存，避免父链互串。
+    if (role && !seen.size && state.actorAttributeCache.has(role.guid)) return state.actorAttributeCache.get(role.guid)
     const result = new Map()
     if (!role || seen.has(role.guid)) return result
     seen.add(role.guid)
@@ -394,6 +402,7 @@
         depth: 0,
       })
     }
+    if (!seen.size && role) state.actorAttributeCache.set(role.guid, result)
     return result
   }
 
@@ -433,16 +442,37 @@
     return `<span class="resource-preview" data-image-guid="${escapeHtml(resource.imageGuid)}" data-image-clip="${escapeHtml(clip)}"><canvas width="80" height="80"></canvas><span class="resource-preview-fallback">${escapeHtml(fallback)}</span></span>`
   }
 
+  // 位图并发池：上千行目录首渲时限制同时进行的 createImageBitmap 数量，避免瞬时内存峰值。
+  const BITMAP_CONCURRENCY = 12
+  let activeBitmapLoads = 0
+  const bitmapLoadQueue = []
+
   async function loadImageBitmap(guid) {
     if (state.imageBitmaps.has(guid)) return state.imageBitmaps.get(guid)
-    const promise = (async () => {
-      const handle = state.imageHandles.get(guid)
-      if (!handle) return null
-      const file = handle.getFile ? await handle.getFile() : handle
-      return createImageBitmap(file)
-    })()
-    state.imageBitmaps.set(guid, promise)
-    return promise
+    const start = () => {
+      const promise = (async () => {
+        const handle = state.imageHandles.get(guid)
+        if (!handle) return null
+        const file = handle.getFile ? await handle.getFile() : handle
+        return createImageBitmap(file)
+      })()
+      state.imageBitmaps.set(guid, promise)
+      promise.then(() => {}, () => {}).finally(() => {
+        activeBitmapLoads--
+        while (activeBitmapLoads < BITMAP_CONCURRENCY && bitmapLoadQueue.length) bitmapLoadQueue.shift()()
+      })
+      return promise
+    }
+    if (activeBitmapLoads >= BITMAP_CONCURRENCY) {
+      // 入队不计数，真正的计数在任务实际启动时进行（shift 回调内 ++），
+      // 避免会计变量只减不增导致 while 条件失真。排队时先占位 map，
+      // 防止同一 guid 的并发调用重复入队（任务启动后 start() 会覆盖占位 promise）。
+      const queued = new Promise((resolve) => bitmapLoadQueue.push(() => { activeBitmapLoads++; resolve(start()) }))
+      state.imageBitmaps.set(guid, queued)
+      return queued
+    }
+    activeBitmapLoads++
+    return start()
   }
 
   async function paintPreview(node) {
@@ -489,21 +519,25 @@
     return current
   }
 
+  // 单例连接：避免每次读写设置都重新 open IndexedDB（连接建立本身有成本）。
+  let settingsDatabasePromise = null
   function openSettingsDatabase() {
-    return new Promise((resolve, reject) => {
+    if (settingsDatabasePromise) return settingsDatabasePromise
+    settingsDatabasePromise = new Promise((resolve, reject) => {
       const request = indexedDB.open('loot-smith-settings', 1)
       request.onupgradeneeded = () => request.result.createObjectStore('settings')
       request.onsuccess = () => resolve(request.result)
-      request.onerror = () => reject(request.error)
+      request.onerror = () => { settingsDatabasePromise = null; reject(request.error) }
     })
+    return settingsDatabasePromise
   }
 
   async function readSetting(key) {
     const database = await openSettingsDatabase()
     return new Promise((resolve, reject) => {
       const request = database.transaction('settings', 'readonly').objectStore('settings').get(key)
-      request.onsuccess = () => { database.close(); resolve(request.result) }
-      request.onerror = () => { database.close(); reject(request.error) }
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
     })
   }
 
@@ -512,8 +546,8 @@
     return new Promise((resolve, reject) => {
       const transaction = database.transaction('settings', 'readwrite')
       transaction.objectStore('settings').put(value, key)
-      transaction.oncomplete = () => { database.close(); resolve() }
-      transaction.onerror = () => { database.close(); reject(transaction.error) }
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
     })
   }
 
@@ -593,11 +627,13 @@
     state.dropCommandId = findByName(commands, (node) => node.keywords === 'dropItem') || DROP_COMMAND_ID
   }
 
+  // 目录模式：只收集文件句柄（不读内容），子目录递归并行，读取统一交给 readEntriesInBatches 批次并发。
   async function scanDirectoryHandle(dir, relative = '', output = []) {
+    const subTasks = []
     for await (const [name, handle] of dir.entries()) {
       if (handle.kind === 'directory') {
         if (['.git', 'node_modules', 'Dist', 'Save', BACKUP_DIRECTORY].includes(name)) continue
-        await scanDirectoryHandle(handle, `${relative}${name}/`, output)
+        subTasks.push(scanDirectoryHandle(handle, `${relative}${name}/`, output))
         continue
       }
       const ext = extension(name)
@@ -607,16 +643,14 @@
         continue
       }
       if (!SUPPORTED.has(ext)) continue
-      const path = `${relative}${name}`
-      const raw = await readText(handle)
-      let data = null
-      try { data = JSON.parse(raw) } catch (error) { state.errors.push(`${path}: JSON 解析失败`) }
-      if (data) output.push({ name, path, handle, raw, data, ext })
+      output.push({ name, path: `${relative}${name}`, handle, ext })
     }
+    await Promise.all(subTasks)
     return output
   }
 
-  async function scanFallback(files) {
+  // fallback（文件选择器）模式：同样只收集，读取交给 readEntriesInBatches。
+  function scanFallback(files) {
     const output = []
     for (const file of files) {
       const ext = extension(file.name)
@@ -626,15 +660,35 @@
         continue
       }
       if (!SUPPORTED.has(ext)) continue
-      const raw = await file.text(); let data = null
-      try { data = JSON.parse(raw) } catch { state.errors.push(`${file.webkitRelativePath}: JSON 解析失败`) }
-      if (data) output.push({ name: file.name, path: normalizePath(file.webkitRelativePath || file.name), file, raw, data, ext })
+      output.push({ name: file.name, path: normalizePath(file.webkitRelativePath || file.name), file, ext })
     }
     return output
   }
 
+  // 按固定批次并发读取文件内容并解析 JSON：几百个文件时 IO 不再串行（单批内 Promise.all）。
+  async function readEntriesInBatches(entries, batchSize = 40) {
+    for (let offset = 0; offset < entries.length; offset += batchSize) {
+      const batch = entries.slice(offset, offset + batchSize)
+      await Promise.all(batch.map(async (entry) => {
+        try {
+          entry.raw = await readText(entry.handle || entry.file)
+        } catch (error) {
+          state.errors.push(`${entry.path}: 读取失败`)
+          return
+        }
+        try {
+          entry.data = JSON.parse(entry.raw)
+        } catch {
+          state.errors.push(`${entry.path}: JSON 解析失败`)
+        }
+      }))
+    }
+    return entries
+  }
+
   async function scanProject({ rootHandle = state.rootHandle, files = null } = {}) {
     state.errors = []; state.drafts.clear(); state.pending.clear(); state.selectedResource = null
+    state.actorAttributeCache.clear()
     // 重新扫描后必须回到掉落编辑模式；人物属性模式不持久化。
     state.workspaceMode = 'drop'
     state.actorAttributeSearch = ''; state.actorAttributeFilter = 'all'; state.selectedAddDefinitionId = null; state.unknownAttributesExpanded = false
@@ -644,14 +698,15 @@
     for (const bitmapPromise of state.imageBitmaps.values()) bitmapPromise.then((bitmap) => bitmap?.close?.()).catch(() => {})
     state.imageBitmaps.clear()
     setScanStatus('正在读取资源…')
-    const all = rootHandle ? await scanDirectoryHandle(rootHandle) : await scanFallback(files || [])
+    const collected = rootHandle ? await scanDirectoryHandle(rootHandle) : scanFallback(files || [])
+    const all = (await readEntriesInBatches(collected)).filter((entry) => entry.data)
     state.allFiles = all
     await readProjectMetadata(rootHandle, files || [])
     state.roles = all.filter((file) => file.ext === '.actor').map((file) => makeRecord(file, file.data, 'actor')).sort(sortRecords)
     state.items = all.filter((file) => file.ext === '.item').map((file) => makeRecord(file, file.data, 'item')).sort(sortRecords)
     state.equipments = all.filter((file) => file.ext === '.equip').map((file) => makeRecord(file, file.data, 'equipment')).sort(sortRecords)
-    const recordMap = new Map([...state.roles, ...state.items, ...state.equipments].map((record) => [record.guid, record]))
-    ;[...state.roles, ...state.items, ...state.equipments].forEach((record) => inheritMetadata(record, recordMap))
+    state.recordMap = new Map([...state.roles, ...state.items, ...state.equipments].map((record) => [record.guid, record]))
+    ;[...state.roles, ...state.items, ...state.equipments].forEach((record) => inheritMetadata(record, state.recordMap))
     state.roleMap = new Map(state.roles.map((role) => [role.guid, role]))
     state.roles.forEach((role) => initializeRoleStores(role, state.roleMap))
     state.fallbackMode = !rootHandle
@@ -702,6 +757,7 @@
     if (!entry) return
     entry.value = cloneJson(value)
     entry.raw = { ...cloneJson(entry.raw || {}), key: entry.key, value: cloneJson(value) }
+    state.actorAttributeCache.delete(role.guid)
     syncRoleDirtyState(role, 'actorAttributes')
     renderActorAttributeEditor()
   }
@@ -719,6 +775,7 @@
       : `确定删除未知属性 ${entry.key || '（无 ID）'}？此属性不在当前属性定义中，删除后无法通过本工具恢复。`
     if (!window.confirm(confirmMessage)) return
     store.entries.splice(index, 1)
+    state.actorAttributeCache.delete(role.guid)
     syncRoleDirtyState(role, 'actorAttributes')
     renderActorAttributeEditor()
     showToast('已删除', `属性“${name}”将在保存后从 ${role.name} 移除`, 'success')
@@ -733,6 +790,7 @@
     const original = store.originalEntries.find((item) => item.key === entry.key)
     if (original) store.entries[index] = cloneJson(original)
     else store.entries.splice(index, 1)
+    state.actorAttributeCache.delete(role.guid)
     syncRoleDirtyState(role, 'actorAttributes')
     renderActorAttributeEditor()
     showToast('已恢复原值', '属性已还原为原始值', 'success')
@@ -749,6 +807,7 @@
     if (role.stores.actorAttributes.entries.some((entry) => entry.key === key)) { showToast('已存在本地值', '该属性当前角色已有本地值，请直接编辑', 'error'); return }
     const value = cloneJson(info ? info.value : defaultValueForDefinition(definition))
     role.stores.actorAttributes.entries.push({ key, value, raw: { key, value: cloneJson(value) }, localIndex: -1 })
+    state.actorAttributeCache.delete(role.guid)
     syncRoleDirtyState(role, 'actorAttributes')
     renderActorAttributeEditor()
     showToast('已创建本地覆盖', `“${definition.name}”将在保存后写入 ${role.name}，父角色未修改`, 'success')
@@ -760,6 +819,7 @@
     const store = role.stores.actorAttributes
     if (store.entries.some((entry) => entry.key === definition.id)) return false
     store.entries.push({ key: definition.id, value: cloneJson(value), raw: { key: definition.id, value: cloneJson(value) }, localIndex: -1 })
+    state.actorAttributeCache.delete(role.guid)
     syncRoleDirtyState(role, 'actorAttributes')
     renderActorAttributeEditor()
     return true
@@ -784,7 +844,6 @@
       const edited = Boolean(role.edited || isDirty(role))
       return `<div class="role-row ${state.selectedRole?.path === role.path ? 'selected' : ''} ${edited ? 'edited-role' : ''}" data-role-path="${escapeHtml(role.path)}" title="${edited ? '此角色已编辑' : ''}"><div class="role-avatar-small">${previewMarkup(role, '✦')}</div><div class="role-row-info"><div class="role-row-name">${escapeHtml(role.name)}</div><div class="role-row-path">${escapeHtml(role.localizationId ? `本地化 ${role.localizationId}` : role.path)}</div></div><span class="role-row-status ${isDirty(role) ? 'dirty' : ''} ${edited ? 'edited' : ''}"></span></div>`
     }).join('') : '<div class="list-message">没有匹配的角色</div>'
-    $$('.role-row').forEach((row) => row.addEventListener('click', () => selectRole(row.dataset.rolePath)))
     hydratePreviews(els.roleList)
   }
 
@@ -843,9 +902,6 @@
       : '保存时写入 loopList 字符串；包含 min、max 与 dropRate，需由读取该属性的游戏逻辑支持。'
     els.dropList.innerHTML = entries.length ? entries.map((entry, index) => renderDropRow(entry, index)).join('') : ''
     els.dropEmpty.classList.toggle('hidden', entries.length > 0)
-    $$('.remove-drop').forEach((button) => button.addEventListener('click', () => removeDrop(Number(button.dataset.index))))
-    $$('.edit-drop').forEach((button) => button.addEventListener('click', () => editDrop(Number(button.dataset.index))))
-    $$('.toggle-drop').forEach((button) => button.addEventListener('click', () => toggleDrop(Number(button.dataset.index))))
   }
 
   // ---- 人物属性编辑视图 ----
@@ -1120,7 +1176,7 @@
     }
   }
 
-  function resourceForEntry(entry) { return (entry.type === 'equipment' ? state.equipments : state.items).find((resource) => resource.guid === entry.id) }
+  function resourceForEntry(entry) { return state.recordMap.get(entry.id) || null }
   function formatPercent(rate) {
     const percent = clampRate(rate) * 100
     return `${Number(percent.toFixed(4))}%`
@@ -1145,11 +1201,6 @@
     const list = source.filter((resource) => !query || `${resource.name} ${resource.localizationId} ${resource.path} ${resource.guid}`.toLowerCase().includes(query))
     els.catalogList.innerHTML = list.length ? list.map((resource) => `<div class="catalog-row ${state.selectedResource?.guid === resource.guid ? 'selected' : ''}" data-resource-guid="${escapeHtml(resource.guid)}" data-resource-type="${escapeHtml(resource.kind)}" draggable="true" aria-grabbed="false" title="拖到掉落列表进行配置，或点击后手动插入"><div class="resource-icon ${resource.kind}">${previewMarkup(resource, resource.kind === 'equipment' ? '◇' : '◆')}</div><div class="catalog-row-info"><div class="catalog-row-name">${escapeHtml(resource.name)}</div><div class="catalog-row-sub">${resource.localizationId ? `本地化 ${escapeHtml(resource.localizationId)} · ` : ''}${escapeHtml(resource.guid || '无 GUID')}</div></div><div class="catalog-row-action">${state.selectedResource?.guid === resource.guid ? '✓' : '＋'}</div></div>`).join('') : ''
     els.catalogEmpty.classList.toggle('hidden', list.length > 0)
-    $$('.catalog-row').forEach((row) => {
-      row.addEventListener('click', () => selectResource(row.dataset.resourceGuid, row.dataset.resourceType))
-      row.addEventListener('dragstart', (event) => startResourceDrag(event, row))
-      row.addEventListener('dragend', () => finishResourceDrag(row))
-    })
     hydratePreviews(els.catalogList)
   }
 
@@ -1476,7 +1527,6 @@
     }))
     // 数组长度和索引可能改变，必须刷新掉落属性槽位，避免 loopList 索引错位。
     role.stores.attribute.ownSlot = findDropSlot(role.data)
-    return JSON.stringify(role.data, null, 2) + '\n'
   }
 
   function updateRoleData(role, mode = state.storageMode) {
@@ -1541,6 +1591,17 @@
     }
   }
 
+  // 失效角色及其所有间接继承者的有效属性缓存：角色 data 变更会影响继承链上的每个子角色。
+  // seen 防循环继承导致无限递归。
+  function invalidateActorAttributeCache(role, seen = new Set()) {
+    if (!role || seen.has(role.guid)) return
+    seen.add(role.guid)
+    state.actorAttributeCache.delete(role.guid)
+    for (const child of state.roles) {
+      if (child.data?.inherit === role.guid) invalidateActorAttributeCache(child, seen)
+    }
+  }
+
   async function rollbackRoles(roles, originalTexts, draftEntries) {
     const failures = []
     for (const role of roles) {
@@ -1550,6 +1611,7 @@
         await writeTextHandle(role.handle, originalText)
         role.raw = originalText
         role.data = JSON.parse(originalText)
+        invalidateActorAttributeCache(role)
         initializeRoleStores(role, state.roleMap)
         const drafts = draftEntries?.get(role.path)
         if (drafts) {
@@ -1581,6 +1643,8 @@
     if (!normalizedModes.length) return
     if (state.rootHandle && !backupComplete) await createBackupBatch([role])
     for (const mode of normalizedModes) updateRoleData(role, mode)
+    // updateRoleData 已就地改写 role.data，立即失效缓存（写文件可能失败，失效必须发生在 data 变更后）。
+    invalidateActorAttributeCache(role)
     const text = JSON.stringify(role.data, null, 2) + '\n'
     if (state.rootHandle && role.handle?.createWritable) {
       await writeTextHandle(role.handle, text)
@@ -1653,7 +1717,21 @@
     els.clearSelection.addEventListener('click', clearComposer); els.cancelEdit.addEventListener('click', clearComposer)
     els.closeComposerModalButton?.addEventListener('click', () => closeComposerModal())
     els.composerModal?.addEventListener('click', (event) => { if (event.target === els.composerModal) closeComposerModal() })
-    els.roleSearch.addEventListener('input', (event) => { state.roleSearch = event.target.value; renderRoleList() }); els.catalogSearch.addEventListener('input', (event) => { state.catalogSearch = event.target.value; renderCatalog() })
+    // 高频输入防抖：state 立即更新，仅渲染延迟，避免 180ms 内切换角色/保存等操作读到旧 state。
+    const debouncedRoleListRender = debounce(() => renderRoleList())
+    const debouncedCatalogRender = debounce(() => renderCatalog())
+    const debouncedAttributeRender = debounce(() => renderActorAttributeEditor())
+    els.roleSearch.addEventListener('input', (event) => { state.roleSearch = event.target.value; debouncedRoleListRender() }); els.catalogSearch.addEventListener('input', (event) => { state.catalogSearch = event.target.value; debouncedCatalogRender() })
+    // 列表事件委托：列表内容重建时无需重新绑定监听器。
+    els.roleList.addEventListener('click', (event) => { const row = event.target.closest('.role-row'); if (row) selectRole(row.dataset.rolePath) })
+    els.dropList.addEventListener('click', (event) => {
+      const remove = event.target.closest('.remove-drop'); if (remove) { removeDrop(Number(remove.dataset.index)); return }
+      const edit = event.target.closest('.edit-drop'); if (edit) { editDrop(Number(edit.dataset.index)); return }
+      const toggle = event.target.closest('.toggle-drop'); if (toggle) { toggleDrop(Number(toggle.dataset.index)); return }
+    })
+    els.catalogList.addEventListener('click', (event) => { const row = event.target.closest('.catalog-row'); if (row) selectResource(row.dataset.resourceGuid, row.dataset.resourceType) })
+    els.catalogList.addEventListener('dragstart', (event) => { const row = event.target.closest('.catalog-row'); if (row) startResourceDrag(event, row) })
+    els.catalogList.addEventListener('dragend', (event) => { const row = event.target.closest('.catalog-row'); if (row) finishResourceDrag(row) })
     $$('.catalog-tab').forEach((tab) => tab.addEventListener('click', () => { closeComposerModal(); state.catalogType = tab.dataset.catalog; state.selectedResource = null; $$('.catalog-tab').forEach((node) => node.classList.toggle('active', node === tab)); renderCatalog(); renderComposer() }))
     $$('.storage-mode-button').forEach((button) => button.addEventListener('click', () => selectStorageMode(button.dataset.storageMode)))
     $$('.quantity-mode-button').forEach((button) => button.addEventListener('click', () => setQuantityMode(button.dataset.quantityMode)))
@@ -1670,7 +1748,7 @@
     })
     bindDropTarget()
     els.workspaceModeButtons().forEach((button) => button.addEventListener('click', () => setWorkspaceMode(button.dataset.workspaceMode)))
-    els.attributeSearch?.addEventListener('input', (event) => { state.actorAttributeSearch = event.target.value; renderActorAttributeEditor() })
+    els.attributeSearch?.addEventListener('input', (event) => { state.actorAttributeSearch = event.target.value; debouncedAttributeRender() })
     els.attributeFilters?.addEventListener('click', (event) => {
       const button = event.target.closest('[data-filter]')
       if (!button) return
