@@ -274,7 +274,7 @@
   }
 
   function previewMarkup(resource, fallback) {
-    const clip = resource.clip?.join(',') || ''
+    const clip = resource?.clip?.join(',') || ''
     if (!resource?.imageGuid || !state.imageHandles.has(resource.imageGuid)) {
       return `<span class="resource-preview resource-preview-missing" aria-hidden="true"><span class="resource-preview-fallback">${escapeHtml(fallback)}</span></span>`
     }
