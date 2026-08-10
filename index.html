@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#11131a" />
+    <title>Lootsmith · Yami 掉落编辑器</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <div class="brand-mark"><span></span><span></span><span></span></div>
+          <div>
+            <div class="eyebrow">YAMI RPG TOOLKIT</div>
+            <div class="brand-name">Lootsmith<span>掉落编辑器</span></div>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <div id="project-state" class="project-state muted">尚未选择游戏工程</div>
+          <button id="pick-project" class="button button-secondary" type="button">
+            <span class="button-icon">⌂</span>选择工程
+          </button>
+          <button id="save-all" class="button button-primary" type="button" disabled>
+            <span class="button-icon">↥</span>保存全部更改
+            <span id="pending-count" class="button-badge">0</span>
+          </button>
+          <input id="folder-fallback" type="file" webkitdirectory directory multiple hidden />
+        </div>
+      </header>
+
+      <main>
+        <section id="welcome" class="welcome-screen">
+          <div class="welcome-glow"></div>
+          <div class="welcome-content">
+            <div class="welcome-kicker"><span class="status-dot"></span> DROP WORKBENCH / 01</div>
+            <h1>把每个角色的掉落，<em>调到刚刚好。</em></h1>
+            <p>选择 Yami 游戏工程，自动扫描角色、物品与装备。选中角色后即可快速编排掉落列表，保存时才写回角色文件。</p>
+            <button id="welcome-pick" class="button button-primary button-large" type="button">
+              <span class="button-icon">⌂</span>选择游戏工程
+              <span class="button-arrow">→</span>
+            </button>
+            <button id="restore-last" class="button button-secondary restore-last hidden" type="button">
+              <span class="button-icon">↻</span>加载上次工程 <span id="last-project-name"></span>
+            </button>
+            <div class="welcome-note">支持 .actor / .Actor、.item、.equip · 保存前自动备份 · 工程文件不会上传</div>
+          </div>
+          <div class="welcome-orbit orbit-one"></div>
+          <div class="welcome-orbit orbit-two"></div>
+          <div class="welcome-card card-role">
+            <span class="mini-icon mini-icon-role">✦</span>
+            <strong>角色</strong><small>按名称快速定位</small>
+          </div>
+          <div class="welcome-card card-item">
+            <span class="mini-icon mini-icon-item">◆</span>
+            <strong>物品</strong><small>数量一键写入</small>
+          </div>
+          <div class="welcome-card card-equip">
+            <span class="mini-icon mini-icon-equip">◇</span>
+            <strong>装备</strong><small>跨目录完整扫描</small>
+          </div>
+        </section>
+
+        <section id="workspace" class="workspace hidden">
+          <aside class="sidebar">
+            <div class="sidebar-heading">
+              <div>
+                <div class="section-label">COLLECTION</div>
+                <h2>角色列表</h2>
+              </div>
+              <span id="role-count" class="count-pill">0</span>
+            </div>
+            <label class="search-box" for="role-search">
+              <span>⌕</span>
+              <input id="role-search" type="search" placeholder="搜索角色名称或路径" autocomplete="off" />
+              <kbd>/</kbd>
+            </label>
+            <div id="role-list" class="role-list"></div>
+            <div class="sidebar-footer">
+              <div class="scan-summary"><span class="status-dot"></span><span id="scan-status">等待扫描</span></div>
+              <button id="rescan" class="text-button" type="button">重新扫描 ↻</button>
+            </div>
+          </aside>
+
+          <section class="editor-area">
+            <div id="no-role" class="no-role-state">
+              <div class="no-role-mark">✦</div>
+              <h2>选择一个角色开始</h2>
+              <p>左侧角色列表会显示工程中所有 `.actor` 文件。</p>
+            </div>
+
+            <div id="role-editor" class="role-editor hidden">
+              <div class="editor-header">
+                <div class="role-heading">
+                  <div id="role-avatar" class="role-avatar">✦</div>
+                  <div>
+                    <div id="role-path" class="path-label"></div>
+                    <h1 id="role-name"></h1>
+                    <div class="role-meta"><span id="role-guid"></span><span class="meta-separator">•</span><span id="role-slot-state"></span></div>
+                  </div>
+                </div>
+                <div class="editor-header-actions">
+                  <button id="save-current" class="button button-secondary" type="button">保存当前角色</button>
+                </div>
+              </div>
+
+              <div class="editor-grid">
+                <section class="drop-panel panel">
+                  <div class="panel-heading">
+                    <div>
+                      <div class="section-label">CURRENT LOADOUT</div>
+                      <h2>掉落列表 <span id="drop-count" class="inline-count">0</span></h2>
+                    </div>
+                    <div id="dirty-label" class="dirty-label hidden">未保存</div>
+                  </div>
+                  <div id="drop-list" class="drop-list"></div>
+                  <div id="drop-empty" class="drop-empty hidden">
+                    <div class="empty-icon">＋</div>
+                    <strong>这个角色还没有掉落物</strong>
+                    <span>从右侧物品或装备列表选择一个，添加到掉落列表</span>
+                  </div>
+                </section>
+
+                <section class="catalog-panel panel">
+                  <div class="panel-heading catalog-heading">
+                    <div>
+                      <div class="section-label">RESOURCE CATALOG</div>
+                      <h2>掉落物品库</h2>
+                    </div>
+                    <div class="catalog-counts"><span id="item-count-label">0 物品</span><span id="equip-count-label">0 装备</span></div>
+                  </div>
+                  <div class="catalog-tabs" role="tablist">
+                    <button class="catalog-tab active" data-catalog="item" role="tab" type="button"><span class="tab-glyph glyph-item">◆</span>物品<span id="item-tab-count" class="tab-count">0</span></button>
+                    <button class="catalog-tab" data-catalog="equipment" role="tab" type="button"><span class="tab-glyph glyph-equip">◇</span>装备<span id="equipment-tab-count" class="tab-count">0</span></button>
+                  </div>
+                  <label class="search-box catalog-search" for="catalog-search">
+                    <span>⌕</span>
+                    <input id="catalog-search" type="search" placeholder="搜索名称、ID 或文件路径" autocomplete="off" />
+                    <kbd>/</kbd>
+                  </label>
+                  <div id="catalog-list" class="catalog-list"></div>
+                  <div id="catalog-empty" class="catalog-empty hidden">没有匹配的资源</div>
+                  <div id="selection-composer" class="selection-composer hidden">
+                    <div class="composer-title"><span class="selection-mark">✓</span><span>已选择资源</span><button id="clear-selection" class="close-button" type="button" aria-label="清除选择">×</button></div>
+                    <div class="composer-resource"><span id="selected-resource-type" class="resource-type"></span><strong id="selected-resource-name"></strong></div>
+                    <div class="composer-controls">
+                      <label for="quantity">数量</label>
+                      <div class="number-control"><button id="quantity-minus" type="button">−</button><input id="quantity" type="number" min="1" max="1000000000" step="1" value="1" /><button id="quantity-plus" type="button">＋</button></div>
+                      <button id="insert-drop" class="button button-primary" type="button">插入掉落物 <span>→</span></button>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </section>
+        </section>
+      </main>
+
+      <footer class="app-footer">
+        <span>LOOTSMITH</span><span class="footer-divider"></span><span>为每一份掉落保留一点秩序</span>
+        <span class="footer-right">本地工具 · 保存前自动备份 · v0.2</span>
+      </footer>
+    </div>
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>
