@@ -4,6 +4,7 @@
   const DROP_ATTRIBUTE_ID = '4cb407bd71929620'
   const DROP_COMMAND_ID = '249c9c9d4de177c9'
   const DROP_EVENT_TYPE = 'c2ba6c4f90edd668'
+  const RESOURCE_DRAG_MIME = 'application/x-lootsmith-resource'
   const SUPPORTED = new Set(['.item', '.equip', '.actor'])
   const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
   const BACKUP_DIRECTORY = 'Lootsmith Backups'
@@ -29,6 +30,8 @@
     catalogSearch: '',
     roleSearch: '',
     selectedResource: null,
+    composerModalOpen: false,
+    dragDepth: 0,
     quantityMode: 'fixed',
     editingIndex: null,
     drafts: new Map(),
@@ -43,8 +46,9 @@
     restoreLast: $('#restore-last'), lastProjectName: $('#last-project-name'),
     projectState: $('#project-state'), saveAll: $('#save-all'), pendingCount: $('#pending-count'), roleSearch: $('#role-search'), roleList: $('#role-list'), roleCount: $('#role-count'),
     scanStatus: $('#scan-status'), rescan: $('#rescan'), noRole: $('#no-role'), roleEditor: $('#role-editor'), roleName: $('#role-name'), rolePath: $('#role-path'), roleGuid: $('#role-guid'), roleAvatar: $('#role-avatar'), roleSlotState: $('#role-slot-state'),
-    saveCurrent: $('#save-current'), dropCount: $('#drop-count'), dirtyLabel: $('#dirty-label'), dropList: $('#drop-list'), dropEmpty: $('#drop-empty'), storageModeNote: $('#storage-mode-note'), catalogSearch: $('#catalog-search'), catalogList: $('#catalog-list'), catalogEmpty: $('#catalog-empty'),
+    saveCurrent: $('#save-current'), dropCount: $('#drop-count'), dirtyLabel: $('#dirty-label'), dropPanel: $('#drop-panel'), dropList: $('#drop-list'), dropEmpty: $('#drop-empty'), storageModeNote: $('#storage-mode-note'), catalogSearch: $('#catalog-search'), catalogList: $('#catalog-list'), catalogEmpty: $('#catalog-empty'),
     itemCountLabel: $('#item-count-label'), equipCountLabel: $('#equip-count-label'), itemTabCount: $('#item-tab-count'), equipmentTabCount: $('#equipment-tab-count'), composer: $('#selection-composer'), clearSelection: $('#clear-selection'), selectedType: $('#selected-resource-type'), selectedName: $('#selected-resource-name'), itemQuantityConfig: $('#item-quantity-config'), equipmentQuantityNote: $('#equipment-quantity-note'), fixedQuantityRow: $('#fixed-quantity-row'), rangeQuantityRow: $('#range-quantity-row'), fixedQuantity: $('#fixed-quantity'), minQuantity: $('#min-quantity'), maxQuantity: $('#max-quantity'), dropRateSlider: $('#drop-rate-slider'), dropRatePercent: $('#drop-rate-percent'), dropRateOutput: $('#drop-rate-output'), dropRateRaw: $('#drop-rate-raw'), cancelEdit: $('#cancel-edit'), insertDrop: $('#insert-drop'), toastRegion: $('#toast-region'),
+    composerAnchor: $('#selection-composer-anchor'), composerModal: $('#drop-composer-modal'), composerModalContent: $('#drop-composer-modal-content'), closeComposerModalButton: $('#close-drop-composer'),
   }
 
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]))
@@ -263,7 +267,7 @@
     const localizationId = localizationIds(attrName)[0] || ''
     const imageGuid = kind === 'actor' ? (data.portrait || data.sprites?.find((sprite) => sprite?.image)?.image || '') : (data.icon || '')
     const clip = Array.isArray(data.clip) && data.clip.length >= 4 ? data.clip.slice(0, 4).map(Number) : null
-    return { ...file, data, kind, guid, rawName: attrName, localizationId, name: localizedName(attrName, fallbackName), imageGuid, clip, label: normalizePath(file.path) }
+    return { ...file, data, kind, guid, rawName: attrName, localizationId, name: localizedName(attrName, fallbackName), imageGuid, clip, edited: false, label: normalizePath(file.path) }
   }
 
   function inheritMetadata(record, recordMap, seen = new Set()) {
@@ -514,7 +518,7 @@
   function currentStore() { return state.selectedRole?.stores?.[state.storageMode] || null }
   function currentEntries() { return currentStore()?.entries || [] }
   function isDirty(role) { return role && state.pending.has(role.path) }
-  function markDirty(role, mode = state.storageMode) { role.dirtyModes.add(mode); state.pending.add(role.path); updatePendingUi(); renderRoleList(); renderRoleEditor() }
+  function markDirty(role, mode = state.storageMode) { role.edited = true; role.dirtyModes.add(mode); state.pending.add(role.path); updatePendingUi(); renderRoleList(); renderRoleEditor() }
 
   function renderWorkspace() {
     els.welcome.classList.add('hidden'); els.workspace.classList.remove('hidden')
@@ -531,7 +535,10 @@
   function renderRoleList() {
     const query = state.roleSearch.trim().toLowerCase()
     const roles = state.roles.filter((role) => !query || `${role.name} ${role.localizationId} ${role.path} ${role.guid}`.toLowerCase().includes(query))
-    els.roleList.innerHTML = roles.length ? roles.map((role) => `<div class="role-row ${state.selectedRole?.path === role.path ? 'selected' : ''}" data-role-path="${escapeHtml(role.path)}"><div class="role-avatar-small">${previewMarkup(role, '✦')}</div><div class="role-row-info"><div class="role-row-name">${escapeHtml(role.name)}</div><div class="role-row-path">${escapeHtml(role.localizationId ? `本地化 ${role.localizationId}` : role.path)}</div></div><span class="role-row-status ${isDirty(role) ? 'dirty' : ''}"></span></div>`).join('') : '<div class="list-message">没有匹配的角色</div>'
+    els.roleList.innerHTML = roles.length ? roles.map((role) => {
+      const edited = Boolean(role.edited || isDirty(role))
+      return `<div class="role-row ${state.selectedRole?.path === role.path ? 'selected' : ''} ${edited ? 'edited-role' : ''}" data-role-path="${escapeHtml(role.path)}" title="${edited ? '此角色已编辑' : ''}"><div class="role-avatar-small">${previewMarkup(role, '✦')}</div><div class="role-row-info"><div class="role-row-name">${escapeHtml(role.name)}</div><div class="role-row-path">${escapeHtml(role.localizationId ? `本地化 ${role.localizationId}` : role.path)}</div></div><span class="role-row-status ${isDirty(role) ? 'dirty' : ''} ${edited ? 'edited' : ''}"></span></div>`
+    }).join('') : '<div class="list-message">没有匹配的角色</div>'
     $$('.role-row').forEach((row) => row.addEventListener('click', () => selectRole(row.dataset.rolePath)))
     hydratePreviews(els.roleList)
   }
@@ -539,12 +546,14 @@
   function selectRole(path) {
     state.selectedRole = state.roles.find((role) => role.path === path) || null
     if (state.rootHandle && state.selectedRole) localStorage.setItem(`loot-smith-last-role:${state.rootHandle.name}`, state.selectedRole.path)
+    closeComposerModal({ clear: false })
     state.selectedResource = null; state.editingIndex = null; els.catalogSearch.value = ''; state.catalogSearch = ''
     renderRoleList(); renderRoleEditor(); renderCatalog(); renderComposer()
   }
 
   function selectStorageMode(mode) {
     if (!['attribute', 'event'].includes(mode) || state.storageMode === mode) return
+    closeComposerModal()
     state.storageMode = mode
     state.selectedResource = null
     state.editingIndex = null
@@ -593,18 +602,125 @@
     const source = state.catalogType === 'item' ? state.items : state.equipments
     const query = state.catalogSearch.trim().toLowerCase()
     const list = source.filter((resource) => !query || `${resource.name} ${resource.localizationId} ${resource.path} ${resource.guid}`.toLowerCase().includes(query))
-    els.catalogList.innerHTML = list.length ? list.map((resource) => `<div class="catalog-row ${state.selectedResource?.guid === resource.guid ? 'selected' : ''}" data-resource-guid="${escapeHtml(resource.guid)}"><div class="resource-icon ${resource.kind}">${previewMarkup(resource, resource.kind === 'equipment' ? '◇' : '◆')}</div><div class="catalog-row-info"><div class="catalog-row-name">${escapeHtml(resource.name)}</div><div class="catalog-row-sub">${resource.localizationId ? `本地化 ${escapeHtml(resource.localizationId)} · ` : ''}${escapeHtml(resource.guid || '无 GUID')}</div></div><div class="catalog-row-action">${state.selectedResource?.guid === resource.guid ? '✓' : '＋'}</div></div>`).join('') : ''
+    els.catalogList.innerHTML = list.length ? list.map((resource) => `<div class="catalog-row ${state.selectedResource?.guid === resource.guid ? 'selected' : ''}" data-resource-guid="${escapeHtml(resource.guid)}" data-resource-type="${escapeHtml(resource.kind)}" draggable="true" aria-grabbed="false" title="拖到掉落列表进行配置，或点击后手动插入"><div class="resource-icon ${resource.kind}">${previewMarkup(resource, resource.kind === 'equipment' ? '◇' : '◆')}</div><div class="catalog-row-info"><div class="catalog-row-name">${escapeHtml(resource.name)}</div><div class="catalog-row-sub">${resource.localizationId ? `本地化 ${escapeHtml(resource.localizationId)} · ` : ''}${escapeHtml(resource.guid || '无 GUID')}</div></div><div class="catalog-row-action">${state.selectedResource?.guid === resource.guid ? '✓' : '＋'}</div></div>`).join('') : ''
     els.catalogEmpty.classList.toggle('hidden', list.length > 0)
-    $$('.catalog-row').forEach((row) => row.addEventListener('click', () => selectResource(row.dataset.resourceGuid)))
+    $$('.catalog-row').forEach((row) => {
+      row.addEventListener('click', () => selectResource(row.dataset.resourceGuid, row.dataset.resourceType))
+      row.addEventListener('dragstart', (event) => startResourceDrag(event, row))
+      row.addEventListener('dragend', () => finishResourceDrag(row))
+    })
     hydratePreviews(els.catalogList)
   }
 
-  function selectResource(guid) {
+  function selectResource(guid, type = state.catalogType) {
+    if (type === 'item' || type === 'equipment') state.catalogType = type
     const source = state.catalogType === 'item' ? state.items : state.equipments
     state.selectedResource = source.find((resource) => resource.guid === guid) || null
     state.editingIndex = null
+    $$('.catalog-tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.catalog === state.catalogType))
     resetComposerFields()
     renderCatalog(); renderComposer()
+  }
+
+  function hasResourceDrag(event) {
+    return Array.from(event.dataTransfer?.types || []).includes(RESOURCE_DRAG_MIME)
+  }
+
+  function dragPayload(event) {
+    if (!hasResourceDrag(event)) return null
+    try {
+      const payload = JSON.parse(event.dataTransfer.getData(RESOURCE_DRAG_MIME))
+      if (!payload || !['item', 'equipment'].includes(payload.type) || typeof payload.guid !== 'string') return null
+      return payload
+    } catch { return null }
+  }
+
+  function startResourceDrag(event, row) {
+    const payload = { guid: row.dataset.resourceGuid, type: row.dataset.resourceType }
+    event.dataTransfer.effectAllowed = 'copy'
+    event.dataTransfer.setData(RESOURCE_DRAG_MIME, JSON.stringify(payload))
+    event.dataTransfer.setData('text/plain', payload.guid)
+    row.classList.add('dragging')
+    row.setAttribute('aria-grabbed', 'true')
+  }
+
+  function finishResourceDrag(row) {
+    row.classList.remove('dragging')
+    row.setAttribute('aria-grabbed', 'false')
+    state.dragDepth = 0
+    els.dropPanel?.classList.remove('drop-target-active')
+  }
+
+  function openComposerModal() {
+    if (!state.selectedResource || !state.selectedRole || !els.composerModal || !els.composerModalContent) return
+    state.composerModalOpen = true
+    els.composerModalContent.appendChild(els.composer)
+    els.composerModal.classList.remove('hidden')
+    els.composerModal.setAttribute('aria-hidden', 'false')
+    renderComposer()
+    window.requestAnimationFrame(() => {
+      const focusTarget = state.selectedResource?.kind === 'equipment'
+        ? els.dropRatePercent
+        : (state.quantityMode === 'range' ? els.minQuantity : els.fixedQuantity)
+      focusTarget?.focus()
+    })
+  }
+
+  function closeComposerModal({ clear = true } = {}) {
+    if (!els.composerModal) return
+    state.composerModalOpen = false
+    if (els.composerAnchor && els.composer.parentElement !== els.composerAnchor) els.composerAnchor.appendChild(els.composer)
+    els.composerModal.classList.add('hidden')
+    els.composerModal.setAttribute('aria-hidden', 'true')
+    if (clear) {
+      state.selectedResource = null
+      state.editingIndex = null
+      renderCatalog()
+    }
+    renderComposer()
+  }
+
+  function handleDropOnDropList(event) {
+    const payload = dragPayload(event)
+    if (!payload) return
+    event.preventDefault()
+    event.stopPropagation()
+    state.dragDepth = 0
+    els.dropPanel?.classList.remove('drop-target-active')
+    const source = payload.type === 'equipment' ? state.equipments : state.items
+    if (!state.selectedRole) {
+      showToast('请先选择角色', '选择角色后再把物品拖入掉落列表', 'error')
+      return
+    }
+    if (!source.some((resource) => resource.guid === payload.guid)) {
+      showToast('资源不存在', '拖入的物品或装备不属于当前工程', 'error')
+      return
+    }
+    selectResource(payload.guid, payload.type)
+    openComposerModal()
+  }
+
+  function bindDropTarget() {
+    if (!els.dropPanel) return
+    const isResourceEvent = hasResourceDrag
+    els.dropPanel.addEventListener('dragenter', (event) => {
+      if (!isResourceEvent(event)) return
+      event.preventDefault()
+      state.dragDepth += 1
+      els.dropPanel.classList.add('drop-target-active')
+    })
+    els.dropPanel.addEventListener('dragover', (event) => {
+      if (!isResourceEvent(event)) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'copy'
+      els.dropPanel.classList.add('drop-target-active')
+    })
+    els.dropPanel.addEventListener('dragleave', (event) => {
+      if (!isResourceEvent(event)) return
+      state.dragDepth = Math.max(0, state.dragDepth - 1)
+      if (!state.dragDepth) els.dropPanel.classList.remove('drop-target-active')
+    })
+    els.dropPanel.addEventListener('drop', handleDropOnDropList)
   }
 
   function setQuantityMode(mode) {
@@ -674,6 +790,10 @@
   }
 
   function clearComposer() {
+    if (state.composerModalOpen) {
+      closeComposerModal()
+      return
+    }
     state.selectedResource = null
     state.editingIndex = null
     renderCatalog(); renderComposer()
@@ -950,13 +1070,19 @@
     els.fallback.addEventListener('change', (event) => { const files = [...event.target.files]; if (files.length) scanProject({ rootHandle: null, files }) })
     els.saveCurrent.addEventListener('click', saveCurrent); els.saveAll.addEventListener('click', saveAll); els.insertDrop.addEventListener('click', insertDrop)
     els.clearSelection.addEventListener('click', clearComposer); els.cancelEdit.addEventListener('click', clearComposer)
+    els.closeComposerModalButton?.addEventListener('click', () => closeComposerModal())
+    els.composerModal?.addEventListener('click', (event) => { if (event.target === els.composerModal) closeComposerModal() })
     els.roleSearch.addEventListener('input', (event) => { state.roleSearch = event.target.value; renderRoleList() }); els.catalogSearch.addEventListener('input', (event) => { state.catalogSearch = event.target.value; renderCatalog() })
-    $$('.catalog-tab').forEach((tab) => tab.addEventListener('click', () => { state.catalogType = tab.dataset.catalog; state.selectedResource = null; $$('.catalog-tab').forEach((node) => node.classList.toggle('active', node === tab)); renderCatalog(); renderComposer() }))
+    $$('.catalog-tab').forEach((tab) => tab.addEventListener('click', () => { closeComposerModal(); state.catalogType = tab.dataset.catalog; state.selectedResource = null; $$('.catalog-tab').forEach((node) => node.classList.toggle('active', node === tab)); renderCatalog(); renderComposer() }))
     $$('.storage-mode-button').forEach((button) => button.addEventListener('click', () => selectStorageMode(button.dataset.storageMode)))
     $$('.quantity-mode-button').forEach((button) => button.addEventListener('click', () => setQuantityMode(button.dataset.quantityMode)))
     els.dropRateSlider.addEventListener('input', (event) => setDropRatePercent(event.target.value))
     els.dropRatePercent.addEventListener('input', (event) => setDropRatePercent(event.target.value))
-    document.addEventListener('keydown', (event) => { if (event.key === '/' && document.activeElement?.tagName !== 'INPUT') { event.preventDefault(); (state.selectedRole ? els.catalogSearch : els.roleSearch).focus() } })
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && state.composerModalOpen) { event.preventDefault(); closeComposerModal(); return }
+      if (event.key === '/' && document.activeElement?.tagName !== 'INPUT') { event.preventDefault(); (state.selectedRole ? els.catalogSearch : els.roleSearch).focus() }
+    })
+    bindDropTarget()
   }
 
   bindEvents()
