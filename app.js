@@ -742,7 +742,7 @@
     if (!store.ownSlot) {
       let event
       if (store.sourceSlot?.event) event = JSON.parse(JSON.stringify(store.sourceSlot.event))
-      else event = { type: DROP_EVENT_TYPE, enabled: true, commands: [] }
+      else event = { type: state.dropEventType, enabled: true, commands: [] }
       role.data.events = Array.isArray(role.data.events) ? role.data.events : []
       role.data.events.push(event)
       store.ownSlot = { index: role.data.events.length - 1, event }
