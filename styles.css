@@ -92,8 +92,13 @@ html, body { width: 100%; height: 100%; }
 /* 图片预览：按资源 clip 裁切后绘制到 canvas。 */
 .resource-preview { position: relative; display: grid; place-items: center; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
 .resource-preview canvas { width: 100%; height: 100%; image-rendering: pixelated; pointer-events: none; }
-.resource-preview-fallback { position: absolute; inset: 0; display: grid; place-items: center; }
-.resource-preview-fallback { pointer-events: none; }
+/*
+ * Keep the fallback safe even when an older cached app.js emits it without
+ * the .resource-preview wrapper. Only wrapped fallbacks may be absolute;
+ * direct fallbacks must stay inside their small avatar/icon box.
+ */
+.resource-preview-fallback { position: static; inset: auto; display: grid; place-items: center; width: 100%; height: 100%; pointer-events: none; }
+.resource-preview > .resource-preview-fallback { position: absolute; inset: 0; }
 .resource-preview.loaded .resource-preview-fallback { display: none; }
 .role-avatar-small { flex: 0 0 38px; width: 38px; height: 38px; overflow: hidden; }
 .role-avatar { width: 58px; height: 58px; overflow: hidden; transform: none; }
