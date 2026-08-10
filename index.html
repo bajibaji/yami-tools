@@ -26,7 +26,7 @@
             <span class="button-icon">↥</span>保存全部更改
             <span id="pending-count" class="button-badge">0</span>
           </button>
-          <input id="folder-fallback" type="file" webkitdirectory directory multiple hidden />
+          <input id="folder-fallback" class="visually-hidden" type="file" webkitdirectory directory multiple />
         </div>
       </header>
 
@@ -114,6 +114,15 @@
                     </div>
                     <div id="dirty-label" class="dirty-label hidden">未保存</div>
                   </div>
+                  <div class="storage-mode" aria-label="写入位置">
+                    <button class="storage-mode-button active" data-storage-mode="attribute" type="button">
+                      <span>属性字符串</span><small>loopList</small>
+                    </button>
+                    <button class="storage-mode-button" data-storage-mode="event" type="button">
+                      <span>角色事件</span><small>掉落物品指令</small>
+                    </button>
+                  </div>
+                  <div id="storage-mode-note" class="storage-mode-note"></div>
                   <div id="drop-list" class="drop-list"></div>
                   <div id="drop-empty" class="drop-empty hidden">
                     <div class="empty-icon">＋</div>
@@ -144,9 +153,40 @@
                   <div id="selection-composer" class="selection-composer hidden">
                     <div class="composer-title"><span class="selection-mark">✓</span><span>已选择资源</span><button id="clear-selection" class="close-button" type="button" aria-label="清除选择">×</button></div>
                     <div class="composer-resource"><span id="selected-resource-type" class="resource-type"></span><strong id="selected-resource-name"></strong></div>
-                    <div class="composer-controls">
-                      <label for="quantity">数量</label>
-                      <div class="number-control"><button id="quantity-minus" type="button">−</button><input id="quantity" type="number" min="1" max="1000000000" step="1" value="1" /><button id="quantity-plus" type="button">＋</button></div>
+                    <div class="drop-config-grid">
+                      <div id="item-quantity-config" class="config-section">
+                        <div class="config-heading"><span>物品数量</span><span class="config-hint">仅物品有效</span></div>
+                        <div class="quantity-mode" role="group" aria-label="数量方式">
+                          <button class="quantity-mode-button active" data-quantity-mode="fixed" type="button">固定数量</button>
+                          <button class="quantity-mode-button" data-quantity-mode="range" type="button">数量范围</button>
+                        </div>
+                        <div id="fixed-quantity-row" class="config-row">
+                          <label for="fixed-quantity">固定</label>
+                          <input id="fixed-quantity" class="config-number" type="number" min="1" max="1000000000" step="1" value="1" />
+                          <span>件</span>
+                        </div>
+                        <div id="range-quantity-row" class="config-row hidden">
+                          <label for="min-quantity">范围</label>
+                          <input id="min-quantity" class="config-number" type="number" min="1" max="1000000000" step="1" value="1" />
+                          <span>至</span>
+                          <input id="max-quantity" class="config-number" type="number" min="1" max="1000000000" step="1" value="1" />
+                          <span>件</span>
+                        </div>
+                      </div>
+                      <div id="equipment-quantity-note" class="equipment-quantity-note hidden">
+                        <span class="equipment-lock">◇</span><div><strong>装备固定为 1 件</strong><small>插件不会读取装备的数量范围，写入时固定 min=1、max=1。</small></div>
+                      </div>
+                      <div class="config-section rate-section">
+                        <div class="config-heading"><label for="drop-rate-slider">掉落几率</label><output id="drop-rate-output">100%</output></div>
+                        <div class="rate-controls">
+                          <input id="drop-rate-slider" type="range" min="0" max="100" step="0.1" value="100" />
+                          <div class="percent-input"><input id="drop-rate-percent" type="number" min="0" max="100" step="0.1" value="100" /><span>%</span></div>
+                        </div>
+                        <div id="drop-rate-raw" class="raw-preview">写入：dropRate = 1</div>
+                      </div>
+                    </div>
+                    <div class="composer-actions">
+                      <button id="cancel-edit" class="button button-secondary hidden" type="button">取消编辑</button>
                       <button id="insert-drop" class="button button-primary" type="button">插入掉落物 <span>→</span></button>
                     </div>
                   </div>

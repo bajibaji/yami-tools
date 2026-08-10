@@ -2,6 +2,8 @@
   'use strict'
 
   const DROP_ATTRIBUTE_ID = '4cb407bd71929620'
+  const DROP_COMMAND_ID = '249c9c9d4de177c9'
+  const DROP_EVENT_TYPE = 'c2ba6c4f90edd668'
   const SUPPORTED = new Set(['.item', '.equip', '.actor'])
   const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
   const BACKUP_DIRECTORY = 'Lootsmith Backups'
@@ -11,6 +13,9 @@
     fallbackMode: false,
     allFiles: [],
     roles: [],
+    roleMap: new Map(),
+    dropCommandId: DROP_COMMAND_ID,
+    dropEventType: DROP_EVENT_TYPE,
     items: [],
     equipments: [],
     definitions: new Map(),
@@ -19,10 +24,13 @@
     imageHandles: new Map(),
     imageBitmaps: new Map(),
     selectedRole: null,
+    storageMode: 'attribute',
     catalogType: 'item',
     catalogSearch: '',
     roleSearch: '',
     selectedResource: null,
+    quantityMode: 'fixed',
+    editingIndex: null,
     drafts: new Map(),
     pending: new Set(),
     errors: [],
@@ -35,8 +43,8 @@
     restoreLast: $('#restore-last'), lastProjectName: $('#last-project-name'),
     projectState: $('#project-state'), saveAll: $('#save-all'), pendingCount: $('#pending-count'), roleSearch: $('#role-search'), roleList: $('#role-list'), roleCount: $('#role-count'),
     scanStatus: $('#scan-status'), rescan: $('#rescan'), noRole: $('#no-role'), roleEditor: $('#role-editor'), roleName: $('#role-name'), rolePath: $('#role-path'), roleGuid: $('#role-guid'), roleAvatar: $('#role-avatar'), roleSlotState: $('#role-slot-state'),
-    saveCurrent: $('#save-current'), dropCount: $('#drop-count'), dirtyLabel: $('#dirty-label'), dropList: $('#drop-list'), dropEmpty: $('#drop-empty'), catalogSearch: $('#catalog-search'), catalogList: $('#catalog-list'), catalogEmpty: $('#catalog-empty'),
-    itemCountLabel: $('#item-count-label'), equipCountLabel: $('#equip-count-label'), itemTabCount: $('#item-tab-count'), equipmentTabCount: $('#equipment-tab-count'), composer: $('#selection-composer'), clearSelection: $('#clear-selection'), selectedType: $('#selected-resource-type'), selectedName: $('#selected-resource-name'), quantity: $('#quantity'), quantityMinus: $('#quantity-minus'), quantityPlus: $('#quantity-plus'), insertDrop: $('#insert-drop'), toastRegion: $('#toast-region'),
+    saveCurrent: $('#save-current'), dropCount: $('#drop-count'), dirtyLabel: $('#dirty-label'), dropList: $('#drop-list'), dropEmpty: $('#drop-empty'), storageModeNote: $('#storage-mode-note'), catalogSearch: $('#catalog-search'), catalogList: $('#catalog-list'), catalogEmpty: $('#catalog-empty'),
+    itemCountLabel: $('#item-count-label'), equipCountLabel: $('#equip-count-label'), itemTabCount: $('#item-tab-count'), equipmentTabCount: $('#equipment-tab-count'), composer: $('#selection-composer'), clearSelection: $('#clear-selection'), selectedType: $('#selected-resource-type'), selectedName: $('#selected-resource-name'), itemQuantityConfig: $('#item-quantity-config'), equipmentQuantityNote: $('#equipment-quantity-note'), fixedQuantityRow: $('#fixed-quantity-row'), rangeQuantityRow: $('#range-quantity-row'), fixedQuantity: $('#fixed-quantity'), minQuantity: $('#min-quantity'), maxQuantity: $('#max-quantity'), dropRateSlider: $('#drop-rate-slider'), dropRatePercent: $('#drop-rate-percent'), dropRateOutput: $('#drop-rate-output'), dropRateRaw: $('#drop-rate-raw'), cancelEdit: $('#cancel-edit'), insertDrop: $('#insert-drop'), toastRegion: $('#toast-region'),
   }
 
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]))
@@ -136,14 +144,32 @@
     return raw?.[type === 'equipment' ? 'equipmentId' : 'itemId'] || raw?.id || raw?.guid || raw?.key || raw?.resourceId || ''
   }
 
-  function entryQuantity(raw) {
-    if (Array.isArray(raw)) return Number(raw.find((value) => typeof value === 'number') ?? raw[2] ?? 1) || 1
-    return Math.max(1, Number(raw?.quantity ?? raw?.count ?? raw?.amount ?? raw?.num ?? raw?.number ?? 1) || 1)
+  function clampInteger(value, fallback = 1) {
+    return Math.max(1, Math.min(1000000000, Math.floor(Number(value) || fallback)))
   }
 
-  function normalizeEntry(raw, index) {
+  function clampRate(value, fallback = 1) {
+    let rate = Number(value)
+    if (!Number.isFinite(rate)) rate = fallback
+    if (rate > 1 && rate <= 100) rate /= 100
+    return Math.max(0, Math.min(1, Number(rate.toFixed(6))))
+  }
+
+  function normalizeEntry(raw, index, disabled = false) {
     const type = entryType(raw)
-    return { key: `${type}-${entryId(raw, type)}-${index}`, type, id: String(entryId(raw, type) || ''), quantity: entryQuantity(raw), raw }
+    const legacyQuantity = raw?.quantity ?? raw?.count ?? raw?.amount ?? raw?.num ?? raw?.number ?? 1
+    const min = type === 'equipment' ? 1 : clampInteger(raw?.min ?? legacyQuantity)
+    const max = type === 'equipment' ? 1 : clampInteger(raw?.max ?? legacyQuantity, min)
+    return {
+      key: `${type}-${entryId(raw, type)}-${index}`,
+      type,
+      id: String(entryId(raw, type) || ''),
+      min: Math.min(min, max),
+      max: Math.max(min, max),
+      dropRate: clampRate(raw?.dropRate ?? raw?.rate ?? raw?.chance, 1),
+      disabled: Boolean(disabled || raw?.disabled),
+      raw,
+    }
   }
 
   function parseDropList(value) {
@@ -153,12 +179,77 @@
   }
 
   function serializeDropList(entries) {
-    return JSON.stringify(entries.map((entry) => ({ type: entry.type, id: entry.id, quantity: Math.max(1, Number(entry.quantity) || 1) })))
+    return JSON.stringify(entries.map((entry) => ({
+      type: entry.type,
+      id: entry.id,
+      quantity: entry.min === entry.max ? clampInteger(entry.min) : clampInteger(entry.min),
+      min: entry.type === 'equipment' ? 1 : clampInteger(entry.min),
+      max: entry.type === 'equipment' ? 1 : clampInteger(entry.max),
+      dropRate: clampRate(entry.dropRate),
+    })))
   }
 
-  function dropSlotLabel(role, entries) {
-    if (!role.dropSlot) return '未找到属性，将在保存时创建'
-    return `${entries.length} 条记录 · ${role.dropSlot.kind === 'root' ? '对象属性 loopList' : 'attributes / loopList'}`
+  function isDropCommand(command) {
+    return command && String(command.id || '').replace(/^!/, '') === state.dropCommandId
+  }
+
+  function findDropEvent(data) {
+    const events = Array.isArray(data?.events) ? data.events : []
+    const index = events.findIndex((event) => event?.type === state.dropEventType)
+    return index >= 0 ? { index, event: events[index] } : null
+  }
+
+  function parseEventEntries(event) {
+    return (Array.isArray(event?.commands) ? event.commands : [])
+      .filter(isDropCommand)
+      .map((command, index) => normalizeEntry(command.params || {}, index, String(command.id).startsWith('!')))
+      .filter((entry) => entry.id)
+  }
+
+  function findInheritedStore(role, roleMap, mode, seen = new Set()) {
+    if (!role || seen.has(role.guid)) return null
+    seen.add(role.guid)
+    const ownSlot = mode === 'attribute' ? findDropSlot(role.data) : findDropEvent(role.data)
+    if (ownSlot) return { sourceRole: role, sourceSlot: ownSlot, inherited: false }
+    const parent = roleMap.get(role.data?.inherit)
+    if (!parent) return null
+    const inherited = findInheritedStore(parent, roleMap, mode, seen)
+    return inherited ? { ...inherited, inherited: true } : null
+  }
+
+  function initializeRoleStores(role, roleMap) {
+    const attributeSource = findInheritedStore(role, roleMap, 'attribute')
+    const eventSource = findInheritedStore(role, roleMap, 'event')
+    const attributeEntries = attributeSource ? parseDropList(attributeSource.sourceSlot.value) : []
+    const eventEntries = eventSource ? parseEventEntries(eventSource.sourceSlot.event) : []
+    role.stores = {
+      attribute: {
+        mode: 'attribute',
+        ownSlot: findDropSlot(role.data),
+        sourceRole: attributeSource?.sourceRole || null,
+        sourceSlot: attributeSource?.sourceSlot || null,
+        inherited: Boolean(attributeSource?.inherited),
+        entries: attributeEntries.map((entry) => ({ ...entry })),
+        originalEntries: attributeEntries.map((entry) => ({ ...entry })),
+      },
+      event: {
+        mode: 'event',
+        ownSlot: findDropEvent(role.data),
+        sourceRole: eventSource?.sourceRole || null,
+        sourceSlot: eventSource?.sourceSlot || null,
+        inherited: Boolean(eventSource?.inherited),
+        entries: eventEntries.map((entry) => ({ ...entry })),
+        originalEntries: eventEntries.map((entry) => ({ ...entry })),
+      },
+    }
+    role.dirtyModes = new Set()
+  }
+
+  function dropSlotLabel(role, store) {
+    if (!store?.sourceSlot) return state.storageMode === 'event' ? '将新建“掉落物品”角色事件' : '将新建 loopList 属性'
+    const source = store.inherited ? `继承自 ${store.sourceRole?.name || store.sourceRole?.guid}` : '当前角色本地数据'
+    const location = state.storageMode === 'event' ? `角色事件 ${state.dropEventType}` : (store.sourceSlot.kind === 'root' ? '对象属性 loopList' : 'attributes / loopList')
+    return `${source} · ${location}`
   }
 
   function makeRecord(file, data, kind) {
@@ -310,23 +401,40 @@
   }
 
   async function readProjectMetadata(root, fallbackFiles = []) {
-    state.definitions.clear(); state.semanticIds.clear(); state.localization.clear()
+    state.definitions.clear(); state.semanticIds.clear(); state.localization.clear(); state.dropCommandId = DROP_COMMAND_ID; state.dropEventType = DROP_EVENT_TYPE
     let attributes = null
     let localization = null
+    let enumeration = null
+    let commands = null
     if (root) {
       const dataDir = await findNestedHandle(root, ['Data'])
       if (dataDir) {
         try { attributes = await readJsonHandle(await dataDir.getFileHandle('attribute.json')) } catch {}
         try { localization = await readJsonHandle(await dataDir.getFileHandle('localization.json')) } catch {}
+        try { enumeration = await readJsonHandle(await dataDir.getFileHandle('enumeration.json')) } catch {}
+        try { commands = await readJsonHandle(await dataDir.getFileHandle('commands.json')) } catch {}
       }
     } else {
       const attributeFile = fallbackFiles.find((file) => /(^|\/)Data\/attribute\.json$/i.test(normalizePath(file.webkitRelativePath || file.name)) || file.name.toLowerCase() === 'attribute.json')
       const localizationFile = fallbackFiles.find((file) => /(^|\/)Data\/localization\.json$/i.test(normalizePath(file.webkitRelativePath || file.name)) || file.name.toLowerCase() === 'localization.json')
+      const enumerationFile = fallbackFiles.find((file) => /(^|\/)Data\/enumeration\.json$/i.test(normalizePath(file.webkitRelativePath || file.name)) || file.name.toLowerCase() === 'enumeration.json')
+      const commandsFile = fallbackFiles.find((file) => /(^|\/)Data\/commands\.json$/i.test(normalizePath(file.webkitRelativePath || file.name)) || file.name.toLowerCase() === 'commands.json')
       if (attributeFile) { try { attributes = JSON.parse(await attributeFile.text()) } catch {} }
       if (localizationFile) { try { localization = JSON.parse(await localizationFile.text()) } catch {} }
+      if (enumerationFile) { try { enumeration = JSON.parse(await enumerationFile.text()) } catch {} }
+      if (commandsFile) { try { commands = JSON.parse(await commandsFile.text()) } catch {} }
     }
     if (attributes) walkDefinitions(attributes)
     if (localization) walkLocalization(localization)
+    const findByName = (node, predicate) => {
+      if (!node || typeof node !== 'object') return null
+      if (Array.isArray(node)) { for (const value of node) { const found = findByName(value, predicate); if (found) return found } return null }
+      if (predicate(node)) return node.id || null
+      for (const value of Object.values(node)) { const found = findByName(value, predicate); if (found) return found }
+      return null
+    }
+    state.dropEventType = findByName(enumeration, (node) => node.name === '掉落物品' && node.value === 'drop') || DROP_EVENT_TYPE
+    state.dropCommandId = findByName(commands, (node) => node.keywords === 'dropItem') || DROP_COMMAND_ID
   }
 
   async function scanDirectoryHandle(dir, relative = '', output = []) {
@@ -380,15 +488,13 @@
     const all = rootHandle ? await scanDirectoryHandle(rootHandle) : await scanFallback(files || [])
     state.allFiles = all
     await readProjectMetadata(rootHandle, files || [])
-    state.roles = all.filter((file) => file.ext === '.actor').map((file) => {
-      const dropSlot = findDropSlot(file.data)
-      const parsed = dropSlot ? parseDropList(dropSlot.value) : []
-      return { ...makeRecord(file, file.data, 'actor'), dropSlot, originalEntries: parsed, entries: parsed.map((entry) => ({ ...entry })) }
-    }).sort(sortRecords)
+    state.roles = all.filter((file) => file.ext === '.actor').map((file) => makeRecord(file, file.data, 'actor')).sort(sortRecords)
     state.items = all.filter((file) => file.ext === '.item').map((file) => makeRecord(file, file.data, 'item')).sort(sortRecords)
     state.equipments = all.filter((file) => file.ext === '.equip').map((file) => makeRecord(file, file.data, 'equipment')).sort(sortRecords)
     const recordMap = new Map([...state.roles, ...state.items, ...state.equipments].map((record) => [record.guid, record]))
     ;[...state.roles, ...state.items, ...state.equipments].forEach((record) => inheritMetadata(record, recordMap))
+    state.roleMap = new Map(state.roles.map((role) => [role.guid, role]))
+    state.roles.forEach((role) => initializeRoleStores(role, state.roleMap))
     state.fallbackMode = !rootHandle
     if (rootHandle) await rememberRootHandle(rootHandle)
     renderWorkspace()
@@ -399,9 +505,10 @@
 
   function sortRecords(a, b) { return a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) || a.path.localeCompare(b.path) }
   function setScanStatus(text) { els.scanStatus.textContent = text }
-  function currentEntries() { return state.selectedRole ? state.selectedRole.entries : [] }
+  function currentStore() { return state.selectedRole?.stores?.[state.storageMode] || null }
+  function currentEntries() { return currentStore()?.entries || [] }
   function isDirty(role) { return role && state.pending.has(role.path) }
-  function markDirty(role) { state.pending.add(role.path); updatePendingUi(); renderRoleList(); renderRoleEditor() }
+  function markDirty(role, mode = state.storageMode) { role.dirtyModes.add(mode); state.pending.add(role.path); updatePendingUi(); renderRoleList(); renderRoleEditor() }
 
   function renderWorkspace() {
     els.welcome.classList.add('hidden'); els.workspace.classList.remove('hidden')
@@ -426,27 +533,53 @@
   function selectRole(path) {
     state.selectedRole = state.roles.find((role) => role.path === path) || null
     if (state.rootHandle && state.selectedRole) localStorage.setItem(`loot-smith-last-role:${state.rootHandle.name}`, state.selectedRole.path)
-    state.selectedResource = null; els.catalogSearch.value = ''; state.catalogSearch = ''
+    state.selectedResource = null; state.editingIndex = null; els.catalogSearch.value = ''; state.catalogSearch = ''
     renderRoleList(); renderRoleEditor(); renderCatalog(); renderComposer()
+  }
+
+  function selectStorageMode(mode) {
+    if (!['attribute', 'event'].includes(mode) || state.storageMode === mode) return
+    state.storageMode = mode
+    state.selectedResource = null
+    state.editingIndex = null
+    $$('.storage-mode-button').forEach((button) => button.classList.toggle('active', button.dataset.storageMode === mode))
+    renderRoleEditor(); renderCatalog(); renderComposer()
   }
 
   function renderRoleEditor() {
     if (!state.selectedRole) { els.noRole.classList.remove('hidden'); els.roleEditor.classList.add('hidden'); return }
     els.noRole.classList.add('hidden'); els.roleEditor.classList.remove('hidden')
-    const role = state.selectedRole; const entries = currentEntries()
+    const role = state.selectedRole; const store = currentStore(); const entries = currentEntries()
     els.roleName.textContent = role.name; els.rolePath.textContent = role.path; els.roleGuid.textContent = role.guid ? `GUID ${role.guid}` : '文件名未包含标准 GUID'
-    els.roleSlotState.textContent = `${role.localizationId ? `本地化 ${role.localizationId} · ` : ''}${dropSlotLabel(role, entries)}`; els.roleAvatar.innerHTML = previewMarkup(role, role.name.slice(0, 1) || '✦'); els.dropCount.textContent = entries.length
+    els.roleSlotState.textContent = `${role.localizationId ? `本地化 ${role.localizationId} · ` : ''}${dropSlotLabel(role, store)}`; els.roleAvatar.innerHTML = previewMarkup(role, role.name.slice(0, 1) || '✦'); els.dropCount.textContent = entries.length
+    els.storageModeNote.textContent = state.storageMode === 'event'
+      ? '保存时写入角色的“掉落物品”事件指令；装备固定 1 件，物品使用 min/max。'
+      : '保存时写入 loopList 字符串；包含 min、max 与 dropRate，需由读取该属性的游戏逻辑支持。'
     els.dirtyLabel.classList.toggle('hidden', !isDirty(role)); els.saveCurrent.disabled = !state.rootHandle && !state.fallbackMode
     els.dropList.innerHTML = entries.length ? entries.map((entry, index) => renderDropRow(entry, index)).join('') : ''
     els.dropEmpty.classList.toggle('hidden', entries.length > 0)
     $$('.remove-drop').forEach((button) => button.addEventListener('click', () => removeDrop(Number(button.dataset.index))))
+    $$('.edit-drop').forEach((button) => button.addEventListener('click', () => editDrop(Number(button.dataset.index))))
+    $$('.toggle-drop').forEach((button) => button.addEventListener('click', () => toggleDrop(Number(button.dataset.index))))
     hydratePreviews(els.roleEditor)
   }
 
   function resourceForEntry(entry) { return (entry.type === 'equipment' ? state.equipments : state.items).find((resource) => resource.guid === entry.id) }
+  function formatPercent(rate) {
+    const percent = clampRate(rate) * 100
+    return `${Number(percent.toFixed(4))}%`
+  }
+
+  function quantityLabel(entry) {
+    if (entry.type === 'equipment') return '固定 1 件'
+    return entry.min === entry.max ? `固定 ${entry.min} 件` : `${entry.min}–${entry.max} 件`
+  }
+
   function renderDropRow(entry, index) {
     const resource = resourceForEntry(entry); const displayName = resource?.name || entry.id || '未知资源'; const typeLabel = entry.type === 'equipment' ? '装备' : '物品'
-    return `<div class="drop-row"><div class="resource-icon ${entry.type}">${previewMarkup(resource, entry.type === 'equipment' ? '◇' : '◆')}</div><div class="drop-row-info"><div class="drop-row-name">${escapeHtml(displayName)}</div><div class="drop-row-sub">${typeLabel}${resource?.localizationId ? ` · 本地化 ${escapeHtml(resource.localizationId)}` : ''} · ${escapeHtml(entry.id)}</div></div><div class="quantity-badge"><b>${escapeHtml(entry.quantity)}</b><span>数量</span></div><button class="remove-drop" data-index="${index}" type="button" aria-label="移除掉落物">×</button></div>`
+    const eventMode = state.storageMode === 'event'
+    const toggle = eventMode ? `<button class="toggle-drop ${entry.disabled ? 'is-disabled' : ''}" data-index="${index}" type="button" aria-label="${entry.disabled ? '启用掉落物' : '禁用掉落物'}" title="${entry.disabled ? '启用掉落物' : '禁用掉落物'}">${entry.disabled ? '◌' : '●'}</button>` : ''
+    return `<div class="drop-row ${eventMode ? 'event-row' : 'attribute-row'} ${entry.disabled ? 'disabled-entry' : ''}"><div class="resource-icon ${entry.type}">${previewMarkup(resource, entry.type === 'equipment' ? '◇' : '◆')}</div><div class="drop-row-info"><div class="drop-row-name">${escapeHtml(displayName)}${entry.disabled ? '<span class="disabled-chip">已禁用</span>' : ''}</div><div class="drop-row-sub">${typeLabel}${resource?.localizationId ? ` · 本地化 ${escapeHtml(resource.localizationId)}` : ''} · ${escapeHtml(entry.id)}</div></div><div class="drop-metrics"><span>${escapeHtml(quantityLabel(entry))}</span><b>${escapeHtml(formatPercent(entry.dropRate))}</b></div>${toggle}<button class="edit-drop" data-index="${index}" type="button" aria-label="编辑掉落物">✎</button><button class="remove-drop" data-index="${index}" type="button" aria-label="移除掉落物">×</button></div>`
   }
 
   function renderCatalog() {
@@ -462,14 +595,49 @@
   function selectResource(guid) {
     const source = state.catalogType === 'item' ? state.items : state.equipments
     state.selectedResource = source.find((resource) => resource.guid === guid) || null
+    state.editingIndex = null
+    resetComposerFields()
     renderCatalog(); renderComposer()
+  }
+
+  function setQuantityMode(mode) {
+    state.quantityMode = mode === 'range' ? 'range' : 'fixed'
+    $$('.quantity-mode-button').forEach((button) => button.classList.toggle('active', button.dataset.quantityMode === state.quantityMode))
+    els.fixedQuantityRow.classList.toggle('hidden', state.quantityMode !== 'fixed')
+    els.rangeQuantityRow.classList.toggle('hidden', state.quantityMode !== 'range')
+  }
+
+  function setDropRatePercent(value) {
+    const percent = Math.max(0, Math.min(100, Number(value) || 0))
+    const display = Number(percent.toFixed(4))
+    els.dropRateSlider.value = String(display)
+    els.dropRatePercent.value = String(display)
+    els.dropRateOutput.textContent = `${display}%`
+    els.dropRateRaw.textContent = `写入：dropRate = ${clampRate(display / 100)}`
+  }
+
+  function resetComposerFields(entry = null) {
+    const resource = entry ? resourceForEntry(entry) : state.selectedResource
+    if (entry && resource) state.selectedResource = resource
+    const min = entry?.min || 1
+    const max = entry?.max || min
+    els.fixedQuantity.value = String(min)
+    els.minQuantity.value = String(min)
+    els.maxQuantity.value = String(max)
+    setQuantityMode(entry && min !== max ? 'range' : 'fixed')
+    setDropRatePercent((entry?.dropRate ?? 1) * 100)
   }
 
   function renderComposer() {
     const resource = state.selectedResource
     els.composer.classList.toggle('hidden', !resource)
     if (!resource) return
-    els.selectedType.textContent = resource.kind === 'equipment' ? '装备' : '物品'; els.selectedType.className = `resource-type ${resource.kind}`; els.selectedName.textContent = resource.name; els.quantity.value = '1'
+    const equipment = resource.kind === 'equipment'
+    els.selectedType.textContent = equipment ? '装备' : '物品'; els.selectedType.className = `resource-type ${resource.kind}`; els.selectedName.textContent = resource.name
+    els.itemQuantityConfig.classList.toggle('hidden', equipment)
+    els.equipmentQuantityNote.classList.toggle('hidden', !equipment)
+    els.cancelEdit.classList.toggle('hidden', state.editingIndex === null)
+    els.insertDrop.innerHTML = state.editingIndex === null ? '插入掉落物 <span>→</span>' : '保存条目修改 <span>✓</span>'
   }
 
   function removeDrop(index) {
@@ -477,24 +645,146 @@
     currentEntries().splice(index, 1); markDirty(state.selectedRole); showToast('已移除', '点击“保存当前角色”后写回文件', 'success')
   }
 
+  function toggleDrop(index) {
+    if (state.storageMode !== 'event' || !state.selectedRole || !currentEntries()[index]) return
+    const entry = currentEntries()[index]
+    entry.disabled = !entry.disabled
+    markDirty(state.selectedRole, 'event')
+    showToast(entry.disabled ? '掉落已禁用' : '掉落已启用', `${resourceForEntry(entry)?.name || entry.id} · 保存后写入 ${entry.disabled ? `!${state.dropCommandId}` : state.dropCommandId}`, 'success')
+  }
+
+  function editDrop(index) {
+    const entry = currentEntries()[index]
+    if (!entry) return
+    const resource = resourceForEntry(entry)
+    if (!resource) { showToast('无法编辑', `工程中找不到资源 ${entry.id}`, 'error'); return }
+    state.catalogType = entry.type
+    state.selectedResource = resource
+    state.editingIndex = index
+    $$('.catalog-tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.catalog === state.catalogType))
+    resetComposerFields(entry)
+    renderCatalog(); renderComposer()
+  }
+
+  function clearComposer() {
+    state.selectedResource = null
+    state.editingIndex = null
+    renderCatalog(); renderComposer()
+  }
+
   function insertDrop() {
     if (!state.selectedRole || !state.selectedResource) return
-    const quantity = Math.max(1, Math.min(1000000000, Math.floor(Number(els.quantity.value) || 1)))
-    state.selectedRole.entries.push({ key: `${state.selectedResource.kind}-${state.selectedResource.guid}-${Date.now()}`, type: state.selectedResource.kind, id: state.selectedResource.guid, quantity, raw: null })
-    markDirty(state.selectedRole); showToast('已加入掉落列表', `${state.selectedResource.name} × ${quantity} · 尚未保存`, 'success')
+    const equipment = state.selectedResource.kind === 'equipment'
+    let min = 1
+    let max = 1
+    if (!equipment) {
+      if (state.quantityMode === 'fixed') min = max = clampInteger(els.fixedQuantity.value)
+      else {
+        min = clampInteger(els.minQuantity.value)
+        max = clampInteger(els.maxQuantity.value, min)
+        if (min > max) { showToast('数量范围无效', '最小数量不能大于最大数量', 'error'); return }
+      }
+    }
+    const existing = state.editingIndex === null ? null : currentEntries()[state.editingIndex]
+    const entry = {
+      key: existing?.key || `${state.selectedResource.kind}-${state.selectedResource.guid}-${Date.now()}`,
+      type: state.selectedResource.kind,
+      id: state.selectedResource.guid,
+      min,
+      max,
+      dropRate: clampRate(Number(els.dropRatePercent.value) / 100),
+      disabled: existing?.disabled || false,
+      raw: existing?.raw || null,
+    }
+    if (state.editingIndex === null) currentEntries().push(entry)
+    else currentEntries()[state.editingIndex] = entry
+    const action = state.editingIndex === null ? '已加入掉落列表' : '已更新掉落条目'
+    markDirty(state.selectedRole)
+    showToast(action, `${state.selectedResource.name} · ${quantityLabel(entry)} · ${formatPercent(entry.dropRate)} · 尚未保存`, 'success')
+    clearComposer()
   }
 
   function updatePendingUi() { els.pendingCount.textContent = state.pending.size; els.saveAll.disabled = state.pending.size === 0; }
 
-  function updateRoleData(role) {
-    const serialized = serializeDropList(role.entries)
-    if (role.dropSlot?.kind === 'root') role.data.loopList = serialized
-    else if (role.dropSlot?.kind === 'attribute') role.data.attributes[role.dropSlot.index].value = serialized
-    else {
-      if (!Array.isArray(role.data.attributes)) role.data.attributes = []
-      role.data.attributes.push({ key: DROP_ATTRIBUTE_ID, value: serialized })
-      role.dropSlot = { kind: 'attribute', index: role.data.attributes.length - 1, value: serialized }
+  function makeDropCommand(entry) {
+    const existingParams = entry.raw && typeof entry.raw === 'object'
+      ? { ...entry.raw }
+      : { actor: 'trigger', localActorKey: '', globalActorKey: '' }
+    return {
+      id: entry.disabled ? `!${state.dropCommandId}` : state.dropCommandId,
+      params: {
+        ...existingParams,
+        type: entry.type,
+        itemId: entry.type === 'item' ? entry.id : '',
+        equipmentId: entry.type === 'equipment' ? entry.id : '',
+        min: entry.type === 'equipment' ? 1 : clampInteger(entry.min),
+        max: entry.type === 'equipment' ? 1 : clampInteger(entry.max, entry.min),
+        dropRate: clampRate(entry.dropRate),
+      },
     }
+  }
+
+  function ensureAttributeStore(role) {
+    const store = role.stores.attribute
+    if (!store.ownSlot) {
+      if (!Array.isArray(role.data.attributes)) role.data.attributes = []
+      role.data.attributes.push({ key: DROP_ATTRIBUTE_ID, value: '' })
+      store.ownSlot = { kind: 'attribute', index: role.data.attributes.length - 1, value: '' }
+      store.inherited = false
+      store.sourceRole = role
+      store.sourceSlot = store.ownSlot
+    }
+    return store
+  }
+
+  function ensureEventStore(role) {
+    const store = role.stores.event
+    if (!store.ownSlot) {
+      let event
+      if (store.sourceSlot?.event) event = JSON.parse(JSON.stringify(store.sourceSlot.event))
+      else event = { type: DROP_EVENT_TYPE, enabled: true, commands: [] }
+      role.data.events = Array.isArray(role.data.events) ? role.data.events : []
+      role.data.events.push(event)
+      store.ownSlot = { index: role.data.events.length - 1, event }
+      store.inherited = false
+      store.sourceRole = role
+      store.sourceSlot = store.ownSlot
+    }
+    return store
+  }
+
+  function updateAttributeStore(role) {
+    const store = ensureAttributeStore(role)
+    const serialized = serializeDropList(store.entries)
+    if (store.ownSlot.kind === 'root') role.data.loopList = serialized
+    else role.data.attributes[store.ownSlot.index].value = serialized
+    store.ownSlot.value = serialized
+    return serialized
+  }
+
+  function updateEventStore(role) {
+    const store = ensureEventStore(role)
+    const event = store.ownSlot.event
+    const commands = Array.isArray(event.commands) ? event.commands : []
+    const dropCommands = store.entries.map(makeDropCommand)
+    const nextCommands = []
+    let inserted = false
+    for (const command of commands) {
+      if (isDropCommand(command)) {
+        if (!inserted) { nextCommands.push(...dropCommands); inserted = true }
+      } else nextCommands.push(command)
+    }
+    if (!inserted) nextCommands.push(...dropCommands)
+    event.commands = nextCommands
+    event.type = state.dropEventType
+    event.enabled = event.enabled !== false
+    store.ownSlot.event = event
+    return event
+  }
+
+  function updateRoleData(role, mode = state.storageMode) {
+    if (mode === 'attribute') updateAttributeStore(role)
+    else updateEventStore(role)
     return JSON.stringify(role.data, null, 2) + '\n'
   }
 
@@ -523,7 +813,7 @@
     const batchDirectory = await backupRoot.getDirectoryHandle(timestamp, { create: true })
     const manifest = { createdAt: new Date().toISOString(), project: state.rootHandle.name, files: [] }
     for (const role of roles) {
-      const backupName = `${role.guid || 'actor'}_${basename(role.path)}`.replace(/[<>:"/\\|?*]/g, '_')
+      const backupName = `${role.guid || 'actor'}_${basename(role.path)}.bak`.replace(/[<>:"/\\|?*]/g, '_')
       const backupHandle = await batchDirectory.getFileHandle(backupName, { create: true })
       const originalText = currentTexts.get(role.path)
       await writeTextHandle(backupHandle, originalText)
@@ -537,7 +827,12 @@
       timestamp,
       directory: `${BACKUP_DIRECTORY}/${timestamp}`,
       originalTexts: currentTexts,
-      draftEntries: new Map(roles.map((role) => [role.path, role.entries.map((entry) => ({ ...entry }))])),
+      dirtyModes: new Map(roles.map((role) => [role.path, new Set(role.dirtyModes)])),
+      draftEntries: new Map(roles.map((role) => [role.path, {
+        attribute: role.stores.attribute.entries.map((entry) => ({ ...entry })),
+        event: role.stores.event.entries.map((entry) => ({ ...entry })),
+        dirtyModes: [...role.dirtyModes],
+      }])),
     }
   }
 
@@ -550,10 +845,15 @@
         await writeTextHandle(role.handle, originalText)
         role.raw = originalText
         role.data = JSON.parse(originalText)
-        role.dropSlot = findDropSlot(role.data)
-        const restored = role.dropSlot ? parseDropList(role.dropSlot.value) : []
-        role.originalEntries = restored.map((entry) => ({ ...entry }))
-        role.entries = (draftEntries?.get(role.path) || restored).map((entry) => ({ ...entry }))
+        initializeRoleStores(role, state.roleMap)
+        const drafts = draftEntries?.get(role.path)
+        if (drafts) {
+          for (const mode of ['attribute', 'event']) {
+            role.stores[mode].entries = drafts[mode].map((entry) => ({ ...entry }))
+            role.stores[mode].originalEntries = role.stores[mode].entries.map((entry) => ({ ...entry }))
+          }
+        }
+        role.dirtyModes = new Set(backupModesForRole(draftEntries, role.path))
         state.pending.add(role.path)
       } catch {
         failures.push(role.name)
@@ -563,16 +863,29 @@
     if (failures.length) throw new Error(`写入失败且以下角色回滚失败：${failures.join('、')}。请从备份目录手动恢复。`)
   }
 
-  async function writeRole(role, backupComplete = false) {
+  function backupModesForRole(draftEntries, path) {
+    const value = draftEntries?.get(path)
+    return value?.dirtyModes || []
+  }
+
+  async function writeRoleModes(role, modes, backupComplete = false) {
+    const normalizedModes = [...new Set(modes)].filter((mode) => role.stores[mode])
+    if (!normalizedModes.length) return
     if (state.rootHandle && !backupComplete) await createBackupBatch([role])
-    const text = updateRoleData(role)
+    for (const mode of normalizedModes) updateRoleData(role, mode)
+    const text = JSON.stringify(role.data, null, 2) + '\n'
     if (state.rootHandle && role.handle?.createWritable) {
       await writeTextHandle(role.handle, text)
     } else if (role.file) {
       const blob = new Blob([text], { type: 'application/json;charset=utf-8' }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = basename(role.path); anchor.click(); URL.revokeObjectURL(url)
     } else throw new Error('当前文件不可写')
     role.raw = text
-    role.originalEntries = role.entries.map((entry) => ({ ...entry })); state.pending.delete(role.path); updatePendingUi(); renderRoleList(); renderRoleEditor()
+    for (const mode of normalizedModes) {
+      role.stores[mode].originalEntries = role.stores[mode].entries.map((entry) => ({ ...entry }))
+      role.dirtyModes.delete(mode)
+    }
+    if (!role.dirtyModes.size) state.pending.delete(role.path)
+    updatePendingUi(); renderRoleList(); renderRoleEditor()
   }
 
   async function saveCurrent() {
@@ -580,7 +893,7 @@
     let backup = null
     try {
       backup = state.rootHandle ? await createBackupBatch([state.selectedRole]) : null
-      await writeRole(state.selectedRole, Boolean(backup))
+      await writeRoleModes(state.selectedRole, [...state.selectedRole.dirtyModes], Boolean(backup))
       showToast('保存成功', `${state.selectedRole.name} 已写回${backup ? ` · 备份：${backup.directory}` : ' · 原文件未被覆盖，已下载修改副本'}`, 'success')
     } catch (error) {
       if (backup) {
@@ -592,12 +905,21 @@
 
   async function saveAll() {
     const roles = state.roles.filter((role) => state.pending.has(role.path)); if (!roles.length) return
-    if (state.fallbackMode) { for (const role of roles) { try { await writeRole(role) } catch (error) { showToast('保存失败', error.message, 'error'); return } }; showToast('已导出更改', `原工程未被覆盖，已下载 ${roles.length} 个修改副本`, 'success'); return }
+    if (state.fallbackMode) {
+      for (const role of roles) {
+        try { await writeRoleModes(role, [...role.dirtyModes]) }
+        catch (error) { showToast('保存失败', error.message, 'error'); return }
+      }
+      showToast('已导出更改', `原工程未被覆盖，已下载 ${roles.length} 个修改副本`, 'success'); return
+    }
     let backup = null
     const attempted = []
     try {
       backup = await createBackupBatch(roles)
-      for (const role of roles) { attempted.push(role); await writeRole(role, true) }
+      for (const role of roles) {
+        attempted.push(role)
+        await writeRoleModes(role, [...role.dirtyModes], true)
+      }
       showToast('全部保存成功', `已写回 ${roles.length} 个角色文件 · 备份：${backup.directory}`, 'success')
     } catch (error) {
       if (backup && attempted.length) {
@@ -620,10 +942,13 @@
     els.restoreLast.addEventListener('click', restoreRememberedProject)
     els.fallback.addEventListener('change', (event) => { const files = [...event.target.files]; if (files.length) scanProject({ rootHandle: null, files }) })
     els.saveCurrent.addEventListener('click', saveCurrent); els.saveAll.addEventListener('click', saveAll); els.insertDrop.addEventListener('click', insertDrop)
-    els.clearSelection.addEventListener('click', () => { state.selectedResource = null; renderCatalog(); renderComposer() })
+    els.clearSelection.addEventListener('click', clearComposer); els.cancelEdit.addEventListener('click', clearComposer)
     els.roleSearch.addEventListener('input', (event) => { state.roleSearch = event.target.value; renderRoleList() }); els.catalogSearch.addEventListener('input', (event) => { state.catalogSearch = event.target.value; renderCatalog() })
     $$('.catalog-tab').forEach((tab) => tab.addEventListener('click', () => { state.catalogType = tab.dataset.catalog; state.selectedResource = null; $$('.catalog-tab').forEach((node) => node.classList.toggle('active', node === tab)); renderCatalog(); renderComposer() }))
-    els.quantityMinus.addEventListener('click', () => { els.quantity.value = Math.max(1, Number(els.quantity.value || 1) - 1) }); els.quantityPlus.addEventListener('click', () => { els.quantity.value = Math.min(1000000000, Number(els.quantity.value || 1) + 1) })
+    $$('.storage-mode-button').forEach((button) => button.addEventListener('click', () => selectStorageMode(button.dataset.storageMode)))
+    $$('.quantity-mode-button').forEach((button) => button.addEventListener('click', () => setQuantityMode(button.dataset.quantityMode)))
+    els.dropRateSlider.addEventListener('input', (event) => setDropRatePercent(event.target.value))
+    els.dropRatePercent.addEventListener('input', (event) => setDropRatePercent(event.target.value))
     document.addEventListener('keydown', (event) => { if (event.key === '/' && document.activeElement?.tagName !== 'INPUT') { event.preventDefault(); (state.selectedRole ? els.catalogSearch : els.roleSearch).focus() } })
   }
 
