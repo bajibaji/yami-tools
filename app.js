@@ -274,8 +274,10 @@
   }
 
   function previewMarkup(resource, fallback) {
-    if (!resource?.imageGuid || !state.imageHandles.has(resource.imageGuid)) return `<span class="resource-preview-fallback">${escapeHtml(fallback)}</span>`
     const clip = resource.clip?.join(',') || ''
+    if (!resource?.imageGuid || !state.imageHandles.has(resource.imageGuid)) {
+      return `<span class="resource-preview resource-preview-missing" aria-hidden="true"><span class="resource-preview-fallback">${escapeHtml(fallback)}</span></span>`
+    }
     return `<span class="resource-preview" data-image-guid="${resource.imageGuid}" data-image-clip="${clip}"><canvas width="80" height="80"></canvas><span class="resource-preview-fallback">${escapeHtml(fallback)}</span></span>`
   }
 

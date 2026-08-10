@@ -90,9 +90,10 @@ html, body { width: 100%; height: 100%; }
 .drop-empty { min-height: 0; flex: 1 1 0; }
 
 /* 图片预览：按资源 clip 裁切后绘制到 canvas。 */
-.resource-preview { position: relative; display: grid; place-items: center; width: 100%; height: 100%; overflow: hidden; }
-.resource-preview canvas { width: 100%; height: 100%; image-rendering: pixelated; }
+.resource-preview { position: relative; display: grid; place-items: center; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+.resource-preview canvas { width: 100%; height: 100%; image-rendering: pixelated; pointer-events: none; }
 .resource-preview-fallback { position: absolute; inset: 0; display: grid; place-items: center; }
+.resource-preview-fallback { pointer-events: none; }
 .resource-preview.loaded .resource-preview-fallback { display: none; }
 .role-avatar-small { flex: 0 0 38px; width: 38px; height: 38px; overflow: hidden; }
 .role-avatar { width: 58px; height: 58px; overflow: hidden; transform: none; }
