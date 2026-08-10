@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#11131a" />
     <title>YAHZJ · Yami 掉落编辑器</title>
-    <link rel="stylesheet" href="./styles.css?v=20260810-drag-drop-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260811-actor-attributes-1" />
   </head>
   <body>
     <div class="app-shell">
@@ -14,7 +14,7 @@
           <div class="brand-mark"><span></span><span></span><span></span></div>
           <div>
             <div class="eyebrow">YAMI RPG TOOLKIT</div>
-            <div class="brand-name">YAHZJ<span>掉落编辑器 v0.3.1</span></div>
+            <div class="brand-name">YAHZJ<span>掉落编辑器 v0.4.0</span></div>
           </div>
         </div>
         <div class="topbar-actions">
@@ -105,6 +105,12 @@
                 </div>
               </div>
 
+              <div class="workspace-mode-switch" role="tablist" aria-label="编辑模式">
+                <button class="workspace-mode-button active" data-workspace-mode="drop" role="tab" type="button">掉落编辑</button>
+                <button class="workspace-mode-button" data-workspace-mode="actor-attributes" role="tab" type="button">人物属性编辑</button>
+              </div>
+
+              <section id="drop-editor-view">
               <div class="editor-grid">
                   <section id="drop-panel" class="drop-panel panel">
                   <div class="panel-heading">
@@ -194,6 +200,29 @@
                   </div>
                 </section>
               </div>
+              </section>
+
+              <section id="actor-attribute-editor-view" class="hidden">
+                <div class="attribute-toolbar-row">
+                  <div class="attribute-summary" id="attribute-summary"></div>
+                  <button id="add-actor-attribute" class="button button-secondary" type="button">＋ 添加人物属性</button>
+                </div>
+                <div class="attribute-toolbar">
+                  <label class="search-box attribute-search" for="attribute-search">
+                    <span>⌕</span>
+                    <input id="attribute-search" type="search" placeholder="搜索名称、语义键、ID、分组、说明或当前值" autocomplete="off" />
+                  </label>
+                  <div class="attribute-filters" id="attribute-filters" role="group" aria-label="属性筛选">
+                    <button class="attribute-filter active" data-filter="all" type="button">全部</button>
+                    <button class="attribute-filter" data-filter="local" type="button">本地</button>
+                    <button class="attribute-filter" data-filter="inherited" type="button">继承</button>
+                    <button class="attribute-filter" data-filter="modified" type="button">已修改</button>
+                    <button class="attribute-filter" data-filter="unknown" type="button">未知</button>
+                  </div>
+                </div>
+                <div id="attribute-list" class="attribute-list"></div>
+                <div class="attribute-editor-note">修改仅在保存时写回，并会先创建备份。人物属性可能影响战斗、AI 与存档兼容性；loopList 由掉落编辑器管理。</div>
+              </section>
             </div>
           </section>
         </section>
@@ -201,7 +230,7 @@
 
       <footer class="app-footer">
         <span>LOOTSMITH</span><span class="footer-divider"></span><span>为每一份掉落保留一点秩序</span>
-        <span class="footer-right">本地工具 · 保存前自动备份 · v0.2</span>
+        <span class="footer-right">本地工具 · 保存前自动备份 · v0.4.0</span>
       </footer>
     </div>
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
@@ -217,6 +246,30 @@
         </div>
       </div>
     </div>
-    <script src="./app.js?v=20260810-drag-drop-1"></script>
+    <div id="attribute-add-modal" class="attribute-add-modal hidden" aria-hidden="true">
+      <div class="attribute-add-modal-content" role="dialog" aria-modal="true" aria-labelledby="attribute-add-modal-title">
+        <div class="attribute-add-modal-header">
+          <div>
+            <div class="section-label">ADD ACTOR ATTRIBUTE</div>
+            <h2 id="attribute-add-modal-title">添加人物属性</h2>
+            <p>仅可添加角色属性定义（Data/attribute.json）中当前角色尚未拥有的属性。</p>
+          </div>
+          <button id="close-attribute-add" class="close-button" type="button" aria-label="关闭添加属性">×</button>
+        </div>
+        <label class="search-box attribute-add-search" for="attribute-add-search">
+          <span>⌕</span>
+          <input id="attribute-add-search" type="search" placeholder="搜索属性名称、语义键或 ID" autocomplete="off" />
+        </label>
+        <div id="attribute-add-list" class="attribute-add-list"></div>
+        <div id="attribute-add-detail" class="attribute-add-detail hidden">
+          <div id="attribute-add-info" class="attribute-add-info"></div>
+          <div id="attribute-add-value-row" class="attribute-add-value-row"></div>
+          <div class="attribute-add-actions">
+            <button id="attribute-add-confirm" class="button button-primary" type="button">添加到当前角色 <span>→</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="./app.js?v=20260811-actor-attributes-1"></script>
   </body>
 </html>

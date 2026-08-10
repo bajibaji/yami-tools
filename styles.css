@@ -197,3 +197,120 @@ html, body { width: 100%; height: 100%; }
   .drop-composer-modal { padding: 12px; }
   .drop-composer-modal-content { max-height: calc(100vh - 24px); padding: 15px; }
 }
+
+/* ===== 人物属性编辑模式 ===== */
+.workspace-mode-switch { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: 0 0 16px; padding: 4px; border: 1px solid var(--line); border-radius: 9px; background: rgba(13,15,20,.34); }
+.workspace-mode-button { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 6px 10px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 12px; font-weight: 700; transition: .15s ease; }
+.workspace-mode-button:hover { color: var(--text); background: rgba(255,255,255,.04); }
+.workspace-mode-button.active { color: var(--text); background: var(--surface-3); box-shadow: inset 0 0 0 1px rgba(198,243,107,.18); }
+.workspace-mode-button.active::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--lime); box-shadow: 0 0 0 3px rgba(198,243,107,.1); }
+
+#drop-editor-view, #actor-attribute-editor-view { flex: 1 1 0; min-height: 0; overflow: hidden; }
+#drop-editor-view { display: flex; flex-direction: column; }
+#actor-attribute-editor-view { display: flex; flex-direction: column; gap: 12px; }
+
+/*
+ * 注意：掉落行 class="drop-row attribute-row" 已占用 attribute-row 这个类名（属性字符串模式的标记），
+ * 因此人物属性视图的全部样式必须限定在 #actor-attribute-editor-view 作用域内，避免覆盖掉落行布局。
+ */
+#actor-attribute-editor-view .attribute-toolbar-row { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#actor-attribute-editor-view .attribute-summary { color: var(--muted); font-size: 12px; }
+#actor-attribute-editor-view .attribute-toolbar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
+#actor-attribute-editor-view .attribute-search { flex: 1; min-width: 200px; }
+#actor-attribute-editor-view .attribute-filters { display: flex; gap: 4px; flex-wrap: wrap; }
+#actor-attribute-editor-view .attribute-filter { padding: 6px 9px; border: 1px solid transparent; border-radius: 6px; color: var(--dim); background: transparent; font-size: 11px; font-weight: 700; }
+#actor-attribute-editor-view .attribute-filter:hover { color: var(--text); background: rgba(255,255,255,.04); }
+#actor-attribute-editor-view .attribute-filter.active { color: var(--text); border-color: rgba(198,243,107,.2); background: var(--surface-3); }
+
+#actor-attribute-editor-view .attribute-list { flex: 1 1 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; border: 1px solid var(--line); border-radius: 11px; background: rgba(23,26,35,.55); }
+#actor-attribute-editor-view .attribute-list::-webkit-scrollbar { width: 8px; }
+#actor-attribute-editor-view .attribute-list::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 8px; background: var(--surface-3); background-clip: padding-box; }
+
+#actor-attribute-editor-view .attribute-row { display: grid; grid-template-columns: minmax(150px, 0.9fr) minmax(170px, 1.1fr) auto; align-items: center; gap: 8px 12px; padding: 9px 12px; border-top: 1px solid var(--line); }
+#actor-attribute-editor-view .attribute-row:first-child { border-top: 0; }
+#actor-attribute-editor-view .attribute-row-info { min-width: 0; }
+#actor-attribute-editor-view .attribute-row-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+#actor-attribute-editor-view .attribute-row-name { font-size: 14px; font-weight: 800; }
+#actor-attribute-editor-view .attribute-row-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; color: var(--dim); font-size: 11px; }
+#actor-attribute-editor-view .attribute-row-control { min-width: 0; }
+#actor-attribute-editor-view .attribute-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+
+.type-badge, .origin-badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .02em; }
+.type-number { color: var(--blue); background: rgba(141,185,255,.12); }
+.type-string { color: var(--lime); background: rgba(198,243,107,.1); }
+.type-boolean { color: var(--orange); background: rgba(243,166,107,.12); }
+.type-enum { color: #c9a3ff; background: rgba(201,163,255,.12); }
+.type-unknown { color: var(--orange); background: rgba(243,166,107,.12); }
+.origin-badge.local { color: var(--lime); background: rgba(198,243,107,.1); }
+.origin-badge.inherited { color: var(--blue); background: rgba(141,185,255,.12); }
+.origin-badge.unknown { color: var(--orange); background: rgba(243,166,107,.12); }
+.origin-badge.protected { color: #ff9a88; background: rgba(255,139,121,.12); }
+.origin-badge.modified { color: var(--text); background: var(--surface-3); box-shadow: inset 0 0 0 1px rgba(198,243,107,.3); }
+
+#actor-attribute-editor-view .local-row.modified-row { background: rgba(198,243,107,.05); }
+#actor-attribute-editor-view .inherited-row { background: rgba(141,185,255,.035); }
+#actor-attribute-editor-view .unknown-row { background: rgba(243,166,107,.045); }
+#actor-attribute-editor-view .protected-row { background: rgba(255,139,121,.05); }
+
+#actor-attribute-editor-view .attribute-input { width: 100%; max-width: 460px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 7px; outline: none; color: var(--text); background: var(--surface); font-size: 13px; }
+#actor-attribute-editor-view .attribute-input:focus { border-color: rgba(198,243,107,.45); box-shadow: 0 0 0 3px rgba(198,243,107,.06); }
+#actor-attribute-editor-view .attribute-input.number { width: 150px; }
+#actor-attribute-editor-view .attribute-input.string { resize: vertical; min-height: 32px; line-height: 1.5; }
+#actor-attribute-editor-view .attribute-input.enum { width: min(100%, 380px); }
+#actor-attribute-editor-view .attribute-boolean { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; cursor: pointer; }
+#actor-attribute-editor-view .attribute-boolean input { accent-color: var(--lime); width: 16px; height: 16px; }
+
+#actor-attribute-editor-view .attribute-raw-value, #actor-attribute-editor-view .attribute-inherited-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; line-height: 1.5; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+#actor-attribute-editor-view .attribute-inherited-value { color: var(--blue); }
+
+#actor-attribute-editor-view .attribute-action { padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 6px; color: var(--muted); background: transparent; font-size: 11px; font-weight: 700; white-space: nowrap; }
+#actor-attribute-editor-view .attribute-action:hover { color: var(--text); border-color: rgba(198,243,107,.4); background: rgba(198,243,107,.07); }
+#actor-attribute-editor-view .attribute-action.danger:hover { color: #ff9a88; border-color: rgba(255,139,121,.45); background: rgba(255,139,121,.08); }
+
+#actor-attribute-editor-view .attribute-editor-note { flex: 0 0 auto; color: var(--dim); font-size: 11px; line-height: 1.5; }
+
+/* 未知属性折叠区 */
+#actor-attribute-editor-view .attribute-collapse { border-top: 1px solid var(--line); }
+#actor-attribute-editor-view .attribute-collapse-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 12px; border: 0; color: var(--muted); background: rgba(13,15,20,.4); font-size: 12px; font-weight: 700; text-align: left; cursor: pointer; }
+#actor-attribute-editor-view .attribute-collapse-toggle:hover { color: var(--text); background: rgba(255,255,255,.03); }
+#actor-attribute-editor-view .collapse-arrow { width: 14px; flex: 0 0 auto; color: var(--dim); transition: transform .15s ease; }
+#actor-attribute-editor-view .collapse-count { margin-left: auto; color: var(--dim); font-size: 10px; font-weight: 600; }
+#actor-attribute-editor-view .attribute-collapse-body .attribute-row { border-top: 1px solid var(--line); }
+#actor-attribute-editor-view .attribute-collapse-body .attribute-row:first-child { border-top: 0; }
+
+/* 添加人物属性弹窗（在 body 顶层，类名唯一，与既有样式无冲突） */
+.attribute-add-modal { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgba(5,7,10,.72); backdrop-filter: blur(10px); }
+.attribute-add-modal-content { width: min(640px, 100%); max-height: min(820px, calc(100vh - 48px)); display: flex; flex-direction: column; gap: 12px; padding: 20px; border: 1px solid rgba(198,243,107,.28); border-radius: 14px; background: #171a23; box-shadow: 0 28px 90px rgba(0,0,0,.52); }
+.attribute-add-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.attribute-add-modal-header h2 { margin: 5px 0 4px; font-size: 19px; }
+.attribute-add-modal-header p { margin: 0; color: var(--muted); font-size: 10px; }
+.attribute-add-modal-header .close-button { flex: 0 0 30px; width: 30px; height: 30px; font-size: 22px; }
+.attribute-add-search { flex: 0 0 auto; }
+.attribute-add-list { flex: 1 1 0; min-height: 120px; max-height: 300px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; border: 1px solid var(--line); border-radius: 9px; background: rgba(13,15,20,.3); }
+.attribute-add-row { padding: 9px 11px; border-top: 1px solid var(--line); cursor: pointer; }
+.attribute-add-row:first-child { border-top: 0; }
+.attribute-add-row:hover { background: rgba(255,255,255,.035); }
+.attribute-add-row.selected { background: rgba(198,243,107,.09); box-shadow: inset 2px 0 0 var(--lime); }
+.attribute-add-row-name { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; }
+.attribute-add-row-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 4px; color: var(--dim); font-size: 10px; }
+.attribute-add-detail { display: flex; flex-direction: column; gap: 10px; padding: 13px; border: 1px solid var(--line); border-radius: 9px; background: rgba(198,243,107,.04); }
+.attribute-add-info-name { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 800; }
+.attribute-add-info-sub { margin-top: 5px; color: var(--muted); font-size: 10px; }
+.attribute-add-info-type { margin-top: 5px; color: var(--dim); font-size: 10px; }
+.attribute-add-info-inherit { margin-top: 7px; padding: 7px 9px; border-radius: 6px; color: var(--blue); background: rgba(141,185,255,.08); font-size: 10px; line-height: 1.5; }
+.attribute-add-value-row { display: flex; align-items: center; gap: 10px; }
+.attribute-add-value-label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.attribute-add-value-label small { color: var(--dim); font-size: 9px; font-weight: 500; }
+.attribute-add-actions { display: flex; justify-content: flex-end; }
+
+@media (max-width: 1100px) {
+  #actor-attribute-editor-view .attribute-toolbar { flex-wrap: wrap; }
+  #actor-attribute-editor-view .attribute-search { min-width: 0; }
+}
+@media (max-width: 720px) {
+  .attribute-add-modal { padding: 12px; }
+  .attribute-add-modal-content { max-height: calc(100vh - 24px); padding: 15px; }
+  #actor-attribute-editor-view .attribute-toolbar-row { align-items: stretch; flex-direction: column; }
+  #actor-attribute-editor-view .attribute-row { grid-template-columns: 1fr; align-items: stretch; }
+  #actor-attribute-editor-view .attribute-row-actions { justify-content: flex-start; flex-wrap: wrap; }
+}
