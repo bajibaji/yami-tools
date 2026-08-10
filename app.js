@@ -167,7 +167,9 @@
       min: Math.min(min, max),
       max: Math.max(min, max),
       dropRate: clampRate(raw?.dropRate ?? raw?.rate ?? raw?.chance, 1),
-      disabled: Boolean(disabled || raw?.disabled),
+      // 禁用状态只由角色事件指令的显式参数传入。
+      // 属性字符串不能使用禁用状态，且不能把 Array.prototype.map 的第三个参数误当成 disabled。
+      disabled: Boolean(disabled),
       raw,
     }
   }
@@ -175,7 +177,9 @@
   function parseDropList(value) {
     const decoded = decodeJson(value)
     const list = Array.isArray(decoded) ? decoded : Array.isArray(decoded?.list) ? decoded.list : Array.isArray(decoded?.items) ? decoded.items : []
-    return list.map(normalizeEntry).filter((entry) => entry.id)
+    // 不要直接传 normalizeEntry：Array#map 会把原数组作为第三个参数，
+    // 而 normalizeEntry 的第三个参数正好是 disabled，导致属性条目全部变成“已禁用”。
+    return list.map((raw, index) => normalizeEntry(raw, index, false)).filter((entry) => entry.id)
   }
 
   function serializeDropList(entries) {
@@ -580,8 +584,9 @@
   function renderDropRow(entry, index) {
     const resource = resourceForEntry(entry); const displayName = resource?.name || entry.id || '未知资源'; const typeLabel = entry.type === 'equipment' ? '装备' : '物品'
     const eventMode = state.storageMode === 'event'
-    const toggle = eventMode ? `<button class="toggle-drop ${entry.disabled ? 'is-disabled' : ''}" data-index="${index}" type="button" aria-label="${entry.disabled ? '启用掉落物' : '禁用掉落物'}" title="${entry.disabled ? '启用掉落物' : '禁用掉落物'}">${entry.disabled ? '◌' : '●'}</button>` : ''
-    return `<div class="drop-row ${eventMode ? 'event-row' : 'attribute-row'} ${entry.disabled ? 'disabled-entry' : ''}"><div class="resource-icon ${entry.type}">${previewMarkup(resource, entry.type === 'equipment' ? '◇' : '◆')}</div><div class="drop-row-info"><div class="drop-row-name">${escapeHtml(displayName)}${entry.disabled ? '<span class="disabled-chip">已禁用</span>' : ''}</div><div class="drop-row-sub">${typeLabel}${resource?.localizationId ? ` · 本地化 ${escapeHtml(resource.localizationId)}` : ''} · ${escapeHtml(entry.id)}</div></div><div class="drop-metrics"><span>${escapeHtml(quantityLabel(entry))}</span><b>${escapeHtml(formatPercent(entry.dropRate))}</b></div>${toggle}<button class="edit-drop" data-index="${index}" type="button" aria-label="编辑掉落物">✎</button><button class="remove-drop" data-index="${index}" type="button" aria-label="移除掉落物">×</button></div>`
+    const disabled = eventMode && entry.disabled
+    const toggle = eventMode ? `<button class="toggle-drop ${disabled ? 'is-disabled' : ''}" data-index="${index}" type="button" aria-label="${disabled ? '启用掉落物' : '禁用掉落物'}" title="${disabled ? '启用掉落物' : '禁用掉落物'}">${disabled ? '◌' : '●'}</button>` : ''
+    return `<div class="drop-row ${eventMode ? 'event-row' : 'attribute-row'} ${disabled ? 'disabled-entry' : ''}"><div class="resource-icon ${entry.type}">${previewMarkup(resource, entry.type === 'equipment' ? '◇' : '◆')}</div><div class="drop-row-info"><div class="drop-row-name">${escapeHtml(displayName)}${disabled ? '<span class="disabled-chip">已禁用</span>' : ''}</div><div class="drop-row-sub">${typeLabel}${resource?.localizationId ? ` · 本地化 ${escapeHtml(resource.localizationId)}` : ''} · ${escapeHtml(entry.id)}</div></div><div class="drop-metrics"><span>${escapeHtml(quantityLabel(entry))}</span><b>${escapeHtml(formatPercent(entry.dropRate))}</b></div>${toggle}<button class="edit-drop" data-index="${index}" type="button" aria-label="编辑掉落物">✎</button><button class="remove-drop" data-index="${index}" type="button" aria-label="移除掉落物">×</button></div>`
   }
 
   function renderCatalog() {
@@ -695,7 +700,7 @@
       min,
       max,
       dropRate: clampRate(Number(els.dropRatePercent.value) / 100),
-      disabled: existing?.disabled || false,
+      disabled: state.storageMode === 'event' && Boolean(existing?.disabled),
       raw: existing?.raw || null,
     }
     if (state.editingIndex === null) currentEntries().push(entry)
