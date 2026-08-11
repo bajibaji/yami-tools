@@ -338,9 +338,11 @@
 
   function initializeRoleStores(role, roleMap) {
     const attributeSource = findInheritedStore(role, roleMap, 'attribute')
-    const eventSource = findInheritedStore(role, roleMap, 'event')
+    // 掉落物品事件不继承：怪物自身没有掉落事件时按“将新建”空状态显示，
+    // 编辑保存时才在角色本地创建掉落事件。避免把通用怪物模板的掉落误显示为怪物自己的。
+    const eventSource = findDropEvent(role.data)
     const attributeEntries = attributeSource ? parseDropList(attributeSource.sourceSlot.value) : []
-    const eventEntries = eventSource ? parseEventEntries(eventSource.sourceSlot.event) : []
+    const eventEntries = eventSource ? parseEventEntries(eventSource.event) : []
     // 人物属性草稿：覆盖角色 data.attributes 的全部本地条目（含未知属性和 loopList）。
     // 每条保留 raw 原始对象，保存时未知字段不会被丢弃。
     const actorAttributeEntries = []
@@ -360,10 +362,10 @@
       },
       event: {
         mode: 'event',
-        ownSlot: findDropEvent(role.data),
-        sourceRole: eventSource?.sourceRole || null,
-        sourceSlot: eventSource?.sourceSlot || null,
-        inherited: Boolean(eventSource?.inherited),
+        ownSlot: eventSource,
+        sourceRole: eventSource ? role : null,
+        sourceSlot: eventSource,
+        inherited: false,
         entries: eventEntries.map((entry) => ({ ...entry })),
         originalEntries: eventEntries.map((entry) => ({ ...entry })),
       },
@@ -1465,9 +1467,9 @@
   function ensureEventStore(role) {
     const store = role.stores.event
     if (!store.ownSlot) {
-      let event
-      if (store.sourceSlot?.event) event = JSON.parse(JSON.stringify(store.sourceSlot.event))
-      else event = { type: state.dropEventType, enabled: true, commands: [] }
+      // 始终创建空掉落事件，不复制模板/父角色的掉落事件：
+      // 修改掉落只影响当前 actor 自身，父角色（如通用怪物模板）不被改动。
+      const event = { type: state.dropEventType, enabled: true, commands: [] }
       role.data.events = Array.isArray(role.data.events) ? role.data.events : []
       role.data.events.push(event)
       store.ownSlot = { index: role.data.events.length - 1, event }
