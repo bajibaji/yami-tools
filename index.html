@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#11131a" />
     <title>YAHZJ · Yami 掉落编辑器</title>
-    <link rel="stylesheet" href="./styles.css?v=20260812-drop-inherit-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260813-inherit-fix-1" />
   </head>
   <body>
     <div class="app-shell">
@@ -14,7 +14,7 @@
           <div class="brand-mark"><span></span><span></span><span></span></div>
           <div>
             <div class="eyebrow">YAMI RPG TOOLKIT</div>
-            <div class="brand-name">YAHZJ<span>掉落编辑器 v0.5.0</span></div>
+            <div class="brand-name">YAHZJ<span>掉落编辑器 v0.5.1</span></div>
           </div>
         </div>
         <div class="topbar-actions">
@@ -132,7 +132,7 @@
                   <div id="drop-list" class="drop-list"></div>
                   <div id="drop-empty" class="drop-empty hidden">
                     <div class="empty-icon">＋</div>
-                    <strong>这个角色还没有掉落物</strong>
+                    <strong id="drop-empty-title">这个角色还没有掉落物</strong>
                     <span>从右侧选择或拖入物品、装备，添加到掉落列表</span>
                     <div id="drop-inherit-hint" class="drop-inherit-hint hidden">
                       <span id="drop-inherit-hint-text"></span>
@@ -235,7 +235,7 @@
 
       <footer class="app-footer">
         <span>LOOTSMITH</span><span class="footer-divider"></span><span>为每一份掉落保留一点秩序</span>
-        <span class="footer-right">本地工具 · 保存前自动备份 · v0.5.0</span>
+        <span class="footer-right">本地工具 · 保存前自动备份 · v0.5.1</span>
       </footer>
     </div>
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
@@ -275,6 +275,6 @@
         </div>
       </div>
     </div>
-    <script src="./app.js?v=20260812-drop-inherit-1"></script>
+    <script src="./app.js?v=20260813-inherit-fix-1"></script>
   </body>
 </html>

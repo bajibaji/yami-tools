@@ -58,7 +58,11 @@ main { flex: 1; min-height: 0; position: relative; }
 .drop-inherit-hint { margin-top: 10px; padding: 8px 10px; border: 1px solid rgba(141,185,255,.28); border-radius: 7px; color: var(--blue); background: rgba(141,185,255,.07); font-size: 11px; line-height: 1.55; max-width: 340px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .inherit-toggle { padding: 5px 10px; border: 1px solid rgba(141,185,255,.4); border-radius: 6px; color: var(--blue); background: rgba(141,185,255,.1); font-size: 11px; font-weight: 700; cursor: pointer; }
 .inherit-toggle:hover { color: var(--text); border-color: rgba(141,185,255,.7); background: rgba(141,185,255,.16); }
-.drop-inherited-list { margin-top: 8px; width: 100%; max-width: 340px; border: 1px solid rgba(141,185,255,.2); border-radius: 8px; background: rgba(13,15,20,.35); overflow: hidden; }
+/* 继承来源名（如“@2 通用怪物角色（模板）”）加粗高亮，一眼可辨。 */
+.drop-inherit-hint .inherit-source { color: #dbe9ff; font-weight: 800; font-size: 12px; letter-spacing: .02em; }
+.drop-inherited-list { margin-top: 8px; width: 100%; max-width: 340px; max-height: 240px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; border: 1px solid rgba(141,185,255,.2); border-radius: 8px; background: rgba(13,15,20,.35); }
+.drop-inherited-list::-webkit-scrollbar { width: 8px; }
+.drop-inherited-list::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 8px; background: var(--surface-3); background-clip: padding-box; }
 .drop-inherited-list .inherited-drop-row { grid-template-columns: 31px minmax(0, 1fr) auto; }
 .inherited-chip { display: inline-block; margin-left: 6px; padding: 2px 5px; border-radius: 4px; color: var(--blue); background: rgba(141,185,255,.12); font-size: 9px; vertical-align: 1px; }
 .catalog-heading { padding-bottom: 12px; }.catalog-counts { display: flex; gap: 9px; padding-top: 3px; color: var(--dim); font-size: 10px; }.catalog-tabs { display: flex; gap: 4px; padding-bottom: 13px; border-bottom: 1px solid var(--line); }.catalog-tab { display: flex; align-items: center; gap: 7px; padding: 8px 11px; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: 11px; font-weight: 700; }.catalog-tab:hover { color: var(--text); background: rgba(255,255,255,.04); }.catalog-tab.active { color: var(--text); background: var(--surface-3); }.tab-glyph { font-size: 10px; }.glyph-item { color: var(--orange); }.glyph-equip { color: var(--blue); }.tab-count { min-width: 17px; padding: 2px 5px; border-radius: 99px; color: var(--dim); background: var(--surface); font-size: 9px; }.catalog-search { margin: 13px 0 5px; }.catalog-list { flex: 1; min-height: 205px; }.catalog-row { display: flex; align-items: center; gap: 10px; min-height: 53px; padding: 7px 8px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; }.catalog-row:hover { background: rgba(255,255,255,.035); }.catalog-row.selected { border-color: rgba(198,243,107,.25); background: rgba(198,243,107,.08); }.catalog-row .resource-icon { width: 28px; height: 28px; flex-basis: 28px; }.catalog-row-info { flex: 1; }.catalog-row-action { color: var(--dim); font-size: 15px; }.catalog-row:hover .catalog-row-action, .catalog-row.selected .catalog-row-action { color: var(--lime); }.selection-composer { margin-top: 12px; padding: 12px; border: 1px solid rgba(198,243,107,.2); border-radius: 9px; background: rgba(198,243,107,.045); }.composer-title { justify-content: flex-start; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 700; }.selection-mark { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 5px; color: #1b2410; background: var(--lime); font-size: 10px; }.close-button { width: 20px; height: 20px; margin-left: auto; padding: 0; border: 0; border-radius: 5px; color: var(--dim); background: transparent; font-size: 17px; }.close-button:hover { color: var(--text); background: rgba(255,255,255,.08); }.composer-resource { gap: 8px; margin: 10px 0 12px; }.composer-resource strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }.resource-type { flex: 0 0 auto; padding: 3px 5px; border-radius: 4px; font-size: 9px; }.resource-type.item { color: var(--orange); background: rgba(243,166,107,.12); }.resource-type.equipment { color: var(--blue); background: rgba(141,185,255,.12); }.composer-controls { gap: 8px; }.composer-controls label { color: var(--muted); font-size: 10px; }.number-control { display: flex; align-items: center; height: 31px; border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; background: var(--surface); }.number-control button { width: 26px; height: 100%; padding: 0; border: 0; color: var(--muted); background: transparent; }.number-control button:hover { color: var(--lime); background: rgba(198,243,107,.08); }.number-control input { width: 54px; height: 100%; border: 0; border-right: 1px solid var(--line); border-left: 1px solid var(--line); outline: 0; color: var(--text); background: transparent; text-align: center; font-size: 11px; }.number-control input::-webkit-inner-spin-button { opacity: .5; }.composer-controls .button { margin-left: auto; padding: 8px 10px; font-size: 10px; }
@@ -136,15 +140,16 @@ html, body { width: 100%; height: 100%; }
 }
 
 /* 拖拽资源与已编辑角色状态。 */
+/* 编辑后高亮用浅蓝色系，与选中（绿色）区分开。 */
 .role-row.edited-role {
-  border-color: rgba(198,243,107,.27);
-  background: rgba(198,243,107,.14);
-  box-shadow: inset 3px 0 0 rgba(198,243,107,.74);
+  border-color: rgba(141, 185, 255, 0.3);
+  background: rgba(141, 185, 255, 0.12);
+  box-shadow: inset 3px 0 0 rgba(141, 185, 255, 0.72);
 }
-.role-row.edited-role:hover { background: rgba(198,243,107,.21); }
-.role-row.edited-role.selected { border-color: rgba(198,243,107,.48); background: rgba(198,243,107,.24); }
-.role-row-status.edited { background: var(--lime); box-shadow: 0 0 0 3px rgba(198,243,107,.13); }
-.role-row-status.dirty.edited { background: var(--lime); box-shadow: 0 0 0 3px rgba(198,243,107,.16); }
+.role-row.edited-role:hover { background: rgba(141, 185, 255, 0.18); }
+.role-row.edited-role.selected { border-color: rgba(141, 185, 255, 0.5); background: rgba(141, 185, 255, 0.22); }
+.role-row-status.edited { background: var(--blue); box-shadow: 0 0 0 3px rgba(141, 185, 255, 0.14); }
+.role-row-status.dirty.edited { background: var(--blue); box-shadow: 0 0 0 3px rgba(141, 185, 255, 0.16); }
 
 .catalog-row[draggable="true"] { cursor: grab; user-select: none; }
 .catalog-row[draggable="true"]:active { cursor: grabbing; }

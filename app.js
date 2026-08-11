@@ -68,6 +68,7 @@
     itemCountLabel: $('#item-count-label'), equipCountLabel: $('#equip-count-label'), itemTabCount: $('#item-tab-count'), equipmentTabCount: $('#equipment-tab-count'), composer: $('#selection-composer'), clearSelection: $('#clear-selection'), selectedType: $('#selected-resource-type'), selectedName: $('#selected-resource-name'), itemQuantityConfig: $('#item-quantity-config'), equipmentQuantityNote: $('#equipment-quantity-note'), fixedQuantityRow: $('#fixed-quantity-row'), rangeQuantityRow: $('#range-quantity-row'), fixedQuantity: $('#fixed-quantity'), minQuantity: $('#min-quantity'), maxQuantity: $('#max-quantity'), dropRateSlider: $('#drop-rate-slider'), dropRatePercent: $('#drop-rate-percent'), dropRateOutput: $('#drop-rate-output'), dropRateRaw: $('#drop-rate-raw'), cancelEdit: $('#cancel-edit'), insertDrop: $('#insert-drop'), toastRegion: $('#toast-region'),
     composerAnchor: $('#selection-composer-anchor'), composerModal: $('#drop-composer-modal'), composerModalContent: $('#drop-composer-modal-content'), closeComposerModalButton: $('#close-drop-composer'),
     dropEditorView: $('#drop-editor-view'), actorAttributeEditorView: $('#actor-attribute-editor-view'),
+    dropEmptyTitle: $('#drop-empty-title'),
     dropInheritHint: $('#drop-inherit-hint'), dropInheritHintText: $('#drop-inherit-hint-text'), toggleInheritedDrop: $('#toggle-inherited-drop'), dropInheritedList: $('#drop-inherited-list'),
     workspaceModeButtons: () => $$('.workspace-mode-button'),
     attributeSummary: $('#attribute-summary'), attributeSearch: $('#attribute-search'), attributeFilters: $('#attribute-filters'), attributeList: $('#attribute-list'), addActorAttribute: $('#add-actor-attribute'),
@@ -423,9 +424,17 @@
     return result
   }
 
+  // 继承来源的显示名：优先用文件名（如“@2 通用怪物角色”），
+  // 因为模板的 name 属性可能是通用名（如“怪物”），看不出继承对象是谁。
+  function inheritedSourceName(role) {
+    if (!role) return '父角色'
+    const fileBased = resourceName(role.path || role.name, role.guid)
+    return fileBased || role.name || role.guid || '父角色'
+  }
+
   function dropSlotLabel(role, store) {
     if (!store?.sourceSlot) return state.storageMode === 'event' ? '将新建“掉落物品”角色事件' : '将新建 loopList 属性'
-    const source = store.inherited ? `继承自 ${store.sourceRole?.name || store.sourceRole?.guid}` : '当前角色本地数据'
+    const source = store.inherited ? `继承自 ${inheritedSourceName(store.sourceRole)}` : '当前角色本地数据'
     const location = state.storageMode === 'event' ? `角色事件 ${state.dropEventType}` : (store.sourceSlot.kind === 'root' ? '对象属性 loopList' : 'attributes / loopList')
     return `${source} · ${location}`
   }
@@ -927,10 +936,14 @@
     els.dropEmpty.classList.toggle('hidden', entries.length > 0)
     // 继承标识 + “显示继承掉落”开关：角色自身没有掉落事件时，可展开查看模板的掉落配置（只读）。
     const inheritSource = state.storageMode === 'event' && !store?.ownSlot ? store?.inheritedDropSource : null
+    if (els.dropEmptyTitle) {
+      // 有继承来源时标题提示“继承的掉落物”，并让标识条显示继承角色名。
+      els.dropEmptyTitle.textContent = inheritSource && !entries.length ? '这个角色有继承的掉落物' : '这个角色还没有掉落物'
+    }
     if (els.dropInheritHint) {
       if (inheritSource && !entries.length) {
-        const sourceName = inheritSource.name || inheritSource.guid || '父角色'
-        if (els.dropInheritHintText) els.dropInheritHintText.textContent = `掉落事件继承自 ${sourceName}（模板）· 编辑并保存后将在此角色创建独立掉落事件。`
+        const sourceName = inheritedSourceName(inheritSource)
+        if (els.dropInheritHintText) els.dropInheritHintText.innerHTML = `继承角色：<b class="inherit-source">${escapeHtml(sourceName)}（模板）</b> · 编辑并保存后将在此角色创建独立掉落事件。`
         if (els.toggleInheritedDrop) {
           const sourceEvent = findDropEvent(inheritSource.data)
           const inheritedCount = sourceEvent ? parseEventEntries(sourceEvent.event).length : 0
@@ -953,7 +966,7 @@
   // 继承掉落的只读展示行（只用于“显示继承掉落”展开，不带编辑/删除/禁用操作）。
   function renderInheritedDropRow(entry, sourceRole) {
     const resource = resourceForEntry(entry); const displayName = resource?.name || entry.id || '未知资源'; const typeLabel = entry.type === 'equipment' ? '装备' : '物品'
-    return `<div class="drop-row inherited-drop-row"><div class="resource-icon ${entry.type}">${previewMarkup(resource, entry.type === 'equipment' ? '◇' : '◆')}</div><div class="drop-row-info"><div class="drop-row-name">${escapeHtml(displayName)}<span class="inherited-chip">继承</span></div><div class="drop-row-sub">${typeLabel} · ${escapeHtml(entry.id)} · 来自 ${escapeHtml(sourceRole?.name || sourceRole?.guid || '模板')}</div></div><div class="drop-metrics"><span>${escapeHtml(quantityLabel(entry))}</span><b>${escapeHtml(formatPercent(entry.dropRate))}</b></div></div>`
+    return `<div class="drop-row inherited-drop-row"><div class="resource-icon ${entry.type}">${previewMarkup(resource, entry.type === 'equipment' ? '◇' : '◆')}</div><div class="drop-row-info"><div class="drop-row-name">${escapeHtml(displayName)}<span class="inherited-chip">继承</span></div><div class="drop-row-sub">${typeLabel} · ${escapeHtml(entry.id)} · 来自 ${escapeHtml(inheritedSourceName(sourceRole))}</div></div><div class="drop-metrics"><span>${escapeHtml(quantityLabel(entry))}</span><b>${escapeHtml(formatPercent(entry.dropRate))}</b></div></div>`
   }
 
   // ---- 人物属性编辑视图 ----
@@ -1099,7 +1112,7 @@
 
   function renderInheritedAttributeRow(row) {
     const definition = row.definition
-    const sourceName = row.sourceRole?.name || row.sourceRole?.guid || '父角色'
+    const sourceName = inheritedSourceName(row.sourceRole)
     // 继承的 loopList 同样受保护：禁止创建本地覆盖，只能由掉落编辑器管理。
     if (isLoopListKey(row.key)) {
       const text = typeof row.value === 'string' && row.value ? row.value : ''
@@ -1177,7 +1190,7 @@
     const inherited = effective.get(definition.id)
     const isOverride = Boolean(inherited)
     const defaultValue = inherited ? cloneJson(inherited.value) : defaultValueForDefinition(definition)
-    els.attributeAddInfo.innerHTML = `<div class="attribute-add-info-name">${escapeHtml(definition.name)}${isOverride ? '<span class="origin-badge inherited">将创建本地覆盖</span>' : ''}</div><div class="attribute-add-info-sub">${escapeHtml(definition.key)} · ${escapeHtml(definition.id)} · ${escapeHtml((definition.folderPath || []).join(' / '))}</div><div class="attribute-add-info-type">类型 ${escapeHtml(definition.type)}${definition.note ? ` · 说明：${escapeHtml(definition.note)}` : ''}</div>${isOverride ? `<div class="attribute-add-info-inherit">当前为继承值（${escapeHtml(inherited.sourceRole?.name || inherited.sourceRole?.guid || '父角色')}），添加后将写入当前角色本地，父角色不被修改。</div>` : ''}`
+    els.attributeAddInfo.innerHTML = `<div class="attribute-add-info-name">${escapeHtml(definition.name)}${isOverride ? '<span class="origin-badge inherited">将创建本地覆盖</span>' : ''}</div><div class="attribute-add-info-sub">${escapeHtml(definition.key)} · ${escapeHtml(definition.id)} · ${escapeHtml((definition.folderPath || []).join(' / '))}</div><div class="attribute-add-info-type">类型 ${escapeHtml(definition.type)}${definition.note ? ` · 说明：${escapeHtml(definition.note)}` : ''}</div>${isOverride ? `<div class="attribute-add-info-inherit">当前为继承值（${escapeHtml(inheritedSourceName(inherited.sourceRole))}），添加后将写入当前角色本地，父角色不被修改。</div>` : ''}`
     els.attributeAddValueRow.innerHTML = renderAttributeAddValueControl(definition, defaultValue)
     els.attributeAddConfirm.innerHTML = isOverride ? '创建本地覆盖 <span>→</span>' : '添加到当前角色 <span>→</span>'
   }
