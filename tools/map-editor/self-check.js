@@ -26,4 +26,30 @@ assert.equal(blank[0][0].name, '')
 blank[0][0].monsters.push({ id: 'not-a-guid', lvMin: 5, lvMax: 1, weight: 0 })
 assert.equal(core.validateGrid(blank).length >= 3, true)
 
+const iconEvent = {
+  commands: [{
+    id: 'switch',
+    params: {
+      branches: [
+        {
+          conditions: [{ value: 0 }],
+          commands: [{ id: 'comment', params: { comment: '前哨站' } }, { id: 'setImage', params: { properties: [{ key: 'image', value: '20F00101F4C70FFC' }] } }],
+        },
+        {
+          conditions: [{ value: 100 }, { value: 101 }, { value: 102 }],
+          commands: [{ id: 'comment', params: { comment: '主城' } }, { id: 'setImage', params: { properties: [{ key: 'image', value: '294ef0b713c3d593' }] } }],
+        },
+      ],
+    },
+  }],
+}
+const iconTypes = core.parseIconDefinitions(iconEvent)
+assert.deepEqual(iconTypes.map(({ value, label, imageGuid }) => [value, label, imageGuid]), [
+  [-1, '无地点', ''],
+  [0, '前哨站', '20f00101f4c70ffc'],
+  [100, '主城', '294ef0b713c3d593'],
+  [101, '主城', '294ef0b713c3d593'],
+  [102, '主城', '294ef0b713c3d593'],
+])
+
 console.log('map editor self-check passed')

@@ -12,19 +12,10 @@ const SHEET_DEFINITIONS = [
   { key: '通行', field: 'pass' },
   { key: '刷怪', field: 'spawn' },
 ]
-const ICON_TYPES = [
-  { value: -1, label: '空地' },
-  { value: 0, label: '哨所' },
-  { value: 1, label: '平原' },
-  { value: 2, label: '林地' },
-  { value: 3, label: '沙漠' },
-  { value: 4, label: '水域' },
-  { value: 5, label: '山地' },
-  { value: 6, label: '废墟' },
-  { value: 7, label: '海岸' },
-  { value: 100, label: '王城' },
-  { value: 101, label: '城市' },
-  { value: 102, label: '村落/岛屿' },
+const DEFAULT_ICON_TYPES = [
+  { value: -1, label: '无地点', imageGuid: '' },
+  { value: 0, label: '未配置', imageGuid: '' },
+  ...[1, 2, 3, 4, 5, 6, 7, 100, 101, 102].map((value) => ({ value, label: String(value), imageGuid: '' })),
 ]
 
 function emptyCell() {
@@ -147,6 +138,20 @@ function parseLevelRange(value, at, errors) {
   return null
 }
 
+function parseIconDefinitions(eventData) {
+  const types = [cloneValue(DEFAULT_ICON_TYPES[0])]
+  const branches = eventData?.commands?.find((command) => command?.id === 'switch')?.params?.branches || []
+  for (const branch of branches) {
+    const values = (branch.conditions || []).map((condition) => Number(condition.value)).filter(Number.isFinite)
+    const label = branch.commands?.find((command) => command?.id === 'comment')?.params?.comment || '未命名图标'
+    const imageCommand = branch.commands?.find((command) => command?.id === 'setImage')
+    const imageGuid = String(imageCommand?.params?.properties?.find((property) => property.key === 'image')?.value || '').toLowerCase()
+    for (const value of values) types.push({ value, label, imageGuid })
+  }
+  if (!types.some((entry) => entry.value === 0)) types.push({ value: 0, label: '未配置', imageGuid: '' })
+  return types.sort((a, b) => a.value - b.value)
+}
+
 const MapEditorCore = {
   ROWS,
   COLS,
@@ -156,6 +161,7 @@ const MapEditorCore = {
   rectangleCoords,
   validateGrid,
   parsePassability,
+  parseIconDefinitions,
 }
 globalThis.MapEditorCore = MapEditorCore
 
@@ -169,6 +175,8 @@ function initializeMapEditor() {
     'btn-new', 'btn-import-json', 'btn-import-excel', 'btn-download', 'btn-undo', 'btn-redo',
     'btn-select-all', 'btn-clear-cells', 'btn-copy', 'btn-paste', 'btn-primary-only', 'btn-json',
     'btn-close-json', 'file-input', 'json-modal', 'json-preview', 'drop-overlay', 'toast-region', 'icon-legend',
+    'btn-project', 'btn-restore-project', 'project-state', 'project-input', 'btn-close-inspector', 'canvas-scroll',
+    'actor-modal', 'btn-close-actor', 'actor-search', 'actor-list',
   ].map((id) => [camelId(id), document.getElementById(id)]))
 
   const state = {
@@ -187,6 +195,19 @@ function initializeMapEditor() {
     issues: [],
     diagnosticsOpen: true,
     dragDepth: 0,
+    inspectorOpen: false,
+    rootHandle: null,
+    lastRootHandle: null,
+    projectName: '',
+    actors: [],
+    actorMap: new Map(),
+    imageHandles: new Map(),
+    imageBitmaps: new Map(),
+    iconTypes: cloneValue(DEFAULT_ICON_TYPES),
+    actorSearch: '',
+    actorTargetIndex: null,
+    projectScanGeneration: 0,
+    projectWarnings: [],
   }
   state.cleanSnapshot = snapshotGrid()
 
@@ -202,6 +223,300 @@ function initializeMapEditor() {
     return snapshotGrid() !== state.cleanSnapshot
   }
 
+  const normalizePath = (value) => String(value || '').replace(/\\/g, '/')
+  const basename = (value) => normalizePath(value).split('/').pop() || ''
+  const fileGuid = (value) => (basename(value).match(/\.([a-f0-9]{16})\.[^.]+$/i)?.[1] || '').toLowerCase()
+
+  function resourceName(path, guid) {
+    return basename(path).replace(new RegExp(`\\.${guid}\\.actor$`, 'i'), '').replace(/\.actor$/i, '')
+  }
+
+  async function getHandleByPath(root, path) {
+    const parts = normalizePath(path).split('/').filter(Boolean)
+    let current = root
+    for (let index = 0; index < parts.length - 1; index++) current = await current.getDirectoryHandle(parts[index])
+    return current.getFileHandle(parts.at(-1))
+  }
+
+  async function readSource(source) {
+    const file = source?.getFile ? await source.getFile() : source
+    return file.text()
+  }
+
+  let settingsDatabasePromise = null
+  let settingsWriteQueue = Promise.resolve()
+  function openSettingsDatabase() {
+    if (settingsDatabasePromise) return settingsDatabasePromise
+    settingsDatabasePromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open('loot-smith-settings', 1)
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains('settings')) request.result.createObjectStore('settings')
+      }
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => { settingsDatabasePromise = null; reject(request.error) }
+    })
+    return settingsDatabasePromise
+  }
+
+  async function readSetting(key) {
+    const database = await openSettingsDatabase()
+    return new Promise((resolve, reject) => {
+      const request = database.transaction('settings', 'readonly').objectStore('settings').get(key)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  async function writeSetting(key, value) {
+    const database = await openSettingsDatabase()
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction('settings', 'readwrite')
+      transaction.objectStore('settings').put(value, key)
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+    })
+  }
+
+  async function rememberProjectHandle(handle, generation) {
+    state.lastRootHandle = handle
+    settingsWriteQueue = settingsWriteQueue.then(async () => {
+      if (generation !== state.projectScanGeneration) return
+      try { await writeSetting('last-project-handle', handle) } catch {}
+    })
+    await settingsWriteQueue
+  }
+
+  async function loadRememberedProject() {
+    if (!window.showDirectoryPicker || !window.indexedDB) return
+    try {
+      const handle = await readSetting('last-project-handle')
+      if (!handle) return
+      state.lastRootHandle = handle
+      const permission = await handle.queryPermission?.({ mode: 'read' })
+      if (permission === 'granted') await scanProjectSources({ root: handle })
+      else {
+        els.projectState.textContent = `上次工程：${handle.name}`
+        els.btnRestoreProject.classList.remove('hidden')
+      }
+    } catch {}
+  }
+
+  async function restoreRememberedProject() {
+    if (!state.lastRootHandle) return
+    try {
+      let permission = await state.lastRootHandle.queryPermission?.({ mode: 'read' })
+      if (permission !== 'granted') permission = await state.lastRootHandle.requestPermission?.({ mode: 'read' })
+      if (permission === 'granted') await scanProjectSources({ root: state.lastRootHandle })
+    } catch (error) {
+      if (error?.name !== 'AbortError') toast(`加载上次工程失败：${error.message}`, 'error')
+    }
+  }
+
+  async function chooseProject() {
+    if (!window.showDirectoryPicker) return els.projectInput.click()
+    try {
+      const root = await window.showDirectoryPicker({ mode: 'read' })
+      await scanProjectSources({ root })
+    } catch (error) {
+      if (error?.name !== 'AbortError') toast(`选择工程失败：${error.message}`, 'error')
+    }
+  }
+
+  function collectNameAttributeIds(attributeData) {
+    const ids = new Set(['name'])
+    const visit = (node) => {
+      if (!node || typeof node !== 'object') return
+      if (Array.isArray(node)) return node.forEach(visit)
+      if (node.key === 'name' && typeof node.id === 'string') ids.add(node.id.toLowerCase())
+      Object.values(node).forEach(visit)
+    }
+    visit(attributeData)
+    return ids
+  }
+
+  function collectLocalization(localizationData) {
+    const map = new Map()
+    const visit = (node) => {
+      if (!node || typeof node !== 'object') return
+      if (Array.isArray(node)) return node.forEach(visit)
+      const value = node.contents?.['zh-CN'] || node.contents?.zh || node.name
+      if (typeof node.id === 'string' && typeof value === 'string' && value.trim()) map.set(node.id.toLowerCase(), value.trim())
+      Object.values(node).forEach(visit)
+    }
+    visit(localizationData)
+    return map
+  }
+
+  function actorDisplayName(data, path, guid, nameIds, localization) {
+    const direct = typeof data.name === 'string' ? data.name : ''
+    const attribute = (Array.isArray(data.attributes) ? data.attributes : []).find((entry) => entry && nameIds.has(String(entry.key).toLowerCase()))?.value
+    const raw = direct || (typeof attribute === 'string' ? attribute : '')
+    const resolved = [...raw.matchAll(/<ref:([a-f0-9]{16})>/gi)].map((match) => localization.get(match[1].toLowerCase()) || '').join('')
+    return resolved || raw || resourceName(path, guid)
+  }
+
+  function inheritActorPreview(actor, actorMap, seen = new Set()) {
+    if (!actor?.inherit || seen.has(actor.guid)) return
+    seen.add(actor.guid)
+    const parent = actorMap.get(actor.inherit)
+    if (!parent) return
+    inheritActorPreview(parent, actorMap, seen)
+    if (!actor.imageGuid) actor.imageGuid = parent.imageGuid
+    if (!actor.clip && parent.clip) actor.clip = [...parent.clip]
+  }
+
+  async function scanProjectSources({ root = null, files = [] } = {}) {
+    const generation = ++state.projectScanGeneration
+    els.projectState.textContent = '正在读取工程…'
+    els.btnProject.disabled = true
+    els.btnRestoreProject.disabled = true
+    try {
+      const fallback = new Map(files.map((file) => [normalizePath(file.webkitRelativePath || file.name), file]))
+      const findFallback = (pattern) => [...fallback.entries()].find(([path]) => pattern.test(path))?.[1] || null
+      const readJson = async (path, pattern) => {
+        const source = root ? await getHandleByPath(root, path) : findFallback(pattern)
+        return source ? JSON.parse(await readSource(source)) : null
+      }
+      const manifest = await readJson('Data/manifest.json', /(^|\/)Data\/manifest\.json$/i)
+      const attributes = await readJson('Data/attribute.json', /(^|\/)Data\/attribute\.json$/i)
+      const localizationData = await readJson('Data/localization.json', /(^|\/)Data\/localization\.json$/i)
+      const eventPath = 'Assets/UI/地图/地图icon自动切换图标.77ac144f81197913.event'
+      const iconEvent = await readJson(eventPath, /地图icon自动切换图标\.[a-f0-9]{16}\.event$/i)
+      if (!manifest || !attributes || !localizationData || !iconEvent) throw new Error('工程缺少 manifest、attribute、localization 或地图图标事件')
+
+      const imagePaths = new Map((manifest.images || []).map((entry) => [fileGuid(entry.path), entry.path]).filter(([guid]) => guid))
+      const nameIds = collectNameAttributeIds(attributes)
+      const localization = collectLocalization(localizationData)
+      const actorEntries = root
+        ? (manifest.actors || []).map((entry) => ({ path: entry.path }))
+        : (manifest.actors || []).map((entry) => ({
+            path: entry.path,
+            file: [...fallback.entries()].find(([path]) => normalizePath(path).endsWith(normalizePath(entry.path)))?.[1] || null,
+          })).filter((entry) => entry.file)
+      const actors = []
+      const projectWarnings = []
+      for (let offset = 0; offset < actorEntries.length; offset += 24) {
+        const batch = actorEntries.slice(offset, offset + 24)
+        const records = await Promise.all(batch.map(async (entry) => {
+          try {
+            const source = entry.file || await getHandleByPath(root, entry.path)
+            const data = JSON.parse(await readSource(source))
+            const guid = fileGuid(entry.path)
+            return {
+              guid,
+              path: normalizePath(entry.path),
+              name: actorDisplayName(data, entry.path, guid, nameIds, localization),
+              imageGuid: String(data.portrait || data.sprites?.find((sprite) => sprite?.image)?.image || '').toLowerCase(),
+              clip: Array.isArray(data.clip) && data.clip.length >= 4 ? data.clip.slice(0, 4).map(Number) : null,
+              inherit: String(data.inherit || '').toLowerCase(),
+            }
+          } catch {
+            projectWarnings.push(`无法读取 manifest 角色：${entry.path}`)
+            return null
+          }
+        }))
+        actors.push(...records.filter(Boolean))
+      }
+      actors.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) || a.path.localeCompare(b.path))
+      const actorMap = new Map(actors.map((actor) => [actor.guid, actor]))
+      actors.forEach((actor) => inheritActorPreview(actor, actorMap))
+      const iconTypes = parseIconDefinitions(iconEvent)
+      const neededGuids = new Set([
+        ...actors.map((actor) => actor.imageGuid),
+        ...iconTypes.map((entry) => entry.imageGuid),
+      ].filter(Boolean))
+      const imageHandles = new Map()
+      if (root) {
+        await Promise.all([...neededGuids].map(async (guid) => {
+          const path = imagePaths.get(guid)
+          if (!path) return
+          try { imageHandles.set(guid, await getHandleByPath(root, path)) } catch {}
+        }))
+      } else {
+        for (const file of files) {
+          const guid = fileGuid(file.name)
+          if (guid && neededGuids.has(guid)) imageHandles.set(guid, file)
+        }
+      }
+      for (const type of iconTypes) {
+        if (type.imageGuid && !imageHandles.has(type.imageGuid)) projectWarnings.push(`图标 ${type.value}（${type.label}）的图片 ${type.imageGuid} 无法读取`)
+      }
+      if (generation !== state.projectScanGeneration) return
+      for (const bitmapPromise of state.imageBitmaps.values()) bitmapPromise.then((bitmap) => bitmap?.close?.()).catch(() => {})
+      state.imageBitmaps.clear()
+      state.imageHandles = imageHandles
+      state.iconTypes = iconTypes
+      state.rootHandle = root
+      state.projectName = root?.name || normalizePath([...fallback.keys()][0] || '导入工程').split('/')[0]
+      state.actors = actors
+      state.actorMap = actorMap
+      state.projectWarnings = projectWarnings
+      els.projectState.textContent = `${state.projectName} · ${actors.length} 角色`
+      els.btnProject.textContent = '更换工程'
+      els.btnRestoreProject.classList.add('hidden')
+      if (root) await rememberProjectHandle(root, generation)
+      renderAll()
+      renderLegend()
+      toast(`工程读取完成：${actors.length} 个角色 · ${iconTypes.filter((entry) => entry.imageGuid).length} 个图标映射${projectWarnings.length ? ` · ${projectWarnings.length} 个资源提醒` : ''}`)
+    } catch (error) {
+      if (generation !== state.projectScanGeneration) return
+      els.projectState.textContent = state.projectName ? `${state.projectName} · ${state.actors.length} 角色` : '工程读取失败'
+      toast(`读取游戏工程失败：${error.message}`, 'error')
+    } finally {
+      if (generation === state.projectScanGeneration) {
+        els.btnProject.disabled = false
+        els.btnRestoreProject.disabled = false
+      }
+    }
+  }
+
+  async function loadImageBitmap(guid) {
+    if (state.imageBitmaps.has(guid)) return state.imageBitmaps.get(guid)
+    const promise = (async () => {
+      const source = state.imageHandles.get(guid)
+      if (!source) return null
+      return createImageBitmap(source.getFile ? await source.getFile() : source)
+    })()
+    state.imageBitmaps.set(guid, promise)
+    return promise
+  }
+
+  function previewMarkup(resource, fallback = '?') {
+    if (!resource?.imageGuid || !state.imageHandles.has(resource.imageGuid)) {
+      return `<span class="resource-preview"><span class="resource-preview-fallback">${escapeHtml(fallback)}</span></span>`
+    }
+    return `<span class="resource-preview" data-image-guid="${escapeHtml(resource.imageGuid)}" data-image-clip="${escapeHtml(resource.clip?.join(',') || '')}"><canvas width="80" height="80"></canvas><span class="resource-preview-fallback">${escapeHtml(fallback)}</span></span>`
+  }
+
+  async function paintPreview(node) {
+    if (node.dataset.hydrated) return
+    node.dataset.hydrated = 'loading'
+    const canvas = node.querySelector('canvas')
+    if (!canvas) return
+    try {
+      const bitmap = await loadImageBitmap(node.dataset.imageGuid)
+      if (!bitmap) return
+      const values = (node.dataset.imageClip || '').split(',').map(Number)
+      let [sx, sy, sw, sh] = values
+      if (values.length < 4 || !values.every(Number.isFinite) || sw <= 0 || sh <= 0 || sx < 0 || sy < 0 || sx + sw > bitmap.width || sy + sh > bitmap.height) {
+        sx = 0; sy = 0; sw = bitmap.width; sh = bitmap.height
+      }
+      const context = canvas.getContext('2d')
+      context.imageSmoothingEnabled = false
+      context.clearRect(0, 0, canvas.width, canvas.height)
+      const scale = Math.min(canvas.width / sw, canvas.height / sh)
+      const width = sw * scale
+      const height = sh * scale
+      context.drawImage(bitmap, sx, sy, sw, sh, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height)
+      node.classList.add('loaded')
+      node.dataset.hydrated = 'true'
+    } catch { node.dataset.hydrated = 'error' }
+  }
+
+  function hydratePreviews(container = document) {
+    container.querySelectorAll('.resource-preview[data-image-guid]:not([data-hydrated])').forEach(paintPreview)
+  }
+
   function selectedCoords() {
     return [...state.selected]
       .map((key) => {
@@ -215,6 +530,7 @@ function initializeMapEditor() {
     state.selected = new Set([coordKey(r, c)])
     state.primary = { r, c }
     state.anchor = { r, c }
+    state.inspectorOpen = true
     renderAll()
   }
 
@@ -231,6 +547,7 @@ function initializeMapEditor() {
       state.anchor = { r, c }
     }
     state.primary = { r, c }
+    state.inspectorOpen = true
     renderAll()
   }
 
@@ -238,6 +555,7 @@ function initializeMapEditor() {
     state.selected = new Set(Array.from({ length: COLS }, (_, c) => coordKey(r, c)))
     state.primary = { r, c: 0 }
     state.anchor = { ...state.primary }
+    state.inspectorOpen = true
     renderAll()
   }
 
@@ -245,6 +563,7 @@ function initializeMapEditor() {
     state.selected = new Set(Array.from({ length: ROWS }, (_, r) => coordKey(r, c)))
     state.primary = { r: 0, c }
     state.anchor = { ...state.primary }
+    state.inspectorOpen = true
     renderAll()
   }
 
@@ -252,6 +571,7 @@ function initializeMapEditor() {
     state.selected = new Set(rectangleCoords({ r: 0, c: 0 }, { r: ROWS - 1, c: COLS - 1 }).map(({ r, c }) => coordKey(r, c)))
     state.primary = { r: 0, c: 0 }
     state.anchor = { ...state.primary }
+    state.inspectorOpen = true
     renderAll()
   }
 
@@ -287,8 +607,23 @@ function initializeMapEditor() {
     toast(`已重做：${entry.label}`)
   }
 
+  function validateProjectReferences() {
+    const issues = []
+    if (!state.projectName) return issues
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        for (const monster of state.grid[r][c].monsters) {
+          if (GUID_RE.test(monster.id) && !state.actorMap.has(monster.id.toLowerCase())) {
+            issues.push({ severity: 'error', message: `当前工程找不到角色 ${monster.id}`, r, c })
+          }
+        }
+      }
+    }
+    return issues
+  }
+
   function renderAll() {
-    state.issues = validateGrid(state.grid)
+    state.issues = [...validateGrid(state.grid), ...validateProjectReferences()]
     renderGrid()
     renderInspector()
     renderSummary()
@@ -300,7 +635,7 @@ function initializeMapEditor() {
   }
 
   function refreshDraft() {
-    state.issues = validateGrid(state.grid)
+    state.issues = [...validateGrid(state.grid), ...validateProjectReferences()]
     renderGrid()
     renderSummary()
     renderDiagnostics()
@@ -310,11 +645,16 @@ function initializeMapEditor() {
   }
 
   function iconClass(icon) {
-    return ICON_TYPES.some((entry) => entry.value === icon) ? `icon--${icon === -1 ? 'n1' : icon}` : 'icon--other'
+    return state.iconTypes.some((entry) => entry.value === icon) ? `icon--${icon === -1 ? 'n1' : icon}` : 'icon--other'
   }
 
   function iconLabel(icon) {
-    return ICON_TYPES.find((entry) => entry.value === icon)?.label || '自定义'
+    return state.iconTypes.find((entry) => entry.value === icon)?.label || '自定义'
+  }
+
+  function iconResource(icon) {
+    const type = state.iconTypes.find((entry) => entry.value === icon)
+    return type?.imageGuid ? { imageGuid: type.imageGuid, clip: null } : null
   }
 
   function renderGrid() {
@@ -347,6 +687,7 @@ function initializeMapEditor() {
       for (let c = 0; c < COLS; c++) fragment.appendChild(createCellElement(r, c, invalid))
     }
     els.mapGrid.replaceChildren(fragment)
+    hydratePreviews(els.mapGrid)
   }
 
   function createCellElement(r, c, invalid) {
@@ -361,7 +702,9 @@ function initializeMapEditor() {
     button.dataset.c = c
     button.setAttribute('role', 'gridcell')
     button.setAttribute('aria-selected', String(selected))
+    const landmark = iconResource(cell.icon)
     button.innerHTML = `
+      ${landmark ? `<span class="cell-landmark">${previewMarkup(landmark, '')}</span>` : ''}
       <span class="cell-name">${escapeHtml(cell.name || '')}</span>
       <span class="cell-icon">${cell.icon}</span>
       ${cell.monsters.length ? `<span class="cell-monster">${cell.monsters.length}</span>` : ''}
@@ -381,7 +724,7 @@ function initializeMapEditor() {
     const monsters = cell.monsters.length
       ? cell.monsters.map((monster) => `${monster.id} · Lv${monster.lvMin}-${monster.lvMax} · 权重 ${monster.weight}`).join('\n')
       : '无刷怪'
-    return `${cell.name || '空地'} · R${r + 1} C${c + 1}\n图标 ${cell.icon}（${iconLabel(cell.icon)}）\n右:${cell.Passability.right ? '通' : '断'} 下:${cell.Passability.down ? '通' : '断'}\n${monsters}`
+    return `${cell.name || '无地点'} · R${r + 1} C${c + 1}\n图标 ${cell.icon}（${iconLabel(cell.icon)}）\n右:${cell.Passability.right ? '通' : '断'} 下:${cell.Passability.down ? '通' : '断'}\n${monsters}`
   }
 
   function renderSummary() {
@@ -404,15 +747,17 @@ function initializeMapEditor() {
   }
 
   function renderLegend() {
-    els.iconLegend.innerHTML = ICON_TYPES.map((entry) => `
+    els.iconLegend.innerHTML = state.iconTypes.map((entry) => `
       <span class="legend-chip" title="图标 ${entry.value} · ${escapeHtml(entry.label)}">
-        <span class="legend-swatch ${iconClass(entry.value)}"></span>${entry.value} ${escapeHtml(entry.label)}
+        <span class="legend-swatch ${iconClass(entry.value)}">${previewMarkup(iconResource(entry.value), '')}</span>${entry.value} ${escapeHtml(entry.label)}
       </span>`).join('')
+    hydratePreviews(els.iconLegend)
   }
 
   function renderInspector() {
     const coords = selectedCoords()
     const cell = state.grid[state.primary.r][state.primary.c]
+    els.cellForm.closest('.inspector-panel').classList.toggle('open', state.inspectorOpen)
     els.cellCoord.textContent = coords.length === 1 ? `R${state.primary.r + 1} · C${state.primary.c + 1}` : `${coords.length} 格`
     els.inspectorTitle.textContent = coords.length === 1 ? (cell.name || '格属性') : '批量编辑'
     els.btnPaste.disabled = !state.clipboard
@@ -420,12 +765,16 @@ function initializeMapEditor() {
     els.cellForm.innerHTML = coords.length === 1 ? singleCellForm(cell) : batchCellForm(coords, cell)
     if (coords.length === 1) bindSingleCellForm()
     else bindBatchCellForm()
+    hydratePreviews(els.cellForm)
   }
 
   function iconPicker(active, batch = false) {
     const attr = batch ? 'data-batch-icon' : 'data-icon'
-    return `<div class="icon-picker">${ICON_TYPES.map((entry) => `
-      <button type="button" class="icon-chip ${iconClass(entry.value)}${active === entry.value ? ' active' : ''}" ${attr}="${entry.value}" title="${entry.value} · ${escapeHtml(entry.label)}">${entry.value}</button>`).join('')}</div>`
+    return `<div class="icon-picker">${state.iconTypes.map((entry) => `
+      <button type="button" class="icon-chip ${iconClass(entry.value)}${active === entry.value ? ' active' : ''}" ${attr}="${entry.value}" title="${entry.value} · ${escapeHtml(entry.label)}">
+        ${previewMarkup(iconResource(entry.value), entry.value === -1 ? '—' : '?')}
+        <span class="icon-chip-label"><b>${entry.value}</b><small>${escapeHtml(entry.label)}</small></span>
+      </button>`).join('')}</div>`
   }
 
   function singleCellForm(cell) {
@@ -466,9 +815,15 @@ function initializeMapEditor() {
     const idInvalid = !GUID_RE.test(monster.id)
     const rangeInvalid = !Number.isInteger(monster.lvMin) || monster.lvMin < 1 || !Number.isInteger(monster.lvMax) || monster.lvMax < monster.lvMin
     const weightInvalid = typeof monster.weight !== 'number' || !Number.isFinite(monster.weight) || monster.weight <= 0
+    const actor = state.actorMap.get(monster.id?.toLowerCase())
     return `<div class="monster-card" data-monster-index="${index}">
       <div class="monster-card-head">
-        <input class="monster-id${idInvalid ? ' invalid' : ''}" type="text" maxlength="16" value="${escapeHtml(monster.id)}" placeholder="16 位 Actor GUID" autocomplete="off" />
+        <button class="monster-portrait" type="button" title="${state.actors.length ? '选择或更换角色' : '选择工程后可查看角色图形'}" aria-label="选择或更换角色">${previewMarkup(actor, '角')}</button>
+        <div class="monster-identity">
+          <div class="monster-name">${escapeHtml(actor?.name || (state.actors.length ? '未找到对应角色' : '手动输入角色 GUID'))}</div>
+          <input class="monster-id${idInvalid || (state.actors.length && !actor) ? ' invalid' : ''}" type="text" maxlength="16" value="${escapeHtml(monster.id)}" placeholder="16 位 Actor GUID" autocomplete="off" />
+          <div class="monster-path" title="${escapeHtml(actor?.path || '')}">${escapeHtml(actor?.path || monster.id || '未指定')}</div>
+        </div>
         <button class="remove-button" type="button" title="删除怪物" aria-label="删除怪物">×</button>
       </div>
       <div class="three-column monster-values">
@@ -476,7 +831,7 @@ function initializeMapEditor() {
         <label class="mini-field"><span>最高等级</span><input class="monster-max${rangeInvalid ? ' invalid' : ''}" type="number" min="1" step="1" value="${monster.lvMax}" /></label>
         <label class="mini-field"><span>出现权重</span><input class="monster-weight${weightInvalid ? ' invalid' : ''}" type="number" min="0.01" step="0.1" value="${monster.weight}" /></label>
       </div>
-      <div class="field-error">${idInvalid ? 'GUID 必须是 16 位十六进制' : rangeInvalid ? '等级必须为正整数且最低不高于最高' : weightInvalid ? '权重必须大于 0' : ''}</div>
+      <div class="field-error">${idInvalid ? 'GUID 必须是 16 位十六进制' : state.actors.length && !actor ? '当前工程中找不到这个角色 GUID' : rangeInvalid ? '等级必须为正整数且最低不高于最高' : weightInvalid ? '权重必须大于 0' : ''}</div>
     </div>`
   }
 
@@ -552,16 +907,21 @@ function initializeMapEditor() {
     minInput.addEventListener('input', refreshLevelFeedback)
     maxInput.addEventListener('input', refreshLevelFeedback)
     els.cellForm.querySelector('#btn-clear-level').addEventListener('click', () => commit('移除地点等级', () => { delete state.grid[r][c].levelRange }))
-    els.cellForm.querySelector('#btn-add-monster').addEventListener('click', () => commit('添加怪物', () => {
-      const range = state.grid[r][c].levelRange
-      state.grid[r][c].monsters.push({ id: '', lvMin: validPositive(range?.min) ? range.min : 1, lvMax: validPositive(range?.max) ? range.max : 1, weight: 1 })
-    }))
+    els.cellForm.querySelector('#btn-add-monster').addEventListener('click', () => {
+      if (state.actors.length) return openActorSelector('new')
+      commit('添加怪物', () => {
+        const range = state.grid[r][c].levelRange
+        state.grid[r][c].monsters.push({ id: '', lvMin: validPositive(range?.min) ? range.min : 1, lvMax: validPositive(range?.max) ? range.max : 1, weight: 1 })
+      })
+    })
     for (const card of els.cellForm.querySelectorAll('[data-monster-index]')) bindMonsterCard(card, r, c)
   }
 
   function bindMonsterCard(card, r, c) {
     const index = Number(card.dataset.monsterIndex)
-    bindDraftInput(card.querySelector('.monster-id'), '修改怪物 GUID', (value) => { state.grid[r][c].monsters[index].id = value.trim().toLowerCase() })
+    const idInput = card.querySelector('.monster-id')
+    bindDraftInput(idInput, '修改怪物 GUID', (value) => { state.grid[r][c].monsters[index].id = value.trim().toLowerCase() })
+    idInput.addEventListener('change', renderInspector)
     bindDraftInput(card.querySelector('.monster-min'), '修改怪物最低等级', (value) => { state.grid[r][c].monsters[index].lvMin = integerOrBlank(value) })
     bindDraftInput(card.querySelector('.monster-max'), '修改怪物最高等级', (value) => { state.grid[r][c].monsters[index].lvMax = integerOrBlank(value) })
     bindDraftInput(card.querySelector('.monster-weight'), '修改怪物权重', (value) => { state.grid[r][c].monsters[index].weight = numberOrBlank(value) })
@@ -583,7 +943,61 @@ function initializeMapEditor() {
             : ''
     }
     for (const input of card.querySelectorAll('input')) input.addEventListener('input', refreshFeedback)
+    card.querySelector('.monster-portrait').addEventListener('click', () => {
+      if (state.actors.length) openActorSelector(index)
+      else toast('请先选择游戏工程，再从角色目录中搜索添加', 'error')
+    })
     card.querySelector('.remove-button').addEventListener('click', () => commit('删除怪物', () => { state.grid[r][c].monsters.splice(index, 1) }))
+  }
+
+  function openActorSelector(index) {
+    state.actorTargetIndex = index
+    state.actorSearch = ''
+    els.actorSearch.value = ''
+    renderActorList()
+    els.actorModal.classList.remove('hidden')
+    els.actorModal.setAttribute('aria-hidden', 'false')
+    els.actorSearch.focus()
+  }
+
+  function closeActorSelector() {
+    els.actorModal.classList.add('hidden')
+    els.actorModal.setAttribute('aria-hidden', 'true')
+    state.actorTargetIndex = null
+  }
+
+  function renderActorList() {
+    const query = state.actorSearch.trim().toLowerCase()
+    const currentCell = state.grid[state.primary.r][state.primary.c]
+    const used = new Set(currentCell.monsters.map((monster, index) => index === state.actorTargetIndex ? '' : monster.id?.toLowerCase()).filter(Boolean))
+    const list = state.actors.filter((actor) => !query || `${actor.name} ${actor.guid} ${actor.path}`.toLowerCase().includes(query))
+    els.actorList.innerHTML = list.length ? list.map((actor) => {
+      const duplicate = used.has(actor.guid)
+      return `<button class="actor-row" type="button" data-actor-guid="${actor.guid}"${duplicate ? ' disabled' : ''}>
+        <span class="actor-row-preview">${previewMarkup(actor, '角')}</span>
+        <span class="actor-row-info"><span class="actor-row-name">${escapeHtml(actor.name)}</span><span class="actor-row-meta">${actor.guid} · ${escapeHtml(actor.path)}</span></span>
+        <span class="actor-row-action">${duplicate ? '已添加' : '＋'}</span>
+      </button>`
+    }).join('') : '<div class="actor-empty">没有匹配的角色</div>'
+    hydratePreviews(els.actorList)
+    for (const row of els.actorList.querySelectorAll('[data-actor-guid]:not(:disabled)')) {
+      row.addEventListener('click', () => selectActorForMonster(row.dataset.actorGuid))
+    }
+  }
+
+  function selectActorForMonster(guid) {
+    const index = state.actorTargetIndex
+    const cell = state.grid[state.primary.r][state.primary.c]
+    if (index === 'new') {
+      commit('添加刷怪角色', () => {
+        const range = cell.levelRange
+        cell.monsters.push({ id: guid, lvMin: validPositive(range?.min) ? range.min : 1, lvMax: validPositive(range?.max) ? range.max : 1, weight: 1 })
+      })
+    } else {
+      if (!Number.isInteger(index) || !cell.monsters[index]) return
+      commit('选择刷怪角色', () => { cell.monsters[index].id = guid })
+    }
+    closeActorSelector()
   }
 
   function bindDraftInput(input, label, apply) {
@@ -684,12 +1098,24 @@ function initializeMapEditor() {
   }
 
   function renderDiagnostics() {
+    const resourceWarnings = []
+    if (state.projectName) {
+      const mapped = new Set(state.iconTypes.filter((entry) => entry.imageGuid || entry.value === -1).map((entry) => entry.value))
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const icon = state.grid[r][c].icon
+          if (!mapped.has(icon)) resourceWarnings.push({ severity: 'warning', message: `图标 ${icon} 在地图图标事件中没有图片映射`, r, c })
+        }
+      }
+    }
     const entries = [
       ...state.issues,
       ...state.warnings.map((message) => ({ severity: 'warning', message, r: null, c: null })),
+      ...state.projectWarnings.map((message) => ({ severity: 'warning', message, r: null, c: null })),
+      ...resourceWarnings,
     ]
     const errorCount = state.issues.length
-    const warningCount = state.warnings.length
+    const warningCount = state.warnings.length + state.projectWarnings.length + resourceWarnings.length
     const label = errorCount ? `${errorCount} 个错误` : warningCount ? `${warningCount} 个提醒` : '0 个问题'
     els.diagnosticCount.textContent = label
     els.diagnosticCount.className = `diagnostic-count ${errorCount ? 'error' : warningCount ? 'warning' : 'valid'}`
@@ -963,7 +1389,7 @@ function initializeMapEditor() {
   }
 
   function downloadJson() {
-    state.issues = validateGrid(state.grid)
+    state.issues = [...validateGrid(state.grid), ...validateProjectReferences()]
     if (state.issues.length) {
       renderAll()
       return toast('当前数据存在校验错误，已阻止导出', 'error')
@@ -1022,6 +1448,7 @@ function initializeMapEditor() {
       state.anchor = { ...next }
     }
     state.primary = next
+    state.inspectorOpen = true
     renderAll()
     document.querySelector(`.map-cell[data-r="${next.r}"][data-c="${next.c}"]`)?.focus()
   }
@@ -1031,6 +1458,13 @@ function initializeMapEditor() {
   })
   els.btnImportExcel.addEventListener('click', () => { els.fileInput.accept = '.xlsx'; els.fileInput.click() })
   els.btnImportJson.addEventListener('click', () => { els.fileInput.accept = '.json'; els.fileInput.click() })
+  els.btnProject.addEventListener('click', chooseProject)
+  els.btnRestoreProject.addEventListener('click', restoreRememberedProject)
+  els.projectInput.addEventListener('change', async () => {
+    const files = [...(els.projectInput.files || [])]
+    els.projectInput.value = ''
+    if (files.length) await scanProjectSources({ files })
+  })
   els.fileInput.addEventListener('change', () => {
     const file = els.fileInput.files?.[0]
     els.fileInput.value = ''
@@ -1046,7 +1480,11 @@ function initializeMapEditor() {
   els.btnPrimaryOnly.addEventListener('click', () => selectOnly(state.primary.r, state.primary.c))
   els.btnJson.addEventListener('click', openJsonModal)
   els.btnCloseJson.addEventListener('click', closeJsonModal)
+  els.btnCloseInspector.addEventListener('click', () => { state.inspectorOpen = false; renderInspector() })
+  els.btnCloseActor.addEventListener('click', closeActorSelector)
+  els.actorSearch.addEventListener('input', (event) => { state.actorSearch = event.target.value; renderActorList() })
   els.jsonModal.addEventListener('click', (event) => { if (event.target === els.jsonModal) closeJsonModal() })
+  els.actorModal.addEventListener('click', (event) => { if (event.target === els.actorModal) closeActorSelector() })
   els.diagnosticToggle.addEventListener('click', () => {
     state.diagnosticsOpen = !state.diagnosticsOpen
     renderDiagnostics()
@@ -1055,9 +1493,31 @@ function initializeMapEditor() {
     document.documentElement.style.setProperty('--cell-size', `${els.gridZoom.value}px`)
     els.zoomOutput.textContent = els.gridZoom.value
   })
+  els.canvasScroll.addEventListener('wheel', (event) => {
+    event.preventDefault()
+    const oldSize = Number(els.gridZoom.value)
+    const nextSize = Math.max(Number(els.gridZoom.min), Math.min(Number(els.gridZoom.max), oldSize + (event.deltaY < 0 ? 4 : -4)))
+    if (nextSize === oldSize) return
+    const rect = els.canvasScroll.getBoundingClientRect()
+    const contentX = els.canvasScroll.scrollLeft + event.clientX - rect.left
+    const contentY = els.canvasScroll.scrollTop + event.clientY - rect.top
+    const ratio = nextSize / oldSize
+    els.gridZoom.value = String(nextSize)
+    els.zoomOutput.textContent = String(nextSize)
+    document.documentElement.style.setProperty('--cell-size', `${nextSize}px`)
+    requestAnimationFrame(() => {
+      els.canvasScroll.scrollLeft = contentX * ratio - (event.clientX - rect.left)
+      els.canvasScroll.scrollTop = contentY * ratio - (event.clientY - rect.top)
+    })
+  }, { passive: false })
 
   document.addEventListener('keydown', (event) => {
     const modifier = event.ctrlKey || event.metaKey
+    if (!els.actorModal.classList.contains('hidden')) {
+      if (event.key === 'Escape') closeActorSelector()
+      else if (event.key === '/' && !isEditingTarget(event.target)) { event.preventDefault(); els.actorSearch.focus() }
+      return
+    }
     if (event.key === 'Escape' && !els.jsonModal.classList.contains('hidden')) return closeJsonModal()
     if (isEditingTarget(event.target)) return
     if (modifier && event.key.toLowerCase() === 'z') {
@@ -1111,4 +1571,5 @@ function initializeMapEditor() {
 
   renderLegend()
   renderAll()
+  loadRememberedProject()
 }

@@ -1,6 +1,6 @@
 /*
 @plugin 地图JSON读取
-@version 1.0
+@version 1.1
 @author yahzj
 @link
 @desc
@@ -14,7 +14,7 @@ $ ：指向当前 Assets 文件夹
 
 兼容环境：
 - 编辑器/Electron：fs.readFileSync
-- 发布浏览器环境：fetch(Loader.route(...))
+- 发布浏览器环境：fetch(工程相对路径)
 
 @string filePath
 @alias 文件路径
@@ -53,32 +53,26 @@ export default class MapJsonReader implements Script<Command> {
 	resultVariable?: VariableSetter;
 
 	transformPath(text: string) {
-		const trans_char = (__text: string) => {
-			let _path_local = __text.replace(/\\/, "/");
-			while (/\\/.test(_path_local)) {
-				_path_local = _path_local.replace(/\\/, "/");
-			}
-			return _path_local;
-		};
+		const normalize = (value: string) => value.replace(/\\/g, "/");
+		let relativePath = text;
 		if (text.startsWith("$")) {
-			text = text.slice(1, text.length);
-			return trans_char(Loader.route("Assets")) + "/" + text;
+			relativePath = "Assets/" + text.slice(1).replace(/^\/+/, "");
 		} else if (text.startsWith("%")) {
-			text = text.slice(1, text.length);
-			return trans_char(Loader.route("")) + "/" + text;
+			relativePath = text.slice(1).replace(/^\/+/, "");
+		} else if (/^[a-f0-9]{16}$/i.test(text)) {
+			const guidPath = Loader.getPathByGUID(text);
+			if (guidPath) relativePath = guidPath;
 		}
-		if (/[a-f0-9]{16}/i.test(text) && Loader.getPathByGUID(text).length > 0) {
-			return trans_char(Loader.route("")) + "/" + Loader.getPathByGUID(text);
-		}
-		return text;
+		relativePath = normalize(relativePath);
+		return fs ? normalize(Loader.route(relativePath)) : relativePath;
 	}
 
-	async readJson(): Promise<any> {
-		const p = this.transformPath(this.filePath);
+	async readJson(filePath: string): Promise<any> {
+		const p = this.transformPath(filePath);
 		if (fs) {
 			return JSON.parse(fs.readFileSync(p, "utf8"));
 		}
-		const resp = await fetch(Loader.route(p));
+		const resp = await fetch(p);
 		if (!resp.ok) {
 			throw new Error(`HTTP ${resp.status}`);
 		}
@@ -98,7 +92,7 @@ export default class MapJsonReader implements Script<Command> {
 			for (let c = 0; c < 10; c++) {
 				const cell = row[c];
 				const at = `(${r + 1},${c + 1})`;
-				if (!cell || typeof cell !== "object") {
+				if (!cell || typeof cell !== "object" || Array.isArray(cell)) {
 					errors.push(`${at} 单元格必须是对象`);
 					continue;
 				}
@@ -110,8 +104,8 @@ export default class MapJsonReader implements Script<Command> {
 				}
 				if (cell.levelRange !== undefined && cell.levelRange !== null) {
 					const lr = cell.levelRange;
-					if (!Number.isInteger(lr.min) || !Number.isInteger(lr.max) || lr.max < lr.min) {
-						errors.push(`${at} levelRange 必须是 {min<=max} 整数`);
+					if (!Number.isInteger(lr.min) || lr.min < 1 || !Number.isInteger(lr.max) || lr.max < lr.min) {
+						errors.push(`${at} levelRange 必须是正整数且 min<=max`);
 					}
 				}
 				if (!Array.isArray(cell.monsters)) {
@@ -120,7 +114,7 @@ export default class MapJsonReader implements Script<Command> {
 				}
 				const seen = new Set();
 				for (const m of cell.monsters) {
-					if (!m || typeof m !== "object") {
+					if (!m || typeof m !== "object" || Array.isArray(m)) {
 						errors.push(`${at} monsters 元素必须是对象`);
 						continue;
 					}
@@ -128,8 +122,9 @@ export default class MapJsonReader implements Script<Command> {
 					if (!Number.isInteger(m.lvMin) || m.lvMin < 1) errors.push(`${at} 怪物 ${m.id} lvMin 必须为 >=1 整数`);
 					if (!Number.isInteger(m.lvMax) || m.lvMax < m.lvMin) errors.push(`${at} 怪物 ${m.id} lvMax 必须 >= lvMin`);
 					if (typeof m.weight !== "number" || !(m.weight > 0)) errors.push(`${at} 怪物 ${m.id} weight 必须 > 0`);
-					if (seen.has(m.id)) errors.push(`${at} 怪物 id 重复：${m.id}`);
-					seen.add(m.id);
+					const normalizedId = typeof m.id === "string" ? m.id.toLowerCase() : m.id;
+					if (seen.has(normalizedId)) errors.push(`${at} 怪物 id 重复：${m.id}`);
+					seen.add(normalizedId);
 				}
 			}
 		}
@@ -137,23 +132,31 @@ export default class MapJsonReader implements Script<Command> {
 	}
 
 	call() {
+		const host = CurrentEvent;
+		const filePath = this.filePath;
+		const globalVariable = this.globalVariable;
+		const resultVariable = this.resultVariable;
+		host.pause();
 		const load = async () => {
 			try {
-				const data = await this.readJson();
+				const data = await this.readJson(filePath);
 				const errors = this.validate(data);
 				if (errors.length === 0) {
-					Variable.set(this.globalVariable, data);
-					console.log("地图JSON读取：写入成功", this.globalVariable);
-					this.resultVariable?.set(true);
+					Variable.set(globalVariable, data);
+					console.log("地图JSON读取：写入成功", globalVariable);
+					resultVariable?.set(true);
 				} else {
 					console.warn("地图JSON读取：数据校验失败，未写入变量", errors.slice(0, 5));
-					this.resultVariable?.set(false);
+					resultVariable?.set(false);
 				}
 			} catch (error) {
 				console.warn("地图JSON读取失败", error);
-				this.resultVariable?.set(false);
+				resultVariable?.set(false);
+			} finally {
+				host.continue();
 			}
 		};
 		load();
+		return false;
 	}
 }
