@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0d0f14" />
+    <title>YAHZJ · 地图编辑器</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css?v=20260811-map-workbench-3" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <div class="brand-mark"><span></span><span></span><span></span></div>
+          <div>
+            <div class="eyebrow">YAMI RPG TOOLKIT</div>
+            <div class="brand-name">YAHZJ<span>地图编辑器 v0.6.0</span></div>
+          </div>
+        </div>
+
+        <div class="document-state" aria-live="polite">
+          <span id="dirty-dot" class="document-dot"></span>
+          <span id="document-label">新建空白</span>
+          <span id="dirty-label" class="dirty-label">已就绪</span>
+        </div>
+
+        <div class="topbar-actions">
+          <a class="hub-back" href="../../index.html" title="返回工具合集">← 工具合集</a>
+          <div class="history-actions" role="group" aria-label="历史操作">
+            <button id="btn-undo" class="icon-button" type="button" title="撤销" aria-label="撤销" disabled>↶</button>
+            <button id="btn-redo" class="icon-button" type="button" title="重做" aria-label="重做" disabled>↷</button>
+          </div>
+          <button id="btn-new" class="button button-secondary" type="button">新建</button>
+          <button id="btn-import-json" class="button button-secondary" type="button">导入 JSON</button>
+          <button id="btn-import-excel" class="button button-secondary" type="button">导入 Excel</button>
+          <button id="btn-json" class="icon-button" type="button" title="查看 JSON" aria-label="查看 JSON">{ }</button>
+          <button id="btn-download" class="button button-primary" type="button">下载 JSON</button>
+          <input id="file-input" type="file" accept=".xlsx,.json" hidden />
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="map-panel">
+          <div class="panel-heading">
+            <div>
+              <div class="section-label">MAP CANVAS / 10 × 10</div>
+              <h1>地图工作台</h1>
+            </div>
+            <div id="map-summary" class="map-summary"></div>
+          </div>
+
+          <div id="sheet-mapping" class="sheet-mapping" aria-live="polite"></div>
+
+          <div class="map-toolbar">
+            <div class="selection-tools">
+              <span id="selection-label" class="selection-label">已选择 1 格</span>
+              <button id="btn-select-all" class="text-button" type="button">全选</button>
+              <button id="btn-clear-cells" class="text-button danger-text" type="button">清空所选</button>
+            </div>
+            <label class="zoom-control" for="grid-zoom">
+              <span aria-hidden="true">−</span>
+              <input id="grid-zoom" type="range" min="42" max="72" step="2" value="52" />
+              <span aria-hidden="true">＋</span>
+              <output id="zoom-output">52</output>
+            </label>
+          </div>
+
+          <div id="canvas-scroll" class="canvas-scroll">
+            <div id="map-grid" class="map-grid" role="grid" aria-label="10 × 10 地图网格"></div>
+          </div>
+
+          <div id="icon-legend" class="icon-legend" aria-label="地图图标图例"></div>
+
+          <section class="diagnostics" aria-labelledby="diagnostic-title">
+            <button id="diagnostic-toggle" class="diagnostic-summary" type="button" aria-expanded="true">
+              <span id="diagnostic-title">数据校验</span>
+              <span id="diagnostic-count" class="diagnostic-count valid">0 个问题</span>
+            </button>
+            <div id="diagnostic-list" class="diagnostic-list"></div>
+          </section>
+        </section>
+
+        <aside class="inspector-panel">
+          <div class="panel-heading inspector-heading">
+            <div>
+              <div class="section-label">CELL INSPECTOR</div>
+              <h2 id="inspector-title">格属性</h2>
+            </div>
+            <span id="cell-coord" class="coord-badge">R1 · C1</span>
+          </div>
+
+          <div class="inspector-actions" role="group" aria-label="单元格操作">
+            <button id="btn-copy" class="compact-button" type="button">复制</button>
+            <button id="btn-paste" class="compact-button" type="button" disabled>粘贴</button>
+            <button id="btn-primary-only" class="compact-button" type="button">仅选主格</button>
+          </div>
+
+          <div id="cell-form" class="cell-form"></div>
+        </aside>
+      </main>
+
+      <footer class="statusbar">
+        <span id="status-source">新建空白 · 10 × 10</span>
+        <span id="status-selection">已选择 1 格</span>
+        <span id="status-validation" class="status-validation valid">数据有效</span>
+        <span class="status-spacer"></span>
+        <span>本地处理 · 不上传服务器</span>
+      </footer>
+    </div>
+
+    <div id="drop-overlay" class="drop-overlay hidden" aria-hidden="true">
+      <div class="drop-target">
+        <strong>松开以导入地图</strong>
+        <span>支持 .xlsx 与 .json</span>
+      </div>
+    </div>
+
+    <div id="json-modal" class="modal hidden" aria-hidden="true">
+      <section class="modal-content" role="dialog" aria-modal="true" aria-labelledby="json-modal-title">
+        <div class="modal-heading">
+          <div>
+            <div class="section-label">JSON OUTPUT</div>
+            <h2 id="json-modal-title">地图格.json 预览</h2>
+          </div>
+          <button id="btn-close-json" class="icon-button" type="button" title="关闭" aria-label="关闭">×</button>
+        </div>
+        <pre id="json-preview" class="json-preview"></pre>
+      </section>
+    </div>
+
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+
+    <script src="../../vendor/exceljs.min.js"></script>
+    <script src="./app.js?v=20260811-map-workbench-3"></script>
+  </body>
+</html>

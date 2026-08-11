@@ -1,5 +1,7 @@
 # Lootsmith · Yami 掉落编辑器 Handoff
 
+> 本文件只负责角色编辑器。地图编辑器的当前实现、真实数据验证和后续边界见 `HANDOFF-MAP-EDITOR.md`，生产力验收标准见 `MAP_EDITOR_PRODUCTIVITY_PLAN.md`。
+
 > 最后整理：2026-08-10  
 > 代码仓库：`D:\Documents\GitHub\yami-tools`  
 > 游戏工程：`D:\new-game`  
@@ -393,4 +395,3 @@ Chrome / Edge 在 `localhost` 或 HTTPS 环境下可以使用 File System Access
 4. 将浏览器回归测试正式纳入仓库；
 5. 增加“仅显示已编辑角色”筛选；
 6. 增加未保存更改离开页面提示。
-

@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#11131a" />
+    <title>YAHZJ · Yami 掉落编辑器</title>
+    <link rel="stylesheet" href="./styles.css?v=20260813-character-editor-1" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <div class="brand-mark"><span></span><span></span><span></span></div>
+          <div>
+            <div class="eyebrow">YAMI RPG TOOLKIT</div>
+            <div class="brand-name">YAHZJ<span>角色编辑 v0.6.0</span></div>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <a class="hub-back" href="../../index.html" title="返回工具合集">← 工具合集</a>
+          <div id="project-state" class="project-state muted">尚未选择游戏工程</div>
+          <button id="pick-project" class="button button-secondary" type="button">
+            <span class="button-icon">⌂</span>选择工程
+          </button>
+          <button id="save-all" class="button button-primary" type="button" disabled>
+            <span class="button-icon">↥</span>保存全部更改
+            <span id="pending-count" class="button-badge">0</span>
+          </button>
+          <input id="folder-fallback" class="visually-hidden" type="file" webkitdirectory directory multiple />
+        </div>
+      </header>
+
+      <main>
+        <section id="welcome" class="welcome-screen">
+          <div class="welcome-glow"></div>
+          <div class="welcome-content">
+            <div class="welcome-kicker"><span class="status-dot"></span> DROP WORKBENCH / 01</div>
+            <h1>把每个角色的掉落，<em>调到刚刚好。</em></h1>
+            <p>选择 Yami 游戏工程，自动扫描角色、物品与装备。选中角色后即可快速编排掉落列表，保存时才写回角色文件。</p>
+            <button id="welcome-pick" class="button button-primary button-large" type="button">
+              <span class="button-icon">⌂</span>选择游戏工程
+              <span class="button-arrow">→</span>
+            </button>
+            <button id="restore-last" class="button button-secondary restore-last hidden" type="button">
+              <span class="button-icon">↻</span>加载上次工程 <span id="last-project-name"></span>
+            </button>
+            <div class="welcome-note">支持 .actor / .Actor、.item、.equip · 保存前自动备份 · 工程文件不会上传</div>
+          </div>
+          <div class="welcome-orbit orbit-one"></div>
+          <div class="welcome-orbit orbit-two"></div>
+          <div class="welcome-card card-role">
+            <span class="mini-icon mini-icon-role">✦</span>
+            <strong>角色</strong><small>按名称快速定位</small>
+          </div>
+          <div class="welcome-card card-item">
+            <span class="mini-icon mini-icon-item">◆</span>
+            <strong>物品</strong><small>数量一键写入</small>
+          </div>
+          <div class="welcome-card card-equip">
+            <span class="mini-icon mini-icon-equip">◇</span>
+            <strong>装备</strong><small>跨目录完整扫描</small>
+          </div>
+        </section>
+
+        <section id="workspace" class="workspace hidden">
+          <aside class="sidebar">
+            <div class="sidebar-heading">
+              <div>
+                <div class="section-label">COLLECTION</div>
+                <h2>角色列表</h2>
+              </div>
+              <span id="role-count" class="count-pill">0</span>
+            </div>
+            <label class="search-box" for="role-search">
+              <span>⌕</span>
+              <input id="role-search" type="search" placeholder="搜索角色名称或路径" autocomplete="off" />
+              <kbd>/</kbd>
+            </label>
+            <div id="role-list" class="role-list"></div>
+            <div class="sidebar-footer">
+              <div class="scan-summary"><span class="status-dot"></span><span id="scan-status">等待扫描</span></div>
+              <button id="rescan" class="text-button" type="button">重新扫描 ↻</button>
+            </div>
+          </aside>
+
+          <section class="editor-area">
+            <div id="no-role" class="no-role-state">
+              <div class="no-role-mark">✦</div>
+              <h2>选择一个角色开始</h2>
+              <p>左侧角色列表会显示工程中所有 `.actor` 文件。</p>
+            </div>
+
+            <div id="role-editor" class="role-editor hidden">
+              <div class="editor-header">
+                <div class="role-heading">
+                  <div id="role-avatar" class="role-avatar">✦</div>
+                  <div>
+                    <div id="role-path" class="path-label"></div>
+                    <h1 id="role-name"></h1>
+                    <div class="role-meta"><span id="role-guid"></span><span class="meta-separator">•</span><span id="role-slot-state"></span></div>
+                  </div>
+                </div>
+                <div class="editor-header-actions">
+                  <button id="save-current" class="button button-secondary" type="button">保存当前角色</button>
+                </div>
+              </div>
+
+              <div class="workspace-mode-switch" role="tablist" aria-label="编辑模式">
+                <button class="workspace-mode-button active" data-workspace-mode="drop" role="tab" type="button">掉落编辑</button>
+                <button class="workspace-mode-button" data-workspace-mode="actor-attributes" role="tab" type="button">人物属性编辑</button>
+              </div>
+
+              <section id="drop-editor-view">
+              <div class="editor-grid">
+                  <section id="drop-panel" class="drop-panel panel">
+                  <div class="panel-heading">
+                    <div>
+                      <div class="section-label">CURRENT LOADOUT</div>
+                      <h2>掉落列表 <span id="drop-count" class="inline-count">0</span></h2>
+                    </div>
+                    <div id="dirty-label" class="dirty-label hidden">未保存</div>
+                  </div>
+                  <div class="storage-mode" aria-label="写入位置">
+                    <button class="storage-mode-button active" data-storage-mode="attribute" type="button">
+                      <span>属性字符串</span><small>loopList</small>
+                    </button>
+                    <button class="storage-mode-button" data-storage-mode="event" type="button">
+                      <span>角色事件</span><small>掉落物品指令</small>
+                    </button>
+                  </div>
+                  <div id="storage-mode-note" class="storage-mode-note"></div>
+                  <div id="drop-list" class="drop-list"></div>
+                  <div id="drop-empty" class="drop-empty hidden">
+                    <div class="empty-icon">＋</div>
+                    <strong id="drop-empty-title">这个角色还没有掉落物</strong>
+                    <span>从右侧选择或拖入物品、装备，添加到掉落列表</span>
+                    <div id="drop-inherit-hint" class="drop-inherit-hint hidden">
+                      <span id="drop-inherit-hint-text"></span>
+                      <button id="toggle-inherited-drop" class="inherit-toggle" type="button">显示继承掉落</button>
+                    </div>
+                    <div id="drop-inherited-list" class="drop-inherited-list hidden"></div>
+                  </div>
+                </section>
+
+                <section class="catalog-panel panel">
+                  <div class="panel-heading catalog-heading">
+                    <div>
+                      <div class="section-label">RESOURCE CATALOG</div>
+                      <h2>掉落物品库</h2>
+                    </div>
+                    <div class="catalog-counts"><span id="item-count-label">0 物品</span><span id="equip-count-label">0 装备</span></div>
+                  </div>
+                  <div class="catalog-tabs" role="tablist">
+                    <button class="catalog-tab active" data-catalog="item" role="tab" type="button"><span class="tab-glyph glyph-item">◆</span>物品<span id="item-tab-count" class="tab-count">0</span></button>
+                    <button class="catalog-tab" data-catalog="equipment" role="tab" type="button"><span class="tab-glyph glyph-equip">◇</span>装备<span id="equipment-tab-count" class="tab-count">0</span></button>
+                  </div>
+                  <label class="search-box catalog-search" for="catalog-search">
+                    <span>⌕</span>
+                    <input id="catalog-search" type="search" placeholder="搜索名称、ID 或文件路径" autocomplete="off" />
+                    <kbd>/</kbd>
+                  </label>
+                  <div id="catalog-list" class="catalog-list"></div>
+                  <div id="catalog-empty" class="catalog-empty hidden">没有匹配的资源</div>
+                  <div id="selection-composer-anchor">
+                    <div id="selection-composer" class="selection-composer hidden">
+                    <div class="composer-title"><span class="selection-mark">✓</span><span>已选择资源</span><button id="clear-selection" class="close-button" type="button" aria-label="清除选择">×</button></div>
+                    <div class="composer-resource"><span id="selected-resource-type" class="resource-type"></span><strong id="selected-resource-name"></strong></div>
+                    <div class="drop-config-grid">
+                      <div id="item-quantity-config" class="config-section">
+                        <div class="config-heading"><span>物品数量</span><span class="config-hint">仅物品有效</span></div>
+                        <div class="quantity-mode" role="group" aria-label="数量方式">
+                          <button class="quantity-mode-button active" data-quantity-mode="fixed" type="button">固定数量</button>
+                          <button class="quantity-mode-button" data-quantity-mode="range" type="button">数量范围</button>
+                        </div>
+                        <div id="fixed-quantity-row" class="config-row">
+                          <label for="fixed-quantity">固定</label>
+                          <input id="fixed-quantity" class="config-number" type="number" min="1" max="1000000000" step="1" value="1" />
+                          <span>件</span>
+                        </div>
+                        <div id="range-quantity-row" class="config-row hidden">
+                          <label for="min-quantity">范围</label>
+                          <input id="min-quantity" class="config-number" type="number" min="1" max="1000000000" step="1" value="1" />
+                          <span>至</span>
+                          <input id="max-quantity" class="config-number" type="number" min="1" max="1000000000" step="1" value="1" />
+                          <span>件</span>
+                        </div>
+                      </div>
+                      <div id="equipment-quantity-note" class="equipment-quantity-note hidden">
+                        <span class="equipment-lock">◇</span><div><strong>装备固定为 1 件</strong><small>插件不会读取装备的数量范围，写入时固定 min=1、max=1。</small></div>
+                      </div>
+                      <div class="config-section rate-section">
+                        <div class="config-heading"><label for="drop-rate-slider">掉落几率</label><output id="drop-rate-output">100%</output></div>
+                        <div class="rate-controls">
+                          <input id="drop-rate-slider" type="range" min="0" max="100" step="0.1" value="100" />
+                          <div class="percent-input"><input id="drop-rate-percent" type="number" min="0" max="100" step="0.1" value="100" /><span>%</span></div>
+                        </div>
+                        <div id="drop-rate-raw" class="raw-preview">写入：dropRate = 1</div>
+                      </div>
+                    </div>
+                    <div class="composer-actions">
+                      <button id="cancel-edit" class="button button-secondary hidden" type="button">取消编辑</button>
+                      <button id="insert-drop" class="button button-primary" type="button">插入掉落物 <span>→</span></button>
+                    </div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+              </section>
+
+              <section id="actor-attribute-editor-view" class="hidden">
+                <div class="attribute-toolbar-row">
+                  <div class="attribute-summary" id="attribute-summary"></div>
+                  <button id="add-actor-attribute" class="button button-secondary" type="button">＋ 添加人物属性</button>
+                </div>
+                <div class="attribute-toolbar">
+                  <label class="search-box attribute-search" for="attribute-search">
+                    <span>⌕</span>
+                    <input id="attribute-search" type="search" placeholder="搜索名称、语义键、ID、分组、说明或当前值" autocomplete="off" />
+                  </label>
+                  <div class="attribute-filters" id="attribute-filters" role="group" aria-label="属性筛选">
+                    <button class="attribute-filter active" data-filter="all" type="button">全部</button>
+                    <button class="attribute-filter" data-filter="local" type="button">本地</button>
+                    <button class="attribute-filter" data-filter="inherited" type="button">继承</button>
+                    <button class="attribute-filter" data-filter="modified" type="button">已修改</button>
+                    <button class="attribute-filter" data-filter="unknown" type="button">未知</button>
+                  </div>
+                </div>
+                <div id="attribute-list" class="attribute-list"></div>
+                <div class="attribute-editor-note">修改仅在保存时写回，并会先创建备份。人物属性可能影响战斗、AI 与存档兼容性；loopList 由掉落编辑器管理。</div>
+              </section>
+            </div>
+          </section>
+        </section>
+      </main>
+
+      <footer class="app-footer">
+        <span>LOOTSMITH</span><span class="footer-divider"></span><span>为每一份掉落保留一点秩序</span>
+        <span class="footer-right">本地工具 · 保存前自动备份 · v0.6.0</span>
+      </footer>
+    </div>
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+    <div id="drop-composer-modal" class="drop-composer-modal hidden" aria-hidden="true">
+      <div id="drop-composer-modal-content" class="drop-composer-modal-content" role="dialog" aria-modal="true" aria-labelledby="drop-composer-modal-title">
+        <div class="drop-composer-modal-header">
+          <div>
+            <div class="section-label">DROP CONFIGURATION</div>
+            <h2 id="drop-composer-modal-title">配置掉落物</h2>
+            <p>确认数量和掉落几率后，再点击插入。</p>
+          </div>
+          <button id="close-drop-composer" class="close-button" type="button" aria-label="关闭掉落物配置">×</button>
+        </div>
+      </div>
+    </div>
+    <div id="attribute-add-modal" class="attribute-add-modal hidden" aria-hidden="true">
+      <div class="attribute-add-modal-content" role="dialog" aria-modal="true" aria-labelledby="attribute-add-modal-title">
+        <div class="attribute-add-modal-header">
+          <div>
+            <div class="section-label">ADD ACTOR ATTRIBUTE</div>
+            <h2 id="attribute-add-modal-title">添加人物属性</h2>
+            <p>仅可添加角色属性定义（Data/attribute.json）中当前角色尚未拥有的属性。</p>
+          </div>
+          <button id="close-attribute-add" class="close-button" type="button" aria-label="关闭添加属性">×</button>
+        </div>
+        <label class="search-box attribute-add-search" for="attribute-add-search">
+          <span>⌕</span>
+          <input id="attribute-add-search" type="search" placeholder="搜索属性名称、语义键或 ID" autocomplete="off" />
+        </label>
+        <div id="attribute-add-list" class="attribute-add-list"></div>
+        <div id="attribute-add-detail" class="attribute-add-detail hidden">
+          <div id="attribute-add-info" class="attribute-add-info"></div>
+          <div id="attribute-add-value-row" class="attribute-add-value-row"></div>
+          <div class="attribute-add-actions">
+            <button id="attribute-add-confirm" class="button button-primary" type="button">添加到当前角色 <span>→</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="./app.js?v=20260813-character-editor-1"></script>
+  </body>
+</html>
