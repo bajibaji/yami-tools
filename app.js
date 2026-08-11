@@ -51,6 +51,7 @@
     attributeAddOpen: false,
     selectedAddDefinitionId: null,
     unknownAttributesExpanded: false,
+    showInheritedDrop: false,
     drafts: new Map(),
     pending: new Set(),
     errors: [],
@@ -67,6 +68,7 @@
     itemCountLabel: $('#item-count-label'), equipCountLabel: $('#equip-count-label'), itemTabCount: $('#item-tab-count'), equipmentTabCount: $('#equipment-tab-count'), composer: $('#selection-composer'), clearSelection: $('#clear-selection'), selectedType: $('#selected-resource-type'), selectedName: $('#selected-resource-name'), itemQuantityConfig: $('#item-quantity-config'), equipmentQuantityNote: $('#equipment-quantity-note'), fixedQuantityRow: $('#fixed-quantity-row'), rangeQuantityRow: $('#range-quantity-row'), fixedQuantity: $('#fixed-quantity'), minQuantity: $('#min-quantity'), maxQuantity: $('#max-quantity'), dropRateSlider: $('#drop-rate-slider'), dropRatePercent: $('#drop-rate-percent'), dropRateOutput: $('#drop-rate-output'), dropRateRaw: $('#drop-rate-raw'), cancelEdit: $('#cancel-edit'), insertDrop: $('#insert-drop'), toastRegion: $('#toast-region'),
     composerAnchor: $('#selection-composer-anchor'), composerModal: $('#drop-composer-modal'), composerModalContent: $('#drop-composer-modal-content'), closeComposerModalButton: $('#close-drop-composer'),
     dropEditorView: $('#drop-editor-view'), actorAttributeEditorView: $('#actor-attribute-editor-view'),
+    dropInheritHint: $('#drop-inherit-hint'), dropInheritHintText: $('#drop-inherit-hint-text'), toggleInheritedDrop: $('#toggle-inherited-drop'), dropInheritedList: $('#drop-inherited-list'),
     workspaceModeButtons: () => $$('.workspace-mode-button'),
     attributeSummary: $('#attribute-summary'), attributeSearch: $('#attribute-search'), attributeFilters: $('#attribute-filters'), attributeList: $('#attribute-list'), addActorAttribute: $('#add-actor-attribute'),
     attributeAddModal: $('#attribute-add-modal'), attributeAddSearch: $('#attribute-add-search'), attributeAddList: $('#attribute-add-list'), attributeAddDetail: $('#attribute-add-detail'), attributeAddInfo: $('#attribute-add-info'), attributeAddValueRow: $('#attribute-add-value-row'), attributeAddConfirm: $('#attribute-add-confirm'), closeAttributeAdd: $('#close-attribute-add'),
@@ -336,6 +338,17 @@
     return inherited ? { ...inherited, inherited: true } : null
   }
 
+  // 仅用于“继承标识”：沿 inherit 链找第一个自身有掉落事件的祖先角色。
+  // 不读取、不显示其掉落条目，只标记掉落来源（如通用怪物模板）。
+  function findInheritedDropEventSource(role, roleMap, seen = new Set()) {
+    if (!role || seen.has(role.guid)) return null
+    seen.add(role.guid)
+    const parent = role.data?.inherit ? roleMap.get(role.data.inherit) : null
+    if (!parent) return null
+    if (findDropEvent(parent.data)) return parent
+    return findInheritedDropEventSource(parent, roleMap, seen)
+  }
+
   function initializeRoleStores(role, roleMap) {
     const attributeSource = findInheritedStore(role, roleMap, 'attribute')
     // 掉落物品事件不继承：怪物自身没有掉落事件时按“将新建”空状态显示，
@@ -366,6 +379,8 @@
         sourceRole: eventSource ? role : null,
         sourceSlot: eventSource,
         inherited: false,
+        // 继承标识：角色自身无掉落事件时记录祖先掉落来源（如通用怪物模板），仅用于提示。
+        inheritedDropSource: eventSource ? null : findInheritedDropEventSource(role, roleMap),
         entries: eventEntries.map((entry) => ({ ...entry })),
         originalEntries: eventEntries.map((entry) => ({ ...entry })),
       },
@@ -733,9 +748,14 @@
     const changed = !deepEqual(store.entries, store.originalEntries)
     if (changed) role.dirtyModes.add(mode)
     else role.dirtyModes.delete(mode)
-    role.edited = role.edited || changed
-    if (role.dirtyModes.size) state.pending.add(role.path)
-    else state.pending.delete(role.path)
+    if (role.dirtyModes.size) {
+      role.edited = true
+      state.pending.add(role.path)
+    } else {
+      // 所有模式的草稿都恢复原样：清除“已编辑”高亮与 pending。
+      role.edited = false
+      state.pending.delete(role.path)
+    }
     updatePendingUi(); renderRoleList()
   }
 
@@ -854,6 +874,7 @@
     if (state.rootHandle && state.selectedRole) localStorage.setItem(`loot-smith-last-role:${state.rootHandle.name}`, state.selectedRole.path)
     closeComposerModal({ clear: false })
     state.selectedResource = null; state.editingIndex = null; els.catalogSearch.value = ''; state.catalogSearch = ''
+    state.showInheritedDrop = false
     renderRoleList(); renderRoleEditor(); renderCatalog(); renderComposer()
   }
 
@@ -904,6 +925,35 @@
       : '保存时写入 loopList 字符串；包含 min、max 与 dropRate，需由读取该属性的游戏逻辑支持。'
     els.dropList.innerHTML = entries.length ? entries.map((entry, index) => renderDropRow(entry, index)).join('') : ''
     els.dropEmpty.classList.toggle('hidden', entries.length > 0)
+    // 继承标识 + “显示继承掉落”开关：角色自身没有掉落事件时，可展开查看模板的掉落配置（只读）。
+    const inheritSource = state.storageMode === 'event' && !store?.ownSlot ? store?.inheritedDropSource : null
+    if (els.dropInheritHint) {
+      if (inheritSource && !entries.length) {
+        const sourceName = inheritSource.name || inheritSource.guid || '父角色'
+        if (els.dropInheritHintText) els.dropInheritHintText.textContent = `掉落事件继承自 ${sourceName}（模板）· 编辑并保存后将在此角色创建独立掉落事件。`
+        if (els.toggleInheritedDrop) {
+          const sourceEvent = findDropEvent(inheritSource.data)
+          const inheritedCount = sourceEvent ? parseEventEntries(sourceEvent.event).length : 0
+          els.toggleInheritedDrop.textContent = state.showInheritedDrop ? '隐藏继承掉落' : `显示继承掉落（${inheritedCount}）`
+          els.toggleInheritedDrop.classList.toggle('hidden', inheritedCount === 0)
+        }
+        els.dropInheritHint.classList.remove('hidden')
+      } else els.dropInheritHint.classList.add('hidden')
+    }
+    if (els.dropInheritedList) {
+      if (inheritSource && state.showInheritedDrop && !entries.length) {
+        const sourceEvent = findDropEvent(inheritSource.data)
+        const inheritedEntries = sourceEvent ? parseEventEntries(sourceEvent.event) : []
+        els.dropInheritedList.innerHTML = inheritedEntries.map((entry) => renderInheritedDropRow(entry, inheritSource)).join('')
+        els.dropInheritedList.classList.remove('hidden')
+      } else els.dropInheritedList.classList.add('hidden')
+    }
+  }
+
+  // 继承掉落的只读展示行（只用于“显示继承掉落”展开，不带编辑/删除/禁用操作）。
+  function renderInheritedDropRow(entry, sourceRole) {
+    const resource = resourceForEntry(entry); const displayName = resource?.name || entry.id || '未知资源'; const typeLabel = entry.type === 'equipment' ? '装备' : '物品'
+    return `<div class="drop-row inherited-drop-row"><div class="resource-icon ${entry.type}">${previewMarkup(resource, entry.type === 'equipment' ? '◇' : '◆')}</div><div class="drop-row-info"><div class="drop-row-name">${escapeHtml(displayName)}<span class="inherited-chip">继承</span></div><div class="drop-row-sub">${typeLabel} · ${escapeHtml(entry.id)} · 来自 ${escapeHtml(sourceRole?.name || sourceRole?.guid || '模板')}</div></div><div class="drop-metrics"><span>${escapeHtml(quantityLabel(entry))}</span><b>${escapeHtml(formatPercent(entry.dropRate))}</b></div></div>`
   }
 
   // ---- 人物属性编辑视图 ----
@@ -1065,7 +1115,8 @@
     const group = (definition.folderPath || []).join(' / ')
     const sub = `${definition.key}${group ? ` · ${group}` : ''}`
     const fullSub = `${definition.key} · ${definition.id}${group ? ` · ${group}` : ''}`
-    return `<div class="attribute-row inherited-row"><div class="attribute-row-info"><div class="attribute-row-title"><span class="attribute-row-name">${escapeHtml(definition.name)}</span>${badges}</div><div class="attribute-row-sub" title="${escapeHtml(fullSub)}">${escapeHtml(sub)}</div></div><div class="attribute-row-control"><div class="attribute-inherited-value" title="只读 · 创建本地覆盖后才会写入当前角色，父角色不被修改。">${renderInheritedValueText(definition, row.value)}</div></div><div class="attribute-row-actions"><button class="attribute-action" data-attr-action="override" data-attr-key="${escapeHtml(row.key)}" type="button">创建本地覆盖</button></div></div>`
+    // “创建本地覆盖”按钮紧挨继承值（数字）右侧，方便对照操作。
+    return `<div class="attribute-row inherited-row"><div class="attribute-row-info"><div class="attribute-row-title"><span class="attribute-row-name">${escapeHtml(definition.name)}</span>${badges}</div><div class="attribute-row-sub" title="${escapeHtml(fullSub)}">${escapeHtml(sub)}</div></div><div class="attribute-row-control"><div class="attribute-inherited-value" title="只读 · 创建本地覆盖后才会写入当前角色，父角色不被修改。">${renderInheritedValueText(definition, row.value)}</div><button class="attribute-action" data-attr-action="override" data-attr-key="${escapeHtml(row.key)}" type="button">创建本地覆盖</button></div><div class="attribute-row-actions"></div></div>`
   }
 
   // ---- 添加人物属性弹窗 ----
@@ -1359,7 +1410,11 @@
 
   function removeDrop(index) {
     if (!state.selectedRole || !currentEntries()[index]) return
-    currentEntries().splice(index, 1); markDirty(state.selectedRole); showToast('已移除', '点击“保存当前角色”后写回文件', 'success')
+    currentEntries().splice(index, 1)
+    // 删除后重新计算脏状态：若回到原始列表则同步清除高亮与 pending。
+    syncRoleDirtyState(state.selectedRole, state.storageMode)
+    renderRoleEditor()
+    showToast('已移除', '点击“保存当前角色”后写回文件', 'success')
   }
 
   function toggleDrop(index) {
@@ -1790,6 +1845,7 @@
       else commitActorAttributeValue(state.selectedRole, index, input.value)
     })
     els.addActorAttribute?.addEventListener('click', openAttributeAddModal)
+    els.toggleInheritedDrop?.addEventListener('click', () => { state.showInheritedDrop = !state.showInheritedDrop; renderDropEditor() })
     els.closeAttributeAdd?.addEventListener('click', closeAttributeAddModal)
     els.attributeAddModal?.addEventListener('click', (event) => { if (event.target === els.attributeAddModal) closeAttributeAddModal() })
     els.attributeAddSearch?.addEventListener('input', () => { state.selectedAddDefinitionId = null; renderAttributeAddList(); els.attributeAddDetail.classList.add('hidden') })
