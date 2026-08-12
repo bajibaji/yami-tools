@@ -1,4 +1,4 @@
-# Lootsmith · Yami 掉落编辑器
+# ya的yami妙妙小工具
 
 纯静态 Web 工具，用于批量扫描 Yami RPG 工程中的角色、物品与装备，并快速编辑角色的 `loopList` 掉落列表。
 
