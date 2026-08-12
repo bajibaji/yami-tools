@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0d0f14" />
     <title>YAHZJ · 挂机验证台</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260813-idle-lab-2" />
+    <link rel="stylesheet" href="./styles.css?v=20260812-idle-lab-5" />
   </head>
   <body>
     <div class="app-shell">
@@ -15,7 +15,7 @@
           <div class="brand-mark"><span></span><span></span><span></span></div>
           <div>
             <div class="eyebrow">YAMI RPG TOOLKIT</div>
-            <div class="brand-name">YAHZJ<span>挂机验证台 v0.9.0</span></div>
+            <div class="brand-name">YAHZJ<span>挂机验证台 <em class="version-tag" data-app-version>v0.9.0</em></span></div>
           </div>
         </div>
         <nav class="view-tabs" aria-label="验证视图">
@@ -187,6 +187,8 @@
     </div>
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
     <script src="../../vendor/exceljs.min.js"></script>
-    <script src="./app.js?v=20260813-idle-lab-2"></script>
+    <script src="./app.js?v=20260812-idle-lab-5"></script>
+    <script src="../version.json"></script>
+    <script>document.querySelectorAll('[data-app-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS['idle-lab']||{}).version})</script>
   </body>
 </html>

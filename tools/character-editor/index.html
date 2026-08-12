@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#11131a" />
     <title>YAHZJ · Yami 掉落编辑器</title>
-    <link rel="stylesheet" href="./styles.css?v=20260813-character-editor-2" />
+    <link rel="stylesheet" href="./styles.css?v=20260812-character-editor-5" />
   </head>
   <body>
     <div class="app-shell">
@@ -14,7 +14,7 @@
           <div class="brand-mark"><span></span><span></span><span></span></div>
           <div>
             <div class="eyebrow">YAMI RPG TOOLKIT</div>
-            <div class="brand-name">YAHZJ<span>角色编辑 v0.7.0</span></div>
+            <div class="brand-name">YAHZJ<span>角色编辑 <em class="version-tag" data-app-version>v0.7.0</em></span></div>
           </div>
         </div>
         <div class="topbar-actions">
@@ -236,7 +236,7 @@
 
       <footer class="app-footer">
         <span>LOOTSMITH</span><span class="footer-divider"></span><span>为每一份掉落保留一点秩序</span>
-        <span class="footer-right">本地工具 · 保存前自动备份 · v0.7.0</span>
+        <span class="footer-right">本地工具 · 保存前自动备份 · <em data-app-version>v0.7.0</em></span>
       </footer>
     </div>
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
@@ -276,6 +276,8 @@
         </div>
       </div>
     </div>
-    <script src="./app.js?v=20260813-character-editor-2"></script>
+    <script src="./app.js?v=20260812-character-editor-5"></script>
+    <script src="../version.json"></script>
+    <script>document.querySelectorAll('[data-app-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS['character-editor']||{}).version})</script>
   </body>
 </html>

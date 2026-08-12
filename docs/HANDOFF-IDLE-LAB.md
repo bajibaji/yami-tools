@@ -41,14 +41,14 @@
 | `assets/hub.css` | 首页挂机验证台图标样式 |
 | `README.md` | 工具合集和挂机验证台使用说明 |
 
-静态资源查询版本：
+版本管理（**不要手改**）：
 
-```html
-<link rel="stylesheet" href="./styles.css?v=20260813-idle-lab-2" />
-<script src="./app.js?v=20260813-idle-lab-2"></script>
+```text
+tools/version.json        ← 版本号唯一来源（hub / character-editor / map-editor / idle-lab）
 ```
 
-后续修改 JS/CSS 并准备发布时，应同步更新查询版本，避免浏览器或 GitHub Pages 使用旧缓存。
+- `version.json` 内容为 `window.TOOL_VERSIONS = {...};`（JS 赋值而非纯 JSON），各工具与首页通过 `<script src="version.json">` 标签加载，**file:// 直接打开也生效**——改版本号后刷新页面即更新 `[data-app-version]` / `[data-hub-version]` / `[data-tool-version]` 元素（HTML 内写死的值仅作加载失败时的兜底显示）。
+- **静态资源查询串**由脚本刷新：`node tools/bump-version.js` 把所有 `?v=YYYYMMDD-<tool>-N` 序号 +1，避免浏览器或 GitHub Pages 使用旧缓存。修改 JS/CSS 准备发布时运行一次。
 
 ## 3. 使用流程
 
@@ -444,11 +444,12 @@ map editor self-check passed
 
 已完成：
 
-- `1440×900` 桌面布局，无页面级横向或纵向溢出；
-- `390×844` 手机布局，无页面级横向溢出；
-- 10×10 地图保持在自己的滚动区域；
+- `1440×900` 桌面布局，地图完整显示（纵向不再内滚），全图体检在页面下方滚动查看；地图区右侧为刷怪构成与模拟结果两列；
+- `390×844` 手机布局，地图/刷怪构成/模拟结果三块自动堆叠，无页面级横向溢出；
+- 10×10 地图与地图编辑器同款显示（轴标签、地标图、角标、通行边、缩放滑块、图例）；
 - 页面渲染 100 个地图格；
-- 单关模拟正常；
+- 单关模拟正常，结果面板显示结论/指标/每怪缩放后属性；
+- 全局字号 ×1.25（格子内名称保持 12px 防截断）；
 - 全图体检正常；
 - 流程推演产生关卡、等待、升级事件；
 - A/B 对比正确计算差值；

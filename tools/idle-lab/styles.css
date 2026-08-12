@@ -34,6 +34,7 @@ button { cursor: pointer; }
 .brand-mark span:nth-child(3) { background: var(--danger); box-shadow: 0 0 8px rgba(255,139,121,.7); }
 .eyebrow, .section-label { color: var(--dim); font-size: 11.3px; font-weight: 800; letter-spacing: .16em; }
 .brand-name { gap: 8px; font-size: 21.3px; font-weight: 900; }
+.brand-name em { font-style: normal; }
 .brand-name span { padding: 2px 7px; border: 1px solid rgba(111,217,207,.28); border-radius: 5px; color: var(--cyan); background: rgba(111,217,207,.08); font-size: 12.5px; }
 .view-tabs { align-self: stretch; gap: 3px; margin-left: auto; }
 .view-tab { position: relative; align-self: stretch; padding: 0 13px; border: 0; color: var(--muted); background: transparent; font-size: 13.8px; font-weight: 800; }
@@ -225,7 +226,7 @@ button { cursor: pointer; }
 .toast { width: min(360px,calc(100vw - 36px)); padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--text); background: var(--surface-3); box-shadow: var(--shadow); font-size: 12.5px; }
 .toast.error { border-color: rgba(255,139,121,.4); }
 @media (max-width: 1180px) {
-  .brand-name span, .project-state { display: none; }
+  .brand-name span, .brand-name em, .project-state { display: none; }
   .topbar { padding: 0 12px; gap: 9px; }
   .view-tab { padding: 0 8px; }
   .workspace { grid-template-columns: 270px minmax(0,1fr); }
