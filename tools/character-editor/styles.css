@@ -29,10 +29,10 @@ button { cursor: pointer; }
 .topbar { height: 78px; display: flex; align-items: center; justify-content: space-between; padding: 0 34px; border-bottom: 1px solid var(--line); background: rgba(13, 15, 20, 0.82); backdrop-filter: blur(18px); z-index: 5; }
 .brand-block, .topbar-actions, .role-heading, .editor-header, .sidebar-heading, .panel-heading, .composer-title, .composer-resource, .composer-controls, .app-footer { display: flex; align-items: center; }
 .brand-block { gap: 13px; }
-.brand-mark { width: 31px; height: 31px; display: flex; align-items: flex-end; gap: 3px; padding: 6px; border: 1px solid rgba(198, 243, 107, 0.3); border-radius: 10px 10px 10px 2px; background: rgba(198, 243, 107, 0.08); transform: rotate(-8deg); }
-.brand-mark span { width: 4px; border-radius: 4px; background: var(--lime); display: block; }
-.brand-mark span:nth-child(1) { height: 8px; opacity: .55; }.brand-mark span:nth-child(2) { height: 13px; }.brand-mark span:nth-child(3) { height: 18px; opacity: .75; }
-.eyebrow, .section-label, .welcome-kicker { color: var(--dim); font-size: 10px; font-weight: 700; letter-spacing: .18em; }
+.brand-mark { width: 31px; height: 31px; align-items: flex-end; padding: 6px; border: 1px solid rgba(198, 243, 107, 0.3); border-radius: 10px 10px 10px 2px; background: rgba(198, 243, 107, 0.08); transform: rotate(-8deg); display: grid; place-items: center; color: var(--blue); font-size: 17px; line-height: 1; display: grid; place-items: center; color: var(--blue); font-size: 17px; line-height: 1; }
+
+
+.eyebrow, .welcome-kicker { color: var(--dim); font-size: 10px; font-weight: 700; letter-spacing: .18em; }
 .brand-name { font-size: 17px; font-weight: 800; letter-spacing: -.03em; line-height: 1.05; }.brand-name em { font-style: normal; }
 .brand-name span { margin-left: 8px; color: var(--muted); font-size: 12px; font-weight: 500; letter-spacing: .04em; }
 .topbar-actions { gap: 12px; }
@@ -40,7 +40,7 @@ button { cursor: pointer; }
 .button { border: 1px solid transparent; border-radius: 9px; padding: 10px 14px; color: var(--text); font-size: 12px; font-weight: 700; transition: .18s ease; display: inline-flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap; }
 .button:hover:not(:disabled) { transform: translateY(-1px); }.button:active:not(:disabled) { transform: translateY(0); }.button:disabled { cursor: not-allowed; opacity: .38; }
 .button-secondary { background: var(--surface-2); border-color: var(--line-strong); }.button-secondary:hover:not(:disabled) { border-color: rgba(198, 243, 107, .45); background: var(--surface-3); }
-.button-primary { color: #1b2410; background: var(--lime); box-shadow: 0 6px 20px rgba(198, 243, 107, .12); }.button-primary:hover:not(:disabled) { background: #d6ff86; box-shadow: 0 8px 26px rgba(198, 243, 107, .2); }
+.button-primary { color: #0c1526; background: var(--blue); box-shadow: 0 6px 20px rgba(141, 185, 255, .12); }.button-primary:hover:not(:disabled) { background: #a7c9ff; box-shadow: 0 8px 26px rgba(141, 185, 255, .2); }
 .button-icon { font-size: 16px; line-height: 0; }.button-badge { min-width: 19px; height: 19px; display: inline-grid; place-items: center; padding: 0 5px; border-radius: 99px; background: rgba(24, 33, 11, .2); font-size: 10px; }.button-large { padding: 14px 19px; font-size: 13px; border-radius: 11px; }.button-arrow { margin-left: 20px; font-size: 17px; }
 
 main { flex: 1; min-height: 0; position: relative; }

@@ -12,7 +12,7 @@
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-block">
-          <div class="brand-mark"><span></span><span></span><span></span></div>
+          <div class="brand-mark">◫</div>
           <div>
             <div class="eyebrow">YAMI RPG TOOLKIT</div>
             <div class="brand-name">YAHZJ<span>挂机验证台 <em class="version-tag" data-app-version>v0.9.0</em></span></div>
@@ -41,7 +41,8 @@
         <aside class="control-rail">
           <section class="control-section">
             <div class="section-heading">
-              <div><div class="section-label">PLAYER BUILD</div><h2>玩家构筑</h2></div>
+              <div>
+<h2>玩家构筑</h2></div>
               <button id="reset-player" class="text-button" type="button">重置</button>
             </div>
             <label class="field"><span>工程角色</span><select id="player-actor"></select></label>
@@ -61,7 +62,8 @@
           </section>
 
           <section class="control-section">
-            <div class="section-heading"><div><div class="section-label">MODEL</div><h2>模拟假设</h2></div></div>
+            <div class="section-heading"><div>
+<h2>模拟假设</h2></div></div>
             <div class="field-grid">
               <label class="field"><span>单关挂机 / 分钟</span><input id="stage-minutes" type="number" min="1" max="1440" step="1" /></label>
               <label class="field"><span>重复样本</span><input id="iterations" type="number" min="20" max="2000" step="20" /></label>
@@ -77,7 +79,8 @@
 
           <section class="control-section stage-settings">
             <div class="section-heading">
-              <div><div class="section-label">STAGE OVERRIDE</div><h2 id="selected-stage-name">所选关卡</h2></div>
+              <div>
+<h2 id="selected-stage-name">所选关卡</h2></div>
               <span id="selected-stage-coord" class="coord-badge">R1 C1</span>
             </div>
             <div class="field-grid">
@@ -103,7 +106,8 @@
 
             <section class="map-workbench">
               <div class="map-heading">
-                <div><div class="section-label">STAGE HEATMAP / 10 × 10</div><h1>关卡热力图</h1></div>
+                <div>
+<h1>关卡热力图</h1></div>
                 <div class="map-tools">
                   <label class="zoom-control" for="grid-zoom"><span aria-hidden="true">−</span><input id="grid-zoom" type="range" min="40" max="96" step="2" value="64" /><span aria-hidden="true">＋</span><output id="zoom-output">64</output></label>
                   <label><span>显示指标</span><select id="heat-mode"><option value="clear">通关时间</option><option value="survival">生存率</option><option value="gold">金币 / 小时</option><option value="efficiency">目标偏差</option></select></label>
@@ -121,7 +125,8 @@
                   <div class="heat-legend"><span>危险 / 偏慢</span><i></i><span>健康</span><i></i><span>过快 / 过易</span></div>
                 </div>
                 <aside class="stage-detail">
-                  <div class="detail-head"><div><div class="section-label">ENCOUNTER POOL</div><h2>刷怪构成</h2></div><span id="monster-count" class="count-pill">0</span></div>
+                  <div class="detail-head"><div>
+<h2>刷怪构成</h2></div><span id="monster-count" class="count-pill">0</span></div>
                   <div id="monster-list" class="monster-list"></div>
                   <div class="detail-actions">
                     <button id="run-stage" class="button button-primary button-block" type="button">模拟当前关卡</button>
@@ -130,21 +135,24 @@
                   </div>
                 </aside>
                 <aside class="stage-result-panel">
-                  <div class="detail-head"><div><div class="section-label">STAGE RESULT</div><h2>模拟结果</h2></div><span id="result-coord" class="coord-badge">--</span></div>
+                  <div class="detail-head"><div>
+<h2>模拟结果</h2></div><span id="result-coord" class="coord-badge">--</span></div>
                   <div id="stage-result" class="stage-result"></div>
                 </aside>
               </div>
             </section>
 
             <section class="diagnostics-panel">
-              <div class="diagnostics-heading"><div><div class="section-label">BOTTLENECKS</div><h2>全图体检</h2></div><span id="issue-count" class="count-pill">尚未运行</span></div>
+              <div class="diagnostics-heading"><div>
+<h2>全图体检</h2></div><span id="issue-count" class="count-pill">尚未运行</span></div>
               <div id="issue-list" class="issue-list"><div class="empty-state">运行全图体检后，这里会按严重程度列出卡点、奖励异常和空关卡。</div></div>
             </section>
           </div>
 
           <div id="progression-view" class="view">
             <section class="progression-controls">
-              <div><div class="section-label">PROGRESSION RUN</div><h1>挂机流程推演</h1></div>
+              <div>
+<h1>挂机流程推演</h1></div>
               <div class="inline-fields">
                 <label class="field"><span>推演时长 / 分钟</span><input id="progress-minutes" type="number" min="10" max="10080" step="10" /></label>
                 <label class="field"><span>初始金币</span><input id="start-gold" type="number" min="0" step="10" /></label>
@@ -161,7 +169,8 @@
               <div class="metric"><span>最长等待</span><strong id="flow-wait">--</strong><small>两次成长之间</small></div>
             </div>
             <section class="timeline-panel">
-              <div class="timeline-head"><div><div class="section-label">PLAYER JOURNEY</div><h2>成长时间线</h2></div><div id="timeline-scale"></div></div>
+              <div class="timeline-head"><div>
+<h2>成长时间线</h2></div><div id="timeline-scale"></div></div>
               <div id="timeline-chart" class="timeline-chart"></div>
               <div id="timeline-events" class="timeline-events"></div>
             </section>
@@ -169,7 +178,8 @@
 
           <div id="compare-view" class="view">
             <section class="compare-heading">
-              <div><div class="section-label">A / B SCENARIO</div><h1>方案对比</h1></div>
+              <div>
+<h1>方案对比</h1></div>
               <p>在关卡验证页调整参数后分别存为 A、B，这里只显示真正影响决策的差异。</p>
             </section>
             <div class="compare-grid">

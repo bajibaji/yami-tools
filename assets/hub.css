@@ -56,35 +56,13 @@ html, body {
   gap: 14px;
 }
 
-.brand-mark {
-  width: 40px;
-  height: 40px;
-  background: linear-gradient(135deg, #1d2536, #141926);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-}
+.brand-mark { width: 40px; height: 40px; background: linear-gradient(135deg, #1d2536, #141926); border: 1px solid var(--border); border-radius: 10px; gap: 4px; display: grid; place-items: center; color: var(--blue); font-size: 17px; line-height: 1; display: grid; place-items: center; color: var(--blue); font-size: 17px; line-height: 1; }
 
-.brand-mark span {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--blue);
-  box-shadow: 0 0 8px rgba(141, 185, 255, 0.8);
-}
 
-.brand-mark span:nth-child(2) {
-  background: var(--lime);
-  box-shadow: 0 0 8px rgba(198, 243, 107, 0.7);
-}
 
-.brand-mark span:nth-child(3) {
-  background: #f08c8c;
-  box-shadow: 0 0 8px rgba(240, 140, 140, 0.7);
-}
+
+
+
 
 .eyebrow {
   font-size: 10px;
