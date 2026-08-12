@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0d0f14" />
+    <title>YAHZJ · 挂机验证台</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css?v=20260813-idle-lab-2" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <div class="brand-mark"><span></span><span></span><span></span></div>
+          <div>
+            <div class="eyebrow">YAMI RPG TOOLKIT</div>
+            <div class="brand-name">YAHZJ<span>挂机验证台 v0.9.0</span></div>
+          </div>
+        </div>
+        <nav class="view-tabs" aria-label="验证视图">
+          <button class="view-tab active" data-view="stage" type="button">关卡验证</button>
+          <button class="view-tab" data-view="progression" type="button">流程推演</button>
+          <button class="view-tab" data-view="compare" type="button">方案对比</button>
+        </nav>
+        <div class="topbar-actions">
+          <a class="hub-back" href="../../index.html">← 工具合集</a>
+          <span id="project-state" class="project-state">演示数据</span>
+          <button id="restore-project" class="button hidden" type="button">加载上次工程</button>
+          <button id="pick-project" class="button" type="button">选择工程</button>
+          <button id="import-map" class="button" type="button">导入地图</button>
+          <button id="export-plan" class="icon-button" type="button" title="导出验证方案" aria-label="导出验证方案">⇩</button>
+          <button id="import-plan" class="icon-button" type="button" title="导入验证方案" aria-label="导入验证方案">⇧</button>
+          <input id="folder-fallback" type="file" webkitdirectory directory multiple hidden />
+          <input id="map-input" type="file" accept=".xlsx,.json" hidden />
+          <input id="plan-input" type="file" accept=".json" hidden />
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="control-rail">
+          <section class="control-section">
+            <div class="section-heading">
+              <div><div class="section-label">PLAYER BUILD</div><h2>玩家构筑</h2></div>
+              <button id="reset-player" class="text-button" type="button">重置</button>
+            </div>
+            <label class="field"><span>工程角色</span><select id="player-actor"></select></label>
+            <div class="field-grid">
+              <label class="field"><span>等级</span><input id="player-level" type="number" min="1" step="1" /></label>
+              <label class="field"><span>最大生命</span><input id="player-hp" type="number" min="1" step="1" /></label>
+              <label class="field"><span>物理攻击</span><input id="player-atk" type="number" min="0" step="1" /></label>
+              <label class="field"><span>物理防御</span><input id="player-def" type="number" min="0" step="1" /></label>
+              <label class="field"><span>攻击间隔 / 秒</span><input id="player-interval" type="number" min="0.05" step="0.05" /></label>
+              <label class="field"><span>技能倍率 / %</span><input id="skill-power" type="number" min="1" step="1" /></label>
+              <label class="field"><span>暴击率 / %</span><input id="player-crit" type="number" min="0" max="100" step="0.1" /></label>
+              <label class="field"><span>命中修正</span><input id="player-hit" type="number" min="-100" max="100" step="0.1" /></label>
+              <label class="field"><span>闪避</span><input id="player-dodge" type="number" min="0" max="100" step="0.1" /></label>
+              <label class="field"><span>生命恢复 / 秒</span><input id="player-regen" type="number" min="0" step="0.1" /></label>
+              <label class="field"><span>击杀后恢复 / %</span><input id="kill-heal" type="number" min="0" max="100" step="0.1" /></label>
+            </div>
+          </section>
+
+          <section class="control-section">
+            <div class="section-heading"><div><div class="section-label">MODEL</div><h2>模拟假设</h2></div></div>
+            <div class="field-grid">
+              <label class="field"><span>单关挂机 / 分钟</span><input id="stage-minutes" type="number" min="1" max="1440" step="1" /></label>
+              <label class="field"><span>重复样本</span><input id="iterations" type="number" min="20" max="2000" step="20" /></label>
+              <label class="field"><span>基础命中</span><input id="base-hit" type="number" min="-100" max="100" step="0.1" value="80" /></label>
+              <label class="field"><span>命中骰子范围</span><input id="hit-dice" type="number" min="1" max="1000" step="1" /></label>
+              <label class="field"><span>暴击倍率</span><input id="crit-multiplier" type="number" min="1" max="10" step="0.1" /></label>
+              <label class="field"><span>最低伤害</span><input id="min-damage" type="number" min="0" step="1" /></label>
+              <label class="field"><span>怪物每级成长</span><input id="per-level-growth" type="number" min="0" step="0.1" /></label>
+              <label class="field"><span>攻击速度基准</span><input id="attack-speed-base" type="number" min="0" step="1" /></label>
+              <label class="field"><span>同场怪物数</span><input id="mobs-per-encounter" type="number" min="1" max="100" step="1" /></label>
+            </div>
+          </section>
+
+          <section class="control-section stage-settings">
+            <div class="section-heading">
+              <div><div class="section-label">STAGE OVERRIDE</div><h2 id="selected-stage-name">所选关卡</h2></div>
+              <span id="selected-stage-coord" class="coord-badge">R1 C1</span>
+            </div>
+            <div class="field-grid">
+              <label class="field"><span>通关击杀数</span><input id="stage-kills" type="number" min="1" step="1" /></label>
+              <label class="field"><span>刷怪等待 / 秒</span><input id="spawn-delay" type="number" min="0" step="0.1" /></label>
+              <label class="field"><span>进场赶路 / 秒</span><input id="travel-seconds" type="number" min="0" step="1" /></label>
+              <label class="field"><span>金币倍率</span><input id="gold-multiplier" type="number" min="0" step="0.1" /></label>
+            </div>
+            <label class="field"><span>目标通关时间 / 分钟</span><input id="target-clear-minutes" type="number" min="0.1" step="0.5" /></label>
+            <button id="clear-stage-override" class="button button-block" type="button">恢复关卡默认值</button>
+          </section>
+        </aside>
+
+        <section class="main-stage">
+          <div id="stage-view" class="view active">
+            <div class="result-strip">
+              <div class="metric"><span>平均击杀</span><strong id="metric-kills">0</strong><small id="metric-kph">0 / 小时</small></div>
+              <div class="metric"><span>生存率</span><strong id="metric-survival">0%</strong><small id="metric-deaths">0 次死亡</small></div>
+              <div class="metric"><span>通关时间</span><strong id="metric-clear">--</strong><small id="metric-target">目标 --</small></div>
+              <div class="metric"><span>每小时收益</span><strong id="metric-gold">0 金币</strong><small id="metric-exp">0 经验</small></div>
+              <div class="metric metric-status"><span>验证结论</span><strong id="metric-status">等待模拟</strong><small id="metric-note">选择关卡后查看</small></div>
+            </div>
+
+            <section class="map-workbench">
+              <div class="map-heading">
+                <div><div class="section-label">STAGE HEATMAP / 10 × 10</div><h1>关卡热力图</h1></div>
+                <div class="map-tools">
+                  <label class="zoom-control" for="grid-zoom"><span aria-hidden="true">−</span><input id="grid-zoom" type="range" min="40" max="96" step="2" value="64" /><span aria-hidden="true">＋</span><output id="zoom-output">64</output></label>
+                  <label><span>显示指标</span><select id="heat-mode"><option value="clear">通关时间</option><option value="survival">生存率</option><option value="gold">金币 / 小时</option><option value="efficiency">目标偏差</option></select></label>
+                  <button id="run-all" class="button button-primary" type="button">运行全图体检</button>
+                </div>
+              </div>
+              <div class="map-layout">
+                <div class="map-area">
+                  <div class="canvas-scroll">
+                    <div class="canvas-world">
+                      <div id="map-grid" class="map-grid" role="grid" aria-label="10×10 关卡地图"></div>
+                    </div>
+                  </div>
+                  <div id="icon-legend" class="icon-legend" aria-label="地图图标图例"></div>
+                  <div class="heat-legend"><span>危险 / 偏慢</span><i></i><span>健康</span><i></i><span>过快 / 过易</span></div>
+                </div>
+                <aside class="stage-detail">
+                  <div class="detail-head"><div><div class="section-label">ENCOUNTER POOL</div><h2>刷怪构成</h2></div><span id="monster-count" class="count-pill">0</span></div>
+                  <div id="monster-list" class="monster-list"></div>
+                  <div class="detail-actions">
+                    <button id="run-stage" class="button button-primary button-block" type="button">模拟当前关卡</button>
+                    <button id="snapshot-a" class="button" type="button">存为方案 A</button>
+                    <button id="snapshot-b" class="button" type="button">存为方案 B</button>
+                  </div>
+                </aside>
+                <aside class="stage-result-panel">
+                  <div class="detail-head"><div><div class="section-label">STAGE RESULT</div><h2>模拟结果</h2></div><span id="result-coord" class="coord-badge">--</span></div>
+                  <div id="stage-result" class="stage-result"></div>
+                </aside>
+              </div>
+            </section>
+
+            <section class="diagnostics-panel">
+              <div class="diagnostics-heading"><div><div class="section-label">BOTTLENECKS</div><h2>全图体检</h2></div><span id="issue-count" class="count-pill">尚未运行</span></div>
+              <div id="issue-list" class="issue-list"><div class="empty-state">运行全图体检后，这里会按严重程度列出卡点、奖励异常和空关卡。</div></div>
+            </section>
+          </div>
+
+          <div id="progression-view" class="view">
+            <section class="progression-controls">
+              <div><div class="section-label">PROGRESSION RUN</div><h1>挂机流程推演</h1></div>
+              <div class="inline-fields">
+                <label class="field"><span>推演时长 / 分钟</span><input id="progress-minutes" type="number" min="10" max="10080" step="10" /></label>
+                <label class="field"><span>初始金币</span><input id="start-gold" type="number" min="0" step="10" /></label>
+                <label class="field"><span>升级基础价格</span><input id="upgrade-cost" type="number" min="1" step="10" /></label>
+                <label class="field"><span>价格成长</span><input id="upgrade-cost-growth" type="number" min="1" max="10" step="0.05" /></label>
+                <label class="field"><span>每级攻击提升 / %</span><input id="upgrade-power" type="number" min="0.1" max="500" step="1" /></label>
+                <button id="run-progression" class="button button-primary" type="button">开始推演</button>
+              </div>
+            </section>
+            <div class="progression-summary">
+              <div class="metric"><span>最终关卡</span><strong id="flow-stage">--</strong><small id="flow-coordinate">--</small></div>
+              <div class="metric"><span>购买升级</span><strong id="flow-upgrades">0 次</strong><small id="flow-attack">攻击 0</small></div>
+              <div class="metric"><span>最终资源</span><strong id="flow-gold">0 金币</strong><small id="flow-exp">0 经验</small></div>
+              <div class="metric"><span>最长等待</span><strong id="flow-wait">--</strong><small>两次成长之间</small></div>
+            </div>
+            <section class="timeline-panel">
+              <div class="timeline-head"><div><div class="section-label">PLAYER JOURNEY</div><h2>成长时间线</h2></div><div id="timeline-scale"></div></div>
+              <div id="timeline-chart" class="timeline-chart"></div>
+              <div id="timeline-events" class="timeline-events"></div>
+            </section>
+          </div>
+
+          <div id="compare-view" class="view">
+            <section class="compare-heading">
+              <div><div class="section-label">A / B SCENARIO</div><h1>方案对比</h1></div>
+              <p>在关卡验证页调整参数后分别存为 A、B，这里只显示真正影响决策的差异。</p>
+            </section>
+            <div class="compare-grid">
+              <section class="scenario-column"><div class="scenario-head"><h2>方案 A</h2><span id="a-state">未保存</span></div><div id="a-results" class="scenario-results"></div></section>
+              <section class="delta-column"><div class="scenario-head"><h2>变化</h2><span>以 A 为基准</span></div><div id="delta-results" class="scenario-results"></div></section>
+              <section class="scenario-column"><div class="scenario-head"><h2>方案 B</h2><span id="b-state">未保存</span></div><div id="b-results" class="scenario-results"></div></section>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="statusbar">
+        <span id="data-status">演示地图 · 可直接调参</span><span id="simulation-status">固定种子 · 结果可复现</span><span class="status-spacer"></span><span>校准模型 · 不写回工程</span>
+      </footer>
+    </div>
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+    <script src="../../vendor/exceljs.min.js"></script>
+    <script src="./app.js?v=20260813-idle-lab-2"></script>
+  </body>
+</html>
