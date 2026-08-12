@@ -1,8 +1,6 @@
-<<<<<<< Updated upstream
-# ya的yami妙妙小工具
-=======
-# YAHZJ · Yami 工具合集
->>>>>>> Stashed changes
+
+# ya的YAMI妙妙小工具
+
 
 纯静态 Web 工具合集，所有工程文件均在浏览器本地读取和处理。
 
