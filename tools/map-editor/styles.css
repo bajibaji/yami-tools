@@ -97,6 +97,9 @@ button { cursor: pointer; }
 .zoom-control output { width: 18px; color: var(--muted); text-align: right; }
 
 .canvas-scroll { min-height: 0; flex: 1 1 0; overflow: auto; padding: 10px; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--surface-3) transparent; }
+.canvas-scroll.is-pan-ready { cursor: grab; }
+.canvas-scroll.is-panning { cursor: grabbing; user-select: none; }
+.canvas-scroll.is-panning .map-grid { pointer-events: none; }
 .map-grid {
   width: max-content; margin: 0 auto; display: grid;
   grid-template-columns: 25px repeat(10, var(--cell-size)); grid-template-rows: 25px repeat(10, var(--cell-size)); gap: 3px;

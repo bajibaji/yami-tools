@@ -1,4 +1,4 @@
-/* 地图编辑器 v0.6.0 - 10x10 生产工作台 */
+/* 地图编辑器 v0.7.0 - 10x10 生产工作台 */
 'use strict'
 
 const ROWS = 10
@@ -208,6 +208,7 @@ function initializeMapEditor() {
     actorTargetIndex: null,
     projectScanGeneration: 0,
     projectWarnings: [],
+    pan: { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false, suppressClick: false, spaceDown: false },
   }
   state.cleanSnapshot = snapshotGrid()
 
@@ -535,6 +536,10 @@ function initializeMapEditor() {
   }
 
   function handleCellSelection(r, c, event = {}) {
+    if (state.pan.suppressClick) {
+      state.pan.suppressClick = false
+      return
+    }
     const key = coordKey(r, c)
     if (event.shiftKey) {
       state.selected = new Set(rectangleCoords(state.anchor, { r, c }).map((coord) => coordKey(coord.r, coord.c)))
@@ -722,7 +727,11 @@ function initializeMapEditor() {
 
   function cellTooltip(cell, r, c) {
     const monsters = cell.monsters.length
-      ? cell.monsters.map((monster) => `${monster.id} · Lv${monster.lvMin}-${monster.lvMax} · 权重 ${monster.weight}`).join('\n')
+      ? cell.monsters.map((monster) => {
+        const actor = state.actorMap.get(String(monster.id).toLowerCase())
+        const identity = actor ? `${actor.name}（${monster.id}）` : monster.id
+        return `${identity} · Lv${monster.lvMin}-${monster.lvMax} · 权重 ${monster.weight}`
+      }).join('\n')
       : '无刷怪'
     return `${cell.name || '无地点'} · R${r + 1} C${c + 1}\n图标 ${cell.icon}（${iconLabel(cell.icon)}）\n右:${cell.Passability.right ? '通' : '断'} 下:${cell.Passability.down ? '通' : '断'}\n${monsters}`
   }
@@ -1510,6 +1519,40 @@ function initializeMapEditor() {
       els.canvasScroll.scrollTop = contentY * ratio - (event.clientY - rect.top)
     })
   }, { passive: false })
+  els.canvasScroll.addEventListener('pointerdown', (event) => {
+    const canPan = event.button === 1 || (event.button === 0 && state.pan.spaceDown)
+    if (!canPan) return
+    event.preventDefault()
+    state.pan.active = true
+    state.pan.pointerId = event.pointerId
+    state.pan.lastX = event.clientX
+    state.pan.lastY = event.clientY
+    state.pan.moved = false
+    els.canvasScroll.classList.add('is-panning')
+    els.canvasScroll.setPointerCapture?.(event.pointerId)
+  })
+  els.canvasScroll.addEventListener('pointermove', (event) => {
+    if (!state.pan.active || state.pan.pointerId !== event.pointerId) return
+    const dx = event.clientX - state.pan.lastX
+    const dy = event.clientY - state.pan.lastY
+    if (Math.abs(dx) + Math.abs(dy) > 1) state.pan.moved = true
+    els.canvasScroll.scrollLeft -= dx
+    els.canvasScroll.scrollTop -= dy
+    state.pan.lastX = event.clientX
+    state.pan.lastY = event.clientY
+  })
+  const stopPan = (event) => {
+    if (!state.pan.active || (event && state.pan.pointerId !== event.pointerId)) return
+    if (state.pan.moved) state.pan.suppressClick = true
+    if (state.pan.pointerId !== null) els.canvasScroll.releasePointerCapture?.(state.pan.pointerId)
+    state.pan.active = false
+    state.pan.pointerId = null
+    els.canvasScroll.classList.toggle('is-pan-ready', state.pan.spaceDown)
+    els.canvasScroll.classList.remove('is-panning')
+  }
+  els.canvasScroll.addEventListener('pointerup', stopPan)
+  els.canvasScroll.addEventListener('pointercancel', stopPan)
+  els.canvasScroll.addEventListener('auxclick', (event) => { if (event.button === 1) event.preventDefault() })
 
   document.addEventListener('keydown', (event) => {
     const modifier = event.ctrlKey || event.metaKey
@@ -1520,6 +1563,12 @@ function initializeMapEditor() {
     }
     if (event.key === 'Escape' && !els.jsonModal.classList.contains('hidden')) return closeJsonModal()
     if (isEditingTarget(event.target)) return
+    if (event.code === 'Space') {
+      event.preventDefault()
+      state.pan.spaceDown = true
+      els.canvasScroll.classList.add('is-pan-ready')
+      return
+    }
     if (modifier && event.key.toLowerCase() === 'z') {
       event.preventDefault()
       event.shiftKey ? redo() : undo()
@@ -1544,6 +1593,11 @@ function initializeMapEditor() {
     } else if (event.key === 'ArrowRight') {
       event.preventDefault(); moveSelection(0, 1, event.shiftKey)
     }
+  })
+  document.addEventListener('keyup', (event) => {
+    if (event.code !== 'Space') return
+    state.pan.spaceDown = false
+    if (!state.pan.active) els.canvasScroll.classList.remove('is-pan-ready')
   })
 
   document.addEventListener('dragenter', (event) => {
