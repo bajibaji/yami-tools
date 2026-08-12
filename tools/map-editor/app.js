@@ -175,7 +175,7 @@ function initializeMapEditor() {
     'btn-new', 'btn-import-json', 'btn-import-excel', 'btn-download', 'btn-undo', 'btn-redo',
     'btn-select-all', 'btn-clear-cells', 'btn-copy', 'btn-paste', 'btn-primary-only', 'btn-json',
     'btn-close-json', 'file-input', 'json-modal', 'json-preview', 'drop-overlay', 'toast-region', 'icon-legend',
-    'btn-project', 'btn-restore-project', 'project-state', 'project-input', 'btn-close-inspector', 'canvas-scroll',
+    'btn-project', 'btn-restore-project', 'project-state', 'project-input', 'btn-close-inspector', 'canvas-scroll', 'canvas-world',
     'actor-modal', 'btn-close-actor', 'actor-search', 'actor-list',
   ].map((id) => [camelId(id), document.getElementById(id)]))
 
@@ -208,7 +208,7 @@ function initializeMapEditor() {
     actorTargetIndex: null,
     projectScanGeneration: 0,
     projectWarnings: [],
-    pan: { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false, suppressClick: false, spaceDown: false },
+    pan: { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false, suppressClick: false, spaceDown: false, offsetX: 0, offsetY: 0 },
   }
   state.cleanSnapshot = snapshotGrid()
 
@@ -1507,18 +1507,48 @@ function initializeMapEditor() {
     const oldSize = Number(els.gridZoom.value)
     const nextSize = Math.max(Number(els.gridZoom.min), Math.min(Number(els.gridZoom.max), oldSize + (event.deltaY < 0 ? 4 : -4)))
     if (nextSize === oldSize) return
-    const rect = els.canvasScroll.getBoundingClientRect()
-    const contentX = els.canvasScroll.scrollLeft + event.clientX - rect.left
-    const contentY = els.canvasScroll.scrollTop + event.clientY - rect.top
-    const ratio = nextSize / oldSize
-    els.gridZoom.value = String(nextSize)
-    els.zoomOutput.textContent = String(nextSize)
-    document.documentElement.style.setProperty('--cell-size', `${nextSize}px`)
-    requestAnimationFrame(() => {
-      els.canvasScroll.scrollLeft = contentX * ratio - (event.clientX - rect.left)
-      els.canvasScroll.scrollTop = contentY * ratio - (event.clientY - rect.top)
-    })
+    // 锚点：优先取指针下的格子，按格内分数坐标补偿（格中心缩放前后均为 50%，精确）；
+    // 指针不在格子上时退回网格整体锚点。
+    const cellEl = document.elementFromPoint(event.clientX, event.clientY)?.closest('.map-cell')
+    const applySize = () => {
+      els.gridZoom.value = String(nextSize)
+      els.zoomOutput.textContent = String(nextSize)
+      document.documentElement.style.setProperty('--cell-size', `${nextSize}px`)
+    }
+    if (cellEl) {
+      const oldRect = cellEl.getBoundingClientRect()
+      const fx = (event.clientX - oldRect.left) / oldRect.width
+      const fy = (event.clientY - oldRect.top) / oldRect.height
+      applySize()
+      const newRect = cellEl.getBoundingClientRect() // 强制重排（offset 未变）
+      state.pan.offsetX += (event.clientX - newRect.width * fx) - newRect.left
+      state.pan.offsetY += (event.clientY - newRect.height * fy) - newRect.top
+    } else {
+      const gridRect = els.mapGrid.getBoundingClientRect()
+      const gx = event.clientX - gridRect.left
+      const gy = event.clientY - gridRect.top
+      applySize()
+      const newGridRect = els.mapGrid.getBoundingClientRect()
+      state.pan.offsetX += (event.clientX - gx) - newGridRect.left
+      state.pan.offsetY += (event.clientY - gy) - newGridRect.top
+    }
+    applyPan()
   }, { passive: false })
+  // 画布平移：拖动/缩放锚点全部基于 canvas-world 的 transform（滚动条无法表达无溢出方向的平移）
+  function applyPan() {
+    els.canvasWorld.style.transform = `translate(${state.pan.offsetX}px, ${state.pan.offsetY}px)`
+  }
+
+  // 网格在可视区居中（初始加载 / 双击空白重置）
+  function centerGrid() {
+    const csRect = els.canvasScroll.getBoundingClientRect()
+    const gridRect = els.mapGrid.getBoundingClientRect()
+    const pad = parseFloat(getComputedStyle(els.canvasWorld).paddingLeft) || 0
+    state.pan.offsetX = Math.round((csRect.width - gridRect.width) / 2 - pad)
+    state.pan.offsetY = Math.round((csRect.height - gridRect.height) / 2 - pad)
+    applyPan()
+  }
+
   els.canvasScroll.addEventListener('pointerdown', (event) => {
     const canPan = event.button === 1 || (event.button === 0 && state.pan.spaceDown)
     if (!canPan) return
@@ -1536,10 +1566,11 @@ function initializeMapEditor() {
     const dx = event.clientX - state.pan.lastX
     const dy = event.clientY - state.pan.lastY
     if (Math.abs(dx) + Math.abs(dy) > 1) state.pan.moved = true
-    els.canvasScroll.scrollLeft -= dx
-    els.canvasScroll.scrollTop -= dy
+    state.pan.offsetX += dx
+    state.pan.offsetY += dy
     state.pan.lastX = event.clientX
     state.pan.lastY = event.clientY
+    applyPan()
   })
   const stopPan = (event) => {
     if (!state.pan.active || (event && state.pan.pointerId !== event.pointerId)) return
@@ -1553,6 +1584,10 @@ function initializeMapEditor() {
   els.canvasScroll.addEventListener('pointerup', stopPan)
   els.canvasScroll.addEventListener('pointercancel', stopPan)
   els.canvasScroll.addEventListener('auxclick', (event) => { if (event.button === 1) event.preventDefault() })
+  // 双击空白处（画布背景）重置视图居中
+  els.canvasScroll.addEventListener('dblclick', (event) => {
+    if (event.target === els.canvasScroll || event.target === els.canvasWorld) centerGrid()
+  })
 
   document.addEventListener('keydown', (event) => {
     const modifier = event.ctrlKey || event.metaKey
@@ -1626,4 +1661,5 @@ function initializeMapEditor() {
   renderLegend()
   renderAll()
   loadRememberedProject()
+  centerGrid()
 }
