@@ -9,6 +9,7 @@
   // 重建数组会改变 loopList 的索引，因此 actorAttributes 必须排在 attribute 之前。
   const WRITE_MODE_ORDER = ['actorAttributes', 'attribute', 'event']
   const ACTOR_ATTRIBUTE_TYPES = new Set(['number', 'string', 'enum', 'boolean'])
+  const ROLE_SORT_OPTIONS = ['filename-asc', 'filename-desc', 'name-asc', 'name-desc', 'mtime-asc', 'mtime-desc']
   const SUPPORTED = new Set(['.item', '.equip', '.actor'])
   const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
   const BACKUP_DIRECTORY = 'Lootsmith Backups'
@@ -55,6 +56,12 @@
     drafts: new Map(),
     pending: new Set(),
     errors: [],
+    // 排序模式记住用户选择（刷新后仍生效），非法值回退默认文件名升序。
+    roleSort: ROLE_SORT_OPTIONS.includes(localStorage.getItem('loot-smith-role-sort')) ? localStorage.getItem('loot-smith-role-sort') : 'filename-asc',
+    // 保存流程进行中（用于自动同步忽略自身写入触发的事件）。
+    saving: false,
+    // Data/*.json 的文件句柄，供轮询兜底模式采集元数据。
+    metadataHandles: [],
   }
 
   const $ = (selector) => document.querySelector(selector)
@@ -62,7 +69,7 @@
   const els = {
     welcome: $('#welcome'), workspace: $('#workspace'), pickProject: $('#pick-project'), welcomePick: $('#welcome-pick'), fallback: $('#folder-fallback'),
     restoreLast: $('#restore-last'), lastProjectName: $('#last-project-name'),
-    projectState: $('#project-state'), saveAll: $('#save-all'), pendingCount: $('#pending-count'), roleSearch: $('#role-search'), roleList: $('#role-list'), roleCount: $('#role-count'),
+    projectState: $('#project-state'), saveAll: $('#save-all'), pendingCount: $('#pending-count'), roleSearch: $('#role-search'), roleSortButton: $('#role-sort-button'), roleSortValue: $('#role-sort-value'), roleSortMenu: $('#role-sort-menu'), roleList: $('#role-list'), roleCount: $('#role-count'),
     scanStatus: $('#scan-status'), rescan: $('#rescan'), noRole: $('#no-role'), roleEditor: $('#role-editor'), roleName: $('#role-name'), rolePath: $('#role-path'), roleGuid: $('#role-guid'), roleAvatar: $('#role-avatar'), roleSlotState: $('#role-slot-state'),
     saveCurrent: $('#save-current'), dropCount: $('#drop-count'), dirtyLabel: $('#dirty-label'), dropPanel: $('#drop-panel'), dropList: $('#drop-list'), dropEmpty: $('#drop-empty'), storageModeNote: $('#storage-mode-note'), catalogSearch: $('#catalog-search'), catalogList: $('#catalog-list'), catalogEmpty: $('#catalog-empty'),
     itemCountLabel: $('#item-count-label'), equipCountLabel: $('#equip-count-label'), itemTabCount: $('#item-tab-count'), equipmentTabCount: $('#equipment-tab-count'), composer: $('#selection-composer'), clearSelection: $('#clear-selection'), selectedType: $('#selected-resource-type'), selectedName: $('#selected-resource-name'), itemQuantityConfig: $('#item-quantity-config'), equipmentQuantityNote: $('#equipment-quantity-note'), fixedQuantityRow: $('#fixed-quantity-row'), rangeQuantityRow: $('#range-quantity-row'), fixedQuantity: $('#fixed-quantity'), minQuantity: $('#min-quantity'), maxQuantity: $('#max-quantity'), dropRateSlider: $('#drop-rate-slider'), dropRatePercent: $('#drop-rate-percent'), dropRateOutput: $('#drop-rate-output'), dropRateRaw: $('#drop-rate-raw'), cancelEdit: $('#cancel-edit'), insertDrop: $('#insert-drop'), toastRegion: $('#toast-region'),
@@ -624,6 +631,9 @@
     if (root) {
       const dataDir = await findNestedHandle(root, ['Data'])
       if (dataDir) {
+        for (const name of ['attribute.json', 'localization.json', 'enumeration.json', 'commands.json']) {
+          try { state.metadataHandles.push(await dataDir.getFileHandle(name)) } catch {}
+        }
         try { attributes = await readJsonHandle(await dataDir.getFileHandle('attribute.json')) } catch {}
         try { localization = await readJsonHandle(await dataDir.getFileHandle('localization.json')) } catch {}
         try { enumeration = await readJsonHandle(await dataDir.getFileHandle('enumeration.json')) } catch {}
@@ -697,7 +707,10 @@
       const batch = entries.slice(offset, offset + batchSize)
       await Promise.all(batch.map(async (entry) => {
         try {
-          entry.raw = await readText(entry.handle || entry.file)
+          const source = entry.handle || entry.file
+          const file = source.getFile ? await source.getFile() : source
+          entry.raw = await file.text()
+          entry.lastModified = file.lastModified || 0
         } catch (error) {
           state.errors.push(`${entry.path}: 读取失败`)
           return
@@ -713,7 +726,8 @@
   }
 
   async function scanProject({ rootHandle = state.rootHandle, files = null } = {}) {
-    state.errors = []; state.drafts.clear(); state.pending.clear(); state.selectedResource = null
+    stopAutoSync()
+    state.errors = []; state.drafts.clear(); state.pending.clear(); state.selectedResource = null; state.metadataHandles = []
     state.actorAttributeCache.clear()
     // 重新扫描后必须回到掉落编辑模式；人物属性模式不持久化。
     state.workspaceMode = 'drop'
@@ -741,6 +755,95 @@
     if (lastRolePath && state.roles.some((role) => role.path === lastRolePath)) selectRole(lastRolePath)
     setScanStatus(state.errors.length ? `扫描完成 · ${state.errors.length} 个文件异常` : `扫描完成 · ${all.length} 个资源`)
     showToast('扫描完成', `角色 ${state.roles.length} · 物品 ${state.items.length} · 装备 ${state.equipments.length}`, state.errors.length ? 'error' : 'success')
+    startAutoSync()
+  }
+
+  // ---- 工程文件自动同步 ----
+  // 优先 FileSystemObserver 事件驱动（Chrome 133+ 默认启用），收到 modified/appeared/disappeared/moved
+  // 记录即防抖重扫；不可用时回退 5 秒元数据轮询（lastModified + size，不读内容）。
+  // ponytail: 轮询按 mtime+size 判断，同值但内容变化检测不到（罕见）；要内容级校验需全读+hash，出现实际需求再加。
+  // ponytail: 保存期间忽略全部事件（自身写入与外部分不开）；窗口期外部变化会被吞，下次外部变化自愈。
+  const WATCH_INTERVAL_MS = 5000
+  let fileObserver = null
+  let watchTimer = null
+  let watchSnapshot = new Map()
+  let scheduleRescanTimer = null
+
+  function scheduledRescan() {
+    clearTimeout(scheduleRescanTimer)
+    scheduleRescanTimer = setTimeout(() => {
+      scheduleRescanTimer = null
+      if (state.pending.size) {
+        showToast('检测到工程文件变化', '有未保存修改，暂不自动刷新；保存后将自动同步', 'error')
+        if (watchTimer) captureWatchSnapshot()
+        return
+      }
+      scanProject()
+    }, 500)
+  }
+
+  function onFileChange(records) {
+    if (state.saving) return
+    const invalid = records.some((record) => record.type === 'errored' || record.type === 'unknown')
+    const changed = records.some((record) => ['appeared', 'disappeared', 'modified', 'moved'].includes(record.type))
+    if (invalid) stopAutoSync()
+    if (changed || invalid) scheduledRescan()
+    if (invalid) startAutoSync()
+  }
+
+  function stopAutoSync() {
+    fileObserver?.disconnect(); fileObserver = null
+    clearInterval(watchTimer); watchTimer = null
+    clearTimeout(scheduleRescanTimer); scheduleRescanTimer = null
+    watchSnapshot = new Map()
+  }
+
+  async function startAutoSync() {
+    if (!state.rootHandle) return
+    if ('FileSystemObserver' in window) {
+      fileObserver = new FileSystemObserver(onFileChange)
+      try { await fileObserver.observe(state.rootHandle, { recursive: true }) } catch { fileObserver = null }
+    }
+    if (fileObserver) {
+      setScanStatus(state.errors.length ? `扫描完成 · ${state.errors.length} 个文件异常 · 实时监听` : `扫描完成 · 实时监听`)
+    } else {
+      await captureWatchSnapshot()
+      watchTimer = setInterval(async () => {
+        if (document.visibilityState !== 'visible') return
+        try { if (await pollWatchSnapshot()) scheduledRescan() } catch {}
+      }, WATCH_INTERVAL_MS)
+      setScanStatus(state.errors.length ? `扫描完成 · ${state.errors.length} 个文件异常 · 自动同步(5s)` : `扫描完成 · 自动同步(5s)`)
+    }
+  }
+
+  async function captureWatchSnapshot() {
+    watchSnapshot = new Map()
+    for (const source of [...(state.allFiles || []), ...state.metadataHandles]) {
+      const handle = source.handle || source
+      if (!handle) continue
+      try {
+        const file = await handle.getFile()
+        watchSnapshot.set(source.path || handle.name, { mtime: file.lastModified, size: file.size })
+      } catch {}
+    }
+  }
+
+  async function pollWatchSnapshot() {
+    let changed = false
+    const next = new Map()
+    for (const source of [...(state.allFiles || []), ...state.metadataHandles]) {
+      const handle = source.handle || source
+      if (!handle) continue
+      try {
+        const file = await handle.getFile()
+        const key = source.path || handle.name
+        const prev = watchSnapshot.get(key)
+        next.set(key, { mtime: file.lastModified, size: file.size })
+        if (!prev || prev.mtime !== file.lastModified || prev.size !== file.size) changed = true
+      } catch { changed = true }
+    }
+    watchSnapshot = next
+    return changed
   }
 
   function sortRecords(a, b) { return a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) || a.path.localeCompare(b.path) }
@@ -868,9 +971,38 @@
     else renderRoleEditor()
   }
 
+  function closeRoleSortMenu() {
+    els.roleSortMenu.classList.add('hidden')
+    els.roleSortButton.setAttribute('aria-expanded', 'false')
+  }
+
+  // 同步按钮文案与菜单高亮到当前排序模式。
+  function updateRoleSortUi() {
+    const selected = els.roleSortMenu.querySelector(`.role-sort-option[data-role-sort="${state.roleSort}"]`)
+    els.roleSortValue.textContent = selected?.textContent || '文件名 ↑'
+    els.roleSortMenu.querySelectorAll('.role-sort-option').forEach((option) => option.classList.toggle('active', option.dataset.roleSort === state.roleSort))
+    closeRoleSortMenu()
+  }
+
+  // 角色列表排序：默认按文件名升序（numeric 保证「怪物2」排在「怪物13」前）。
+  // 可选文件名/名称/修改时间 × 升/降序。文件创建时间浏览器 API 不提供，未列入。
+  function sortRoleRecords(a, b) {
+    const byName = (x, y) => x.localeCompare(y, 'zh-CN', { numeric: true })
+    let result
+    switch (state.roleSort) {
+      case 'filename-desc': result = byName(basename(b.path), basename(a.path)); break
+      case 'name-asc': result = byName(a.name, b.name); break
+      case 'name-desc': result = byName(b.name, a.name); break
+      case 'mtime-asc': result = (a.lastModified || 0) - (b.lastModified || 0); break
+      case 'mtime-desc': result = (b.lastModified || 0) - (a.lastModified || 0); break
+      default: result = byName(basename(a.path), basename(b.path))
+    }
+    return result || a.path.localeCompare(b.path)
+  }
+
   function renderRoleList() {
     const query = state.roleSearch.trim().toLowerCase()
-    const roles = state.roles.filter((role) => !query || `${role.name} ${role.localizationId} ${role.path} ${role.guid}`.toLowerCase().includes(query))
+    const roles = state.roles.filter((role) => !query || `${role.name} ${role.localizationId} ${role.path} ${role.guid}`.toLowerCase().includes(query)).sort(sortRoleRecords)
     els.roleList.innerHTML = roles.length ? roles.map((role) => {
       const edited = Boolean(role.edited || isDirty(role))
       return `<div class="role-row ${state.selectedRole?.path === role.path ? 'selected' : ''} ${edited ? 'edited-role' : ''}" data-role-path="${escapeHtml(role.path)}" title="${edited ? '此角色已编辑' : ''}"><div class="role-avatar-small">${previewMarkup(role, '✦')}</div><div class="role-row-info"><div class="role-row-name">${escapeHtml(role.name)}</div><div class="role-row-path">${escapeHtml(role.localizationId ? `本地化 ${role.localizationId}` : role.path)}</div></div><span class="role-row-status ${isDirty(role) ? 'dirty' : ''} ${edited ? 'edited' : ''}"></span></div>`
@@ -1733,6 +1865,7 @@
   async function saveCurrent() {
     if (!state.selectedRole || !isDirty(state.selectedRole)) return
     let backup = null
+    state.saving = true
     try {
       backup = state.rootHandle ? await createBackupBatch([state.selectedRole]) : null
       await writeRoleModes(state.selectedRole, [...state.selectedRole.dirtyModes], Boolean(backup))
@@ -1742,6 +1875,9 @@
         try { await rollbackRoles([state.selectedRole], backup.originalTexts, backup.draftEntries); showToast('保存失败，已自动回滚', `${error.message} · 用户编辑仍保留为未保存状态`, 'error') }
         catch (rollbackError) { showToast('保存与回滚均失败', rollbackError.message, 'error') }
       } else showToast('保存失败，原文件未修改', error.message, 'error')
+    } finally {
+      state.saving = false
+      if (watchTimer) captureWatchSnapshot()
     }
   }
 
@@ -1756,6 +1892,7 @@
     }
     let backup = null
     const attempted = []
+    state.saving = true
     try {
       backup = await createBackupBatch(roles)
       for (const role of roles) {
@@ -1768,6 +1905,9 @@
         try { await rollbackRoles(attempted, backup.originalTexts, backup.draftEntries); showToast('保存失败，已自动回滚', `${error.message} · 用户编辑仍保留为未保存状态`, 'error') }
         catch (rollbackError) { showToast('保存与回滚均失败', rollbackError.message, 'error') }
       } else showToast('保存失败，原文件未修改', error.message, 'error')
+    } finally {
+      state.saving = false
+      if (watchTimer) captureWatchSnapshot()
     }
   }
 
@@ -1792,6 +1932,24 @@
     const debouncedCatalogRender = debounce(() => renderCatalog())
     const debouncedAttributeRender = debounce(() => renderActorAttributeEditor())
     els.roleSearch.addEventListener('input', (event) => { state.roleSearch = event.target.value; debouncedRoleListRender() }); els.catalogSearch.addEventListener('input', (event) => { state.catalogSearch = event.target.value; debouncedCatalogRender() })
+    els.roleSortButton.addEventListener('click', (event) => {
+      event.stopPropagation()
+      const open = els.roleSortMenu.classList.toggle('hidden') === false
+      els.roleSortButton.setAttribute('aria-expanded', String(open))
+    })
+    els.roleSortMenu.addEventListener('click', (event) => {
+      const option = event.target.closest('.role-sort-option')
+      if (!option) return
+      state.roleSort = option.dataset.roleSort
+      localStorage.setItem('loot-smith-role-sort', state.roleSort)
+      updateRoleSortUi()
+      renderRoleList()
+    })
+    document.addEventListener('click', (event) => {
+      if (els.roleSortMenu.classList.contains('hidden')) return
+      if (!event.target.closest('.role-sort-box')) closeRoleSortMenu()
+    })
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeRoleSortMenu() })
     // 列表事件委托：列表内容重建时无需重新绑定监听器。
     els.roleList.addEventListener('click', (event) => { const row = event.target.closest('.role-row'); if (row) selectRole(row.dataset.rolePath) })
     els.dropList.addEventListener('click', (event) => {
@@ -1866,5 +2024,6 @@
   }
 
   bindEvents()
+  updateRoleSortUi()
   loadRememberedProject()
 })()

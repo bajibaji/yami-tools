@@ -441,6 +441,8 @@ function initializeIdleLab() {
     iconTypes: clone(DEFAULT_ICON_TYPES),
     imagePaths: new Map(),
     bitmapCache: new Map(),
+    // 自动同步关心的文件路径（轮询兜底模式用）。
+    watchPaths: [],
   }
   state.player.actorId = demo.playerActors[0].id
   Object.assign(state.player, pickPlayerStats(demo.playerActors[0]))
@@ -524,6 +526,7 @@ function initializeIdleLab() {
     return grid
   }
   async function scanProject(root) {
+    stopAutoSync()
     els.projectState.textContent = '正在扫描…'
     const [manifest, attribute, localizationData] = await Promise.all([
       readText(root, 'Data/manifest.json').then(JSON.parse), readText(root, 'Data/attribute.json').then(JSON.parse),
@@ -566,6 +569,10 @@ function initializeIdleLab() {
     state.iconTypes = iconTypes
     state.imagePaths = imagePaths
     state.results.clear()
+    state.watchPaths = ['Data/manifest.json', 'Data/attribute.json', 'Data/localization.json',
+      ...(manifest.actors || []).map((entry) => entry.path),
+      ...(mapEntry ? [mapEntry.path] : []),
+      ...(iconEvent ? [iconEvent.path] : [])]
     const first = combatRouteFromGrid(grid)[0] || routeFromGrid(grid)[0]
     if (first) state.selected = { r: first.r, c: first.c }
     await setting('last-project-handle', root).catch(() => {})
@@ -574,8 +581,10 @@ function initializeIdleLab() {
     populateActors()
     renderAll()
     toast(`已读取 ${actors.length} 个角色与 ${source}`)
+    startAutoSync()
   }
   async function scanProjectFiles(files) {
+    stopAutoSync()
     const fileMap = new Map(files.map((file) => [normalizePath(file.webkitRelativePath || file.name).replace(/^[^/]+\//, ''), file]))
     const readFile = async (path) => {
       const file = fileMap.get(normalizePath(path))
@@ -634,6 +643,83 @@ function initializeIdleLab() {
     renderAll()
     toast(`已读取 ${actors.length} 个角色与 ${source}`)
   }
+
+  // ---- 工程文件自动同步 ----
+  // 优先 FileSystemObserver 事件驱动（Chrome 133+），不可用时回退 5 秒元数据轮询。
+  // 全量重扫会重解析 Excel；ponytail: 若解析变慢再拆增量重建 actors。
+  const WATCH_INTERVAL_MS = 5000
+  let fileObserver = null
+  let watchTimer = null
+  let watchSnapshot = new Map()
+  let scheduleRescanTimer = null
+
+  function scheduledRescan() {
+    clearTimeout(scheduleRescanTimer)
+    scheduleRescanTimer = setTimeout(async () => {
+      scheduleRescanTimer = null
+      if (!state.rootHandle) return
+      await scanProject(state.rootHandle)
+      toast('工程文件已更新，已自动重新读取', 'info')
+    }, 500)
+  }
+
+  function onFileChange(records) {
+    const invalid = records.some((record) => record.type === 'errored' || record.type === 'unknown')
+    const changed = records.some((record) => ['appeared', 'disappeared', 'modified', 'moved'].includes(record.type))
+    if (invalid) stopAutoSync()
+    if (changed || invalid) scheduledRescan()
+    if (invalid) startAutoSync()
+  }
+
+  function stopAutoSync() {
+    fileObserver?.disconnect(); fileObserver = null
+    clearInterval(watchTimer); watchTimer = null
+    clearTimeout(scheduleRescanTimer); scheduleRescanTimer = null
+    watchSnapshot = new Map()
+  }
+
+  async function startAutoSync() {
+    if (!state.rootHandle) return
+    if ('FileSystemObserver' in window) {
+      fileObserver = new FileSystemObserver(onFileChange)
+      try { await fileObserver.observe(state.rootHandle, { recursive: true }) } catch { fileObserver = null }
+    }
+    if (!fileObserver) {
+      await captureWatchSnapshot()
+      watchTimer = setInterval(async () => {
+        if (document.visibilityState !== 'visible') return
+        try { if (await pollWatchSnapshot()) scheduledRescan() } catch {}
+      }, WATCH_INTERVAL_MS)
+    }
+  }
+
+  async function fileStamp(path) {
+    try {
+      const file = await (await getHandle(state.rootHandle, path)).getFile()
+      return { mtime: file.lastModified, size: file.size }
+    } catch { return null }
+  }
+
+  async function captureWatchSnapshot() {
+    watchSnapshot = new Map()
+    for (const path of state.watchPaths || []) {
+      const stamp = await fileStamp(path)
+      if (stamp) watchSnapshot.set(normalizePath(path), stamp)
+    }
+  }
+
+  async function pollWatchSnapshot() {
+    let changed = false
+    for (const path of state.watchPaths || []) {
+      const key = normalizePath(path)
+      const stamp = await fileStamp(path)
+      const prev = watchSnapshot.get(key)
+      if (!stamp || !prev || prev.mtime !== stamp.mtime || prev.size !== stamp.size) changed = true
+      if (stamp) watchSnapshot.set(key, stamp)
+    }
+    return changed
+  }
+
   async function chooseProject() {
     try {
       if (!window.showDirectoryPicker) return els.folderFallback.click()

@@ -2,7 +2,7 @@
 
 > 本文件只负责角色编辑器。地图编辑器的当前实现、真实数据验证和后续边界见 `HANDOFF-MAP-EDITOR.md`，生产力验收标准见 `MAP_EDITOR_PRODUCTIVITY_PLAN.md`。
 
-> 最后整理：2026-08-10  
+> 最后整理：2026-08-13
 > 代码仓库：`D:\Documents\GitHub\yami-tools`  
 > 游戏工程：`D:\new-game`  
 > GitHub Pages：<https://bajibaji.github.io/yami-tools/>  
@@ -11,8 +11,8 @@
 ## 1. 当前状态
 
 - 当前分支：`main`
-- 当前基线提交：`caaf6cb Update index.html`
-- 当前版本标识：`v0.3.1`
+- 当前基线提交：`588a264 更新UI`（工作区有未提交修改：自动同步 + 排序 + v0.7.1）
+- 当前版本标识：`v0.7.1`
 - `main` 与 `origin/main` 已同步。
 - 创建本文件前工作区是干净的；`HANDOFF.md` 是本次新增的交接文件，尚未要求提交或推送。
 - 最新功能已经包含：资源拖拽、掉落参数弹窗、已编辑角色绿色高亮。
@@ -55,8 +55,8 @@ caaf6cb Update index.html                         # 版本号更新为 v0.3.1
 当前静态资源缓存版本：
 
 ```html
-<link rel="stylesheet" href="./styles.css?v=20260810-drag-drop-1" />
-<script src="./app.js?v=20260810-drag-drop-1"></script>
+<link rel="stylesheet" href="./styles.css?v=20260813-character-editor-8" />
+<script src="./app.js?v=20260813-character-editor-8"></script>
 ```
 
 以后修改线上 JS/CSS 时，应同步更新这个版本参数，避免 GitHub Pages 或浏览器继续使用旧资源。
@@ -175,6 +175,7 @@ DROP_COMMAND_ID   = '249c9c9d4de177c9'
 - 按 `portrait` / `icon` 与 `clip` 绘制头像或图标；
 - 缺失图片时显示安全兜底字符，不会挡住页面点击；
 - 支持角色继承链中的头像和掉落来源。
+- **角色列表排序**：`#role-sort-box` 是**自定义下拉**（原生 select 弹出层在用户环境为系统白底、`color-scheme` 不生效，CSS 管不到，不要改回原生 select）。分组「文件名 / 名称 / 修改时间」× 升/降共 6 项，默认「文件名 ↑」（`basename` localeCompare zh-CN numeric）。排序模式持久化在 localStorage `loot-smith-role-sort`，刷新后保持。修改时间来自扫描时 `getFile().lastModified`（挂在 entry.lastModified 上）。**创建日期排序做不了**：浏览器无文件创建时间 API，工程文件系统 birthtime 全是复制时间戳，actor/manifest 无时间字段。
 
 ### 6.2 掉落编辑
 
@@ -248,6 +249,16 @@ Lootsmith Backups/<时间戳>/
 - 批量保存中途失败会自动回滚已经写入的角色；
 - 备份失败、文件被外部修改或回读不一致时，不覆盖原角色文件；
 - 不支持 File System Access API 时进入导入预览模式，保存只下载修改副本。
+
+### 6.6 工程文件自动同步（2026-08-13）
+
+三个工具统一机制（细节见 `MEMORY.md` §4）：
+
+- 优先 `FileSystemObserver`（Chrome 133+）观察工程根目录，`modified/appeared/disappeared/moved` 事件 500ms 防抖后自动重扫；不可用时回退 5 秒元数据轮询（`lastModified`+`size`），页面隐藏时暂停。
+- 本工具特有保护：`state.pending.size > 0`（有未保存草稿）时**跳过自动重扫**并 toast 提示，绝不丢用户编辑；保存期间 `state.saving` 忽略自身写入触发的事件，保存完成后刷新轮询快照基线。
+- 相关函数：`startAutoSync` / `stopAutoSync` / `scheduledRescan` / `onFileChange` / `captureWatchSnapshot` / `pollWatchSnapshot`（`scanProject` 之后）。
+- 已知限制见代码内 `ponytail:` 注释（mtime+size 同值检测不到内容变化；保存窗口期外部变化被吞、下次自愈）。
+- fallback 导入模式（无目录句柄）不启动同步。
 
 ## 7. 已修复的重要 Bug
 
@@ -382,6 +393,7 @@ Chrome / Edge 在 `localhost` 或 HTTPS 环境下可以使用 File System Access
 - 保存按钮才可以修改原角色文件。
 - 保持物品、装备、角色列表的独立滚动。
 - 装备数量必须固定为 1。
+- 角色排序是自定义下拉（`#role-sort-box` + `#role-sort-menu`），不要改回原生 `<select>`；排序模式持久化（`loot-smith-role-sort`）是用户明确要求的，不要删除。
 - 角色事件更新时必须保留未知命令和未知参数。
 - 后续若增加自动化测试，建议把当前临时 Playwright 场景迁入仓库的 `tests/`。
 

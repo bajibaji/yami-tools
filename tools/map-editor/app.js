@@ -175,7 +175,7 @@ function initializeMapEditor() {
     'btn-new', 'btn-import-json', 'btn-import-excel', 'btn-download', 'btn-undo', 'btn-redo',
     'btn-select-all', 'btn-clear-cells', 'btn-copy', 'btn-paste', 'btn-primary-only', 'btn-json',
     'btn-close-json', 'file-input', 'json-modal', 'json-preview', 'drop-overlay', 'toast-region', 'icon-legend',
-    'btn-project', 'btn-restore-project', 'project-state', 'project-input', 'btn-close-inspector', 'canvas-scroll', 'canvas-world',
+    'btn-project', 'btn-restore-project', 'btn-rescan', 'project-state', 'project-input', 'btn-close-inspector', 'canvas-scroll', 'canvas-world',
     'actor-modal', 'btn-close-actor', 'actor-search', 'actor-list',
   ].map((id) => [camelId(id), document.getElementById(id)]))
 
@@ -208,6 +208,8 @@ function initializeMapEditor() {
     actorTargetIndex: null,
     projectScanGeneration: 0,
     projectWarnings: [],
+    // 自动同步关心的文件路径（轮询兜底模式用）。
+    watchPaths: [],
     pan: { active: false, pointerId: null, lastX: 0, lastY: 0, moved: false, suppressClick: false, spaceDown: false, offsetX: 0, offsetY: 0 },
   }
   state.cleanSnapshot = snapshotGrid()
@@ -367,6 +369,7 @@ function initializeMapEditor() {
   }
 
   async function scanProjectSources({ root = null, files = [] } = {}) {
+    stopAutoSync()
     const generation = ++state.projectScanGeneration
     els.projectState.textContent = '正在读取工程…'
     els.btnProject.disabled = true
@@ -452,13 +455,17 @@ function initializeMapEditor() {
       state.actors = actors
       state.actorMap = actorMap
       state.projectWarnings = projectWarnings
+      state.watchPaths = ['Data/manifest.json', 'Data/attribute.json', 'Data/localization.json', eventPath,
+        ...(manifest.actors || []).map((entry) => entry.path)]
       els.projectState.textContent = `${state.projectName} · ${actors.length} 角色`
       els.btnProject.textContent = '更换工程'
       els.btnRestoreProject.classList.add('hidden')
+      els.btnRescan.classList.toggle('hidden', !root)
       if (root) await rememberProjectHandle(root, generation)
       renderAll()
       renderLegend()
       toast(`工程读取完成：${actors.length} 个角色 · ${iconTypes.filter((entry) => entry.imageGuid).length} 个图标映射${projectWarnings.length ? ` · ${projectWarnings.length} 个资源提醒` : ''}`)
+      startAutoSync()
     } catch (error) {
       if (generation !== state.projectScanGeneration) return
       els.projectState.textContent = state.projectName ? `${state.projectName} · ${state.actors.length} 角色` : '工程读取失败'
@@ -469,6 +476,82 @@ function initializeMapEditor() {
         els.btnRestoreProject.disabled = false
       }
     }
+  }
+
+  // ---- 工程文件自动同步 ----
+  // 优先 FileSystemObserver 事件驱动（Chrome 133+），不可用时回退 5 秒元数据轮询。
+  // 重扫只更新工程资源（角色/图标/头像），不动正在编辑的地图、选择与历史。
+  const WATCH_INTERVAL_MS = 5000
+  let fileObserver = null
+  let watchTimer = null
+  let watchSnapshot = new Map()
+  let scheduleRescanTimer = null
+
+  function scheduledRescan() {
+    clearTimeout(scheduleRescanTimer)
+    scheduleRescanTimer = setTimeout(async () => {
+      scheduleRescanTimer = null
+      if (!state.rootHandle) return
+      await scanProjectSources({ root: state.rootHandle })
+      toast('工程文件已更新，已自动重新读取', 'info')
+    }, 500)
+  }
+
+  function onFileChange(records) {
+    const invalid = records.some((record) => record.type === 'errored' || record.type === 'unknown')
+    const changed = records.some((record) => ['appeared', 'disappeared', 'modified', 'moved'].includes(record.type))
+    if (invalid) stopAutoSync()
+    if (changed || invalid) scheduledRescan()
+    if (invalid) startAutoSync()
+  }
+
+  function stopAutoSync() {
+    fileObserver?.disconnect(); fileObserver = null
+    clearInterval(watchTimer); watchTimer = null
+    clearTimeout(scheduleRescanTimer); scheduleRescanTimer = null
+    watchSnapshot = new Map()
+  }
+
+  async function startAutoSync() {
+    if (!state.rootHandle) return
+    if ('FileSystemObserver' in window) {
+      fileObserver = new FileSystemObserver(onFileChange)
+      try { await fileObserver.observe(state.rootHandle, { recursive: true }) } catch { fileObserver = null }
+    }
+    if (!fileObserver) {
+      await captureWatchSnapshot()
+      watchTimer = setInterval(async () => {
+        if (document.visibilityState !== 'visible') return
+        try { if (await pollWatchSnapshot()) scheduledRescan() } catch {}
+      }, WATCH_INTERVAL_MS)
+    }
+  }
+
+  async function fileStamp(path) {
+    try {
+      const file = await (await getHandleByPath(state.rootHandle, path)).getFile()
+      return { mtime: file.lastModified, size: file.size }
+    } catch { return null }
+  }
+
+  async function captureWatchSnapshot() {
+    watchSnapshot = new Map()
+    for (const path of state.watchPaths || []) {
+      const stamp = await fileStamp(path)
+      if (stamp) watchSnapshot.set(normalizePath(path), stamp)
+    }
+  }
+
+  async function pollWatchSnapshot() {
+    let changed = false
+    for (const path of state.watchPaths || []) {
+      const key = normalizePath(path)
+      const stamp = await fileStamp(path)
+      const prev = watchSnapshot.get(key)
+      if (!stamp || !prev || prev.mtime !== stamp.mtime || prev.size !== stamp.size) changed = true
+      if (stamp) watchSnapshot.set(key, stamp)
+    }
+    return changed
   }
 
   async function loadImageBitmap(guid) {
@@ -1469,6 +1552,7 @@ function initializeMapEditor() {
   els.btnImportJson.addEventListener('click', () => { els.fileInput.accept = '.json'; els.fileInput.click() })
   els.btnProject.addEventListener('click', chooseProject)
   els.btnRestoreProject.addEventListener('click', restoreRememberedProject)
+  els.btnRescan.addEventListener('click', () => { if (state.rootHandle) scanProjectSources({ root: state.rootHandle }) })
   els.projectInput.addEventListener('change', async () => {
     const files = [...(els.projectInput.files || [])]
     els.projectInput.value = ''
