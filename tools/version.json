@@ -3,5 +3,5 @@ window.TOOL_VERSIONS = {
   "character-editor": { "version": "0.7.2" },
   "map-editor": { "version": "0.7.0" },
   "idle-lab": { "version": "0.1.0 beta" },
-  "localization-lab": { "version": "0.1.0 beta" }
+  "localization-lab": { "version": "0.2.0 beta" }
 };

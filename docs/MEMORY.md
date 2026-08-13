@@ -1,7 +1,7 @@
 # Yami Tools 项目记忆（MEMORY）
 
 > 本文档沉淀历次对话的关键事实、用户偏好、技术决策与待办，供后续会话快速恢复上下文。
-> 最后更新：2026-08-13（角色编辑器：搜索修复 + 价格/总价值/掉率小数 + 继承事件开关，多轮反馈定型）
+> 最后更新：2026-08-13（快速本地化 v0.2.0：孤儿自动修复/来源分组/忽略行明示/占位识别/噪声过滤，双真实工程验证）
 
 ## 0. 沟通规则（用户 AGENTS.md，最高优先级）
 
@@ -62,17 +62,21 @@
 - 已知限制（代码内 ponytail 注释）：轮询按 mtime+size 判断，同值但内容变化检测不到；保存窗口期的外部变化被吞、下次变化自愈；FSO 观察整个工程根，游戏存档等无关事件也会触发重扫（低频可接受）。
 - E2E（`.e2e-tmp/test-sync.js`，临时工程 `%TEMP%\yami-tools-sync-e2e`）：排序、三工具 fallback 导入、btn-rescan 隐藏、零 pageerror 已过。**root 模式自动同步无法自动化**（showDirectoryPicker 系统弹窗无法接管），需用户手工验证。
 
-## 5. 快速本地化（tools/localization-lab/，v0.1.0，2026-08-13 新建）
+## 5. 快速本地化（tools/localization-lab/，v0.2.0 beta，2026-08-13）
 
-- 功能：扫描工程**未本地化硬编码中文/英文**（资产 `attributes[].value` 与事件命令树里没包 `<ref:ID>` 的文本）、**缺翻译条目**（config 语言列表中任一语言为空）、**孤儿引用**（ref 指向不存在的 ID，真实工程现存 5 个）；导出多语言 Excel 供翻译（「待本地化/缺翻译/孤儿引用/说明」四 sheet，导出时预分配 16hex ID）；翻译后导入写回：新增条目进 localization.json 根级「快速本地化」文件夹 + 资产原文替换为 `<ref:ID>`（full 整值替换/segment 只替换命中段，保留 `<color:>`/`<local:>` 标签）。
-- **未本地化判定（三层信号）**：① 字段级白名单——`attributes[].value` 限 attribute.json `type==='string'` 属性（排除 loopList），命令树只收 `value/content/comment/tag/operand` ∪ 本趟已见 `<ref:` 的 key（ref 先例），排除 `name`（.ui 编辑器标签 596 处）/`script`/元数据；② 字符串特征——含 CJK → high 置信，纯英文 → medium（GUID/纯数字/`<local:>` 纯变量/路径/命令 tag 枚举排除）；③ 人工兜底——Excel 置信度列 + UI 勾选。
-- **16 国语言扩展（引擎机制已核实，全链路零硬编码）**：语言列、缺翻译判定、导入写入全部由 `Data/config.json localization.languages`（对象数组 `{name,font,scale}`）驱动；加语言 = config 加一项 + 重导出，工具与引擎（`local.ts` contents 任意键 map）均零改动。引擎别名（zh-HK→zh-TW）工具不处理。
-- **合并策略（用户拍板）**：同文本同 ID——`normalizeText` 剥 color/local/global 标签后相等即合并为同一候选，翻译一次处处生效，locations 记录全部出现位置。
-- 导入安全：导入前**强制重扫**并按位置校验当前值与导出时一致（不匹配=外部改动，**整个中止**）；`Lootsmith Backups/<时间戳>/` 备份 localization.json + 全部待写资产文件；失败回滚；同 Excel 二次导入幂等（ID 已存在且原文一致跳过）。
-- 复用模式：indexedDB `loot-smith-settings`/`last-project-handle` 工程记忆、fallback（webkitdirectory）只读导入、watchPaths 5s 轮询（变化 toast 提示**不自动重扫**，手动点「重新扫描」）。
-- E2E（`.e2e-tmp/test-localize.js`）：fallback 导入 → 扫描（缺翻译 187 与独立计算一致、候选含「治疗药剂」）→ 导出 xlsx 校验（待本地化行数=候选数、ID 16hex、缺翻译行数、零 pageerror）已过。
-- **真实工程验收（`.e2e-tmp/verify-real.js`，2026-08-13 用户授权用 D:\new-game 实测）**：真实扫描 268 文件 → 674 候选（高 377/中 297、1125 处）、缺翻译 187、孤儿 5（全部在设置界面.ui）与探索基线吻合；构造 3 新增+3 补译 → 备份 → **真实写回生效** → 回读校验 → 备份恢复无残留。修复了真实数据暴露的 3 个 bug：① 同文件多个相同文本必须先全部校验后统一替换（`applyAssetReplacement` 加 file 参数，DOM 按「候选×文件」分组调用）；② `locateValue` 路径不存在返回 undefined 不抛错；③ **Yami 原生序列化 = 2 空格缩进 + CRLF + 无尾随换行**（实测治疗药剂.item），写回用 `serializeLike(data, 原文本)` 仿生，避免编辑器大 diff。
-- 已知限制（代码 ponytail 注释）：命令 tag 排除清单按当前工程噪声起步（英文误报由置信度列人工过滤）；孤儿引用只报告不自动修复；占位符（如 en="shit"）无法自动识别。
+- 功能：扫描工程**未本地化硬编码中文/英文**（资产 `attributes[].value` 与事件命令树里没包 `<ref:ID>` 的文本，v0.2.0 起含 **actors**——英雄姓名/台词/怪物名称硬编码）、**缺翻译条目**、**孤儿引用**、**疑似占位翻译**（脏词/与原文相同）；导出五 sheet 多语言 Excel；翻译后导入写回；**孤儿可一键按现有引用 ID 创建缺失条目**（只写 localization.json，资产已引用该 ID 无需改动）。
+- **只扫已引用资产（2026-08-13 用户拍板「打包算法就是只打包使用的资产」）**：`referencedFileIds` 复刻引擎打包算法（编辑器 `data-object.js createReferencedFileIDMap:334-387` + `deploy-project-window.js`）——① 全部资产内容（ui/scenes/actors/skills/triggers/items/equipments/states/events/animations/particles/tilesets）+ plugins/commands/config 里的**纯 16hex GUID 字符串值**；② **UI/场景预设元素映射**（事件的 `createElement presetId` 经 `uiPresets/scenePresets` 反查所在文件——漏了这层会把对话框等按预设引用的 UI 全判成未引用，这是关键坑）；③ 自动触发事件（type≠common）；④ 脚本 meta 自标记 + 代码内引号 GUID。默认过滤，工具栏「含未引用资产」可关（`rescanFromCache` 不重读文件）。缺翻译/疑似占位同步按「被已引用资产 `<ref:>` 引用 + 条目内嵌套闭包」过滤（`referencedLocalizationIds`；插件脚本实测无 `<ref:`）。真实基线：new-game 跳过未引用 92（旧装备 43/未接入怪物 33…）→ 候选 660/缺翻译 118/孤儿 16/疑似占位 1；GAME-20240905 跳过 560（地图编辑器辅助技能 236/DLC 建筑 195…）→ 候选 692/缺翻译 3/孤儿 0/疑似占位 161。
+- **未本地化判定（三层信号）**：① 字段级白名单——`attributes[].value` 限 attribute.json `type==='string'` 属性（排除 loopList），命令树只收 `value/content/comment/tag/operand` ∪ 本趟已见 `<ref:` 的 key（ref 先例），排除 `name`（.ui 编辑器标签，但作为孤儿建议来源）/`script`/元数据；② 字符串特征——含 CJK → high 置信，纯英文 → medium（GUID/纯数字/纯标签残留/**8hex 与 #6hex 颜色码**/路径/命令 tag 枚举排除；**判定前剥 color/local/global/image 标签**；v0.2.0 起 value 位置单 token 引擎枚举排除：inventory/smithy/ranged/melee/sell/buy…）；③ 人工兜底——Excel 置信度列 + UI 勾选。
+- **孤儿引用（v0.2.0 重做）**：`collectOrphanRefs` 全树扫描（不依赖文本字段白名单，任何字符串值里的 `<ref:ID>` 都检查，记录 attrKey→属性语义名/`.ui` 节点 name/refIndex/refCount），按 refId 分组；建议文本推导 = 名称属性 ref ← 文件名核心（剥 `序号.` 与 ` -后缀`，多文件取最短核心）+ .ui 节点编辑器标签；后缀 ref（同值第 2 个）与备注属性留空人工填。**修复用现有引用 ID 建条目（不要给孤儿分配随机新 ID）**。
+- **疑似占位**：脏词整值（shit/fuck/xxx/test/todo/待翻译/未翻译/占位…）→「占位词」；与 zh-CN 相同且含 CJK → zh-TW 含简体独有字（`SIMPLIFIED_ONLY_RE`）判「简体未转繁」，否则「可能同形，请确认」（专名梅林/史蒂夫属软提示）；版本号同值不算。只报告不自动改。
+- **16 国语言扩展（引擎机制已核实，全链路零硬编码）**：语言列、缺翻译/疑似占位判定、导入写入全部由 `Data/config.json localization.languages` 驱动；加语言 = config 加一项 + 重导出。引擎别名（zh-HK→zh-TW）工具不处理。
+- **合并策略（用户拍板）**：同文本同 ID——`normalizeText` 剥 color/local/global 标签后相等即合并为同一候选，翻译一次处处生效。
+- 导入安全：导入前**强制重扫**并按位置校验当前值与导出时一致（不匹配=外部改动，**整个中止**）；`Lootsmith Backups/<时间戳>/` 备份；失败回滚；同 Excel 二次导入幂等。**忽略行**（处理方式=忽略/孤儿空建议/幂等已存在）预览单独明示。**新增条目按来源类型分「快速本地化」子文件夹**（物品/装备/技能/状态/事件/界面/触发器/角色/孤儿修复）。
+- 复用模式：indexedDB `loot-smith-settings`/`last-project-handle` 工程记忆、fallback（webkitdirectory）只读导入（导入/孤儿修复/补译保存/备份面板均禁用）、watchPaths 5s 轮询（变化 toast 提示**不自动重扫**）。
+- **界面编辑与备份（2026-08-13 用户要求）**：① 原文颜色渲染——`<color:RRGGBB[AA]>…</color>` 直接显示彩色字（`renderRichText`，其余标签转义保留原文）；② 原文内联编辑——候选行 ✎ 按钮改原文，条目 zh-CN/导出用新文本，**导入替换校验仍按扫描原文**（`candidate.originalZhCN` 首次编辑锁定）；③ **单语言模式**——工具栏「译文语言」下拉（默认第一个非原文语言），缺翻译/疑似占位/候选的译文列只显示当前语言；候选视图的译文输入预填进 Excel 导出；④ **已本地化视图（第 5 张统计卡）**——被引用且条目存在的文本（new-game 120 条 / GAME-20240905 1436 条），**中文原文与译文都直接可编辑**，「保存修改」备份后写回 localization.json（zh-CN 编辑=改游戏显示文本，用户明确要求）；**候选唯一 ID（2026-08-13 用户要求）**——候选原文下方显示 16hex ID（`state.candidateIdMap` 按 normalized 文本分配，会话内稳定、重扫不换，与引擎 GUID 同格式；Excel 导出共用同一 ID），缺翻译/疑似占位/已本地化的条目 ID 也显示在文本下方；**「本地化」按钮**——单条立即创建条目+替换文件（`localizeCandidateNow`，先校验后替换→备份→仿生写回→重扫，译文随界面输入一起写入）；⑤ **备份与还原面板**——列出 `Lootsmith Backups/<时间戳>/`（文件名 = 路径 `/`→`__`），支持立即备份、还原（**还原前自动快照「还原前-<时间戳>」可反悔**）、删除；⑥ 扫描时屏幕最上方 3px 进度条（determinate 计数 / indeterminate 写回动画）。fill 只写非空值（不支持清空为「」）。
+- E2E（`.e2e-tmp/test-localize.js`）：fallback 导入 → 扫描（缺翻译 187、疑似占位 1 含 shit、候选含「治疗药剂」）→ 导出五 sheet 校验（待本地化行数=候选数、ID 16hex、疑似占位 sheet）→ 疑似占位视图渲染 → 零 pageerror 已过。
+- **双真实工程验收（`.e2e-tmp/verify-real2.js`，2026-08-13 用户授权）**：只读扫描 `D:\new-game`（336 资产 → 681 候选（高 398/中 283）、缺翻译 187、疑似占位 1、孤儿 47——此前只报 5 是因为不扫 actor；建议抽查 兽人/大恶魔/精英哥布林/左右/上方/关闭 全对）+ `D:\GAME-20240905`（2501 资产 → 1068 候选、缺翻译 14、疑似占位 197（简体未转繁 1/同形请确认 196）、孤儿 1）；`%TEMP%` 副本跑完整写回链路（孤儿修复按引用 ID 建条目 → 来源分文件夹 → 忽略行 → 幂等 → 5 文件写回格式仿生 → 重扫孤儿归零 → 备份恢复无残留），真实工程零写入。v0.1.0 真实工程验收修复的 3 个 bug（候选×文件分组校验、locateValue 不抛错、serializeLike 仿生）仍然有效勿回退。
+- 已知限制：命令 tag 排除清单按当前工程噪声起步（英文误报由置信度列人工过滤）；孤儿建议是参考值需人工过目（后缀 ref/备注属性不推导）；「与原文相同」对同形专名有软提示误报；脏词表按样本起步。
 
 ## 6. 已知未完成 / 待用户确认
 
@@ -84,7 +88,7 @@
 
 ## 7. 验证方法（E2E）
 
-- 临时环境：`mkdir .e2e-tmp && cd .e2e-tmp && npm install playwright-core exceljs`；真实数据复制：`D:\new-game\Data\{attribute,enumeration,localization,commands}.json`、`地图格.xlsx`。`.e2e-tmp/test-sync.js` 为排序/同步回归脚本：临时工程 `%TEMP%\yami-tools-sync-e2e`（真实 Data 四件套 + 伪造 manifest + 4 个 actor 带不同 mtime），覆盖排序六选项、持久化（reload 验证）、三工具 fallback 导入零报错。`.e2e-tmp/test-localize.js` 为快速本地化浏览器回归（fallback 扫描 + 导出 xlsx 校验）。`.e2e-tmp/verify-real.js` 为**真实工程验收脚本**（直接对 D:\new-game 扫描→导入→写回→备份恢复无残留，会创建 Lootsmith Backups 目录测试后删除）——用户已授权用真实工程验收。
+- 临时环境：`mkdir .e2e-tmp && cd .e2e-tmp && npm install playwright-core exceljs`；真实数据复制：`D:\new-game\Data\{attribute,enumeration,localization,commands}.json`、`地图格.xlsx`。`.e2e-tmp/test-sync.js` 为排序/同步回归脚本：临时工程 `%TEMP%\yami-tools-sync-e2e`（真实 Data 四件套 + 伪造 manifest + 4 个 actor 带不同 mtime），覆盖排序六选项、持久化（reload 验证）、三工具 fallback 导入零报错。`.e2e-tmp/test-localize.js` 为快速本地化浏览器回归（fallback 扫描 + 导出五 sheet 校验）。`.e2e-tmp/verify-real.js` 为 v0.1.0 **真实工程验收脚本**（直接对 D:\new-game 扫描→导入→写回→备份恢复无残留）；`.e2e-tmp/verify-real2.js` 为 v0.2.0 验收脚本（**只读**扫描 D:\new-game 与 D:\GAME-20240905 两个真实工程 + `%TEMP%` 副本跑完整写回链路，真实工程零写入）——用户已授权用两个真实工程验证。
 - Chrome：`C:/Program Files/Google/Chrome/Application/chrome.exe`（headless）；服务器：`python -m http.server 4173`。
 - 关键断言信号：导入完成用 `#status-source` 文本（`btn-download` 初始即启用，不可作完成信号）。
 - 静态检查：`node --check <file>`、`git diff --check`（delivery 模式禁止 `node -e`/`python -c` 内联脚本）。

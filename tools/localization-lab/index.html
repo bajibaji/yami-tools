@@ -6,9 +6,10 @@
     <meta name="theme-color" content="#0d0f14" />
     <title>YAHZJ · 快速本地化</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260813-localization-lab-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260813-localization-lab-6" />
   </head>
   <body>
+    <div id="scan-progress" class="scan-progress hidden"><div id="scan-progress-fill" class="scan-progress-fill"></div></div>
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-block">
@@ -23,6 +24,7 @@
           <span id="project-state" class="project-state">尚未选择游戏工程</span>
           <button id="restore-project" class="button hidden" type="button">加载上次工程</button>
           <button id="pick-project" class="button" type="button">选择工程</button>
+          <button id="btn-backups" class="button" type="button" disabled title="管理 Lootsmith Backups 目录：查看/立即备份/还原/删除">备份与还原</button>
           <button id="btn-export" class="button" type="button" disabled title="导出本地化 Excel（含待本地化候选与缺翻译条目）">⇩ 导出 Excel</button>
           <button id="btn-import" class="button" type="button" disabled title="导入翻译完成的 Excel">⇧ 导入 Excel</button>
           <input id="folder-fallback" type="file" webkitdirectory directory multiple hidden />
@@ -39,7 +41,13 @@
             <span>缺翻译条目</span><strong id="metric-missing">--</strong><small id="metric-missing-langs">localization.json 条目</small>
           </button>
           <button class="metric-card" data-filter="orphans" type="button">
-            <span>孤儿引用</span><strong id="metric-orphans">--</strong><small>ref 指向不存在的 ID</small>
+            <span>孤儿引用</span><strong id="metric-orphans">--</strong><small>ref 指向不存在的 ID · 可创建缺失条目</small>
+          </button>
+          <button class="metric-card" data-filter="suspicious" type="button">
+            <span>疑似占位</span><strong id="metric-suspicious">--</strong><small>脏词 / 与原文相同的翻译</small>
+          </button>
+          <button class="metric-card" data-filter="localized" type="button">
+            <span>已本地化</span><strong id="metric-localized">--</strong><small>已引用条目 · 原文/译文可编辑</small>
           </button>
         </section>
 
@@ -49,9 +57,13 @@
               <h2>扫描结果</h2>
             </div>
             <div class="list-tools">
-              <label class="field field-inline"><span>类型</span><select id="filter-source"><option value="all">全部类型</option><option value="items">物品</option><option value="equipments">装备</option><option value="skills">技能</option><option value="states">状态</option><option value="events">事件</option><option value="ui">界面</option><option value="triggers">触发器</option><option value="missing">缺翻译条目</option><option value="orphans">孤儿引用</option></select></label>
+              <label class="field field-inline field-check" title="默认只扫描游戏里被引用（引擎打包算法判定）的资产；勾选后显示全部，包括用不到的闲置资产"><input type="checkbox" id="chk-unreferenced" /><span>含未引用资产</span></label>
+              <label class="field field-inline"><span>译文语言</span><select id="lang-select"></select></label>
+              <label class="field field-inline"><span>类型</span><select id="filter-source"><option value="all">全部类型</option><option value="items">物品</option><option value="equipments">装备</option><option value="skills">技能</option><option value="states">状态</option><option value="events">事件</option><option value="ui">界面</option><option value="triggers">触发器</option><option value="actors">角色</option><option value="missing">缺翻译条目</option><option value="orphans">孤儿引用</option></select></label>
               <label class="field field-inline"><span>置信度</span><select id="filter-confidence"><option value="all">全部</option><option value="high">高（中文）</option><option value="medium">中（英文）</option></select></label>
               <label class="search-box" for="filter-query"><span>⌕</span><input id="filter-query" type="search" placeholder="搜索原文或文件路径" autocomplete="off" /></label>
+              <button id="btn-save-fills" class="button hidden" type="button" title="把表格里编辑的原文/译文写回 localization.json（先备份）">保存修改</button>
+              <button id="btn-fix-orphans" class="button hidden" type="button" title="为所有已填写中文文本的孤儿引用创建缺失条目（只写 localization.json）">一键创建孤儿条目</button>
               <button id="btn-rescan" class="button" type="button">重新扫描 ↻</button>
             </div>
           </div>
@@ -73,6 +85,20 @@
           </div>
           <div id="import-preview-body" class="import-preview-body"></div>
         </section>
+
+        <section id="backup-panel" class="backup-panel hidden">
+          <div class="backup-panel-head">
+            <div>
+              <h2>备份与还原</h2>
+              <p id="backup-panel-summary">Lootsmith Backups 目录下的历史备份</p>
+            </div>
+            <div class="backup-panel-actions">
+              <button id="btn-backup-now" class="button" type="button" title="把 localization.json 与全部已扫描资产文件备份到新目录">立即备份</button>
+              <button id="btn-close-backup" class="button" type="button">关闭</button>
+            </div>
+          </div>
+          <div id="backup-panel-body" class="backup-panel-body"></div>
+        </section>
       </main>
 
       <footer class="statusbar">
@@ -83,7 +109,7 @@
     </div>
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
     <script src="../../vendor/exceljs.min.js"></script>
-    <script src="./app.js?v=20260813-localization-lab-1"></script>
+    <script src="./app.js?v=20260813-localization-lab-6"></script>
     <script src="../version.json"></script>
     <script>document.querySelectorAll('[data-app-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS['localization-lab']||{}).version})</script>
   </body>

@@ -6,26 +6,36 @@ const REF_RE = /<ref:([0-9a-f]{16})>/gi
 const COLOR_RE = /<color:[^>]*>|<\/color>/gi
 const LOCAL_RE = /<local:[^>]*>/gi
 const GLOBAL_RE = /<global:[0-9a-f]{16}>/gi
+const IMAGE_RE = /<image:[0-9a-f]{16}>/gi
 const CJK_RE = /[一-鿿]/
 const GUID_RE = /^[0-9a-f]{16}$/i
 const LONG_HEX_RE = /^[0-9a-f]{32}$/i
+const HEX8_RE = /^[0-9a-f]{8}$/i
+const COLOR_HEX_RE = /^#?[0-9a-f]{6}$/i
 const NUMERIC_RE = /^[\d\s.,%+\-*/=<>x×（）()]+$/
 const EN_TEXT_RE = /^[A-Za-z][A-Za-z\s'\-!?.(),:;%°]*$/
 const LOOPLIST_ID = '4cb407bd71929620'
 const LOCALIZATION_FOLDER = '快速本地化'
+const ORPHAN_FOLDER = '孤儿修复'
+// 占位符脏词（整值匹配）：翻译列里出现这些值基本可以断定没真正翻译
+const PLACEHOLDER_WORD_RE = /^(shit|fuck|xxx+|test|todo|tbd|fixme|tmp|placeholder|待翻译|未翻译|占位|暂缺|暂不翻译|待定|占位符|暂无)$/i
+// 简体独有字（繁体写法不同的常用字）：zh-TW 与 zh-CN 相同且含其中一字 → 大概率没转繁
+const SIMPLIFIED_ONLY_RE = /[国语文这们个说见话关开长东车门问无时来会风龙电马鸟鱼觉让军兴样经结层还进书办对产发里离实学写处号业队极间几线验联尔场块买卖头听谁课岁义亿与云专丰为乐习乡亏亲从仑仓仪价众传伤伦伪体余佣侠侣侦侧侨归忆忧怀状犹独猎猫环现玛疗疯盘监着础确礼积称稳穷窃竞笔签简类粮紧约级纪纳纷纸纹纺纽练组细织终绍经绑绕绘给络绝绞统继绩维综绿绵缆编缘缩缴罚罢罗聪肃肤胁胜脑肿胶脸腾胆腻舆举舰舱艺节苍苏劳荣药获营萨蓝虑虫虽虾蚀蚁蚕蛮观规览计订认议记讲设访证评识诉诊词译试诗诚话询该详语误说请诸读课谁调谈谊谋谢谣谨谱谷贝负贡财责货质贩贪购贮贯贱贴贵贸费贺资贾贿赁赐赔赏赚赛赠赞赢赵赶趋践踪跃转轮软轻载辅辈辉辐输辖辙边达过迈迁运还这进远违连迟选适递逻遗辽邮邻郑钟铁铅铜银铸铺链锁锋锐错锡锤锦键锯锻镇镜镐长门闲间闷闹闻阅队阶阳阴阵际陆陈险难随隐虽电雾静页顶项顺须顾顿顽颁领颈频颗题额颠颤风飘飞饭饮饰饱饲饶饺饼饿馆马驱驳驴驶驾骄骆验骑骗骤发鱼鲜鲁鸦鸭鸽鹅鹊鹤鹏鹰麦黄齐龄龙龟亚严两丽举击势动劲历压厌员吴启吨园围图圣坚堕备复声壳奖夺奋妇妆妈婴孙学宁宝审宽宾导寻将尘届屿岭峡岛岗币师带帮干庆应庙库废张强归当录彻忆态恒恶恼惨惩惯懒战戏护报担据挥损换摆摇摄数断敌斗旧旷显晓晒晕术杀杂权条杨枪柜栏标树桥检欢欧汉汤沟没泪泽洁洒浇测济浏浑浓涂润涨渐渔渗湾湿满滥滨滤灵灿炉点炼烧烫热爱爷墙]/
 
 // 命令树文本字段白名单：引擎实测 CJK 与 <ref:> 只出现在这些 key（name 是 .ui 编辑器标签、script 是代码，均排除）
 const BASE_TEXT_KEYS = ['value', 'content', 'comment', 'tag', 'operand']
 const SKIP_KEYS = new Set(['name', 'script', 'description', 'namespace', 'id', 'key', 'type', 'enum', 'note', 'title'])
-// ponytail: 按当前工程命令 tag 噪声起步的排除清单，误报由 Excel 置信度列人工过滤兜底
+// ponytail: 按当前工程命令 tag 噪声起步的排除清单，误报由 Excel 置信度列人工过滤兜底；
+// tag/operand 位置整值排除；value 位置仅排除单 token（多词英文保留），防误杀真实文本
 const COMMAND_TAG_DENYLIST = new Set([
   'actor', 'global', 'inherit', 'constant', 'variable', 'trigger', 'none', 'add', 'sub', 'set', 'clear',
   'penetrate', 'move', 'attack', 'skill', 'random', 'switch', 'state', 'sound', 'close', 'wait', 'branch',
   'loop', 'call', 'event', 'input', 'mouse', 'key', 'scene', 'anim', 'particle', 'active', 'inactive',
   'true', 'false', 'save', 'load', 'menu', 'system', 'local', 'private', 'public', 'static', 'inline',
   'up', 'down', 'left', 'right', 'forward', 'back', 'item', 'equip', 'skillpoint', 'gold', 'exp', 'open', 'quit',
+  'inventory', 'smithy', 'equipment', 'sell', 'buy', 'ranged', 'melee',
 ])
-const EXT_TYPE = { '.item': 'items', '.equip': 'equipments', '.skill': 'skills', '.state': 'states', '.event': 'events', '.ui': 'ui', '.trigger': 'triggers' }
+const EXT_TYPE = { '.item': 'items', '.equip': 'equipments', '.skill': 'skills', '.state': 'states', '.event': 'events', '.ui': 'ui', '.trigger': 'triggers', '.actor': 'actors' }
 
 function clone(value) { return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value)) }
 
@@ -67,19 +77,25 @@ function splitRefSegments(value) {
   return { hasRef, segments }
 }
 
-/** 单段文本判定：返回 {confidence:'high'|'medium'} 或 null（排除 GUID/数字/标签/路径/命令枚举等）。 */
+/** 单段文本判定：返回 {confidence:'high'|'medium'} 或 null（排除 GUID/数字/颜色/路径/命令枚举等）。
+    判定前先剥 color/local/global 标签——纯标签残留（如「 +<local:num>」）不算文本，含中文的标签文本照常 high。 */
 function classifyText(segment, key = '') {
-  const text = String(segment ?? '')
+  const raw = String(segment ?? '')
+  const text = raw.replace(COLOR_RE, '').replace(LOCAL_RE, '').replace(GLOBAL_RE, '').replace(IMAGE_RE, '')
   const trimmed = text.trim()
   if (!trimmed) return null
   // 路径判定必须在 CJK 之前（中文路径如「Assets/物品/a.item」不能算文本）
   if (/^(Assets\/|[A-Za-z]:[\\/]|\/)/.test(trimmed)) return null
   if (CJK_RE.test(text)) return { confidence: 'high' }
-  if (GUID_RE.test(trimmed) || LONG_HEX_RE.test(trimmed)) return null
+  if (GUID_RE.test(trimmed) || LONG_HEX_RE.test(trimmed) || HEX8_RE.test(trimmed) || COLOR_HEX_RE.test(trimmed)) return null
   if (NUMERIC_RE.test(trimmed)) return null
   if (/^<[a-z]+:[^>]*>$/i.test(trimmed)) return null
   if (/^[A-Za-z]$/.test(trimmed)) return null
-  if ((key === 'tag' || key === 'operand') && COMMAND_TAG_DENYLIST.has(trimmed.toLowerCase())) return null
+  if (key === 'tag' || key === 'operand') {
+    if (COMMAND_TAG_DENYLIST.has(trimmed.toLowerCase())) return null
+  } else if (key === 'value' && !/\s/.test(trimmed) && COMMAND_TAG_DENYLIST.has(trimmed.toLowerCase())) {
+    return null // value 位置单 token 引擎枚举（菜单页签/方向/商店等），多词文本保留
+  }
   if (EN_TEXT_RE.test(trimmed) && trimmed.length >= 2) return { confidence: 'medium' }
   if (/[A-Za-z]/.test(trimmed)) return { confidence: 'medium' }
   return null
@@ -111,17 +127,30 @@ function loopListAttributeId(attributeJson) {
   return id
 }
 
-/** localization.json：收集全部叶子 ID（孤儿引用判定用）。 */
+/** localization.json：收集全部叶子 ID（小写归一，孤儿引用判定用）。 */
 function localizationIds(localizationJson) {
   const ids = new Set()
   const walk = (items) => {
     for (const item of items || []) {
       if (item && Array.isArray(item.children)) walk(item.children)
-      else if (item && item.id) ids.add(item.id)
+      else if (item && item.id) ids.add(String(item.id).toLowerCase())
     }
   }
   walk(localizationJson && localizationJson.list)
   return ids
+}
+
+/** attribute.json：属性 ID → 语义名（名称/备注/描述…），孤儿引用的上下文提示用。 */
+function buildAttributeNames(attributeJson) {
+  const names = new Map()
+  const walk = (nodes) => {
+    for (const node of nodes || []) {
+      if (node && Array.isArray(node.children)) walk(node.children)
+      else if (node && node.id) names.set(String(node.id).toLowerCase(), node.name || '')
+    }
+  }
+  walk(attributeJson && attributeJson.keys)
+  return names
 }
 
 /** 命令树两趟扫描：第一趟收集「出现过 <ref:> 的 key」并入白名单（ref 先例信号）。 */
@@ -141,15 +170,11 @@ function collectRefKeys(root) {
   return refKeys
 }
 
-/** 单个资产文件扫描：attributes[].value（文本型属性）+ 命令树白名单 key。 */
-function collectCandidates(fileJson, type, stringAttrIds, ids, skipAttrIds) {
+/** 单个资产文件扫描：attributes[].value（文本型属性）+ 命令树白名单 key → 未本地化候选（孤儿引用由 collectOrphanRefs 单独全树扫描）。 */
+function collectCandidates(fileJson, type, stringAttrIds, skipAttrIds) {
   const candidates = []
-  const orphans = []
   const note = (candidate) => { candidate.sourceType = type; candidates.push(candidate) }
   const handleValue = (value, path, key) => {
-    for (const match of [...String(value).matchAll(/<ref:([0-9a-f]{16})>/gi)]) {
-      if (!ids.has(match[1].toLowerCase())) orphans.push({ refId: match[1], path })
-    }
     const { hasRef, segments } = splitRefSegments(value)
     if (hasRef) {
       segments.forEach((segment, index) => {
@@ -165,7 +190,7 @@ function collectCandidates(fileJson, type, stringAttrIds, ids, skipAttrIds) {
   for (let i = 0; i < (fileJson.attributes || []).length; i++) {
     const attr = fileJson.attributes[i]
     if (attr && typeof attr.value === 'string' && stringAttrIds.has(attr.key) && !skipAttrIds.has(attr.key)) {
-      handleValue(attr.value, `attributes[${i}].value`, 'value')
+      handleValue(attr.value, `attributes[${i}].value`, 'attr') // 'attr' 不参与命令 tag 排除（属性文本不是命令枚举）
     }
   }
   const keys = new Set(BASE_TEXT_KEYS.filter((k) => !SKIP_KEYS.has(k)))
@@ -180,7 +205,93 @@ function collectCandidates(fileJson, type, stringAttrIds, ids, skipAttrIds) {
     }
   }
   walk(fileJson, '')
-  return { candidates, orphans }
+  return candidates
+}
+
+/** 孤儿引用全树扫描：不依赖文本字段白名单——任何含 <ref:ID> 的字符串值都检查目标 ID 是否存在。
+    记录上下文：attrKey（属性 ID）、nodeName（.ui 节点编辑器标签）、refIndex/refCount（同值内第几个 ref）。 */
+function collectOrphanRefs(fileJson) {
+  const occurrences = []
+  const collect = (value, path, attrKey, nodeName) => {
+    const matches = [...String(value).matchAll(/<ref:([0-9a-f]{16})>/gi)]
+    for (let i = 0; i < matches.length; i++) {
+      occurrences.push({ refId: matches[i][1].toLowerCase(), path, attrKey: attrKey || null, nodeName: nodeName || null, refIndex: i, refCount: matches.length })
+    }
+  }
+  for (let i = 0; i < (fileJson.attributes || []).length; i++) {
+    const attr = fileJson.attributes[i]
+    if (attr && typeof attr.value === 'string') collect(attr.value, `attributes[${i}].value`, attr.key || null, null)
+  }
+  const walk = (node, path, nodeName) => {
+    if (Array.isArray(node)) { node.forEach((item, i) => walk(item, `${path}[${i}]`, nodeName)); return }
+    if (!node || typeof node !== 'object') return
+    const name = typeof node.name === 'string' && node.name.trim() ? node.name : nodeName
+    for (const [key, value] of Object.entries(node)) {
+      if (key === 'attributes' || key === 'name') continue
+      if (typeof value === 'string') collect(value, path ? `${path}.${key}` : key, null, name)
+      else if (value && typeof value === 'object') walk(value, path ? `${path}.${key}` : key, name)
+    }
+  }
+  walk(fileJson, '', null)
+  return occurrences
+}
+
+/** 文件名核心：去路径、去扩展名、去尾部 16hex GUID（「010.兽人.c65e716280b38eef.actor」→「010.兽人」）。 */
+function filenameCore(file) {
+  const base = String(file).split('/').pop()
+  return base
+    .replace(/\.(?:item|equip|skill|state|event|ui|trigger|actor|anim|particle)$/i, '')
+    .replace(/\.(?:[0-9a-f]{16})$/i, '')
+}
+
+/** 最高频项；并列取最短（「大恶魔」胜过「大恶魔-远程」）。 */
+function mostFrequent(items) {
+  const count = new Map()
+  for (const item of items) count.set(item, (count.get(item) || 0) + 1)
+  let best = null
+  let bestCount = 0
+  for (const [item, n] of count) {
+    if (n > bestCount || (n === bestCount && best !== null && item.length < best.length)) { best = item; bestCount = n }
+  }
+  return best
+}
+
+/** 孤儿建议文本：① 名称属性的 ref → 文件名推导（剥序号；同值多 ref 只推第一个，后缀 ref 留给人工）；② .ui 节点编辑器标签。 */
+function orphanSuggestion(group) {
+  const NAME_ATTRS = ['名称', '名字', 'name']
+  const nameUses = group.uses.filter((u) => NAME_ATTRS.includes(u.attrName))
+  if (nameUses.length) {
+    const firstOnly = nameUses.filter((u) => u.refIndex === 0)
+    if (firstOnly.length) {
+      const core = mostFrequent(firstOnly.map((u) => filenameCore(u.file)))
+      if (core) {
+        let s = core.replace(/^\d+\s*[.．、]\s*/, '')
+        if (firstOnly.some((u) => u.refCount > 1)) s = s.replace(/\s*[-－—]\s*[^-－—]+$/, '')
+        return s.trim()
+      }
+    }
+    return ''
+  }
+  const nodeNames = group.uses.map((u) => u.nodeName).filter((n) => n && CJK_RE.test(n))
+  return nodeNames.length ? mostFrequent(nodeNames) : ''
+}
+
+/** 孤儿按 refId 分组（同 ID 多处引用合并成一条，创建一次处处生效）；有建议文本的排前面。 */
+function groupOrphans(occurrences) {
+  const map = new Map()
+  for (const o of occurrences) {
+    const group = map.get(o.refId) || { refId: o.refId, uses: [], count: 0, files: new Set() }
+    group.uses.push({ file: o.file, path: o.path, attrKey: o.attrKey, attrName: o.attrName, nodeName: o.nodeName, refIndex: o.refIndex, refCount: o.refCount })
+    group.count += 1
+    group.files.add(o.file)
+    map.set(o.refId, group)
+  }
+  const orphans = []
+  for (const group of map.values()) {
+    orphans.push({ refId: group.refId, uses: group.uses, count: group.count, fileCount: group.files.size, suggestion: orphanSuggestion(group) })
+  }
+  orphans.sort((a, b) => (b.suggestion ? 1 : 0) - (a.suggestion ? 1 : 0) || a.refId.localeCompare(b.refId))
+  return orphans
 }
 
 /** 同文本合并：normalize 相等 → 同一候选，locations 追加。 */
@@ -220,20 +331,193 @@ function findMissingTranslations(localizationJson, languages) {
   return missing
 }
 
-function buildScanResult(assets, { attributeJson, localizationJson, languages }) {
+/** 疑似占位符翻译：脏词（shit/xxx/待翻译…）或与中文原文完全相同（含 CJK 才判定，版本号/数字不算）。 */
+function findSuspiciousTranslations(localizationJson, languages) {
+  const primary = languages[0]
+  const suspicious = []
+  const walk = (items, folder) => {
+    for (const item of items || []) {
+      if (item && Array.isArray(item.children)) walk(item.children, item.name || '')
+      else if (item && item.id && item.contents) {
+        const langs = {}
+        for (const lang of languages) langs[lang] = typeof item.contents[lang] === 'string' ? item.contents[lang] : ''
+        const zhVal = langs[primary].trim()
+        const flagged = []
+        for (const lang of languages.slice(1)) {
+          const value = langs[lang].trim()
+          if (!value) continue
+          let reason = null
+          if (PLACEHOLDER_WORD_RE.test(value)) reason = '占位词'
+          else if (zhVal && CJK_RE.test(zhVal) && value === zhVal) {
+            // 简体独有字没转成繁体 → 大概率没翻译；无简体字可能是同形词（专名/单字），请人工确认
+            reason = lang === 'zh-TW' && SIMPLIFIED_ONLY_RE.test(value) ? '简体未转繁（疑似未翻译）' : '与原文相同（可能同形，请确认）'
+          }
+          if (reason) flagged.push({ lang, value, reason })
+        }
+        if (flagged.length) suspicious.push({ id: item.id, name: item.name || '', folder: folder || '', languages: langs, suspicious: flagged })
+      }
+    }
+  }
+  walk(localizationJson && localizationJson.list, '')
+  return suspicious
+}
+
+/** 文件名里提取资产 GUID（「010.兽人.c65e716280b38eef.actor」→ c65e716280b38eef）。 */
+function assetGuid(file) {
+  const match = /\.([0-9a-f]{16})\.\S+$/.exec(String(file))
+  return match ? match[1].toLowerCase() : null
+}
+
+/** 复刻引擎打包算法的「已引用文件」判定（编辑器 data-object.js createReferencedFileIDMap:334-387）：
+    ① 全部资产文件内容 + plugins/commands/config 里出现的「纯 16hex GUID 字符串值」；
+    ② UI/场景节点的 presetId（事件按预设元素引用 → 经 uiPresets/scenePresets 反查所在文件）；
+    ③ 自动触发事件（type ≠ 'common'）自身；④ 脚本 meta（guid+code）自标记 + 脚本代码内的引号 GUID。
+    打包只打已引用文件——未出现在该集合里的资产游戏里用不到，不需要本地化。 */
+function referencedFileIds(references) {
+  const uiPresets = {}
+  const scenePresets = {}
+  const walkNodes = (nodes, setter) => {
+    for (const node of nodes || []) {
+      if (!node || typeof node !== 'object') continue
+      setter(node)
+      if (Array.isArray(node.children) && node.children.length) walkNodes(node.children, setter)
+    }
+  }
+  for (const item of references.data || []) {
+    if (!item.guid) continue
+    if (item.type === 'ui' && item.data) walkNodes(item.data.nodes, (n) => { if (n.presetId) uiPresets[n.presetId] = item.guid })
+    else if (item.type === 'scenes' && item.data) walkNodes(item.data.objects, (n) => { if (n.presetId) scenePresets[n.presetId] = item.guid })
+  }
+  const used = new Set()
+  const mark = (guid) => {
+    const g = String(guid).toLowerCase()
+    if (!/^[0-9a-f]{16}$/.test(g)) return
+    used.add(g)
+    if (uiPresets[g]) used.add(uiPresets[g])
+    if (scenePresets[g]) used.add(scenePresets[g])
+  }
+  const jsonRe = /"([0-9a-f]{16})/g
+  const scanJson = (obj) => { jsonRe.lastIndex = 0; let m; const text = JSON.stringify(obj); while ((m = jsonRe.exec(text))) mark(m[1]) }
+  for (const item of references.data || []) scanJson(item.data)
+  if (references.plugins !== undefined) scanJson(references.plugins)
+  if (references.commands !== undefined) scanJson(references.commands)
+  if (references.config !== undefined) scanJson(references.config)
+  for (const script of references.scripts || []) {
+    if (script.guid) mark(script.guid)
+    scanJson({ guid: script.guid, code: script.code })
+  }
+  const scriptRe = /"[0-9a-f]{16}"|'[0-9a-f]{16}'/g
+  for (const script of references.scripts || []) {
+    scriptRe.lastIndex = 0
+    let m
+    while ((m = scriptRe.exec(script.code || ''))) mark(m[0].slice(1, -1))
+  }
+  for (const item of references.data || []) {
+    const data = item.data
+    if (data && data.type !== undefined && data.type !== 'common' && item.guid) mark(item.guid)
+  }
+  return used
+}
+
+/** 已引用本地化条目：被扫描资产 <ref:ID> 引用的条目 + 被引用条目内容里嵌套引用的条目（闭包）。
+    引擎打包时 localization.json 整包携带，这里按「游戏里真的会显示」过滤缺翻译/疑似占位视图。 */
+function referencedLocalizationIds(assets, localizationJson) {
+  const refs = new Set()
+  for (const { data } of assets) {
+    for (const m of [...JSON.stringify(data).matchAll(/<ref:([0-9a-f]{16})>/gi)]) refs.add(m[1].toLowerCase())
+  }
+  const byId = new Map()
+  const walk = (items) => { for (const item of items || []) { if (item && Array.isArray(item.children)) walk(item.children); else if (item && item.id) byId.set(String(item.id).toLowerCase(), item) } }
+  walk(localizationJson && localizationJson.list)
+  const out = new Set()
+  const queue = [...refs]
+  while (queue.length) {
+    const id = queue.shift()
+    if (out.has(id)) continue
+    out.add(id)
+    const leaf = byId.get(id)
+    if (leaf && leaf.contents) {
+      for (const value of Object.values(leaf.contents)) {
+        for (const m of [...String(value).matchAll(/<ref:([0-9a-f]{16})>/gi)]) {
+          const nested = m[1].toLowerCase()
+          if (!out.has(nested)) queue.push(nested)
+        }
+      }
+    }
+  }
+  return out
+}
+
+function buildScanResult(assets, { attributeJson, localizationJson, languages, references, includeUnreferenced }) {
+  const used = references ? referencedFileIds(references) : null
+  let scanAssets = assets
+  const unreferenced = { total: 0, byType: {} }
+  if (used && !includeUnreferenced) {
+    const kept = []
+    for (const asset of assets) {
+      if (used.has(assetGuid(asset.file))) kept.push(asset)
+      else {
+        unreferenced.total += 1
+        unreferenced.byType[asset.type] = (unreferenced.byType[asset.type] || 0) + 1
+      }
+    }
+    scanAssets = kept
+  }
   const ids = localizationIds(localizationJson)
   const stringAttrIds = buildStringAttributeIds(attributeJson)
   const skipAttrIds = new Set([loopListAttributeId(attributeJson)])
+  const attrNames = buildAttributeNames(attributeJson)
   const candidates = []
-  const orphans = []
-  for (const { file, type, data } of assets) {
-    const result = collectCandidates(data, type, stringAttrIds, ids, skipAttrIds)
-    for (const c of result.candidates) c.file = file
-    for (const o of result.orphans) o.file = file
-    candidates.push(...result.candidates)
-    orphans.push(...result.orphans)
+  const orphanOccurrences = []
+  const localizedLocations = new Map()
+  for (const { file, type, data } of scanAssets) {
+    const result = collectCandidates(data, type, stringAttrIds, skipAttrIds)
+    for (const c of result) c.file = file
+    candidates.push(...result)
+    for (const o of collectOrphanRefs(data)) {
+      if (ids.has(o.refId)) {
+        if (!localizedLocations.has(o.refId)) localizedLocations.set(o.refId, [])
+        if (localizedLocations.get(o.refId).length < 40) localizedLocations.get(o.refId).push({ file, path: o.path })
+        continue
+      }
+      o.file = file
+      o.attrName = o.attrKey ? (attrNames.get(String(o.attrKey).toLowerCase()) || '') : ''
+      orphanOccurrences.push(o)
+    }
   }
-  return { candidates: mergeCandidates(candidates), orphans, missing: findMissingTranslations(localizationJson, languages), languages: [...languages] }
+  // 已本地化：被扫描资产引用且条目存在的文本（浏览/编辑用）
+  const localizedLeaves = new Map()
+  const leafWalk = (items, folder) => {
+    for (const item of items || []) {
+      if (item && Array.isArray(item.children)) leafWalk(item.children, item.name || '')
+      else if (item && item.id && localizedLocations.has(String(item.id).toLowerCase())) localizedLeaves.set(String(item.id).toLowerCase(), { leaf: item, folder: folder || '' })
+    }
+  }
+  leafWalk(localizationJson && localizationJson.list, '')
+  const localized = []
+  for (const [id, { leaf, folder }] of localizedLeaves) {
+    const langs = {}
+    for (const lang of languages) langs[lang] = typeof leaf.contents[lang] === 'string' ? leaf.contents[lang] : ''
+    localized.push({ id, name: leaf.name || '', folder, zh: langs[languages[0]] || '', langs, locations: localizedLocations.get(id) || [] })
+  }
+  localized.sort((a, b) => (a.name || a.zh).localeCompare(b.name || b.zh, 'zh-CN'))
+  let missing = findMissingTranslations(localizationJson, languages)
+  let suspicious = findSuspiciousTranslations(localizationJson, languages)
+  let unreferencedMissing = 0
+  let unreferencedSuspicious = 0
+  if (used && !includeUnreferenced) {
+    const usedRefs = referencedLocalizationIds(scanAssets, localizationJson)
+    const keepMissing = missing.filter((m) => usedRefs.has(m.id.toLowerCase()))
+    const keepSuspicious = suspicious.filter((m) => usedRefs.has(m.id.toLowerCase()))
+    unreferencedMissing = missing.length - keepMissing.length
+    unreferencedSuspicious = suspicious.length - keepSuspicious.length
+    missing = keepMissing
+    suspicious = keepSuspicious
+  }
+  return {
+    candidates: mergeCandidates(candidates), orphans: groupOrphans(orphanOccurrences), missing, suspicious, localized, languages: [...languages],
+    referenced: !!used, unreferenced, unreferencedMissing, unreferencedSuspicious,
+  }
 }
 
 /** 按点路径导航（'attributes[3].value' / 'events[0].commands[2].params.content'）；路径不存在返回 undefined（不抛错）。 */
@@ -269,13 +553,15 @@ function replaceSegment(value, segmentIndex, replacement) {
 }
 
 /** 把候选写入资产文件数据（file 指定时只处理该文件的 locations）。
-   先全部校验（当前值与导出时一致，不一致=外部改动，返回失败），再统一替换——
-   同文件多个相同文本位置必须先校验后替换，否则前一个被换成 <ref:ID> 后后一个校验会失败。 */
+   先全部校验（当前值与扫描时一致，不一致=外部改动，返回失败），再统一替换——
+   同文件多个相同文本位置必须先校验后替换，否则前一个被换成 <ref:ID> 后后一个校验会失败。
+   原文在界面里被编辑过时（candidate.originalZhCN 存在），按原始文本校验（文件里还是原文本），写进条目的是编辑后的文本。 */
 function applyAssetReplacement(fileJson, candidate, file) {
   const locations = file ? candidate.locations.filter((l) => l.file === file) : candidate.locations
+  const expect = candidate.originalZhCN || candidate.zhCN
   for (const loc of locations) {
     const current = locateValue(fileJson, loc.path)
-    if (typeof current !== 'string' || !current.includes(candidate.zhCN)) {
+    if (typeof current !== 'string' || !current.includes(expect)) {
       return { ok: false, reason: `${loc.file} ${loc.path} 当前值已与导出时不一致（可能被外部修改），导入已中止` }
     }
   }
@@ -287,7 +573,9 @@ function applyAssetReplacement(fileJson, candidate, file) {
   return { ok: true }
 }
 
-/** 把新增/补译条目写入 localization.json 树（根级「快速本地化」文件夹；不存在则创建）。幂等：ID 已存在则跳过新增。 */
+/** 把新增/补译条目写入 localization.json 树。
+    新增按 add.folder 分入根级「快速本地化」文件夹下的类型子文件夹（物品/装备/技能/…/孤儿修复；不存在则创建）。
+    幂等：ID 已存在则跳过新增；已有条目（补译）按 ID 覆盖非空语言列。 */
 function localizationInsertion(localizationJson, additions, fills, languages) {
   const root = localizationJson.list || (localizationJson.list = [])
   const byId = new Map()
@@ -295,6 +583,16 @@ function localizationInsertion(localizationJson, additions, fills, languages) {
   collect(root)
   let folder = root.find((item) => item && item.name === LOCALIZATION_FOLDER && Array.isArray(item.children))
   if (!folder) { folder = { class: 'folder', name: LOCALIZATION_FOLDER, expanded: false, children: [] }; root.push(folder) }
+  const subFolders = new Map()
+  const subFolder = (name) => {
+    const key = name || '其他'
+    if (!subFolders.has(key)) {
+      let sub = folder.children.find((item) => item && item.name === key && Array.isArray(item.children))
+      if (!sub) { sub = { class: 'folder', name: key, expanded: false, children: [] }; folder.children.push(sub) }
+      subFolders.set(key, sub)
+    }
+    return subFolders.get(key)
+  }
   for (const fill of fills) {
     const leaf = byId.get(fill.id)
     if (!leaf) continue
@@ -310,20 +608,37 @@ function localizationInsertion(localizationJson, additions, fills, languages) {
       const value = add.langs[lang]
       if (typeof value === 'string' && value.trim()) contents[lang] = value
     }
-    folder.children.push({ id: add.id, name: String(add.zhCN).replace(/\s+/g, ' ').trim().slice(0, 20), contents })
+    subFolder(add.folder).children.push({ id: add.id, name: String(add.zhCN).replace(/\s+/g, ' ').trim().slice(0, 20), contents })
     byId.set(add.id, null)
   }
   return localizationJson
 }
 
-/** Excel 导入行校验：ID 格式/表内重复/与现有条目冲突/原文空/补译行 ID 必须存在。返回错误与归类行。 */
+/** Excel 导入行校验：ID 格式/表内重复/与现有条目冲突/原文空/补译行 ID 必须存在。
+    忽略行（处理方式=忽略、建议文本为空、幂等已存在）单独进 ignored 列表，供预览明示。 */
 function validateImportRows(rows, existingById, languages) {
   const errors = []
   const warnings = []
-  const seen = { add: new Set(), fill: new Set() } // 表内重复按 sheet 分开（两张表 ID 重叠正常）
+  const seen = { add: new Set(), fill: new Set(), orphan: new Set() } // 表内重复按 sheet 分开（多张表 ID 重叠正常）
   const additions = []
   const fills = []
+  const ignored = []
   for (const row of rows) {
+    if (row.sheet === 'add' && row.handle && String(row.handle).trim() === '忽略') {
+      ignored.push({ ...row, reason: '处理方式=忽略，不创建也不替换' })
+      continue
+    }
+    if (row.sheet === 'orphan') {
+      const id = String(row.id || '').trim()
+      if (!/^[0-9a-f]{16}$/i.test(id)) { errors.push(`第 ${row.row} 行：引用ID「${row.id || '(空)'}」不是 16 位 hex`); continue }
+      if (seen.orphan.has(id)) { errors.push(`第 ${row.row} 行：引用ID ${id} 在表中重复`); continue }
+      seen.orphan.add(id)
+      const zhCN = String(row.zhCN || '').trim()
+      if (!zhCN) { ignored.push({ ...row, reason: '建议文本为空，跳过（可在界面或 Excel 里补填）' }); continue }
+      if (existingById.has(id)) { ignored.push({ ...row, reason: '条目已存在（此前已修复），幂等跳过' }); continue }
+      additions.push({ ...row, folder: ORPHAN_FOLDER, zhCN })
+      continue
+    }
     const id = String(row.id || '').trim()
     if (!/^[0-9a-f]{16}$/i.test(id)) { errors.push(`第 ${row.row} 行：ID「${row.id || '(空)'}」不是 16 位 hex`); continue }
     if (seen[row.sheet].has(id)) { errors.push(`第 ${row.row} 行：ID ${id} 在表中重复`); continue }
@@ -333,7 +648,7 @@ function validateImportRows(rows, existingById, languages) {
       if (!zhCN.trim()) { errors.push(`第 ${row.row} 行：原文为空`); continue }
       const existing = existingById.get(id)
       if (existing) {
-        if (normalizeText(existing.zhCN) === normalizeText(zhCN)) continue // 幂等：已存在且原文一致 → 跳过
+        if (normalizeText(existing.zhCN) === normalizeText(zhCN)) { ignored.push({ ...row, reason: '条目已存在且原文一致，幂等跳过' }); continue }
         errors.push(`第 ${row.row} 行：ID ${id} 已存在于 localization.json 且原文不同（${existing.zhCN.slice(0, 24)}…），可能是重复导出的旧表，请重新导出`)
         continue
       }
@@ -343,15 +658,16 @@ function validateImportRows(rows, existingById, languages) {
       fills.push(row)
     }
   }
-  return { errors, warnings, additions, fills }
+  return { errors, warnings, additions, fills, ignored }
 }
 
 const core = {
   REF_RE, COLOR_RE, LOCAL_RE, GLOBAL_RE, normalizeText, splitRefSegments, classifyText,
-  buildStringAttributeIds, loopListAttributeId, localizationIds, collectRefKeys, collectCandidates,
-  mergeCandidates, findMissingTranslations, buildScanResult, locateValue, setValue, replaceSegment,
-  applyAssetReplacement, localizationInsertion, validateImportRows, randomHex16, EXT_TYPE,
-  LOCALIZATION_FOLDER, serializeLike, clone,
+  buildStringAttributeIds, loopListAttributeId, localizationIds, buildAttributeNames, collectRefKeys, collectCandidates,
+  collectOrphanRefs, orphanSuggestion, groupOrphans, mergeCandidates, findMissingTranslations, findSuspiciousTranslations,
+  buildScanResult, assetGuid, referencedFileIds, referencedLocalizationIds,
+  locateValue, setValue, replaceSegment, applyAssetReplacement, localizationInsertion, validateImportRows,
+  randomHex16, EXT_TYPE, LOCALIZATION_FOLDER, ORPHAN_FOLDER, serializeLike, clone,
 }
 globalThis.LocalizationLabCore = core
 
@@ -368,17 +684,49 @@ function initializeLocalizationLab() {
     projectState: $('#project-state'), pickProject: $('#pick-project'), restoreProject: $('#restore-project'),
     folderFallback: $('#folder-fallback'), btnExport: $('#btn-export'), btnImport: $('#btn-import'), importXlsx: $('#import-xlsx'),
     btnRescan: $('#btn-rescan'), filterSource: $('#filter-source'), filterConfidence: $('#filter-confidence'), filterQuery: $('#filter-query'),
-    metricCandidates: $('#metric-candidates'), metricMissing: $('#metric-missing'), metricMissingLangs: $('#metric-missing-langs'), metricOrphans: $('#metric-orphans'),
-    listBody: $('#list-body'), scanStatus: $('#scan-status'),
+    metricCandidates: $('#metric-candidates'), metricMissing: $('#metric-missing'), metricMissingLangs: $('#metric-missing-langs'), metricOrphans: $('#metric-orphans'), metricSuspicious: $('#metric-suspicious'), metricLocalized: $('#metric-localized'),
+    listBody: $('#list-body'), scanStatus: $('#scan-status'), btnFixOrphans: $('#btn-fix-orphans'), btnSaveFills: $('#btn-save-fills'), chkUnreferenced: $('#chk-unreferenced'), langSelect: $('#lang-select'),
     importPreview: $('#import-preview'), importPreviewSummary: $('#import-preview-summary'), importPreviewBody: $('#import-preview-body'),
     btnCancelImport: $('#btn-cancel-import'), btnConfirmImport: $('#btn-confirm-import'), toastRegion: $('#toast-region'),
+    scanProgress: $('#scan-progress'), scanProgressFill: $('#scan-progress-fill'),
+    btnBackups: $('#btn-backups'), backupPanel: $('#backup-panel'), backupPanelSummary: $('#backup-panel-summary'), backupPanelBody: $('#backup-panel-body'),
+    btnBackupNow: $('#btn-backup-now'), btnCloseBackup: $('#btn-close-backup'),
   }
   const state = {
     rootHandle: null, lastRootHandle: null, scan: null, filter: 'candidates', filterSourceValue: 'all', filterConfidenceValue: 'all', filterQueryValue: '',
-    importRows: null, importErrors: null, importAdditions: null, importFills: null, selectedIds: new Set(), pendingFiles: [],
-    watchPaths: [], watchTimer: null, watchSnapshot: new Map(), watchRunning: false,
+    importRows: null, importErrors: null, importAdditions: null, importFills: null, importIgnored: [], selectedIds: new Set(), pendingFiles: [],
+    orphanTexts: new Map(), fillDrafts: new Map(), candidateLangs: new Map(), langValue: '', candidateIdMap: new Map(), watchPaths: [], watchTimer: null, watchSnapshot: new Map(), watchRunning: false,
+    scanAssets: null, scanAttribute: null, references: null, filterReferenced: true, // 引用过滤：默认只扫被引擎打包算法判定的已引用资产
   }
   const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  /** 原文富文本渲染：<color:RRGGBB[AA]>…</color> 渲染成彩色字；其余标签保留原样文本（已转义）。 */
+  function renderRichText(text) {
+    const pieces = String(text).split(/(<\/color>|<color:[0-9a-f]{6}(?:[0-9a-f]{2})?>)/i)
+    let html = ''
+    let open = false
+    for (const piece of pieces) {
+      if (!piece) continue
+      if (/^<\/color>$/i.test(piece)) { if (open) html += '</span>'; open = false; continue }
+      const color = /^<color:([0-9a-f]{6}(?:[0-9a-f]{2})?)>$/i.exec(piece)
+      if (color) { if (open) html += '</span>'; open = true; html += `<span style="color:#${color[1]}">`; continue }
+      if (/^<color:[^>]*>$/i.test(piece)) continue // 无法识别的颜色标签丢弃，内文照常显示
+      html += escapeHtml(piece)
+    }
+    if (open) html += '</span>'
+    return html
+  }
+  /** 顶部进度条：total<=0 隐藏；indeterminate 为 true 时走流动动画。 */
+  function setScanProgress(done, total, indeterminate) {
+    if (indeterminate) {
+      els.scanProgress.classList.remove('hidden')
+      els.scanProgress.classList.add('indeterminate')
+      return
+    }
+    els.scanProgress.classList.remove('indeterminate')
+    if (!total) { els.scanProgress.classList.add('hidden'); return }
+    els.scanProgress.classList.remove('hidden')
+    els.scanProgressFill.style.width = `${Math.min(100, Math.round((done / total) * 100))}%`
+  }
   function toast(message, type = 'info') {
     const element = document.createElement('div')
     element.className = `toast ${type}`
@@ -387,7 +735,31 @@ function initializeLocalizationLab() {
     setTimeout(() => element.remove(), 3200)
   }
   function typeLabel(type) {
-    return ({ items: '物品', equipments: '装备', skills: '技能', states: '状态', events: '事件', ui: '界面', triggers: '触发器' })[type] || type
+    return ({ items: '物品', equipments: '装备', skills: '技能', states: '状态', events: '事件', ui: '界面', triggers: '触发器', actors: '角色' })[type] || type
+  }
+  /** 扫描完成状态行（含未引用资产跳过说明）。 */
+  function scanStatusText() {
+    const scan = state.scan
+    if (!scan) return '等待扫描'
+    let extra = ''
+    if (scan.referenced) {
+      const skipped = []
+      if (scan.unreferenced.total) skipped.push(`未引用资产 ${scan.unreferenced.total} 个已跳过`)
+      if (scan.unreferencedMissing) skipped.push(`未引用缺翻译 ${scan.unreferencedMissing} 条已跳过`)
+      if (scan.unreferencedSuspicious) skipped.push(`未引用疑似占位 ${scan.unreferencedSuspicious} 条已跳过`)
+      if (skipped.length) extra = ` · ${skipped.join(' · ')}（可勾选「含未引用资产」查看）`
+    }
+    return `扫描完成 · ${scan.candidates.length} 候选 · ${scan.missing.length} 缺翻译 · ${scan.orphans.length} 孤儿 · ${scan.suspicious.length} 疑似占位${extra}`
+  }
+  /** 从缓存资产重算扫描结果（切换「含未引用资产」时用，不重读文件）。 */
+  function rescanFromCache() {
+    if (!state.scanAssets) return
+    state.scan = buildScanResult(state.scanAssets, {
+      attributeJson: state.scanAttribute, localizationJson: state.scanLocalization, languages: state.scan.languages,
+      references: state.references, includeUnreferenced: !state.filterReferenced,
+    })
+    els.scanStatus.textContent = scanStatusText()
+    renderScan()
   }
   const formatNow = () => new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
 
@@ -423,38 +795,73 @@ function initializeLocalizationLab() {
   async function readText(root, path) { return (await (await getHandle(root, path)).getFile()).text() }
   async function readJson(root, path) { return JSON.parse(await readText(root, path)) }
 
-  async function collectAssets(root, manifest) {
+  // 扫描类型：参与候选/孤儿判定；引用类型：只参与「已引用文件」判定（复刻引擎打包算法）
+  const SCAN_TYPES = ['items', 'equipments', 'skills', 'states', 'events', 'ui', 'triggers', 'actors']
+  const REF_ONLY_TYPES = ['scenes', 'animations', 'particles', 'tilesets']
+  async function collectAssets(root, manifest, onProgress) {
     const assets = []
-    for (const type of ['items', 'equipments', 'skills', 'states', 'events', 'ui', 'triggers']) {
+    const references = { data: [], scripts: [] }
+    let done = 0
+    const tick = () => { done += 1; if (onProgress) onProgress(done) }
+    for (const type of SCAN_TYPES) {
       for (const entry of manifest[type] || []) {
-        try { assets.push({ file: entry.path, type, data: await readJson(root, entry.path) }) } catch (error) { console.warn('跳过无法读取的文件', entry.path, error) }
+        try {
+          const data = await readJson(root, entry.path)
+          assets.push({ file: entry.path, type, data })
+          references.data.push({ guid: core.assetGuid(entry.path), type, data })
+        } catch (error) { console.warn('跳过无法读取的文件', entry.path, error) }
+        tick()
       }
     }
-    return assets
+    for (const type of REF_ONLY_TYPES) {
+      for (const entry of manifest[type] || []) {
+        try { references.data.push({ guid: core.assetGuid(entry.path), type, data: await readJson(root, entry.path) }) } catch (error) { console.warn('跳过无法读取的文件', entry.path, error) }
+        tick()
+      }
+    }
+    for (const entry of manifest.script || []) {
+      try { references.scripts.push({ guid: core.assetGuid(entry.path), code: await readText(root, entry.path) }) } catch (error) { console.warn('跳过无法读取的脚本', entry.path, error) }
+      tick()
+    }
+    return { assets, references }
   }
   async function scanProject(root) {
     stopAutoSync()
     els.projectState.textContent = '正在扫描…'
     try {
-      const [manifest, attributeJson, localizationJson, configJson] = await Promise.all([
+      const [manifest, attributeJson, localizationJson, configJson, pluginsJson, commandsJson] = await Promise.all([
         readJson(root, 'Data/manifest.json'), readJson(root, 'Data/attribute.json'), readJson(root, 'Data/localization.json'),
         readJson(root, 'Data/config.json').catch(() => ({})),
+        readJson(root, 'Data/plugins.json').catch(() => undefined),
+        readJson(root, 'Data/commands.json').catch(() => undefined),
       ])
       const languages = (configJson.localization && configJson.localization.languages && configJson.localization.languages.map((l) => l.name)) || ['zh-CN', 'en']
-      const assets = await collectAssets(root, manifest)
-      state.scan = buildScanResult(assets, { attributeJson, localizationJson, languages })
+      const total = [...SCAN_TYPES, ...REF_ONLY_TYPES, 'script'].reduce((n, type) => n + (manifest[type] || []).length, 0)
+      setScanProgress(0, total)
+      els.projectState.textContent = `正在扫描… 0/${total}`
+      const { assets, references } = await collectAssets(root, manifest, (done) => { setScanProgress(done, total); els.projectState.textContent = `正在扫描… ${done}/${total}` })
+      references.plugins = pluginsJson
+      references.commands = commandsJson
+      references.config = configJson
+      state.scanAssets = assets
+      state.scanAttribute = attributeJson
+      state.references = references
+      state.scan = buildScanResult(assets, { attributeJson, localizationJson, languages, references, includeUnreferenced: !state.filterReferenced })
       state.scanLocalization = localizationJson
       state.rootHandle = root
       state.lastRootHandle = root
-      state.watchPaths = ['Data/manifest.json', 'Data/attribute.json', 'Data/localization.json', 'Data/config.json',
-        ...['items', 'equipments', 'skills', 'states', 'events', 'ui', 'triggers'].flatMap((type) => (manifest[type] || []).map((e) => e.path))]
+      state.watchPaths = ['Data/manifest.json', 'Data/attribute.json', 'Data/localization.json', 'Data/config.json', 'Data/plugins.json', 'Data/commands.json',
+        ...[...SCAN_TYPES, ...REF_ONLY_TYPES, 'script'].flatMap((type) => (manifest[type] || []).map((e) => e.path))]
+      setScanProgress(0, 0)
       els.btnExport.disabled = false
       els.btnImport.disabled = !root || state.importRows !== null
+      els.btnBackups.disabled = !root
       els.projectState.textContent = root.name || '工程已导入'
-      els.scanStatus.textContent = `扫描完成 · ${state.scan.candidates.length} 候选 · ${state.scan.missing.length} 缺翻译 · ${state.scan.orphans.length} 孤儿`
+      els.scanStatus.textContent = scanStatusText()
       renderScan()
       startAutoSync()
     } catch (error) {
+      setScanProgress(0, 0)
       els.scanStatus.textContent = '扫描失败'
       toast(`扫描失败：${error.message}`, 'error')
       console.error(error)
@@ -470,41 +877,76 @@ function initializeLocalizationLab() {
       const readData = async (path) => JSON.parse(await byPath.get(path).text())
       const manifest = byPath.has('Data/manifest.json') ? await readData('Data/manifest.json') : null
       const assets = []
+      const references = { data: [], scripts: [] }
+      const ALL_TYPES = [...SCAN_TYPES, ...REF_ONLY_TYPES, 'script']
+      const total = manifest ? ALL_TYPES.reduce((n, type) => n + (manifest[type] || []).length, 0) : files.filter((file) => EXT_TYPE['.' + file.name.split('.').pop().toLowerCase()] || file.name.toLowerCase().endsWith('.ts')).length
+      let done = 0
+      setScanProgress(0, total)
+      els.projectState.textContent = `正在扫描… 0/${total}`
+      const tick = () => { done += 1; setScanProgress(done, total); els.projectState.textContent = `正在扫描… ${done}/${total}` }
       if (manifest) {
-        for (const type of ['items', 'equipments', 'skills', 'states', 'events', 'ui', 'triggers']) {
+        for (const type of ALL_TYPES) {
           for (const entry of manifest[type] || []) {
             const file = byPath.get(entry.path)
             if (!file) continue
-            try { assets.push({ file: entry.path, type, data: JSON.parse(await file.text()) }) } catch {}
+            if (type === 'script') {
+              references.scripts.push({ guid: core.assetGuid(entry.path), code: await file.text() })
+            } else {
+              try {
+                const data = JSON.parse(await file.text())
+                references.data.push({ guid: core.assetGuid(entry.path), type, data })
+                if (SCAN_TYPES.includes(type)) assets.push({ file: entry.path, type, data })
+              } catch {}
+            }
+            tick()
           }
         }
       } else {
         for (const file of files) {
           const ext = '.' + file.name.split('.').pop().toLowerCase()
           const type = EXT_TYPE[ext]
-          if (!type) continue
-          try { assets.push({ file: rel(file), type, data: JSON.parse(await file.text()) }) } catch {}
+          if (!type && !file.name.toLowerCase().endsWith('.ts')) continue
+          try {
+            if (type === 'scripts' || (type === undefined && file.name.toLowerCase().endsWith('.ts'))) {
+              references.scripts.push({ guid: core.assetGuid(rel(file)), code: await file.text() })
+            } else {
+              const data = JSON.parse(await file.text())
+              references.data.push({ guid: core.assetGuid(rel(file)), type, data })
+              if (SCAN_TYPES.includes(type)) assets.push({ file: rel(file), type, data })
+            }
+          } catch {}
+          tick()
         }
       }
       const attributeJson = byPath.has('Data/attribute.json') ? await readData('Data/attribute.json') : { keys: [] }
       const localizationJson = byPath.has('Data/localization.json') ? await readData('Data/localization.json') : { list: [] }
       let languages = ['zh-CN', 'en']
+      let configJson = {}
       if (byPath.has('Data/config.json')) {
         try {
-          const config = JSON.parse(await byPath.get('Data/config.json').text())
-          if (config.localization && config.localization.languages) languages = config.localization.languages.map((l) => l.name)
+          configJson = JSON.parse(await byPath.get('Data/config.json').text())
+          if (configJson.localization && configJson.localization.languages) languages = configJson.localization.languages.map((l) => l.name)
         } catch {}
       }
-      state.scan = buildScanResult(assets, { attributeJson, localizationJson, languages })
+      references.plugins = byPath.has('Data/plugins.json') ? await readData('Data/plugins.json').catch(() => undefined) : undefined
+      references.commands = byPath.has('Data/commands.json') ? await readData('Data/commands.json').catch(() => undefined) : undefined
+      references.config = configJson
+      state.scanAssets = assets
+      state.scanAttribute = attributeJson
+      state.references = references
+      state.scan = buildScanResult(assets, { attributeJson, localizationJson, languages, references, includeUnreferenced: !state.filterReferenced })
       state.scanLocalization = localizationJson
       state.lastRootHandle = null
       state.watchPaths = []
+      setScanProgress(0, 0)
       els.btnExport.disabled = false
       els.btnImport.disabled = true // fallback 导入模式只读，不写回工程
+      els.btnBackups.disabled = true
       els.projectState.textContent = '已导入工程（只读）'
-      els.scanStatus.textContent = `扫描完成 · ${state.scan.candidates.length} 候选 · ${state.scan.missing.length} 缺翻译 · ${state.scan.orphans.length} 孤儿`
+      els.scanStatus.textContent = scanStatusText()
       renderScan()
     } catch (error) {
+      setScanProgress(0, 0)
       els.scanStatus.textContent = '扫描失败'
       toast(`扫描失败：${error.message}`, 'error')
       console.error(error)
@@ -519,7 +961,23 @@ function initializeLocalizationLab() {
     els.metricMissing.textContent = scan.missing.length
     els.metricMissingLangs.textContent = `缺：${scan.missing.reduce((n, m) => n + m.missingLangs.length, 0)} 语言 · 共 ${scan.languages.length} 种语言`
     els.metricOrphans.textContent = scan.orphans.length
+    els.metricSuspicious.textContent = scan.suspicious.length
+    els.metricLocalized.textContent = scan.localized.length
+    els.chkUnreferenced.checked = !state.filterReferenced
+    // 语言切换下拉：单语言模式（译文列只显示当前语言）；默认第一个非原文语言
+    els.langSelect.innerHTML = scan.languages.map((lang) => `<option value="${escapeHtml(lang)}">${escapeHtml(lang)}${lang === scan.languages[0] ? '（原文）' : ''}</option>`).join('')
+    if (!scan.languages.includes(state.langValue)) state.langValue = scan.languages[1] || scan.languages[0]
+    els.langSelect.value = state.langValue
+    state.candidateLangs = new Map()
+    // 会话内稳定的候选 ID（与引擎同格式 16hex）：重扫/切换过滤不换 ID，Excel 导出与「本地化」按钮共用
+    for (const c of scan.candidates) {
+      let id = state.candidateIdMap.get(c.normalized)
+      if (!id) { id = core.randomHex16(); state.candidateIdMap.set(c.normalized, id) }
+      c.id = id
+    }
     state.selectedIds = new Set(scan.candidates.map((c) => c.normalized)) // 默认全选，导出范围由勾选控制
+    state.orphanTexts = new Map(scan.orphans.filter((o) => o.suggestion).map((o) => [o.refId, o.suggestion]))
+    state.fillDrafts = new Map()
     renderList()
   }
   function renderList() {
@@ -528,6 +986,8 @@ function initializeLocalizationLab() {
     let html = ''
     if (state.filter === 'missing') html = renderMissingRows(scan.missing)
     else if (state.filter === 'orphans') html = renderOrphanRows(scan.orphans)
+    else if (state.filter === 'suspicious') html = renderSuspiciousRows(scan.suspicious)
+    else if (state.filter === 'localized') html = renderLocalizedRows(scan.localized)
     else html = renderCandidateRows(scan.candidates)
     els.listBody.innerHTML = html || '<div class="empty-state">没有匹配的条目。</div>'
     els.listBody.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
@@ -536,24 +996,68 @@ function initializeLocalizationLab() {
         else state.selectedIds.delete(checkbox.dataset.key)
       })
     })
+    els.listBody.querySelectorAll('.orphan-text').forEach((input) => {
+      input.addEventListener('input', () => {
+        state.orphanTexts.set(input.dataset.refId, input.value)
+        const button = input.closest('tr')?.querySelector('.btn-fix-orphan')
+        if (button) button.disabled = !input.value.trim()
+      })
+    })
+    els.listBody.querySelectorAll('.btn-fix-orphan').forEach((button) => {
+      button.addEventListener('click', () => createOrphanEntries([{ refId: button.dataset.refId }]))
+    })
+    els.listBody.querySelectorAll('.btn-edit-text').forEach((button) => {
+      button.addEventListener('click', () => startTextEdit(button))
+    })
+    els.listBody.querySelectorAll('.btn-localize-now').forEach((button) => {
+      button.addEventListener('click', () => {
+        const candidate = state.scan && state.scan.candidates.find((c) => c.normalized === button.dataset.key)
+        if (candidate) localizeCandidateNow(candidate)
+      })
+    })
+    els.listBody.querySelectorAll('.fill-input').forEach((input) => {
+      input.addEventListener('input', () => {
+        state.fillDrafts.set(`${input.dataset.id}::${input.dataset.lang}`, input.value)
+        input.classList.toggle('dirty', !!input.value.trim())
+      })
+    })
+    els.listBody.querySelectorAll('.candidate-lang-input').forEach((input) => {
+      input.addEventListener('input', () => {
+        state.candidateLangs.set(`${input.dataset.key}::${state.langValue}`, input.value)
+        input.classList.toggle('dirty', !!input.value.trim())
+      })
+    })
+    els.btnFixOrphans.classList.toggle('hidden', state.filter !== 'orphans' || !state.rootHandle)
+    els.btnSaveFills.classList.toggle('hidden', !['missing', 'suspicious', 'localized'].includes(state.filter) || !state.rootHandle)
+  }
+  // 单语言模式：译文列只显示语言下拉选中的语言（可切换）；原文(zh-CN)列固定
+  function langCellValue(languages, id) {
+    const key = `${id}::${state.langValue}`
+    const draft = state.fillDrafts.get(key)
+    return { key, draft, value: draft !== undefined ? draft : (languages[state.langValue] || '') }
   }
   function renderCandidateRows(candidates) {
     const scan = state.scan
     const query = state.filterQueryValue
+    const langEditable = state.langValue && state.langValue !== scan.languages[0]
     const rows = candidates.filter((c) => {
       if (state.filterSourceValue !== 'all' && c.sourceType !== state.filterSourceValue) return false
       if (state.filterConfidenceValue !== 'all' && c.confidence !== state.filterConfidenceValue) return false
       if (query && !c.zhCN.toLowerCase().includes(query) && !c.locations.some((l) => l.file.toLowerCase().includes(query))) return false
       return true
     })
-    return `<table class="candidate-table"><thead><tr><th class="col-check">勾选</th><th>原文</th><th>语言</th><th>处理</th><th>置信度</th><th>来源</th><th class="col-loc">出现位置</th></tr></thead><tbody>${rows.map((c) => {
+    return `<table class="candidate-table"><thead><tr><th class="col-check">勾选</th><th>原文</th><th>译文(${escapeHtml(state.langValue)})</th><th>处理</th><th>置信度</th><th>来源</th><th class="col-loc">出现位置</th></tr></thead><tbody>${rows.map((c) => {
       const checked = state.selectedIds.has(c.normalized) ? 'checked' : ''
       const locations = c.locations.slice(0, 4).map((l) => `<span class="loc-file">${escapeHtml(l.file)}</span><span class="loc-path">${escapeHtml(l.path)}</span>`).join('')
       const more = c.locations.length > 4 ? `<span class="loc-path">…共 ${c.locations.length} 处</span>` : ''
+      const langDraft = state.candidateLangs.get(`${c.normalized}::${state.langValue}`)
+      const langCell = langEditable
+        ? `<td><input class="fill-input candidate-lang-input${langDraft !== undefined ? ' dirty' : ''}" type="text" data-key="${escapeHtml(c.normalized)}" value="${escapeHtml(langDraft !== undefined ? langDraft : '')}" placeholder="待翻译（随 Excel 导出）" /></td>`
+        : `<td class="col-muted">—</td>`
       return `<tr${checked ? ' class="selected"' : ''}>
         <td class="col-check"><input type="checkbox" data-key="${escapeHtml(c.normalized)}" ${checked} /></td>
-        <td class="col-text"><span class="raw col-zh">${escapeHtml(c.zhCN)}</span></td>
-        <td class="col-text"><span class="raw col-en">${scan.languages.length > 1 ? scan.languages.slice(1).map((l) => `${l}：待翻译`).join(' · ') : ''}</span></td>
+        <td class="col-text"><span class="raw col-zh rich-text">${renderRichText(c.zhCN)}</span><button class="btn-edit-text" type="button" data-key="${escapeHtml(c.normalized)}" title="编辑原文：条目 zh-CN 与 Excel 导出用编辑后的文本，导入时仍按扫描原文校验">✎</button>${state.rootHandle ? `<button class="btn-localize-now" type="button" data-key="${escapeHtml(c.normalized)}" title="立即创建条目（下方唯一 ID）并把文件里的原文替换为 <ref:ID>（先备份）">本地化</button>` : ''}<div class="text-id" title="唯一 ID（与引擎同格式 16hex），写入 localization.json 条目">${escapeHtml(c.id)}</div></td>
+        ${langCell}
         <td><select class="handle-select" data-key="${escapeHtml(c.normalized)}"><option selected>替换</option><option>忽略</option></select></td>
         <td><span class="conf-badge ${c.confidence === 'high' ? 'conf-high' : 'conf-medium'}">${c.confidence === 'high' ? '高' : '中'}</span></td>
         <td><span class="type-badge">${typeLabel(c.sourceType)}</span></td>
@@ -563,17 +1067,97 @@ function initializeLocalizationLab() {
   function renderMissingRows(missing) {
     const scan = state.scan
     const query = state.filterQueryValue
+    const langEditable = state.langValue && state.langValue !== scan.languages[0]
     const rows = missing.filter((m) => !query || m.id.includes(query) || m.name.includes(query) || (m.languages[m.languages[0]] || '').includes(query))
-    return `<table class="candidate-table"><thead><tr><th>ID</th><th>名称</th><th>中文</th>${scan.languages.slice(1).map((l) => `<th>${l}</th>`).join('')}<th>缺语言</th></tr></thead><tbody>${rows.map((m) => `<tr>
-      <td class="col-muted">${m.id}</td><td>${escapeHtml(m.name)}</td><td class="col-text"><span class="raw col-zh">${escapeHtml(m.languages[scan.languages[0]] || '')}</span></td>
-      ${scan.languages.slice(1).map((l) => `<td class="${m.languages[l] ? 'col-muted' : 'col-danger'}">${escapeHtml(m.languages[l] || '(空)')}</td>`).join('')}
-      <td class="col-danger">${m.missingLangs.join(', ')}</td></tr>`).join('')}</tbody></table>`
+    const editable = !!state.rootHandle
+    return `<table class="candidate-table"><thead><tr><th>名称</th><th>中文（下方为条目 ID）</th><th>译文(${escapeHtml(state.langValue)})</th><th>缺语言</th></tr></thead><tbody>${rows.map((m) => {
+      const { key, draft, value } = langCellValue(m.languages, m.id)
+      const dirty = draft !== undefined && draft !== (m.languages[state.langValue] || '')
+      const langCell = !langEditable
+        ? `<td class="col-muted">—</td>`
+        : editable
+          ? `<td><input class="fill-input${dirty ? ' dirty' : ''}" type="text" data-id="${escapeHtml(m.id)}" data-lang="${escapeHtml(state.langValue)}" value="${escapeHtml(value)}" placeholder="待翻译" /></td>`
+          : `<td class="${m.languages[state.langValue] ? 'col-muted' : 'col-danger'}">${m.languages[state.langValue] ? renderRichText(m.languages[state.langValue]) : '(空)'}</td>`
+      return `<tr>
+        <td>${escapeHtml(m.name)}</td><td class="col-text"><span class="raw col-zh rich-text">${renderRichText(m.languages[scan.languages[0]] || '')}</span><div class="text-id">${escapeHtml(m.id)}</div></td>
+        ${langCell}
+        <td class="col-danger">${m.missingLangs.join(', ')}</td></tr>`
+    }).join('')}</tbody></table>`
   }
   function renderOrphanRows(orphans) {
     const query = state.filterQueryValue
-    const rows = orphans.filter((o) => !query || o.refId.includes(query) || o.file.includes(query))
-    return `<table class="candidate-table"><thead><tr><th>引用 ID</th><th>文件</th><th>位置</th></tr></thead><tbody>${rows.map((o) => `<tr>
-      <td class="col-danger">${o.refId}</td><td class="col-loc"><span class="loc-file">${escapeHtml(o.file)}</span></td><td class="col-muted">${escapeHtml(o.path)}</td></tr>`).join('')}</tbody></table>`
+    const rows = orphans.filter((o) => !query
+      || o.refId.includes(query)
+      || o.suggestion.toLowerCase().includes(query)
+      || o.uses.some((u) => u.file.toLowerCase().includes(query) || (u.attrName || '').includes(query)))
+    const contextOf = (o) => [...new Set(o.uses.map((u) => u.attrName || u.nodeName || '').filter(Boolean))].join(' / ')
+    return `<table class="candidate-table"><thead><tr><th>引用 ID</th><th>上下文</th><th class="col-orphan-text">中文文本（创建缺失条目）</th><th class="col-loc">引用位置</th><th></th></tr></thead><tbody>${rows.map((o) => {
+      const value = state.orphanTexts.get(o.refId) || o.suggestion || ''
+      const context = contextOf(o)
+      const uses = o.uses.slice(0, 4).map((u) => `<span class="loc-file">${escapeHtml(u.file)}</span><span class="loc-path">${escapeHtml(u.path)}</span>`).join('')
+      const more = o.uses.length > 4 ? `<span class="loc-path">…共 ${o.uses.length} 处（${o.fileCount} 个文件）</span>` : ''
+      return `<tr>
+        <td class="col-danger col-mono">${o.refId}</td>
+        <td class="col-muted">${escapeHtml(context) || '—'}</td>
+        <td class="col-orphan-text"><input class="orphan-text" type="text" data-ref-id="${escapeHtml(o.refId)}" value="${escapeHtml(value)}" placeholder="输入该条目的中文原文" /></td>
+        <td class="col-loc">${uses}${more}</td>
+        <td><button class="btn-fix-orphan button" type="button" data-ref-id="${escapeHtml(o.refId)}" ${value.trim() ? '' : 'disabled'} title="用该引用 ID 在 localization.json 创建条目（资产文件无需改动）">创建条目</button></td></tr>`
+    }).join('')}</tbody></table>`
+  }
+  function renderSuspiciousRows(suspicious) {
+    const scan = state.scan
+    const query = state.filterQueryValue
+    const langEditable = state.langValue && state.langValue !== scan.languages[0]
+    const rows = suspicious.filter((m) => !query || m.id.includes(query) || m.name.includes(query) || (m.languages[scan.languages[0]] || '').includes(query))
+    const editable = !!state.rootHandle
+    return `<table class="candidate-table"><thead><tr><th>名称</th><th>中文（下方为条目 ID）</th><th>译文(${escapeHtml(state.langValue)})</th><th>疑似说明</th></tr></thead><tbody>${rows.map((m) => {
+      const suspect = m.suspicious.filter((s) => s.lang === state.langValue)
+      const { key, draft, value } = langCellValue(m.languages, m.id)
+      const dirty = draft !== undefined && draft !== (m.languages[state.langValue] || '')
+      const langCell = !langEditable
+        ? `<td class="col-muted">—</td>`
+        : editable
+          ? `<td><input class="fill-input${dirty ? ' dirty' : ''}${suspect.length ? ' fill-suspect' : ''}" type="text" data-id="${escapeHtml(m.id)}" data-lang="${escapeHtml(state.langValue)}" value="${escapeHtml(value)}" placeholder="待翻译" /></td>`
+          : `<td class="${suspect.length ? 'col-danger' : 'col-muted'}">${m.languages[state.langValue] ? renderRichText(m.languages[state.langValue]) : '(空)'}</td>`
+      return `<tr>
+        <td>${escapeHtml(m.name)}</td><td class="col-text"><span class="raw col-zh rich-text">${renderRichText(m.languages[scan.languages[0]] || '')}</span><div class="text-id">${escapeHtml(m.id)}</div></td>
+        ${langCell}
+        <td class="col-muted">${escapeHtml(m.suspicious.map((s) => `${s.lang}：${s.reason}（「${s.value}」）`).join('；'))}</td></tr>`
+    }).join('')}</tbody></table>`
+  }
+  /** 已本地化视图：被引用且条目存在的文本——中文与译文都可直接编辑，「保存修改」备份后写回 localization.json。 */
+  function renderLocalizedRows(localized) {
+    const scan = state.scan
+    const query = state.filterQueryValue
+    const langEditable = state.langValue && state.langValue !== scan.languages[0]
+    const editable = !!state.rootHandle
+    const primary = scan.languages[0]
+    const rows = localized.filter((m) => !query || m.id.includes(query) || m.name.includes(query) || m.zh.includes(query) || m.locations.some((l) => l.file.toLowerCase().includes(query)))
+    return `<table class="candidate-table"><thead><tr><th>名称</th><th>中文原文（可编辑，下方为条目 ID）</th><th>译文(${escapeHtml(state.langValue)})</th><th>缺语言</th><th class="col-loc">引用位置</th></tr></thead><tbody>${rows.map((m) => {
+      const missingLangs = scan.languages.slice(1).filter((lang) => !(m.langs[lang] && m.langs[lang].trim()))
+      const zhKey = `${m.id}::${primary}`
+      const zhDraft = state.fillDrafts.get(zhKey)
+      const zhValue = zhDraft !== undefined ? zhDraft : m.zh
+      const { key, draft, value } = langCellValue(m.langs, m.id)
+      const dirty = draft !== undefined && draft !== (m.langs[state.langValue] || '')
+      const zhDirty = zhDraft !== undefined && zhDraft !== m.zh
+      const zhCell = editable
+        ? `<td class="col-text"><input class="fill-input fill-wide${zhDirty ? ' dirty' : ''}" type="text" data-id="${escapeHtml(m.id)}" data-lang="${escapeHtml(primary)}" value="${escapeHtml(zhValue)}" /><div class="text-id">${escapeHtml(m.id)}</div></td>`
+        : `<td class="col-text"><span class="raw col-zh rich-text">${renderRichText(m.zh)}</span><div class="text-id">${escapeHtml(m.id)}</div></td>`
+      const langCell = !langEditable
+        ? `<td class="col-muted">—</td>`
+        : editable
+          ? `<td><input class="fill-input${dirty ? ' dirty' : ''}" type="text" data-id="${escapeHtml(m.id)}" data-lang="${escapeHtml(state.langValue)}" value="${escapeHtml(value)}" placeholder="待翻译" /></td>`
+          : `<td class="${m.langs[state.langValue] ? 'col-muted' : 'col-danger'}">${m.langs[state.langValue] ? renderRichText(m.langs[state.langValue]) : '(空)'}</td>`
+      const locations = m.locations.slice(0, 3).map((l) => `<span class="loc-file">${escapeHtml(l.file)}</span><span class="loc-path">${escapeHtml(l.path)}</span>`).join('')
+      const more = m.locations.length > 3 ? `<span class="loc-path">…共 ${m.locations.length} 处</span>` : ''
+      return `<tr>
+        <td>${escapeHtml(m.name)}</td>
+        ${zhCell}
+        ${langCell}
+        <td class="${missingLangs.length ? 'col-danger' : 'col-muted'}">${missingLangs.length ? missingLangs.join(', ') : '完整'}</td>
+        <td class="col-loc">${locations}${more}</td></tr>`
+    }).join('')}</tbody></table>`
   }
 
   // ---- 导出 Excel ----
@@ -593,7 +1177,7 @@ function initializeLocalizationLab() {
       const locations = c.locations.map((l) => `${l.file} :: ${l.path}`).join('\n')
       row.getCell(1).value = c.id
       row.getCell(2).value = c.zhCN
-      other.forEach((lang, j) => { row.getCell(3 + j).value = '' })
+      other.forEach((lang, j) => { row.getCell(3 + j).value = state.candidateLangs.get(`${c.normalized}::${lang}`) || '' })
       row.getCell(3 + other.length).value = '替换'
       row.getCell(4 + other.length).value = c.confidence === 'high' ? '高' : '中'
       row.getCell(5 + other.length).value = typeLabel(c.sourceType)
@@ -602,7 +1186,7 @@ function initializeLocalizationLab() {
       row.getCell(6 + other.length).alignment = { wrapText: true }
     })
     const fillSheet = workbook.addWorksheet('缺翻译')
-    fillSheet.columns = ['ID', '名称', `原文(${primary})`, ...other, '缺语言', '备注'].map((h) => ({ header: h, width: h.includes('原文') || h === '备注' ? 18 : 14 }))
+    fillSheet.columns = ['ID', '名称', `原文(${primary})`, ...other, '缺语言'].map((h) => ({ header: h, width: h.includes('原文') ? 18 : 14 }))
     fillSheet.getRow(1).font = { bold: true }
     fillSheet.views = [{ state: 'frozen', ySplit: 1 }]
     scan.missing.forEach((m, i) => {
@@ -612,12 +1196,32 @@ function initializeLocalizationLab() {
       row.getCell(3).value = m.languages[primary]
       other.forEach((lang, j) => { row.getCell(4 + j).value = m.languages[lang] })
       row.getCell(4 + other.length).value = m.missingLangs.join(', ')
-      row.getCell(5 + other.length).value = m.missingLangs.map((lang) => (m.languages[lang] && m.languages[lang].trim() ? `${lang} 已有值（疑似占位符），请确认` : '')).filter(Boolean).join('；')
+    })
+    const suspiciousSheet = workbook.addWorksheet('疑似占位')
+    suspiciousSheet.columns = ['ID', '名称', `原文(${primary})`, ...other, '疑似说明'].map((h) => ({ header: h, width: h.includes('原文') || h === '疑似说明' ? 20 : 14 }))
+    suspiciousSheet.getRow(1).font = { bold: true }
+    suspiciousSheet.views = [{ state: 'frozen', ySplit: 1 }]
+    scan.suspicious.forEach((m, i) => {
+      const row = suspiciousSheet.getRow(i + 2)
+      row.getCell(1).value = m.id
+      row.getCell(2).value = m.name
+      row.getCell(3).value = m.languages[primary]
+      other.forEach((lang, j) => { row.getCell(4 + j).value = m.languages[lang] })
+      row.getCell(4 + other.length).value = m.suspicious.map((s) => `${s.lang}：${s.reason}（现值「${s.value}」）`).join('；')
     })
     const orphanSheet = workbook.addWorksheet('孤儿引用')
-    orphanSheet.columns = [{ header: '引用ID', width: 20 }, { header: '文件', width: 50 }, { header: '位置', width: 30 }]
+    orphanSheet.columns = [{ header: '引用ID', width: 20 }, { header: '出现文件', width: 60 }, { header: '上下文', width: 16 }, { header: '建议文本', width: 24 }]
     orphanSheet.getRow(1).font = { bold: true }
-    scan.orphans.forEach((o, i) => { orphanSheet.getRow(i + 2).values = [null, o.refId, o.file, o.path] })
+    orphanSheet.views = [{ state: 'frozen', ySplit: 1 }]
+    scan.orphans.forEach((o, i) => {
+      const row = orphanSheet.getRow(i + 2)
+      row.getCell(1).value = o.refId
+      row.getCell(2).value = o.uses.map((u) => u.file).join('\n')
+      row.getCell(3).value = [...new Set(o.uses.map((u) => u.attrName || u.nodeName || '').filter(Boolean))].join(' / ')
+      row.getCell(4).value = o.suggestion
+      row.getCell(2).alignment = { wrapText: true }
+      row.getCell(4).alignment = { wrapText: true }
+    })
     const guideSheet = workbook.addWorksheet('说明')
     guideSheet.getRow(1).values = [null, '快速本地化 · 填写指引']
     const guide = [
@@ -627,6 +1231,9 @@ function initializeLocalizationLab() {
       '4. 删除整行 = 放弃该条（待本地化表中的 ID 不会写入工程）；请勿只删单元格留下空行。',
       '5. 语言列由 Data/config.json 的 localization.languages 决定，未来加语言只需在配置中追加并重新导出。',
       '6. 同一 Excel 重复导入是安全的（已处理过的条目自动跳过）；导入前工具会重新扫描工程，发现文件被外部改动会中止导入。',
+      '7. 「孤儿引用」表：引用的条目不存在于 localization.json。在「建议文本」列填中文原文，导入时按引用 ID 创建条目（资产文件无需改动）；留空则跳过该行。',
+      '8. 「疑似占位」表：翻译疑似占位符（脏词/与中文原文相同）。直接在语言列填入正确译文，导入时按 ID 写回。',
+      '9. 新增条目会按来源类型分组写入 localization.json 的「快速本地化」文件夹（物品/装备/技能/状态/事件/界面/触发器/角色/孤儿修复）。',
     ]
     guide.forEach((line, i) => { guideSheet.getRow(i + 3).values = [null, line] })
     guideSheet.getColumn(2).width = 120
@@ -663,26 +1270,38 @@ function initializeLocalizationLab() {
     await workbook.xlsx.load(buffer)
     const rows = []
     for (const sheet of workbook.worksheets) {
-      if (!sheet.name.includes('待本地化') && !sheet.name.includes('缺翻译')) continue
-      const isAdd = sheet.name.includes('待本地化')
+      const name = sheet.name
+      const isAdd = name.includes('待本地化')
+      const isOrphan = name.includes('孤儿引用')
+      const isFill = name.includes('缺翻译') || name.includes('疑似占位')
+      if (!isAdd && !isFill && !isOrphan) continue
       const header = sheet.getRow(1)
       const cols = {}
       header.eachCell({ includeEmpty: false }, (cell, col) => { cols[cellText(cell.value).trim()] = col })
-      if (!cols.ID) throw new Error(`${sheet.name} 缺少 ID 列`)
-      const primaryCol = Object.keys(cols).find((name) => name.startsWith('原文'))
-      if (!primaryCol) throw new Error(`${sheet.name} 缺少原文列`)
+      let primaryCol = null
+      if (isOrphan) {
+        if (!cols['引用ID']) throw new Error(`${name} 缺少「引用ID」列`)
+        if (!cols['建议文本']) throw new Error(`${name} 缺少「建议文本」列`)
+        primaryCol = '建议文本'
+      } else {
+        if (!cols.ID) throw new Error(`${name} 缺少 ID 列`)
+        primaryCol = Object.keys(cols).find((key) => key.startsWith('原文'))
+        if (!primaryCol) throw new Error(`${name} 缺少原文列`)
+      }
+      const META_COLS = new Set(['ID', '引用ID', '处理方式', '置信度', '来源', '出现位置', '名称', '缺语言', '备注', '疑似说明', '建议文本', '出现文件', '上下文', primaryCol])
       const langCols = []
-      for (const [name, col] of Object.entries(cols)) {
-        if (name !== 'ID' && name !== primaryCol && name !== '处理方式' && name !== '置信度' && name !== '来源' && name !== '出现位置' && name !== '名称' && name !== '缺语言' && name !== '备注') langCols.push({ name, col })
+      for (const [key, col] of Object.entries(cols)) {
+        if (!META_COLS.has(key)) langCols.push({ name: key, col })
       }
       for (let r = 2; r <= sheet.rowCount; r++) {
         const row = sheet.getRow(r)
-        const id = cellText(row.getCell(cols.ID).value)
+        const idCell = isOrphan ? cols['引用ID'] : cols.ID
+        const id = cellText(row.getCell(idCell).value)
         if (!id.trim()) continue
         const langs = {}
-        for (const { name, col } of langCols) langs[name] = cellText(row.getCell(col).value)
+        for (const { name: langName, col } of langCols) langs[langName] = cellText(row.getCell(col).value)
         rows.push({
-          sheet: isAdd ? 'add' : 'fill', row: r, id,
+          sheet: isOrphan ? 'orphan' : isAdd ? 'add' : 'fill', row: r, id,
           zhCN: cellText(row.getCell(cols[primaryCol]).value),
           langs,
           handle: cols['处理方式'] ? cellText(row.getCell(cols['处理方式']).value) : '替换',
@@ -698,27 +1317,34 @@ function initializeLocalizationLab() {
       const existingById = new Map()
       const collect = (items) => { for (const item of items || []) { if (item && Array.isArray(item.children)) collect(item.children); else if (item && item.id && item.contents) existingById.set(item.id, { zhCN: typeof item.contents[state.scan.languages[0]] === 'string' ? item.contents[state.scan.languages[0]] : '', leaf: item }) } }
       collect(state.scanLocalization)
-      const { errors, additions, fills } = core.validateImportRows(rows, existingById, state.scan.languages)
+      const { errors, additions, fills, ignored } = core.validateImportRows(rows, existingById, state.scan.languages)
       state.importRows = rows
       state.importErrors = errors
       state.importAdditions = additions
       state.importFills = fills
+      state.importIgnored = ignored
       renderImportPreview()
     } catch (error) { toast(`导入失败：${error.message}`, 'error'); console.error(error) }
   }
   function renderImportPreview() {
-    const { errors, additions, fills } = state
+    const { errors, additions, fills, importIgnored } = state
     els.importPreview.classList.remove('hidden')
     const involved = new Set()
+    const orphanAdds = additions.filter((row) => !state.scan.candidates.some((c) => c.id === row.id))
     for (const row of additions) {
       const candidate = state.scan.candidates.find((c) => c.id === row.id)
       if (candidate) candidate.locations.forEach((l) => involved.add(l.file))
     }
-    els.importPreviewSummary.textContent = `将新增 ${additions.length} 条本地化并替换 ${involved.size} 个文件中的原文 · 补译 ${fills.length} 条 · 错误 ${errors.length} 条`
+    const replacementFiles = involved.size ? `，替换 ${involved.size} 个资产文件中的原文` : ''
+    const orphanNote = orphanAdds.length ? `（其中孤儿修复 ${orphanAdds.length} 条，仅写 localization.json，资产文件无需改动）` : ''
+    els.importPreviewSummary.textContent = `将新增 ${additions.length} 条本地化${replacementFiles} · 补译 ${fills.length} 条 · 忽略 ${importIgnored.length} 条 · 错误 ${errors.length} 条`
+    const ignoredLines = importIgnored.slice(0, 12).map((row) => `<div class="skip">－ 第 ${row.row} 行（${row.sheet === 'orphan' ? '孤儿引用' : row.sheet === 'add' ? '待本地化' : '缺翻译/疑似占位'}）「${escapeHtml(String(row.zhCN || row.id).slice(0, 24))}」：${escapeHtml(row.reason)}</div>`).join('')
+    const ignoredMore = importIgnored.length > 12 ? `<div class="skip">…还有 ${importIgnored.length - 12} 条忽略</div>` : ''
     els.importPreviewBody.innerHTML = errors.map((e) => `<div class="err">✕ ${escapeHtml(e)}</div>`).join('')
-      + (additions.length ? `<div class="ok">＋ ${additions.length} 条新增（含译文：${additions.filter((r) => Object.values(r.langs).some((v) => v && v.trim())).length}）</div>` : '')
+      + (additions.length ? `<div class="ok">＋ ${additions.length} 条新增（含译文：${additions.filter((r) => Object.values(r.langs).some((v) => v && v.trim())).length}）${orphanNote}</div>` : '')
       + (fills.length ? `<div class="ok">＋ ${fills.length} 条补译</div>` : '')
       + (additions.length && involved.size ? `<div class="ok">＋ 将写入 ${involved.size} 个资产文件与 localization.json（先备份，失败自动回滚）</div>` : '')
+      + (importIgnored.length ? `<div class="warn">⊙ ${importIgnored.length} 条忽略（不创建、不替换、不写入）</div>${ignoredLines}${ignoredMore}` : '')
     els.btnConfirmImport.disabled = errors.length > 0 || (additions.length === 0 && fills.length === 0)
   }
   async function confirmImport() {
@@ -736,9 +1362,9 @@ function initializeLocalizationLab() {
       const groups = []
       const seenGroups = new Set()
       for (const row of importAdditions) {
-        const candidate = state.scan.candidates.find((c) => c.id === row.id)
-        if (!candidate) throw new Error(`ID ${row.id} 不在导出范围内`)
         if (row.handle && row.handle.trim() === '忽略') continue
+        const candidate = state.scan.candidates.find((c) => c.id === row.id)
+        if (!candidate) continue // 孤儿修复行：资产文件已引用该 ID，无需替换资产
         for (const loc of candidate.locations) {
           const key = `${row.id}::${loc.file}`
           if (!seenGroups.has(key)) { seenGroups.add(key); groups.push({ candidate, file: loc.file }) }
@@ -775,13 +1401,14 @@ function initializeLocalizationLab() {
       for (const row of importAdditions) {
         if (row.handle && row.handle.trim() === '忽略') continue
         const candidate = state.scan.candidates.find((c) => c.id === row.id)
-        additions.push({ id: row.id, zhCN: row.zhCN, langs: row.langs, candidate })
+        additions.push({ id: row.id, zhCN: row.zhCN, langs: row.langs, folder: row.folder || (candidate ? typeLabel(candidate.sourceType) : '其他') })
       }
       core.localizationInsertion(localizationJson, additions, importFills, state.scan.languages)
       const originalLocalization = await readText(state.rootHandle, 'Data/localization.json')
       await writeFileTo(await getHandle(state.rootHandle, 'Data/localization.json'), core.serializeLike(localizationJson, originalLocalization))
       // 6) 完成：重置导入状态并重扫
       state.importRows = state.importErrors = state.importAdditions = state.importFills = null
+      state.importIgnored = []
       els.importPreview.classList.add('hidden')
       toast(`导入完成：新增 ${additions.length} 条 · 补译 ${importFills.length} 条 · 备份于 Lootsmith Backups/${backupDir.name}`, 'success')
       await scanProject(state.rootHandle)
@@ -790,6 +1417,264 @@ function initializeLocalizationLab() {
       toast(`导入中止：${error.message}`, 'error')
       console.error(error)
     }
+  }
+
+  // ---- 孤儿引用修复：按引用 ID 创建缺失条目（只写 localization.json，资产文件已引用该 ID 无需改动） ----
+  async function createOrphanEntries(rows) {
+    if (!state.scan || !state.rootHandle) { toast('只读导入模式无法写回工程，请使用「选择工程」授权后修复', 'error'); return }
+    const entries = rows
+      .map((r) => ({ refId: r.refId, zhCN: (state.orphanTexts.get(r.refId) || '').trim() }))
+      .filter((e) => e.zhCN)
+    if (!entries.length) { toast('没有可创建的条目（先在表格中填写中文文本）', 'info'); return }
+    try {
+      const localizationJson = await readJson(state.rootHandle, 'Data/localization.json')
+      const existingIds = core.localizationIds(localizationJson)
+      const pending = entries.filter((e) => !existingIds.has(e.refId.toLowerCase()))
+      if (!pending.length) { toast('这些条目已存在（无需修复）', 'info'); return }
+      const additions = pending.map((e) => ({ id: e.refId, zhCN: e.zhCN, langs: {}, folder: ORPHAN_FOLDER }))
+      core.localizationInsertion(localizationJson, additions, [], state.scan.languages)
+      const backupRoot = await state.rootHandle.getDirectoryHandle('Lootsmith Backups', { create: true })
+      const backupDir = await backupRoot.getDirectoryHandle(formatNow(), { create: true })
+      const writeFileTo = async (handle, content) => {
+        const file = await handle.createWritable()
+        await file.write(content)
+        await file.close()
+      }
+      await writeFileTo(await backupDir.getFileHandle('localization.json', { create: true }), await readText(state.rootHandle, 'Data/localization.json'))
+      const original = await readText(state.rootHandle, 'Data/localization.json')
+      await writeFileTo(await getHandle(state.rootHandle, 'Data/localization.json'), core.serializeLike(localizationJson, original))
+      toast(`已创建 ${additions.length} 条缺失条目（备份于 Lootsmith Backups/${backupDir.name}）`, 'success')
+      await scanProject(state.rootHandle)
+    } catch (error) {
+      toast(`创建失败：${error.message}`, 'error')
+      console.error(error)
+    }
+  }
+
+  // ---- 原文编辑：候选行的 ✎ 按钮 → 单元格内联编辑（保存后条目 zh-CN/导出用新文本，导入校验仍按扫描原文） ----
+  function startTextEdit(button) {
+    const candidate = state.scan && state.scan.candidates.find((c) => c.normalized === button.dataset.key)
+    if (!candidate) return
+    const cell = button.closest('td')
+    const old = candidate.zhCN
+    cell.innerHTML = `<div class="edit-cell">
+      <textarea class="edit-text">${escapeHtml(old)}</textarea>
+      <div class="text-id">${escapeHtml(candidate.id || '')}</div>
+      <div class="edit-actions">
+        <button class="button btn-save-edit" type="button">保存</button>
+        <button class="button btn-cancel-edit" type="button">取消</button>
+      </div></div>`
+    const textarea = cell.querySelector('.edit-text')
+    textarea.focus()
+    const finish = (save) => {
+      if (save) {
+        const value = textarea.value
+        if (value !== old) {
+          if (!candidate.originalZhCN) candidate.originalZhCN = old // 首次编辑锁定扫描原文，导入校验用
+          candidate.zhCN = value
+          toast('原文已修改：导出与条目 zh-CN 用新文本，导入替换校验仍按扫描原文', 'success')
+        }
+      }
+      renderList()
+    }
+    cell.querySelector('.btn-save-edit').addEventListener('click', () => finish(true))
+    cell.querySelector('.btn-cancel-edit').addEventListener('click', () => finish(false))
+    textarea.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && event.ctrlKey) finish(true)
+      if (event.key === 'Escape') finish(false)
+    })
+  }
+
+  // ---- 单条立即本地化：用候选的唯一 ID 创建条目（zh-CN=当前原文，含界面里填的译文），
+  //      并把所有出现位置的原文替换为 <ref:ID>（先校验后替换 → 备份 → 仿生写回 → 重扫） ----
+  async function localizeCandidateNow(candidate) {
+    if (!state.scan || !state.rootHandle) { toast('只读导入模式无法写回工程，请使用「选择工程」授权', 'error'); return }
+    try {
+      setScanProgress(0, 0, true)
+      const filesToWrite = new Map()
+      for (const loc of candidate.locations) {
+        if (filesToWrite.has(loc.file)) continue
+        const original = await readText(state.rootHandle, loc.file)
+        filesToWrite.set(loc.file, { data: JSON.parse(original), original })
+      }
+      for (const { file } of [...filesToWrite.keys()].map((file) => ({ file }))) {
+        const result = core.applyAssetReplacement(filesToWrite.get(file).data, candidate, file)
+        if (!result.ok) throw new Error(result.reason)
+      }
+      const localizationJson = await readJson(state.rootHandle, 'Data/localization.json')
+      const langs = {}
+      for (const lang of state.scan.languages.slice(1)) {
+        const value = state.candidateLangs.get(`${candidate.normalized}::${lang}`)
+        if (value && value.trim()) langs[lang] = value
+      }
+      core.localizationInsertion(localizationJson, [{ id: candidate.id, zhCN: candidate.zhCN, langs, folder: typeLabel(candidate.sourceType) }], [], state.scan.languages)
+      const backupRoot = await state.rootHandle.getDirectoryHandle('Lootsmith Backups', { create: true })
+      const backupDir = await backupRoot.getDirectoryHandle(formatNow(), { create: true })
+      const writeFileTo = async (handle, content) => {
+        const file = await handle.createWritable()
+        await file.write(content)
+        await file.close()
+      }
+      await writeFileTo(await backupDir.getFileHandle('localization.json', { create: true }), await readText(state.rootHandle, 'Data/localization.json'))
+      for (const file of filesToWrite.keys()) {
+        await writeFileTo(await backupDir.getFileHandle(file.replace(/\//g, '__'), { create: true }), await readText(state.rootHandle, file))
+      }
+      for (const [file, { data, original }] of filesToWrite) {
+        await writeFileTo(await getHandle(state.rootHandle, file), core.serializeLike(data, original))
+      }
+      const originalLocalization = await readText(state.rootHandle, 'Data/localization.json')
+      await writeFileTo(await getHandle(state.rootHandle, 'Data/localization.json'), core.serializeLike(localizationJson, originalLocalization))
+      setScanProgress(0, 0)
+      toast(`已本地化「${candidate.zhCN.slice(0, 24)}」→ 条目 ${candidate.id}（备份于 Lootsmith Backups/${backupDir.name}）`, 'success')
+      await scanProject(state.rootHandle)
+    } catch (error) {
+      setScanProgress(0, 0)
+      toast(`本地化失败：${error.message}`, 'error')
+      console.error(error)
+    }
+  }
+
+  // ---- 补译保存：缺翻译/疑似占位视图的语言输入 → 备份 → 写回 localization.json ----
+  function localizationLeaf(id) {
+    let found = null
+    const walk = (items) => { for (const item of items || []) { if (item && Array.isArray(item.children)) walk(item.children); else if (item && item.id === id) found = item } }
+    walk(state.scanLocalization && state.scanLocalization.list)
+    return found
+  }
+  async function writeLocalizationFills() {
+    if (!state.scan || !state.rootHandle) { toast('只读导入模式无法写回工程，请使用「选择工程」授权', 'error'); return }
+    const fills = []
+    for (const [key, value] of state.fillDrafts) {
+      const separator = key.indexOf('::')
+      const id = key.slice(0, separator)
+      const lang = key.slice(separator + 2)
+      if (!value || !value.trim()) continue
+      const leaf = localizationLeaf(id)
+      if (leaf && String(leaf.contents[lang] || '') === value) continue // 与现值相同 → 跳过
+      fills.push({ id, langs: { [lang]: value } })
+    }
+    if (!fills.length) { toast('没有需要保存的修改（先在上方表格里填写）', 'info'); return }
+    try {
+      setScanProgress(0, 0, true)
+      const localizationJson = await readJson(state.rootHandle, 'Data/localization.json')
+      core.localizationInsertion(localizationJson, [], fills, state.scan.languages)
+      const backupRoot = await state.rootHandle.getDirectoryHandle('Lootsmith Backups', { create: true })
+      const backupDir = await backupRoot.getDirectoryHandle(formatNow(), { create: true })
+      const writeFileTo = async (handle, content) => {
+        const file = await handle.createWritable()
+        await file.write(content)
+        await file.close()
+      }
+      await writeFileTo(await backupDir.getFileHandle('localization.json', { create: true }), await readText(state.rootHandle, 'Data/localization.json'))
+      const original = await readText(state.rootHandle, 'Data/localization.json')
+      await writeFileTo(await getHandle(state.rootHandle, 'Data/localization.json'), core.serializeLike(localizationJson, original))
+      setScanProgress(0, 0)
+      toast(`已保存 ${fills.length} 处修改（原文/译文写回 localization.json，备份于 Lootsmith Backups/${backupDir.name}）`, 'success')
+      await scanProject(state.rootHandle)
+    } catch (error) {
+      setScanProgress(0, 0)
+      toast(`保存失败：${error.message}`, 'error')
+      console.error(error)
+    }
+  }
+
+  // ---- 备份与还原面板：列出 Lootsmith Backups 目录，支持立即备份 / 还原 / 删除 ----
+  async function listBackupEntries() {
+    try {
+      const backupRoot = await state.rootHandle.getDirectoryHandle('Lootsmith Backups')
+      const entries = []
+      for await (const [name, handle] of backupRoot.entries()) {
+        if (handle.kind !== 'directory') continue
+        let fileCount = 0
+        for await (const [innerName, inner] of handle.entries()) { if (inner.kind === 'file') fileCount += 1 }
+        entries.push({ name, fileCount })
+      }
+      entries.sort((a, b) => b.name.localeCompare(a.name))
+      return { backupRoot, entries }
+    } catch { return { backupRoot: null, entries: [] } }
+  }
+  async function renderBackupPanel() {
+    els.backupPanelBody.innerHTML = '<div class="empty-state">读取备份列表…</div>'
+    const { entries } = await listBackupEntries()
+    els.backupPanelSummary.textContent = entries.length ? `共 ${entries.length} 个备份（新在上）` : 'Lootsmith Backups 目录下的历史备份'
+    if (!entries.length) {
+      els.backupPanelBody.innerHTML = '<div class="empty-state">还没有备份。导入 Excel、孤儿修复、保存补译和「立即备份」都会在 Lootsmith Backups 下创建带时间戳的备份目录。</div>'
+      return
+    }
+    els.backupPanelBody.innerHTML = entries.map((entry) => `<div class="backup-row">
+      <span class="backup-name">${escapeHtml(entry.name)}</span>
+      <span class="backup-meta">${entry.fileCount} 个文件</span>
+      <span class="spacer"></span>
+      <button class="button btn-restore" type="button" data-backup="${escapeHtml(entry.name)}">还原</button>
+      <button class="button btn-delete" type="button" data-backup="${escapeHtml(entry.name)}">删除</button>
+    </div>`).join('')
+    els.backupPanelBody.querySelectorAll('.btn-restore').forEach((button) => button.addEventListener('click', () => restoreBackup(button.dataset.backup)))
+    els.backupPanelBody.querySelectorAll('.btn-delete').forEach((button) => button.addEventListener('click', () => deleteBackup(button.dataset.backup)))
+  }
+  async function openBackupPanel() {
+    if (!state.rootHandle) { toast('请先选择工程', 'error'); return }
+    els.backupPanel.classList.remove('hidden')
+    await renderBackupPanel()
+  }
+  async function backupNow() {
+    if (!state.rootHandle || !state.scan) return
+    try {
+      setScanProgress(0, 0, true)
+      const backupRoot = await state.rootHandle.getDirectoryHandle('Lootsmith Backups', { create: true })
+      const backupDir = await backupRoot.getDirectoryHandle(formatNow(), { create: true })
+      const writeFileTo = async (handle, content) => {
+        const file = await handle.createWritable()
+        await file.write(content)
+        await file.close()
+      }
+      const files = [...new Set(state.watchPaths)] // localization/配置 4 件套 + 全部已扫描资产文件
+      let count = 0
+      for (const path of files) {
+        try { await writeFileTo(await backupDir.getFileHandle(path.replace(/\//g, '__'), { create: true }), await readText(state.rootHandle, path)); count += 1 } catch (error) { console.warn('备份跳过', path, error) }
+      }
+      setScanProgress(0, 0)
+      toast(`已备份 ${count} 个文件到 Lootsmith Backups/${backupDir.name}`, 'success')
+      await renderBackupPanel()
+    } catch (error) { setScanProgress(0, 0); toast(`备份失败：${error.message}`, 'error'); console.error(error) }
+  }
+  async function restoreBackup(name) {
+    if (!state.rootHandle) return
+    try {
+      const backupRoot = await state.rootHandle.getDirectoryHandle('Lootsmith Backups')
+      const backupDir = await backupRoot.getDirectoryHandle(name)
+      const entries = []
+      for await (const [innerName, handle] of backupDir.entries()) {
+        if (handle.kind !== 'file') continue
+        const file = await handle.getFile()
+        entries.push({ name: innerName, text: await file.text() })
+      }
+      if (!entries.length) { toast('该备份是空目录', 'info'); return }
+      // 还原前先快照当前文件（可反悔）
+      const preDir = await backupRoot.getDirectoryHandle(`还原前-${formatNow()}`, { create: true })
+      const writeFileTo = async (handle, content) => {
+        const file = await handle.createWritable()
+        await file.write(content)
+        await file.close()
+      }
+      for (const entry of entries) {
+        const targetPath = entry.name.replace(/__/g, '/')
+        try { await writeFileTo(await preDir.getFileHandle(entry.name, { create: true }), await readText(state.rootHandle, targetPath)) } catch {}
+      }
+      for (const entry of entries) {
+        const targetPath = entry.name.replace(/__/g, '/')
+        await writeFileTo(await getHandle(state.rootHandle, targetPath), entry.text)
+      }
+      toast(`已从 ${name} 还原 ${entries.length} 个文件（还原前状态存于 ${preDir.name}）`, 'success')
+      await scanProject(state.rootHandle)
+    } catch (error) { toast(`还原失败：${error.message}`, 'error'); console.error(error) }
+  }
+  async function deleteBackup(name) {
+    try {
+      const backupRoot = await state.rootHandle.getDirectoryHandle('Lootsmith Backups')
+      await backupRoot.removeEntry(name, { recursive: true })
+      toast(`已删除备份 ${name}`, 'success')
+      await renderBackupPanel()
+    } catch (error) { toast(`删除失败：${error.message}`, 'error') }
   }
 
   // ---- 自动同步（ponytail: 固定 watchPaths 元数据轮询，5s；不自动重扫覆盖用户操作，只提示） ----
@@ -885,8 +1770,19 @@ function initializeLocalizationLab() {
     els.importXlsx.value = ''
   })
   els.btnRescan.addEventListener('click', () => { if (state.rootHandle) scanProject(state.rootHandle) })
+  els.btnBackups.addEventListener('click', openBackupPanel)
+  els.btnCloseBackup.addEventListener('click', () => els.backupPanel.classList.add('hidden'))
+  els.btnBackupNow.addEventListener('click', backupNow)
+  els.btnSaveFills.addEventListener('click', writeLocalizationFills)
+  els.chkUnreferenced.addEventListener('change', () => { state.filterReferenced = !els.chkUnreferenced.checked; rescanFromCache() })
+  els.langSelect.addEventListener('change', () => { state.langValue = els.langSelect.value; renderList() })
+  els.btnFixOrphans.addEventListener('click', () => {
+    if (!state.scan) return
+    createOrphanEntries(state.scan.orphans.filter((o) => (state.orphanTexts.get(o.refId) || '').trim()).map((o) => ({ refId: o.refId })))
+  })
   els.btnCancelImport.addEventListener('click', () => {
     state.importRows = state.importErrors = state.importAdditions = state.importFills = null
+    state.importIgnored = []
     els.importPreview.classList.add('hidden')
   })
   els.btnConfirmImport.addEventListener('click', confirmImport)
@@ -904,7 +1800,9 @@ function initializeLocalizationLab() {
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       els.importPreview.classList.add('hidden')
+      els.backupPanel.classList.add('hidden')
       state.importRows = state.importErrors = state.importAdditions = state.importFills = null
+      state.importIgnored = []
     }
   })
 
