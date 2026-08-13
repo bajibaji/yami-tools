@@ -1,7 +1,7 @@
 # Yami Tools 项目记忆（MEMORY）
 
 > 本文档沉淀历次对话的关键事实、用户偏好、技术决策与待办，供后续会话快速恢复上下文。
-> 最后更新：2026-08-13（自动同步 + 排序自定义下拉定型、用户验收通过）
+> 最后更新：2026-08-13（角色编辑器：搜索修复 + 价格/总价值/掉率小数 + 继承事件开关，多轮反馈定型）
 
 ## 0. 沟通规则（用户 AGENTS.md，最高优先级）
 
@@ -22,7 +22,7 @@
 | 性质 | 纯静态网页工具，无构建无框架（原生 JS/CSS） |
 | 结构 | `index.html`（工具合集主页）+ `assets/hub.css` + `vendor/exceljs.min.js` + `tools/character-editor/`（角色编辑器）+ `tools/map-editor/`（地图编辑器）+ `tools/idle-lab/`（挂机验证台）+ `tools/localization-lab/`（快速本地化） |
 
-版本历史：v0.3.x（早期掉落编辑器）→ v0.4.1 → v0.5.1（继承/折叠/高亮等）→ v0.6.0（工具合集拆分+地图编辑器首版）→ v0.7.0（发布：主页新设计+合集+地图编辑器+方案文档）→ **v0.7.1（角色编辑器：排序自定义下拉 + 三工具工程自动同步，2026-08-13）** → **v0.1.0（快速本地化：第四工具，2026-08-13 新建）**。**改 JS/CSS 必须同步更新各 `index.html` 里的 `?v=` 缓存参数**（否则 GitHub Pages/浏览器不刷新）。
+版本历史：v0.3.x（早期掉落编辑器）→ v0.4.1 → v0.5.1（继承/折叠/高亮等）→ v0.6.0（工具合集拆分+地图编辑器首版）→ v0.7.0（发布：主页新设计+合集+地图编辑器+方案文档）→ **v0.7.1（角色编辑器：排序自定义下拉 + 三工具工程自动同步，2026-08-13）** → **v0.1.0（快速本地化：第四工具，2026-08-13 新建）**。角色编辑器已升 **v0.7.2**（用户自行更新 version.json，2026-08-13）。**改 JS/CSS 必须同步更新各 `index.html` 里的 `?v=` 缓存参数**（否则 GitHub Pages/浏览器不刷新）。
 
 ## 2. 角色编辑器（tools/character-editor/）
 
@@ -31,6 +31,7 @@
 - 属性继承：角色文件 `inherit` 字段指向父角色 GUID；有效属性 = 本地 + 继承（seen 防环）。继承行只读，可「创建本地覆盖」。
 - **掉落事件继承（用户拍板的行为）**：怪物自身无掉落事件时**不显示模板的掉落条目**，但显示「继承角色：XXX」加粗标识（说明编辑保存后会创建独立事件）；用户编辑掉落并保存 → 在 actor 本地创建**空掉落事件**（只含用户编辑的指令，不复制模板事件）。loopList（属性字符串）的继承显示保留。
 - 人物属性模式：从 `Data/attribute.json` 解析 85 个角色属性（分组/类型/枚举），`enumeration.json` 解析枚举值；未知属性/未知枚举值只读保留；未知折叠区可展开。
+- **列表搜索（2026-08-13 修复）**：角色/物品/装备搜索统一走 `recordSearchText()`，路径**去扩展名**后匹配——此前搜「it」会因 `.item` 后缀子串误命中全部物品、搜「ac」误命中全部角色（用户反馈的 bug）。搜索字段 = name + localizationId + 去扩展名 path + guid。
 - **角色列表排序（2026-08-13，用户多轮反馈后定型）**：**自定义下拉**（非原生 select——原生弹出层在用户环境为系统白底且 `color-scheme` 不生效，CSS 管不到），深色弹出菜单 `#role-sort-menu`，分组文件名/名称/修改时间 × 升/降共 6 项，默认「文件名 ↑」（`basename` localeCompare zh-CN numeric）；**排序模式持久化** localStorage `loot-smith-role-sort`（刷新后记住，用户明确要求）；物品/装备列表排序未动。**创建日期排序做不了**：浏览器 File API 只有 `lastModified`，工程文件系统 birthtime 全是复制时间戳，actor/manifest 无时间字段。
 - **价格/总价值/掉率（2026-08-13，用户多轮反馈定型）**：物品/装备价格读 `getValue(data,'price')`（item ID `49574fd687a9bd27`、equip ID `9c6c39e76efa5356`，货币单位 G 已核对 UI 模板 `价格 <local:_price>G`）；掉落列表标题显示总价值 `Σ(价格×掉率×期望数量)`（范围用 min/max 中值，装备固定 1，禁用不计）；**价格标签紧跟名字右侧**（`catalog-row-name` 内 flex，名字 ellipsis + 价格固定），添加按钮 flex 行尾对齐——**最终布局**：右对齐和 grid 独立列方案均被用户否决（grid auto 列宽顶歪按钮、右对齐贴按钮）；**关键坑：`catalog-name-text` 绝不能设 `flex:1`**（会把名字撑满剩余宽度、价格推到行右端远离名字——这就是前几轮"价格位置不对"的根因，务必保持名字自然宽度）；**掉率支持小数**（输入与滑块 step 0.01，0~1% 可 0.01 精度微调，min=0）——**「最低 1% 限制」是用户推翻的错误决策，勿恢复**。
 - **继承事件开关（2026-08-13）**：掉落事件模式 checkbox「继承事件」，保存时在掉落命令最上方插入 `{id:'callEvent', params:{type:'inherited'}}`（引擎 `Command.compileInheritedCommandTuple()`），关闭移除，读取时自动识别恢复勾选；属性模式不显示。实例参考 `@1 通用英雄角色`（引擎 API 文档示例）。
@@ -77,20 +78,20 @@
 
 - **阶段 3（游戏侧，需用户拍板）**：改造 `读取excel.3739667372fedf5f.event` 统一入口（保持 GUID）→ 调 `地图JSON读取` 指令；路线 A 拆分五个旧全局变量；路线 B 刷怪算法按 weight/lvMin/lvMax。改前先备份事件文件，只能在用户 Yami 编辑器验证。
 - **地图编辑器重做**：用户不满意，交他人接手 → 见 `HANDOFF-MAP-EDITOR.md`（16 项缺陷改进清单：图标色板 100 系列、错误定位、批量/撤销、拖放提示、视觉统一等）。
-- 画布拖拽修复（2026-08-13，3 个文件 `tools/map-editor/{app.js,index.html,styles.css}` +60/-18）**已改未提交**；**角色编辑器版本已定 v0.7.1**（用户拍板，2026-08-13 更新 version.json），地图编辑器画布修复的版本号仍待用户定。
+- 画布拖拽修复（2026-08-13，3 个文件 `tools/map-editor/{app.js,index.html,styles.css}` +60/-18）**已改未提交**；**角色编辑器版本已定 v0.7.2**（用户拍板，2026-08-13 更新 version.json），地图编辑器画布修复的版本号仍待用户定。
 - `地图格数据` GUID 未登记 `Data/manifest.json`。
 - Yami MCP 服务器当前不可用（`DANJUAN TOOLS/yami-mcp/server.js` 缺失，报 MODULE_NOT_FOUND）。
 
 ## 7. 验证方法（E2E）
 
-- 临时环境：`mkdir .e2e-tmp && cd .e2e-tmp && npm install playwright-core`；真实数据复制：`D:\new-game\Data\{attribute,enumeration,localization,commands}.json`、`地图格.xlsx`。`.e2e-tmp/test-sync.js` 为现行回归脚本：临时工程 `%TEMP%\yami-tools-sync-e2e`（真实 Data 四件套 + 伪造 manifest + 4 个 actor 带不同 mtime），覆盖排序六选项、持久化（reload 验证）、三工具 fallback 导入零报错（已进 .gitignore）。
+- 临时环境：`mkdir .e2e-tmp && cd .e2e-tmp && npm install playwright-core exceljs`；真实数据复制：`D:\new-game\Data\{attribute,enumeration,localization,commands}.json`、`地图格.xlsx`。`.e2e-tmp/test-sync.js` 为排序/同步回归脚本：临时工程 `%TEMP%\yami-tools-sync-e2e`（真实 Data 四件套 + 伪造 manifest + 4 个 actor 带不同 mtime），覆盖排序六选项、持久化（reload 验证）、三工具 fallback 导入零报错。`.e2e-tmp/test-localize.js` 为快速本地化浏览器回归（fallback 扫描 + 导出 xlsx 校验）。`.e2e-tmp/verify-real.js` 为**真实工程验收脚本**（直接对 D:\new-game 扫描→导入→写回→备份恢复无残留，会创建 Lootsmith Backups 目录测试后删除）——用户已授权用真实工程验收。
 - Chrome：`C:/Program Files/Google/Chrome/Application/chrome.exe`（headless）；服务器：`python -m http.server 4173`。
 - 关键断言信号：导入完成用 `#status-source` 文本（`btn-download` 初始即启用，不可作完成信号）。
 - 静态检查：`node --check <file>`、`git diff --check`（delivery 模式禁止 `node -e`/`python -c` 内联脚本）。
 
 ## 8. 关键文档
 
-- `HANDOFF.md`（早期整体交接）、`HANDOFF-MAP-EDITOR.md`（地图编辑器专项交接）
+- `HANDOFF.md`（角色编辑器交接）、`HANDOFF-MAP-EDITOR.md`（地图编辑器专项交接）、`HANDOFF-LOCALIZATION.md`（快速本地化专项交接，2026-08-13 新建，含真实工程验收记录）
 - `CHARACTER_ATTRIBUTE_EDITOR_PLAN.md`（人物属性模式方案）
 - `小工具合集与地图编辑器方案.txt`（v2：合集+地图编辑器完整方案，含 JSON Schema 第四章）
 - `小工具合集与地图Excel导出方案.txt`（v1 旧版）
