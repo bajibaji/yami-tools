@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0d0f14" />
+    <title>YAHZJ · 快速本地化</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css?v=20260813-localization-lab-1" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <div class="brand-mark">🌐</div>
+          <div>
+            <div class="eyebrow">YAMI RPG TOOLKIT</div>
+            <div class="brand-name">YAHZJ<span>快速本地化 <em class="version-tag" data-app-version>v0.1.0</em></span></div>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <a class="hub-back" href="../../index.html">← 工具合集</a>
+          <span id="project-state" class="project-state">尚未选择游戏工程</span>
+          <button id="restore-project" class="button hidden" type="button">加载上次工程</button>
+          <button id="pick-project" class="button" type="button">选择工程</button>
+          <button id="btn-export" class="button" type="button" disabled title="导出本地化 Excel（含待本地化候选与缺翻译条目）">⇩ 导出 Excel</button>
+          <button id="btn-import" class="button" type="button" disabled title="导入翻译完成的 Excel">⇧ 导入 Excel</button>
+          <input id="folder-fallback" type="file" webkitdirectory directory multiple hidden />
+          <input id="import-xlsx" type="file" accept=".xlsx,.xls" hidden />
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="metric-row" aria-label="扫描统计">
+          <button class="metric-card" data-filter="candidates" type="button">
+            <span>待本地化候选</span><strong id="metric-candidates">--</strong><small>硬编码文本 · 可导入替换</small>
+          </button>
+          <button class="metric-card" data-filter="missing" type="button">
+            <span>缺翻译条目</span><strong id="metric-missing">--</strong><small id="metric-missing-langs">localization.json 条目</small>
+          </button>
+          <button class="metric-card" data-filter="orphans" type="button">
+            <span>孤儿引用</span><strong id="metric-orphans">--</strong><small>ref 指向不存在的 ID</small>
+          </button>
+        </section>
+
+        <section class="list-panel">
+          <div class="list-toolbar">
+            <div>
+              <h2>扫描结果</h2>
+            </div>
+            <div class="list-tools">
+              <label class="field field-inline"><span>类型</span><select id="filter-source"><option value="all">全部类型</option><option value="items">物品</option><option value="equipments">装备</option><option value="skills">技能</option><option value="states">状态</option><option value="events">事件</option><option value="ui">界面</option><option value="triggers">触发器</option><option value="missing">缺翻译条目</option><option value="orphans">孤儿引用</option></select></label>
+              <label class="field field-inline"><span>置信度</span><select id="filter-confidence"><option value="all">全部</option><option value="high">高（中文）</option><option value="medium">中（英文）</option></select></label>
+              <label class="search-box" for="filter-query"><span>⌕</span><input id="filter-query" type="search" placeholder="搜索原文或文件路径" autocomplete="off" /></label>
+              <button id="btn-rescan" class="button" type="button">重新扫描 ↻</button>
+            </div>
+          </div>
+          <div id="list-body" class="list-body">
+            <div class="empty-state">选择游戏工程后，这里会列出尚未本地化的中文/英文文本、缺翻译条目与孤儿引用。</div>
+          </div>
+        </section>
+
+        <section id="import-preview" class="import-preview hidden">
+          <div class="import-preview-head">
+            <div>
+              <h2>导入预览</h2>
+              <p id="import-preview-summary">--</p>
+            </div>
+            <div class="import-preview-actions">
+              <button id="btn-cancel-import" class="button" type="button">取消</button>
+              <button id="btn-confirm-import" class="button button-primary" type="button">确认导入 <span>→</span></button>
+            </div>
+          </div>
+          <div id="import-preview-body" class="import-preview-body"></div>
+        </section>
+      </main>
+
+      <footer class="statusbar">
+        <span id="scan-status">等待扫描</span>
+        <span class="status-spacer"></span>
+        <span>语言列来自 Data/config.json · 翻译不写回 · 保存自动备份</span>
+      </footer>
+    </div>
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+    <script src="../../vendor/exceljs.min.js"></script>
+    <script src="./app.js?v=20260813-localization-lab-1"></script>
+    <script src="../version.json"></script>
+    <script>document.querySelectorAll('[data-app-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS['localization-lab']||{}).version})</script>
+  </body>
+</html>

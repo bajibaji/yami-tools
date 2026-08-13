@@ -88,6 +88,23 @@
               <span class="tool-action">启动工具</span>
             </div>
           </a>
+
+          <!-- 快速本地化 -->
+          <a class="tool-card" href="./tools/localization-lab/">
+            <div class="card-glow"></div>
+            <div class="tool-card-header">
+              <span class="tool-icon icon-local">🌐</span>
+              <span class="tool-version" data-tool-version>v0.1.0</span>
+            </div>
+            <div class="tool-card-body">
+              <h2 class="tool-card-title">快速本地化 <span class="card-arrow">→</span></h2>
+              <p class="tool-card-desc">扫描尚未本地化的硬编码文本与缺翻译条目，导出多语言 Excel 供翻译，翻译完成后导入回工程。</p>
+            </div>
+            <div class="tool-card-footer">
+              <span class="tool-tag">Excel 导入导出 · 自动备份</span>
+              <span class="tool-action">启动工具</span>
+            </div>
+          </a>
         </section>
       </main>
 
@@ -102,6 +119,6 @@
       </footer>
     </div>
       <script src="./tools/version.json"></script>
-    <script>document.querySelectorAll('[data-hub-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS.hub||{}).version});const order=['character-editor','map-editor','idle-lab'];document.querySelectorAll('[data-tool-version]').forEach((e,i)=>{e.textContent='v'+((window.TOOL_VERSIONS[order[i]]||{}).version||'')})</script>
+    <script>document.querySelectorAll('[data-hub-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS.hub||{}).version});const order=['character-editor','map-editor','idle-lab','localization-lab'];document.querySelectorAll('[data-tool-version]').forEach((e,i)=>{e.textContent='v'+((window.TOOL_VERSIONS[order[i]]||{}).version||'')})</script>
   </body>
 </html>

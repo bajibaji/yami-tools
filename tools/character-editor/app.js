@@ -71,7 +71,7 @@
     restoreLast: $('#restore-last'), lastProjectName: $('#last-project-name'),
     projectState: $('#project-state'), saveAll: $('#save-all'), pendingCount: $('#pending-count'), roleSearch: $('#role-search'), roleSortButton: $('#role-sort-button'), roleSortValue: $('#role-sort-value'), roleSortMenu: $('#role-sort-menu'), roleList: $('#role-list'), roleCount: $('#role-count'),
     scanStatus: $('#scan-status'), rescan: $('#rescan'), noRole: $('#no-role'), roleEditor: $('#role-editor'), roleName: $('#role-name'), rolePath: $('#role-path'), roleGuid: $('#role-guid'), roleAvatar: $('#role-avatar'), roleSlotState: $('#role-slot-state'),
-    saveCurrent: $('#save-current'), dropCount: $('#drop-count'), dirtyLabel: $('#dirty-label'), dropPanel: $('#drop-panel'), dropList: $('#drop-list'), dropEmpty: $('#drop-empty'), storageModeNote: $('#storage-mode-note'), catalogSearch: $('#catalog-search'), catalogList: $('#catalog-list'), catalogEmpty: $('#catalog-empty'),
+    saveCurrent: $('#save-current'), dropCount: $('#drop-count'), dropTotalValue: $('#drop-total-value'), dirtyLabel: $('#dirty-label'), dropPanel: $('#drop-panel'), dropList: $('#drop-list'), dropEmpty: $('#drop-empty'), storageModeNote: $('#storage-mode-note'), inheritEventRow: $('#inherit-event-row'), inheritEventCheckbox: $('#inherit-event-checkbox'), catalogSearch: $('#catalog-search'), catalogList: $('#catalog-list'), catalogEmpty: $('#catalog-empty'),
     itemCountLabel: $('#item-count-label'), equipCountLabel: $('#equip-count-label'), itemTabCount: $('#item-tab-count'), equipmentTabCount: $('#equipment-tab-count'), composer: $('#selection-composer'), clearSelection: $('#clear-selection'), selectedType: $('#selected-resource-type'), selectedName: $('#selected-resource-name'), itemQuantityConfig: $('#item-quantity-config'), equipmentQuantityNote: $('#equipment-quantity-note'), fixedQuantityRow: $('#fixed-quantity-row'), rangeQuantityRow: $('#range-quantity-row'), fixedQuantity: $('#fixed-quantity'), minQuantity: $('#min-quantity'), maxQuantity: $('#max-quantity'), dropRateSlider: $('#drop-rate-slider'), dropRatePercent: $('#drop-rate-percent'), dropRateOutput: $('#drop-rate-output'), dropRateRaw: $('#drop-rate-raw'), cancelEdit: $('#cancel-edit'), insertDrop: $('#insert-drop'), toastRegion: $('#toast-region'),
     composerAnchor: $('#selection-composer-anchor'), composerModal: $('#drop-composer-modal'), composerModalContent: $('#drop-composer-modal-content'), closeComposerModalButton: $('#close-drop-composer'),
     dropEditorView: $('#drop-editor-view'), actorAttributeEditorView: $('#actor-attribute-editor-view'),
@@ -322,6 +322,15 @@
     return command && String(command.id || '').replace(/^!/, '') === state.dropCommandId
   }
 
+  // 「继承事件」命令：callEvent(type: inherited)，运行时继承父级事件上下文，插在掉落命令最上方。
+  function isInheritCommand(command) {
+    return Boolean(command) && command.id === 'callEvent' && command.params?.type === 'inherited'
+  }
+
+  function detectInheritCommand(event) {
+    return Array.isArray(event?.commands) ? event.commands.some(isInheritCommand) : false
+  }
+
   function findDropEvent(data) {
     const events = Array.isArray(data?.events) ? data.events : []
     const index = events.findIndex((event) => event?.type === state.dropEventType)
@@ -389,6 +398,7 @@
         inherited: false,
         // 继承标识：角色自身无掉落事件时记录祖先掉落来源（如通用怪物模板），仅用于提示。
         inheritedDropSource: eventSource ? null : findInheritedDropEventSource(role, roleMap),
+        inheritEnabled: detectInheritCommand(eventSource?.event),
         entries: eventEntries.map((entry) => ({ ...entry })),
         originalEntries: eventEntries.map((entry) => ({ ...entry })),
       },
@@ -453,7 +463,7 @@
     const localizationId = localizationIds(attrName)[0] || ''
     const imageGuid = kind === 'actor' ? (data.portrait || data.sprites?.find((sprite) => sprite?.image)?.image || '') : (data.icon || '')
     const clip = Array.isArray(data.clip) && data.clip.length >= 4 ? data.clip.slice(0, 4).map(Number) : null
-    return { ...file, data, kind, guid, rawName: attrName, localizationId, name: localizedName(attrName, fallbackName), imageGuid, clip, edited: false, label: normalizePath(file.path) }
+    return { ...file, data, kind, guid, rawName: attrName, localizationId, name: localizedName(attrName, fallbackName), price: Number(getValue(data, 'price')) || 0, imageGuid, clip, edited: false, label: normalizePath(file.path) }
   }
 
   function inheritMetadata(record, recordMap, seen = new Set()) {
@@ -1000,9 +1010,15 @@
     return result || a.path.localeCompare(b.path)
   }
 
+  function recordSearchText(record) {
+    // 路径去掉扩展名：否则搜「it」「ac」会因 .item/.actor 后缀的子串误命中全部记录。
+    const cleanPath = (record.path || '').replace(/\.(?:item|equip|actor)$/i, '')
+    return `${record.name} ${record.localizationId} ${cleanPath} ${record.guid}`.toLowerCase()
+  }
+
   function renderRoleList() {
     const query = state.roleSearch.trim().toLowerCase()
-    const roles = state.roles.filter((role) => !query || `${role.name} ${role.localizationId} ${role.path} ${role.guid}`.toLowerCase().includes(query)).sort(sortRoleRecords)
+    const roles = state.roles.filter((role) => !query || recordSearchText(role).includes(query)).sort(sortRoleRecords)
     els.roleList.innerHTML = roles.length ? roles.map((role) => {
       const edited = Boolean(role.edited || isDirty(role))
       return `<div class="role-row ${state.selectedRole?.path === role.path ? 'selected' : ''} ${edited ? 'edited-role' : ''}" data-role-path="${escapeHtml(role.path)}" title="${edited ? '此角色已编辑' : ''}"><div class="role-avatar-small">${previewMarkup(role, '✦')}</div><div class="role-row-info"><div class="role-row-name">${escapeHtml(role.name)}</div><div class="role-row-path">${escapeHtml(role.localizationId ? `本地化 ${role.localizationId}` : role.path)}</div></div><span class="role-row-status ${isDirty(role) ? 'dirty' : ''} ${edited ? 'edited' : ''}"></span></div>`
@@ -1058,9 +1074,26 @@
     hydratePreviews(els.roleEditor)
   }
 
+  function dropTotalValue(entries) {
+    // 掉落物总价值 = Σ(物品价格 × 掉率 × 期望数量)；范围掉率用 min/max 中值，禁用掉落不计入。
+    let sum = 0
+    for (const entry of entries) {
+      if (entry.disabled) continue
+      const price = state.recordMap.get(entry.id)?.price || 0
+      if (!price) continue
+      const qty = entry.type === 'equipment' ? 1 : (Number(entry.min) + Number(entry.max)) / 2
+      sum += price * clampRate(entry.dropRate) * qty
+    }
+    return Number(sum.toFixed(2))
+  }
+
   function renderDropEditor() {
     const role = state.selectedRole; const store = currentStore(); const entries = currentEntries()
     els.dropCount.textContent = entries.length
+    const total = dropTotalValue(entries)
+    els.dropTotalValue.textContent = entries.length ? `总价值 ${total} G` : ''
+    els.inheritEventRow?.classList.toggle('hidden', state.storageMode !== 'event')
+    els.inheritEventCheckbox && (els.inheritEventCheckbox.checked = Boolean(store?.inheritEnabled))
     els.storageModeNote.textContent = state.storageMode === 'event'
       ? '保存时写入角色的“掉落物品”事件指令；装备固定 1 件，物品使用 min/max。'
       : '保存时写入 loopList 字符串；包含 min、max 与 dropRate，需由读取该属性的游戏逻辑支持。'
@@ -1396,8 +1429,8 @@
   function renderCatalog() {
     const source = state.catalogType === 'item' ? state.items : state.equipments
     const query = state.catalogSearch.trim().toLowerCase()
-    const list = source.filter((resource) => !query || `${resource.name} ${resource.localizationId} ${resource.path} ${resource.guid}`.toLowerCase().includes(query))
-    els.catalogList.innerHTML = list.length ? list.map((resource) => `<div class="catalog-row ${state.selectedResource?.guid === resource.guid ? 'selected' : ''}" data-resource-guid="${escapeHtml(resource.guid)}" data-resource-type="${escapeHtml(resource.kind)}" draggable="true" aria-grabbed="false" title="拖到掉落列表进行配置，或点击后手动插入"><div class="resource-icon ${resource.kind}">${previewMarkup(resource, resource.kind === 'equipment' ? '◇' : '◆')}</div><div class="catalog-row-info"><div class="catalog-row-name">${escapeHtml(resource.name)}</div><div class="catalog-row-sub">${resource.localizationId ? `本地化 ${escapeHtml(resource.localizationId)} · ` : ''}${escapeHtml(resource.guid || '无 GUID')}</div></div><div class="catalog-row-action">${state.selectedResource?.guid === resource.guid ? '✓' : '＋'}</div></div>`).join('') : ''
+    const list = source.filter((resource) => !query || recordSearchText(resource).includes(query))
+    els.catalogList.innerHTML = list.length ? list.map((resource) => `<div class="catalog-row ${state.selectedResource?.guid === resource.guid ? 'selected' : ''}" data-resource-guid="${escapeHtml(resource.guid)}" data-resource-type="${escapeHtml(resource.kind)}" draggable="true" aria-grabbed="false" title="拖到掉落列表进行配置，或点击后手动插入"><div class="resource-icon ${resource.kind}">${previewMarkup(resource, resource.kind === 'equipment' ? '◇' : '◆')}</div><div class="catalog-row-info"><div class="catalog-row-name">${escapeHtml(resource.name)}</div><div class="catalog-row-sub">${resource.localizationId ? `本地化 ${escapeHtml(resource.localizationId)} · ` : ''}${escapeHtml(resource.guid || '无 GUID')}</div></div>${resource.price > 0 ? `<span class="price-tag">${resource.price} G</span>` : ''}<div class="catalog-row-action">${state.selectedResource?.guid === resource.guid ? '✓' : '＋'}</div></div>`).join('') : ''
     els.catalogEmpty.classList.toggle('hidden', list.length > 0)
     hydratePreviews(els.catalogList)
   }
@@ -1521,6 +1554,7 @@
   }
 
   function setDropRatePercent(value) {
+    // 掉率支持小数百分比（如 0.5%），仅限制在 0~100 区间。
     const percent = Math.max(0, Math.min(100, Number(value) || 0))
     const display = Number(percent.toFixed(4))
     els.dropRateSlider.value = String(display)
@@ -1697,11 +1731,13 @@
     const nextCommands = []
     let inserted = false
     for (const command of commands) {
+      if (isInheritCommand(command)) continue // 继承命令按开关重新插入，避免重复。
       if (isDropCommand(command)) {
         if (!inserted) { nextCommands.push(...dropCommands); inserted = true }
       } else nextCommands.push(command)
     }
     if (!inserted) nextCommands.push(...dropCommands)
+    if (store.inheritEnabled) nextCommands.unshift({ id: 'callEvent', params: { type: 'inherited' } })
     event.commands = nextCommands
     event.type = state.dropEventType
     event.enabled = event.enabled !== false
@@ -1962,6 +1998,13 @@
     els.catalogList.addEventListener('dragend', (event) => { const row = event.target.closest('.catalog-row'); if (row) finishResourceDrag(row) })
     $$('.catalog-tab').forEach((tab) => tab.addEventListener('click', () => { closeComposerModal(); state.catalogType = tab.dataset.catalog; state.selectedResource = null; $$('.catalog-tab').forEach((node) => node.classList.toggle('active', node === tab)); renderCatalog(); renderComposer() }))
     $$('.storage-mode-button').forEach((button) => button.addEventListener('click', () => selectStorageMode(button.dataset.storageMode)))
+    els.inheritEventCheckbox?.addEventListener('change', (event) => {
+      if (!state.selectedRole || state.storageMode !== 'event') return
+      const store = currentStore()
+      if (!store) return
+      store.inheritEnabled = event.target.checked
+      markDirty(state.selectedRole, 'event')
+    })
     $$('.quantity-mode-button').forEach((button) => button.addEventListener('click', () => setQuantityMode(button.dataset.quantityMode)))
     els.dropRateSlider.addEventListener('input', (event) => setDropRatePercent(event.target.value))
     els.dropRatePercent.addEventListener('input', (event) => setDropRatePercent(event.target.value))

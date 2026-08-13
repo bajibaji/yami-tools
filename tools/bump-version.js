@@ -24,6 +24,6 @@ function bump(file, tool) {
 }
 
 bump('index.html', 'hub')
-for (const tool of ['character-editor', 'map-editor', 'idle-lab']) bump(`tools/${tool}/index.html`, tool)
+for (const tool of ['character-editor', 'map-editor', 'idle-lab', 'localization-lab']) bump(`tools/${tool}/index.html`, tool)
 
 console.log(CHANGES.length ? CHANGES.join('\n') : '无查询串变更')
