@@ -175,7 +175,7 @@ DROP_COMMAND_ID   = '249c9c9d4de177c9'
 - 按 `portrait` / `icon` 与 `clip` 绘制头像或图标；
 - 缺失图片时显示安全兜底字符，不会挡住页面点击；
 - 支持角色继承链中的头像和掉落来源。
-- **掉落价格与价值（2026-08-13，用户反馈多轮定型）**：掉落物品库每行显示物品价格（读 `getValue(data,'price')`，货币单位 G，已核对游戏源码 UI 模板 `价格 <local:_price>G`）；**catalog 行用 grid 四列布局 `icon | info | 价格 | 添加按钮`**，价格独立列 `justify-self:end` 右对齐，永不与按钮重叠（这是用户三轮反馈后的最终布局，不要改回 flex 推挤）；「掉落列表」标题右侧显示掉落物总价值 `Σ(物品价格 × 掉率 × 期望数量)`（范围掉率用 min/max 中值，装备固定 1，禁用条目不计入）；**掉率支持小数百分比**（如 0.5%，输入框 step 0.01、**滑块 step 0.01** 可在 0~1% 区间 0.01 精度微调，min=0，`setDropRatePercent` 仅钳 0~100）——此前「最低 1%」限制是用户推翻的错误决策，不要恢复。
+- **掉落价格与价值（2026-08-13，用户多轮反馈定型）**：掉落物品库每行显示物品价格（读 `getValue(data,'price')`，货币单位 G，已核对游戏源码 UI 模板 `价格 <local:_price>G`）；**价格标签紧跟名字右侧**（`catalog-row-name` 内 flex：`catalog-name-text` 收缩 ellipsis + `price-tag` 固定），添加按钮固定在 flex 行尾（所有行对齐）——**这是最终布局**：此前试过右对齐（margin-left:auto）和 grid 独立列，都被用户否决（grid 的 `auto` 列宽会随价格文本把按钮顶歪、右对齐让价格贴按钮）。**关键坑：`catalog-name-text` 不要设 `flex:1`**——它会把名字撑满、价格推到行右端，是「价格位置不对」多轮反馈的根因；「掉落列表」标题右侧显示掉落物总价值 `Σ(物品价格 × 掉率 × 期望数量)`（范围掉率用 min/max 中值，装备固定 1，禁用条目不计入）；**掉率支持小数百分比**（如 0.5%，输入框 step 0.01、**滑块 step 0.01** 可在 0~1% 区间 0.01 精度微调，min=0，`setDropRatePercent` 仅钳 0~100）——此前「最低 1%」限制是用户推翻的错误决策，不要恢复。
 - **继承事件开关（2026-08-13）**：掉落事件模式新增「继承事件」checkbox，勾选后保存时在掉落命令最上方插入 `{id:'callEvent', params:{type:'inherited'}}`（引擎 `Command.compileInheritedCommandTuple()`），关闭则移除；读取事件时自动识别该命令恢复勾选。属性字符串模式不显示开关。
 - **角色列表排序**：`#role-sort-box` 是**自定义下拉**（原生 select 弹出层在用户环境为系统白底、`color-scheme` 不生效，CSS 管不到，不要改回原生 select）。分组「文件名 / 名称 / 修改时间」× 升/降共 6 项，默认「文件名 ↑」（`basename` localeCompare zh-CN numeric）。排序模式持久化在 localStorage `loot-smith-role-sort`，刷新后保持。修改时间来自扫描时 `getFile().lastModified`（挂在 entry.lastModified 上）。**创建日期排序做不了**：浏览器无文件创建时间 API，工程文件系统 birthtime 全是复制时间戳，actor/manifest 无时间字段。
 
