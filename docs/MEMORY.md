@@ -1,7 +1,7 @@
 # Yami Tools 项目记忆（MEMORY）
 
 > 本文档沉淀历次对话的关键事实、用户偏好、技术决策与待办，供后续会话快速恢复上下文。
-> 最后更新：2026-08-13（快速本地化 v0.2.0：孤儿自动修复/来源分组/忽略行明示/占位识别/噪声过滤，双真实工程验证）
+> 最后更新：2026-08-14（快速本地化 v0.2.0 完整功能集：引用过滤/孤儿修复/已本地化视图/单语言模式/唯一 ID/立即本地化/增量刷新，双真实工程验证）
 
 ## 0. 沟通规则（用户 AGENTS.md，最高优先级）
 
@@ -22,7 +22,7 @@
 | 性质 | 纯静态网页工具，无构建无框架（原生 JS/CSS） |
 | 结构 | `index.html`（工具合集主页）+ `assets/hub.css` + `vendor/exceljs.min.js` + `tools/character-editor/`（角色编辑器）+ `tools/map-editor/`（地图编辑器）+ `tools/idle-lab/`（挂机验证台）+ `tools/localization-lab/`（快速本地化） |
 
-版本历史：v0.3.x（早期掉落编辑器）→ v0.4.1 → v0.5.1（继承/折叠/高亮等）→ v0.6.0（工具合集拆分+地图编辑器首版）→ v0.7.0（发布：主页新设计+合集+地图编辑器+方案文档）→ **v0.7.1（角色编辑器：排序自定义下拉 + 三工具工程自动同步，2026-08-13）** → **v0.1.0（快速本地化：第四工具，2026-08-13 新建）**。角色编辑器已升 **v0.7.2**（用户自行更新 version.json，2026-08-13）。**改 JS/CSS 必须同步更新各 `index.html` 里的 `?v=` 缓存参数**（否则 GitHub Pages/浏览器不刷新）。
+版本历史：v0.3.x（早期掉落编辑器）→ v0.4.1 → v0.5.1（继承/折叠/高亮等）→ v0.6.0（工具合集拆分+地图编辑器首版）→ v0.7.0（发布：主页新设计+合集+地图编辑器+方案文档）→ **v0.7.1（角色编辑器：排序自定义下拉 + 三工具工程自动同步，2026-08-13）** → **v0.1.0（快速本地化：第四工具，2026-08-13 新建）** → **v0.2.0 beta（快速本地化：引用过滤/孤儿修复/占位识别/已本地化视图/单语言模式/唯一 ID/立即本地化/备份还原面板/增量刷新，2026-08-14 未提交待验收）**。角色编辑器已升 **v0.7.2**（用户自行更新 version.json，2026-08-13）。**改 JS/CSS 必须同步更新各 `index.html` 里的 `?v=` 缓存参数**（否则 GitHub Pages/浏览器不刷新）。
 
 ## 2. 角色编辑器（tools/character-editor/）
 
@@ -62,10 +62,10 @@
 - 已知限制（代码内 ponytail 注释）：轮询按 mtime+size 判断，同值但内容变化检测不到；保存窗口期的外部变化被吞、下次变化自愈；FSO 观察整个工程根，游戏存档等无关事件也会触发重扫（低频可接受）。
 - E2E（`.e2e-tmp/test-sync.js`，临时工程 `%TEMP%\yami-tools-sync-e2e`）：排序、三工具 fallback 导入、btn-rescan 隐藏、零 pageerror 已过。**root 模式自动同步无法自动化**（showDirectoryPicker 系统弹窗无法接管），需用户手工验证。
 
-## 5. 快速本地化（tools/localization-lab/，v0.2.0 beta，2026-08-13）
+## 5. 快速本地化（tools/localization-lab/，v0.2.0 beta，2026-08-13 起）
 
 - 功能：扫描工程**未本地化硬编码中文/英文**（资产 `attributes[].value` 与事件命令树里没包 `<ref:ID>` 的文本，v0.2.0 起含 **actors**——英雄姓名/台词/怪物名称硬编码）、**缺翻译条目**、**孤儿引用**、**疑似占位翻译**（脏词/与原文相同）；导出五 sheet 多语言 Excel；翻译后导入写回；**孤儿可一键按现有引用 ID 创建缺失条目**（只写 localization.json，资产已引用该 ID 无需改动）。
-- **只扫已引用资产（2026-08-13 用户拍板「打包算法就是只打包使用的资产」）**：`referencedFileIds` 复刻引擎打包算法（编辑器 `data-object.js createReferencedFileIDMap:334-387` + `deploy-project-window.js`）——① 全部资产内容（ui/scenes/actors/skills/triggers/items/equipments/states/events/animations/particles/tilesets）+ plugins/commands/config 里的**纯 16hex GUID 字符串值**；② **UI/场景预设元素映射**（事件的 `createElement presetId` 经 `uiPresets/scenePresets` 反查所在文件——漏了这层会把对话框等按预设引用的 UI 全判成未引用，这是关键坑）；③ 自动触发事件（type≠common）；④ 脚本 meta 自标记 + 代码内引号 GUID。默认过滤，工具栏「含未引用资产」可关（`rescanFromCache` 不重读文件）。缺翻译/疑似占位同步按「被已引用资产 `<ref:>` 引用 + 条目内嵌套闭包」过滤（`referencedLocalizationIds`；插件脚本实测无 `<ref:`）。真实基线：new-game 跳过未引用 92（旧装备 43/未接入怪物 33…）→ 候选 660/缺翻译 118/孤儿 16/疑似占位 1；GAME-20240905 跳过 560（地图编辑器辅助技能 236/DLC 建筑 195…）→ 候选 692/缺翻译 3/孤儿 0/疑似占位 161。
+- **只扫已引用资产（2026-08-13 用户拍板「打包算法就是只打包使用的资产」）**：`referencedFileIds` 复刻引擎打包算法（编辑器 `data-object.js createReferencedFileIDMap:334-387` + `deploy-project-window.js`）——① 全部资产内容（ui/scenes/actors/skills/triggers/items/equipments/states/events/animations/particles/tilesets）+ plugins/commands/config 里的**纯 16hex GUID 字符串值**；② **UI/场景预设元素映射**（事件的 `createElement presetId` 经 `uiPresets/scenePresets` 反查所在文件——漏了这层会把对话框等按预设引用的 UI 全判成未引用，这是关键坑）；③ 自动触发事件（type≠common）；④ 脚本 meta 自标记 + 代码内引号 GUID。默认过滤，工具栏「含未引用资产」可关（`rescanFromCache` 不重读文件）。缺翻译/疑似占位同步按「被已引用资产 `<ref:>` 引用 + 条目内嵌套闭包」过滤（`referencedLocalizationIds`；插件脚本实测无 `<ref:`）。真实基线（会随用户实时编辑漂移）：new-game 跳过未引用 92（旧装备 43/未接入怪物 33…）→ 候选约 660/缺翻译约 118/孤儿 16/疑似占位 1/已本地化 120；GAME-20240905 跳过 560（地图编辑器辅助技能 236/DLC 建筑 195…）→ 候选 692/缺翻译 3/孤儿 0/疑似占位 161/已本地化 1436。
 - **未本地化判定（三层信号）**：① 字段级白名单——`attributes[].value` 限 attribute.json `type==='string'` 属性（排除 loopList），命令树只收 `value/content/comment/tag/operand` ∪ 本趟已见 `<ref:` 的 key（ref 先例），排除 `name`（.ui 编辑器标签，但作为孤儿建议来源）/`script`/元数据；② 字符串特征——含 CJK → high 置信，纯英文 → medium（GUID/纯数字/纯标签残留/**8hex 与 #6hex 颜色码**/路径/命令 tag 枚举排除；**判定前剥 color/local/global/image 标签**；v0.2.0 起 value 位置单 token 引擎枚举排除：inventory/smithy/ranged/melee/sell/buy…）；③ 人工兜底——Excel 置信度列 + UI 勾选。
 - **孤儿引用（v0.2.0 重做）**：`collectOrphanRefs` 全树扫描（不依赖文本字段白名单，任何字符串值里的 `<ref:ID>` 都检查，记录 attrKey→属性语义名/`.ui` 节点 name/refIndex/refCount），按 refId 分组；建议文本推导 = 名称属性 ref ← 文件名核心（剥 `序号.` 与 ` -后缀`，多文件取最短核心）+ .ui 节点编辑器标签；后缀 ref（同值第 2 个）与备注属性留空人工填。**修复用现有引用 ID 建条目（不要给孤儿分配随机新 ID）**。
 - **疑似占位**：脏词整值（shit/fuck/xxx/test/todo/待翻译/未翻译/占位…）→「占位词」；与 zh-CN 相同且含 CJK → zh-TW 含简体独有字（`SIMPLIFIED_ONLY_RE`）判「简体未转繁」，否则「可能同形，请确认」（专名梅林/史蒂夫属软提示）；版本号同值不算。只报告不自动改。
@@ -73,13 +73,14 @@
 - **合并策略（用户拍板）**：同文本同 ID——`normalizeText` 剥 color/local/global 标签后相等即合并为同一候选，翻译一次处处生效。
 - 导入安全：导入前**强制重扫**并按位置校验当前值与导出时一致（不匹配=外部改动，**整个中止**）；`Lootsmith Backups/<时间戳>/` 备份；失败回滚；同 Excel 二次导入幂等。**忽略行**（处理方式=忽略/孤儿空建议/幂等已存在）预览单独明示。**新增条目按来源类型分「快速本地化」子文件夹**（物品/装备/技能/状态/事件/界面/触发器/角色/孤儿修复）。
 - 复用模式：indexedDB `loot-smith-settings`/`last-project-handle` 工程记忆、fallback（webkitdirectory）只读导入（导入/孤儿修复/补译保存/备份面板均禁用）、watchPaths 5s 轮询（变化 toast 提示**不自动重扫**）。
-- **界面编辑与备份（2026-08-13 用户要求）**：① 原文颜色渲染——`<color:RRGGBB[AA]>…</color>` 直接显示彩色字（`renderRichText`，其余标签转义保留原文）；② 原文内联编辑——候选行 ✎ 按钮改原文，条目 zh-CN/导出用新文本，**导入替换校验仍按扫描原文**（`candidate.originalZhCN` 首次编辑锁定）；③ **单语言模式**——工具栏「译文语言」下拉（默认第一个非原文语言），缺翻译/疑似占位/候选的译文列只显示当前语言；候选视图的译文输入预填进 Excel 导出；④ **已本地化视图（第 5 张统计卡）**——被引用且条目存在的文本（new-game 120 条 / GAME-20240905 1436 条），**中文原文与译文都直接可编辑**，「保存修改」备份后写回 localization.json（zh-CN 编辑=改游戏显示文本，用户明确要求）；**候选唯一 ID（2026-08-13 用户要求）**——候选原文下方显示 16hex ID（`state.candidateIdMap` 按 normalized 文本分配，会话内稳定、重扫不换，与引擎 GUID 同格式；Excel 导出共用同一 ID），缺翻译/疑似占位/已本地化的条目 ID 也显示在文本下方；**「本地化」按钮**——单条立即创建条目+替换文件（`localizeCandidateNow`，先校验后替换→备份→仿生写回→重扫，译文随界面输入一起写入）；⑤ **备份与还原面板**——列出 `Lootsmith Backups/<时间戳>/`（文件名 = 路径 `/`→`__`），支持立即备份、还原（**还原前自动快照「还原前-<时间戳>」可反悔**）、删除；⑥ 扫描时屏幕最上方 3px 进度条（determinate 计数 / indeterminate 写回动画）。fill 只写非空值（不支持清空为「」）。
-- E2E（`.e2e-tmp/test-localize.js`）：fallback 导入 → 扫描（缺翻译 187、疑似占位 1 含 shit、候选含「治疗药剂」）→ 导出五 sheet 校验（待本地化行数=候选数、ID 16hex、疑似占位 sheet）→ 疑似占位视图渲染 → 零 pageerror 已过。
-- **双真实工程验收（`.e2e-tmp/verify-real2.js`，2026-08-13 用户授权）**：只读扫描 `D:\new-game`（336 资产 → 681 候选（高 398/中 283）、缺翻译 187、疑似占位 1、孤儿 47——此前只报 5 是因为不扫 actor；建议抽查 兽人/大恶魔/精英哥布林/左右/上方/关闭 全对）+ `D:\GAME-20240905`（2501 资产 → 1068 候选、缺翻译 14、疑似占位 197（简体未转繁 1/同形请确认 196）、孤儿 1）；`%TEMP%` 副本跑完整写回链路（孤儿修复按引用 ID 建条目 → 来源分文件夹 → 忽略行 → 幂等 → 5 文件写回格式仿生 → 重扫孤儿归零 → 备份恢复无残留），真实工程零写入。v0.1.0 真实工程验收修复的 3 个 bug（候选×文件分组校验、locateValue 不抛错、serializeLike 仿生）仍然有效勿回退。
+- **界面编辑与备份（2026-08-13 用户要求）**：① 原文颜色渲染——`<color:RRGGBB[AA]>…</color>` 直接显示彩色字（`renderRichText`，其余标签转义保留原文）；② 原文内联编辑——候选行 ✎ 按钮改原文，条目 zh-CN/导出用新文本，**导入替换校验仍按扫描原文**（`candidate.originalZhCN` 首次编辑锁定）；③ **单语言模式**——工具栏「译文语言」下拉（默认第一个非原文语言），缺翻译/疑似占位/候选的译文列只显示当前语言；候选视图的译文输入预填进 Excel 导出；④ **已本地化视图（第 5 张统计卡）**——被引用且条目存在的文本（new-game 120 条 / GAME-20240905 1436 条），**中文原文与译文都直接可编辑**，「保存修改」备份后写回 localization.json（zh-CN 编辑=改游戏显示文本，用户明确要求）；**候选唯一 ID（2026-08-13 用户要求）**——候选原文下方显示 16hex ID（`state.candidateIdMap` 按 normalized 文本分配，会话内稳定、重扫不换，与引擎 GUID 同格式；Excel 导出共用同一 ID），缺翻译/疑似占位/已本地化的条目 ID 也显示在文本下方；**「本地化」按钮**——单条立即创建条目+替换文件（`localizeCandidateNow`，先校验后替换→备份→仿生写回，译文随界面输入一起写入）；**写回后增量刷新（2026-08-13 用户反馈「点本地化就重扫很蠢」）**——所有写回收尾走 `finishAfterWrite`：内存同步已写回内容（`applyInMemoryWrites`）+ 刷新被写文件监控戳（`refreshWatchStamps`）+ `rescanFromCache` 重算渲染，**零磁盘重读**；只有备份还原仍整工程重扫。测试教训：E2E 夹具改为**全自造确定性数据**（不复制真实工程——用户实时编辑 D:\new-game 会让硬编码基线漂移，且夹具 GUID 必须是合法 hex：`gggg...` 不是 hex！）；verify-real2 改**动态基线**（不硬编码数字，孤儿按建议动态挑选，条目按 ID 查找）；⑤ **备份与还原面板**——列出 `Lootsmith Backups/<时间戳>/`（文件名 = 路径 `/`→`__`），支持立即备份、还原（**还原前自动快照「还原前-<时间戳>」可反悔**）、删除；⑥ 扫描时屏幕最上方 3px 进度条（determinate 计数 / indeterminate 写回动画）。fill 只写非空值（不支持清空为「」）。
+- E2E（`.e2e-tmp/test-localize.js`，**全自造确定性夹具**，不复制真实工程）：fallback 导入 → 扫描对账（候选 2/缺翻译 1/孤儿 1/疑似占位 1/已本地化 3/未引用 1）→ 导出五 sheet 校验（行数=候选数、ID 16hex）→ 颜色渲染/原文 ID/语言下拉/疑似占位与已本地化视图/「含未引用资产」切换/进度条元素断言 → 零 pageerror 已过。
+- **双真实工程验收（`.e2e-tmp/verify-real2.js`，2026-08-13 用户授权，08-14 改动态基线）**：只读扫描 `D:\new-game`（跳过未引用 92 → 候选约 660/缺翻译约 118/孤儿 16/疑似占位 1/已本地化 120，孤儿建议 兽人/黄金巨人骷髅/左右/上方/关闭 全对）+ `D:\GAME-20240905`（跳过 560 → 候选 692/缺翻译 3/疑似占位 161/孤儿 0/已本地化 1436）；`%TEMP%` 副本跑完整写回链路（孤儿修复按引用 ID 建条目 → 来源分文件夹 → 忽略行 → 幂等 → 写回格式仿生 → 重扫孤儿归零 → 备份恢复无残留），真实工程零写入。**基线是动态的：用户实时编辑工程会让数字漂移（08-14 实测 659/119），脚本不硬编码数字、孤儿按建议动态挑选、条目按 ID 查找。**v0.1.0 真实工程验收修复的 3 个 bug（候选×文件分组校验、locateValue 不抛错、serializeLike 仿生）仍然有效勿回退。
 - 已知限制：命令 tag 排除清单按当前工程噪声起步（英文误报由置信度列人工过滤）；孤儿建议是参考值需人工过目（后缀 ref/备注属性不推导）；「与原文相同」对同形专名有软提示误报；脏词表按样本起步。
 
 ## 6. 已知未完成 / 待用户确认
 
+- **快速本地化 v0.2.0 beta 已改未提交、未推送、未部署**（`tools/localization-lab/` 四个文件 + `docs/HANDOFF-LOCALIZATION.md`/`MEMORY.md`/`README.md`/hub 卡片），等用户验收后按用户指示提交。
 - **阶段 3（游戏侧，需用户拍板）**：改造 `读取excel.3739667372fedf5f.event` 统一入口（保持 GUID）→ 调 `地图JSON读取` 指令；路线 A 拆分五个旧全局变量；路线 B 刷怪算法按 weight/lvMin/lvMax。改前先备份事件文件，只能在用户 Yami 编辑器验证。
 - **地图编辑器重做**：用户不满意，交他人接手 → 见 `HANDOFF-MAP-EDITOR.md`（16 项缺陷改进清单：图标色板 100 系列、错误定位、批量/撤销、拖放提示、视觉统一等）。
 - 画布拖拽修复（2026-08-13，3 个文件 `tools/map-editor/{app.js,index.html,styles.css}` +60/-18）**已改未提交**；**角色编辑器版本已定 v0.7.2**（用户拍板，2026-08-13 更新 version.json），地图编辑器画布修复的版本号仍待用户定。
@@ -95,7 +96,7 @@
 
 ## 8. 关键文档
 
-- `HANDOFF.md`（角色编辑器交接）、`HANDOFF-MAP-EDITOR.md`（地图编辑器专项交接）、`HANDOFF-LOCALIZATION.md`（快速本地化专项交接，2026-08-13 新建，含真实工程验收记录）
+- `HANDOFF.md`（角色编辑器交接）、`HANDOFF-MAP-EDITOR.md`（地图编辑器专项交接）、`HANDOFF-LOCALIZATION.md`（快速本地化专项交接，2026-08-13 新建、08-14 更新至 v0.2.0，含双真实工程验收记录）
 - `CHARACTER_ATTRIBUTE_EDITOR_PLAN.md`（人物属性模式方案）
 - `小工具合集与地图编辑器方案.txt`（v2：合集+地图编辑器完整方案，含 JSON Schema 第四章）
 - `小工具合集与地图Excel导出方案.txt`（v1 旧版）

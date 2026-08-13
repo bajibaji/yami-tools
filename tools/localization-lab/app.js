@@ -761,6 +761,36 @@ function initializeLocalizationLab() {
     els.scanStatus.textContent = scanStatusText()
     renderScan()
   }
+  /** 写回后增量更新：把内存里已写回的文件内容同步进缓存（资产 + 引用源 + localization），无需重读磁盘。 */
+  function applyInMemoryWrites(filesToWrite, localizationJson) {
+    const byFile = new Map(filesToWrite)
+    for (const asset of state.scanAssets || []) {
+      const written = byFile.get(asset.file)
+      if (written) asset.data = written.data
+    }
+    for (const item of state.references && state.references.data || []) {
+      const written = byFile.get(item.file)
+      if (written) item.data = written.data
+    }
+    if (localizationJson) state.scanLocalization = localizationJson
+  }
+  /** 刷新被写文件的监控戳（避免自动同步把自己刚写入的文件误判为外部变化）。 */
+  async function refreshWatchStamps(paths) {
+    if (!state.rootHandle || !state.watchPaths.length) return
+    for (const path of paths) {
+      try {
+        const file = await (await getHandle(state.rootHandle, path)).getFile()
+        state.watchSnapshot.set(path, fileStamp(file))
+      } catch { state.watchSnapshot.set(path, 'missing') }
+    }
+  }
+  /** 写回后的统一收尾：增量更新 → 刷新监控戳 → 重算渲染（不重扫工程）。 */
+  async function finishAfterWrite(filesToWrite, localizationJson) {
+    applyInMemoryWrites(filesToWrite, localizationJson)
+    await refreshWatchStamps([...filesToWrite.keys(), 'Data/localization.json'])
+    setScanProgress(0, 0)
+    rescanFromCache()
+  }
   const formatNow = () => new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
 
   // ---- 工程记忆（indexedDB，与角色编辑器同库同键） ----
@@ -808,14 +838,14 @@ function initializeLocalizationLab() {
         try {
           const data = await readJson(root, entry.path)
           assets.push({ file: entry.path, type, data })
-          references.data.push({ guid: core.assetGuid(entry.path), type, data })
+          references.data.push({ guid: core.assetGuid(entry.path), type, file: entry.path, data })
         } catch (error) { console.warn('跳过无法读取的文件', entry.path, error) }
         tick()
       }
     }
     for (const type of REF_ONLY_TYPES) {
       for (const entry of manifest[type] || []) {
-        try { references.data.push({ guid: core.assetGuid(entry.path), type, data: await readJson(root, entry.path) }) } catch (error) { console.warn('跳过无法读取的文件', entry.path, error) }
+        try { references.data.push({ guid: core.assetGuid(entry.path), type, file: entry.path, data: await readJson(root, entry.path) }) } catch (error) { console.warn('跳过无法读取的文件', entry.path, error) }
         tick()
       }
     }
@@ -894,7 +924,7 @@ function initializeLocalizationLab() {
             } else {
               try {
                 const data = JSON.parse(await file.text())
-                references.data.push({ guid: core.assetGuid(entry.path), type, data })
+                references.data.push({ guid: core.assetGuid(entry.path), type, file: entry.path, data })
                 if (SCAN_TYPES.includes(type)) assets.push({ file: entry.path, type, data })
               } catch {}
             }
@@ -911,7 +941,7 @@ function initializeLocalizationLab() {
               references.scripts.push({ guid: core.assetGuid(rel(file)), code: await file.text() })
             } else {
               const data = JSON.parse(await file.text())
-              references.data.push({ guid: core.assetGuid(rel(file)), type, data })
+              references.data.push({ guid: core.assetGuid(rel(file)), type, file: rel(file), data })
               if (SCAN_TYPES.includes(type)) assets.push({ file: rel(file), type, data })
             }
           } catch {}
@@ -968,7 +998,6 @@ function initializeLocalizationLab() {
     els.langSelect.innerHTML = scan.languages.map((lang) => `<option value="${escapeHtml(lang)}">${escapeHtml(lang)}${lang === scan.languages[0] ? '（原文）' : ''}</option>`).join('')
     if (!scan.languages.includes(state.langValue)) state.langValue = scan.languages[1] || scan.languages[0]
     els.langSelect.value = state.langValue
-    state.candidateLangs = new Map()
     // 会话内稳定的候选 ID（与引擎同格式 16hex）：重扫/切换过滤不换 ID，Excel 导出与「本地化」按钮共用
     for (const c of scan.candidates) {
       let id = state.candidateIdMap.get(c.normalized)
@@ -976,8 +1005,9 @@ function initializeLocalizationLab() {
       c.id = id
     }
     state.selectedIds = new Set(scan.candidates.map((c) => c.normalized)) // 默认全选，导出范围由勾选控制
-    state.orphanTexts = new Map(scan.orphans.filter((o) => o.suggestion).map((o) => [o.refId, o.suggestion]))
-    state.fillDrafts = new Map()
+    for (const o of scan.orphans) {
+      if (o.suggestion && !state.orphanTexts.has(o.refId)) state.orphanTexts.set(o.refId, o.suggestion) // 保留用户已填的文本
+    }
     renderList()
   }
   function renderList() {
@@ -1411,7 +1441,7 @@ function initializeLocalizationLab() {
       state.importIgnored = []
       els.importPreview.classList.add('hidden')
       toast(`导入完成：新增 ${additions.length} 条 · 补译 ${importFills.length} 条 · 备份于 Lootsmith Backups/${backupDir.name}`, 'success')
-      await scanProject(state.rootHandle)
+      await finishAfterWrite(filesToWrite, localizationJson)
     } catch (error) {
       els.btnConfirmImport.disabled = false
       toast(`导入中止：${error.message}`, 'error')
@@ -1444,7 +1474,7 @@ function initializeLocalizationLab() {
       const original = await readText(state.rootHandle, 'Data/localization.json')
       await writeFileTo(await getHandle(state.rootHandle, 'Data/localization.json'), core.serializeLike(localizationJson, original))
       toast(`已创建 ${additions.length} 条缺失条目（备份于 Lootsmith Backups/${backupDir.name}）`, 'success')
-      await scanProject(state.rootHandle)
+      await finishAfterWrite(new Map(), localizationJson)
     } catch (error) {
       toast(`创建失败：${error.message}`, 'error')
       console.error(error)
@@ -1497,7 +1527,7 @@ function initializeLocalizationLab() {
         const original = await readText(state.rootHandle, loc.file)
         filesToWrite.set(loc.file, { data: JSON.parse(original), original })
       }
-      for (const { file } of [...filesToWrite.keys()].map((file) => ({ file }))) {
+      for (const file of filesToWrite.keys()) {
         const result = core.applyAssetReplacement(filesToWrite.get(file).data, candidate, file)
         if (!result.ok) throw new Error(result.reason)
       }
@@ -1524,9 +1554,8 @@ function initializeLocalizationLab() {
       }
       const originalLocalization = await readText(state.rootHandle, 'Data/localization.json')
       await writeFileTo(await getHandle(state.rootHandle, 'Data/localization.json'), core.serializeLike(localizationJson, originalLocalization))
-      setScanProgress(0, 0)
       toast(`已本地化「${candidate.zhCN.slice(0, 24)}」→ 条目 ${candidate.id}（备份于 Lootsmith Backups/${backupDir.name}）`, 'success')
-      await scanProject(state.rootHandle)
+      await finishAfterWrite(filesToWrite, localizationJson)
     } catch (error) {
       setScanProgress(0, 0)
       toast(`本地化失败：${error.message}`, 'error')
@@ -1568,9 +1597,8 @@ function initializeLocalizationLab() {
       await writeFileTo(await backupDir.getFileHandle('localization.json', { create: true }), await readText(state.rootHandle, 'Data/localization.json'))
       const original = await readText(state.rootHandle, 'Data/localization.json')
       await writeFileTo(await getHandle(state.rootHandle, 'Data/localization.json'), core.serializeLike(localizationJson, original))
-      setScanProgress(0, 0)
       toast(`已保存 ${fills.length} 处修改（原文/译文写回 localization.json，备份于 Lootsmith Backups/${backupDir.name}）`, 'success')
-      await scanProject(state.rootHandle)
+      await finishAfterWrite(new Map(), localizationJson)
     } catch (error) {
       setScanProgress(0, 0)
       toast(`保存失败：${error.message}`, 'error')

@@ -1,6 +1,6 @@
 # YAHZJ 快速本地化 Handoff
 
-> 最后整理：2026-08-13
+> 最后整理：2026-08-14
 > 代码仓库：`D:\Documents\GitHub\yami-tools`
 > 游戏工程：`D:\new-game`（Yami RPG Maker 工程，半成品）
 > 完工参照：`D:\GAME-20240905`（已发布、已做本地化的完整项目，13 种语言）
@@ -12,7 +12,7 @@
 快速本地化（v0.2.0 beta）是工具合集第四号工具：找出工程中**尚未本地化的硬编码文本**、**缺翻译条目**、**孤儿引用**与**疑似占位翻译**，导出多语言 Excel 供翻译，翻译完成后导入写回工程；孤儿引用可一键按现有引用 ID 创建缺失条目。
 
 - 分支：`main`（未提交、未推送、未部署，等用户验收）
-- 工具版本：`v0.2.0 beta`（`tools/version.json`；`index.html` 缓存参数 `?v=20260813-localization-lab-2`）
+- 工具版本：`v0.2.0 beta`（`tools/version.json`；`index.html` 缓存参数 `?v=20260813-localization-lab-6`）
 - **已用两个真实工程验证**（用户授权，2026-08-13）：`D:\new-game` 半成品 + `D:\GAME-20240905` 完工参照，全链路验收细节见 §9
 - v0.2.0 新增：孤儿引用自动修复（含 actor 扫描）、按来源类型分文件夹、忽略行预览明示、疑似占位符识别、中置信噪声过滤（颜色/引擎枚举/标签剥离）、**原文颜色渲染**（`<color:hex>` 直接显示彩色）、**原文内联编辑**（✎，按扫描原文校验）、**缺翻译/疑似占位内联补译保存**（备份后写回）、**备份与还原面板**（列出/立即备份/还原/删除）、**扫描顶部进度条**、**仅扫描已引用资产**（复刻引擎打包算法，默认过滤闲置资产，可勾选「含未引用资产」关闭）、**已本地化视图**（被引用条目的原文/译文直接编辑写回）、**单语言模式**（译文语言下拉切换，列表只显示当前语言一列；候选视图可直接预填译文随 Excel 导出）、**唯一 ID 显示与立即本地化**（候选原文下方显示会话内稳定的 16hex ID——与引擎同格式；「本地化」按钮当场创建条目并替换文件，无需 Excel）
 - 已知缺陷：英文候选仍是启发式（置信度列人工过滤）；同形词（如「梅林」）会进「疑似占位-请确认」软提示；孤儿建议文本是参考值需人工过目
@@ -24,7 +24,7 @@
 | `tools/localization-lab/index.html` | 顶部进度条、顶栏（工程选择/备份与还原/导出/导入）、5 张统计卡（候选/缺翻译/孤儿/疑似占位/已本地化）、工具栏（含未引用/译文语言切换/孤儿修复/保存修改）、导入预览区、备份面板 |
 | `tools/localization-lab/styles.css` | 沿用 idle-lab 视觉语言（变量体系/卡片/表格/toast）+ 孤儿输入/修复按钮/疑似占位样式 |
 | `tools/localization-lab/app.js` | 顶部纯函数核心（`globalThis.LocalizationLabCore`，node 可跑）+ 底部 DOM 装配（`document` 检测双模式） |
-| `tools/localization-lab/self-check.js` | 15 组 assert 单测（判定/分段/合并/孤儿/占位/路径/替换/校验/文件夹/幂等/序列化） |
+| `tools/localization-lab/self-check.js` | 19 组 assert 单测（判定/分段/合并/属性/扫描/缺翻译/占位/路径/写入/校验/随机/序列化/引用判定/引用过滤/已本地化） |
 
 注册改动：`tools/version.json` 的 `localization-lab` 键、hub `index.html` 第 4 张卡片描述、`tools/bump-version.js` 工具数组、`assets/hub.css` 的 `.icon-local`。
 
@@ -79,7 +79,7 @@
 ## 6. Excel 导出/导入
 
 **导出** `localization-导出-YYYYMMDD_HHmmss.xlsx`，五 sheet：
-- 待本地化：ID（**导出时预分配 16 位随机 hex**，导入按 ID 匹配幂等）/ 原文(zh-CN) / 各语言列 / 处理方式（默认替换，可改忽略）/ 置信度 / 来源 / 出现位置（多条换行）
+- 待本地化：ID（**扫描时预分配 16 位随机 hex，会话内稳定**——重扫/切换过滤不换 ID，Excel 导出与「本地化」按钮共用）/ 原文(zh-CN) / 各语言列（界面里填的译文会预填进来）/ 处理方式（默认替换，可改忽略）/ 置信度 / 来源 / 出现位置（多条换行）
 - 缺翻译：ID / 名称 / 中文 / 各语言列 / 缺语言
 - 疑似占位：ID / 名称 / 中文 / 各语言列 / 疑似说明（预填原因与现值，改语言列即可写回）
 - 孤儿引用：引用ID / 出现文件 / 上下文 / 建议文本（**建议文本非空 → 导入时按引用 ID 创建条目**；留空跳过）
@@ -108,17 +108,17 @@
 
 纯函数核心（self-check 覆盖）：`buildStringAttributeIds` / `loopListAttributeId` / `localizationIds` / `buildAttributeNames` / `collectRefKeys` / `collectCandidates` / `collectOrphanRefs` / `orphanSuggestion` / `groupOrphans` / `classifyText` / `splitRefSegments` / `normalizeText` / `mergeCandidates` / `findMissingTranslations` / `findSuspiciousTranslations` / `buildScanResult` / `locateValue`（路径不存在返回 undefined）/ `setValue` / `replaceSegment` / `applyAssetReplacement` / `localizationInsertion` / `validateImportRows` / `serializeLike` / `randomHex16`。
 
-DOM：`scanProject`（root 模式）/ `scanProjectFiles`（fallback，**webkitRelativePath 首段是所选目录名需剥掉**）/ `collectAssets`（扫描 + 引用类型 + 脚本全量收集，驱动进度条）/ `rescanFromCache`（切换「含未引用资产」时不重读文件）/ `buildExportWorkbook`（候选译文预填自界面输入）/ `readImportWorkbook` / `confirmImport` / `localizeCandidateNow`（单条立即本地化：按显示的唯一 ID 创建条目 + 替换文件 + 备份写回）/ `createOrphanEntries`（孤儿修复写回）/ `writeLocalizationFills`（原文/译文修改写回，含 zh-CN 编辑）/ `renderLocalizedRows`（已本地化视图）/ `renderRichText`（颜色标签渲染）/ `startTextEdit`（候选原文内联编辑，编辑格内也显示 ID）/ `openBackupPanel`·`backupNow`·`restoreBackup`·`deleteBackup`（备份与还原）/ `setScanProgress`（顶部进度条）/ `startAutoSync`（watchPaths 5s 轮询，变化 toast 提示不自动重扫）。
+DOM：`scanProject`（root 模式）/ `scanProjectFiles`（fallback，**webkitRelativePath 首段是所选目录名需剥掉**）/ `collectAssets`（扫描 + 引用类型 + 脚本全量收集，驱动进度条）/ `rescanFromCache`（切换「含未引用资产」时不重读文件）/ `finishAfterWrite`（**写回后的增量收尾：内存同步 + 监控戳刷新 + 重算渲染，不再整工程重扫**——`applyInMemoryWrites` 把已写回文件内容同步进 `state.scanAssets`/`state.references`/`state.scanLocalization`，`refreshWatchStamps` 只刷新被写文件的监控戳防误报外部变化）/ `buildExportWorkbook`（候选译文预填自界面输入）/ `readImportWorkbook` / `confirmImport` / `localizeCandidateNow`（单条立即本地化：按显示的唯一 ID 创建条目 + 替换文件 + 备份写回）/ `createOrphanEntries`（孤儿修复写回）/ `writeLocalizationFills`（原文/译文修改写回，含 zh-CN 编辑）/ `renderLocalizedRows`（已本地化视图）/ `renderRichText`（颜色标签渲染）/ `startTextEdit`（候选原文内联编辑，编辑格内也显示 ID）/ `openBackupPanel`·`backupNow`·`restoreBackup`·`deleteBackup`（备份与还原；**还原是唯一仍整工程重扫的写回路径**——备份内容任意）/ `setScanProgress`（顶部进度条）/ `startAutoSync`（watchPaths 5s 轮询，变化 toast 提示不自动重扫）。
 
 ## 9. 验收记录（2026-08-13，两个真实工程）
 
 **真实扫描（只读，仅已引用资产）**：
-- `D:\new-game`：336 资产 → **跳过未引用 92 个**（旧装备 43/未接入怪物 33/闲置技能 9/物品 3/事件 4）→ 候选 660（高 379/中 281）、缺翻译 118（另有 69 条未被引用已跳过）、疑似占位 1（en="shit"）、**孤儿 16**、**已本地化 120 条**。孤儿建议抽查：`2ce00873427ec87f`→「兽人」、`2c73fa96888b1094`→「黄金巨人骷髅」、设置界面 →「左右/上方/关闭/标题/伤害数字方向标签」。
+- `D:\new-game`：336 资产 → **跳过未引用 92 个**（旧装备 43/未接入怪物 33/闲置技能 9/物品 3/事件 4）→ 候选约 660（高 379/中 281）、缺翻译约 118（另有 69 条未被引用已跳过）、疑似占位 1（en="shit"）、**孤儿 16**、**已本地化 120 条**。孤儿建议抽查：`2ce00873427ec87f`→「兽人」、`2c73fa96888b1094`→「黄金巨人骷髅」、设置界面 →「左右/上方/关闭/标题/伤害数字方向标签」。**注意：用户会用工具实时编辑该工程，数字会漂移（08-14 实测 659/119/16/1）——验收脚本已改动态基线，不硬编码数字。**
 - `D:\GAME-20240905`（完工参照）：2501 资产 → **跳过未引用 560 个**（地图编辑器辅助技能 236/DLC 建筑 195/未接线事件 58…）→ 候选 692（v0.1.0 全量是 1068）、缺翻译 3（另有 11 条未引用已跳过）、疑似占位 161（另有 36 条未引用已跳过；zh-TW/ja 与 zh-CN 相同是真实现状）、孤儿 0（v0.1.0 报的 1 个孤儿在未引用的升级技能里）、**已本地化 1436 条**。
 
-**写回链路**（`.e2e-tmp/verify-real2.js`，`%TEMP%` 副本，真实工程零写入）：孤儿修复 3 条按引用 ID 建条目 → 候选导入 2 新增（物品/角色分文件夹）+ 2 补译 + 1 忽略行 → 资产替换 4 文件 → localization 子文件夹（孤儿修复/物品/角色）条目与补译校验 → 二次导入 0 新增（幂等）→ 5 文件真实写回 + 格式仿生对账 → 重扫已修复孤儿归零 → 备份恢复无残留 → 临时副本清理。
+**写回链路**（`.e2e-tmp/verify-real2.js`，`%TEMP%` 副本，真实工程零写入，动态基线）：孤儿修复 3 条按引用 ID 建条目（按建议动态挑选）→ 候选导入 2 新增（物品/角色分文件夹，条目按 ID 查找校验）+ 2 补译 + 1 忽略行 → 资产替换（候选×文件分组）→ localization 子文件夹（孤儿修复/物品/角色）→ 二次导入 0 新增（幂等）→ 真实写回 + 格式仿生对账 → 重扫已修复孤儿归零 → 备份恢复无残留 → 临时副本清理。
 
-**浏览器 E2E**（`.e2e-tmp/test-localize.js`）：fallback 扫描（缺翻译 187 对账、疑似占位 1 含 shit）+ 导出五 sheet 结构（待本地化行数=候选数、ID 16hex、疑似占位 sheet 1 行）+ 疑似占位视图渲染 + **颜色渲染断言**（「恢复<color:00ff00>50</color>HP」渲染成 #00ff00 span）+ 原文编辑按钮 + 进度条/备份面板元素与 fallback 禁用态 + 零 pageerror。
+**浏览器 E2E**（`.e2e-tmp/test-localize.js`，**全自造确定性夹具**——不复制真实工程，避免用户实时编辑导致基线漂移）：候选 2/缺翻译 1/孤儿 1/疑似占位 1/已本地化 3/未引用 1 与核心算法逐项对账 + 导出五 sheet 结构（行数=候选数、ID 16hex）+ **颜色渲染断言**（「恢复<color:00ff00>50</color>HP」渲染成 #00ff00 span）+ 原文编辑按钮与下方 16hex ID + 语言下拉默认 en + 疑似占位/已本地化视图渲染 + 「含未引用资产」切换 + 进度条/备份面板元素与 fallback 禁用态 + 零 pageerror。**夹具坑：GUID 必须是合法 hex（`gggg...` 不是 hex，g 超出 0-9a-f）。**
 
 **验证命令**：`node --check tools/localization-lab/app.js`、`node tools/localization-lab/self-check.js`、`node .e2e-tmp/test-localize.js`、`node .e2e-tmp/verify-real2.js`。
 
@@ -134,7 +134,8 @@ DOM：`scanProject`（root 模式）/ `scanProjectFiles`（fallback，**webkitRe
 - **已本地化视图的 zh-CN 编辑会直接改游戏里显示的文本**（条目 contents 写回），保存前自动备份；这是用户明确的编辑需求，不要加只读限制。
 - 单语言模式：译文列跟随「译文语言」下拉；候选视图的译文输入进 Excel 导出，也会随「本地化」按钮直接写入新条目。
 - **候选唯一 ID（会话内稳定）**：`renderScan` 按 normalized 文本分配（`state.candidateIdMap`），重扫/切换「含未引用资产」不换 ID；16hex 随机与引擎 GUID 同格式；Excel 导出与「本地化」按钮共用同一 ID。原文下方与编辑格内都显示该 ID（缺翻译/疑似占位/已本地化视图的条目 ID 也显示在文本下方）。
-- 「本地化」按钮 = 单条 confirmImport：先读文件 → 内存校验替换（`originalZhCN` 规则同导入）→ 备份 → 写回资产 + localization.json → 重扫。
+- 「本地化」按钮 = 单条 confirmImport：先读文件 → 内存校验替换（`originalZhCN` 规则同导入）→ 备份 → 写回资产 + localization.json → **增量刷新（不重扫工程）**。
+- 所有写回路径（本地化/保存修改/孤儿修复/导入）收尾都走 `finishAfterWrite` 增量更新；只有备份还原需要整工程重扫。
 - 缺翻译/疑似占位/已本地化三个视图共用 `fillDrafts` 与「保存修改」写回；fill 只写非空值（不支持清空为「」，删值请在 Yami 编辑器做）。
 - 备份文件名 = 原路径 `/` 换成 `__`；还原按 `__` 反解路径，**还原前自动快照到「还原前-<时间戳>」目录**（可反悔）；删除备份不可恢复，无确认弹窗（点了就删）。
 - 备份面板只在 root 模式可用（fallback 无目录句柄）。补译保存与孤儿修复一样只写 localization.json（先备份）。
@@ -150,4 +151,5 @@ DOM：`scanProject`（root 模式）/ `scanProjectFiles`（fallback，**webkitRe
 1. 设置界面 5 个孤儿（标题/伤害数字方向标签/左右/上方/关闭）等无文件名线索的条目，可考虑从「邻近 .ui 节点编辑器标签」进一步人工对账（已做标签提示，未做自动填充）；
 2. 占位符脏词表与「同形词」白名单（如专名清单）可按用户工程样本扩充；
 3. 导入预览支持勾选排除个别新增行（现在靠 Excel 处理方式列控制）；
-4. 手工验收建议：选真实工程 → 导出 Excel → 填几条英文 → 导入 → 孤儿页一键创建 → 在 Yami 编辑器确认条目与替换生效 → 切英文语言实测显示。
+4. fill 写回支持清空值（当前只写非空，删值需在 Yami 编辑器做）——需要用户拍板交互方式；
+5. 手工验收建议：选真实工程 → 候选页点「本地化」看是否秒级刷新 → 已本地化页改原文/译文并保存 → 导出 Excel → 填几条英文 → 导入 → 孤儿页一键创建 → 在 Yami 编辑器确认条目与替换生效 → 切英文语言实测显示。
