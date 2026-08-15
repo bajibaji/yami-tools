@@ -804,19 +804,28 @@ function findCandidateById(scan, id) {
   return scan.candidates.find((c) => c.id === id) || scan.attributeCandidates.find((c) => c.id === id)
 }
 
+/** 按候选 ID 查找**全部**匹配候选：界面候选与数据属性候选可能因同 normalized 文本拿到同一 ID，
+    此时两个域的资产文件都必须被替换成 <ref:ID>——用 find 只取第一个会漏掉另一个域的文件。 */
+function findCandidatesById(scan, id) {
+  return scan.candidates.filter((c) => c.id === id).concat(scan.attributeCandidates.filter((c) => c.id === id))
+}
+
 /** 把导入新增行分类为「需替换资产文件的候选×文件分组」与「孤儿修复行（找不到候选，资产文件已引用该 ID，无需替换）」。
     数据属性候选（attributeCandidates）必须参与查找——只查 candidates 会把数据属性 sheet 的每行都误判成孤儿：
-    资产文件不被替换成 <ref:ID>，而 localization 条目照常创建，用户看到「新增 N 条」但游戏里仍是硬编码中文（静默失败）。 */
+    资产文件不被替换成 <ref:ID>，而 localization 条目照常创建，用户看到「新增 N 条」但游戏里仍是硬编码中文（静默失败）。
+    同 ID 命中多个候选（界面 + 数据属性）时，合并所有候选的 locations，确保两个域的资产文件都替换。 */
 function classifyImportAdditions(scan, additions) {
   const groups = []
   const seenGroups = new Set()
   const orphanAdds = []
   for (const row of additions) {
-    const candidate = findCandidateById(scan, row.id)
-    if (!candidate) { orphanAdds.push(row); continue }
-    for (const loc of candidate.locations) {
-      const key = `${row.id}::${loc.file}`
-      if (!seenGroups.has(key)) { seenGroups.add(key); groups.push({ candidate, file: loc.file }) }
+    const matches = findCandidatesById(scan, row.id)
+    if (!matches.length) { orphanAdds.push(row); continue }
+    for (const candidate of matches) {
+      for (const loc of candidate.locations) {
+        const key = `${row.id}::${loc.file}`
+        if (!seenGroups.has(key)) { seenGroups.add(key); groups.push({ candidate, file: loc.file }) }
+      }
     }
   }
   return { groups, orphanAdds }
@@ -827,7 +836,7 @@ const core = {
   buildStringAttributeIds, loopListAttributeId, localizationIds, buildAttributeNames, collectRefKeys, collectCandidates, collectAttributeCandidates, collectSetTextTargets, refPathKind,
   collectOrphanRefs, orphanSuggestion, groupOrphans, mergeCandidates, findMissingTranslations, findSuspiciousTranslations,
   buildScanResult, assetGuid, referencedFileIds, referencedLocalizationIds, openYamiRows, localizationFromOpenYami, diffLocalizationTrees,
-  locateValue, setValue, replaceSegment, applyAssetReplacement, localizationInsertion, validateImportRows, findCandidateById, classifyImportAdditions,
+  locateValue, setValue, replaceSegment, applyAssetReplacement, localizationInsertion, validateImportRows, findCandidateById, findCandidatesById, classifyImportAdditions,
   randomHex16, EXT_TYPE, LOCALIZATION_FOLDER, ORPHAN_FOLDER, serializeLike, clone,
 }
 globalThis.LocalizationLabCore = core
@@ -855,7 +864,7 @@ function initializeLocalizationLab() {
   }
   const state = {
     rootHandle: null, lastRootHandle: null, scan: null, filter: 'candidates', filterSourceValue: 'all', filterConfidenceValue: 'all', filterQueryValue: '',
-    importRows: null, importErrors: null, importAdditions: null, importFills: null, importIgnored: [], importTree: null, selectedIds: new Set(), pendingFiles: [],
+    importRows: null, importErrors: null, importAdditions: null, importFills: null, importIgnored: [], importTree: null, selectedIds: new Set(), pendingFiles: [], filterQueryTimer: null,
     orphanTexts: new Map(), fillDrafts: new Map(), candidateLangs: new Map(), langValue: '', candidateIdMap: new Map(), watchPaths: [], watchTimer: null, watchSnapshot: new Map(), watchRunning: false,
     scanAssets: null, scanAttribute: null, references: null, filterReferenced: true, // 引用过滤：默认只扫被引擎打包算法判定的已引用资产
     // 数据属性（名称/描述）单独成 tab（attributeCandidates/attributeLocalized），不混进界面候选
@@ -1267,6 +1276,9 @@ function loadDisplayMetadata(manifest, configJson, variablesJson) {
   function renderList() {
     const scan = state.scan
     if (!scan) { els.listBody.innerHTML = ''; return }
+    // innerHTML 重建会把滚动重置到顶部：编辑（✎/✓、候选原文编辑保存/取消）都会触发 renderList，
+    // 必须保存并恢复滚动位置，否则用户在列表下方编辑会跳回顶部。
+    const scrollTop = els.listBody.scrollTop
     let html = ''
     if (state.filter === 'missing') html = renderMissingRows(scan.missing)
     else if (state.filter === 'orphans') html = renderOrphanRows(scan.orphans)
@@ -1275,6 +1287,7 @@ function loadDisplayMetadata(manifest, configJson, variablesJson) {
     else if (state.filter === 'attributes') html = renderAttributeRows(scan)
     else html = renderCandidateRows(scan.candidates)
     els.listBody.innerHTML = html || '<div class="empty-state">没有匹配的条目。</div>'
+    els.listBody.scrollTop = scrollTop
     hydrateImages(els.listBody) // 异步把 <image:...> 标签换成实际图片（失败保留文件名）
     els.listBody.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
       checkbox.addEventListener('change', () => {
@@ -2214,7 +2227,12 @@ function richCell(opts) {
   els.btnConfirmImport.addEventListener('click', confirmImport)
   els.filterSource.addEventListener('change', () => { state.filterSourceValue = els.filterSource.value; renderList() })
   els.filterConfidence.addEventListener('change', () => { state.filterConfidenceValue = els.filterConfidence.value; renderList() })
-  els.filterQuery.addEventListener('input', () => { state.filterQueryValue = els.filterQuery.value.trim().toLowerCase(); renderList() })
+  els.filterQuery.addEventListener('input', () => {
+    state.filterQueryValue = els.filterQuery.value.trim().toLowerCase()
+    // 搜索防抖：已本地化视图 750 条 + 富文本递归渲染，逐键全量重渲染会明显卡顿
+    clearTimeout(state.filterQueryTimer)
+    state.filterQueryTimer = setTimeout(() => renderList(), 180)
+  })
   document.querySelectorAll('.metric-card').forEach((card) => card.addEventListener('click', () => {
     document.querySelectorAll('.metric-card').forEach((c) => c.classList.remove('active'))
     card.classList.add('active')

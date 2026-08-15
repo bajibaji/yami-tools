@@ -460,4 +460,16 @@ assert.deepEqual(classified.groups.map((g) => g.file).sort(), ['A.ui', 'B.item']
 assert.equal(classified.orphanAdds.length, 1)
 assert.equal(classified.orphanAdds[0].id, '333333333333333c')
 
+// 18. 跨域同 ID：同 normalized 文本同时出现在界面候选与数据属性候选（共用同一 ID）时，
+//     两个域的资产文件都必须替换成 <ref:ID>——findCandidatesById 合并两域 locations。
+const sharedScan = {
+  candidates: [{ id: '111111111111111a', zhCN: '黄金巨人骷髅', sourceType: 'ui', locations: [{ file: 'X.ui', path: [], kind: 'full' }] }],
+  attributeCandidates: [{ id: '111111111111111a', zhCN: '黄金巨人骷髅', sourceType: 'actor', locations: [{ file: 'Y.actor', path: [], kind: 'full' }] }],
+}
+assert.equal(core.findCandidatesById(sharedScan, '111111111111111a').length, 2)
+assert.equal(core.findCandidateById(sharedScan, '111111111111111a').sourceType, 'ui')
+const sharedClassified = core.classifyImportAdditions(sharedScan, [{ id: '111111111111111a', zhCN: '黄金巨人骷髅', handle: '' }])
+assert.deepEqual(sharedClassified.groups.map((g) => g.file).sort(), ['X.ui', 'Y.actor'])
+assert.equal(sharedClassified.orphanAdds.length, 0)
+
 console.log('localization lab self-check passed')

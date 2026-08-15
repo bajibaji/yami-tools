@@ -2,6 +2,6 @@ window.TOOL_VERSIONS = {
   "hub": { "version": "0.8.1" },
   "character-editor": { "version": "0.7.2" },
   "map-editor": { "version": "0.7.0" },
-  "idle-lab": { "version": "0.9.0" },
+  "idle-lab": { "version": "0.1.0 beta" },
   "localization-lab": { "version": "0.2.1 beta" }
 };

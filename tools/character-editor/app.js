@@ -308,10 +308,12 @@
   }
 
   function serializeDropList(entries) {
+    // 格式与 README/引擎「掉落物品」指令一致：{type, id, min, max, dropRate}。
+    // quantity 是引擎运行时 `Math.randomInt(this.min, this.max)` 算出的结果（掉落物品.指令 :139），
+    // 不是存储输入字段，写进去既无人读、又误导维护者——故不输出（此前有个两分支相同的死三元）。
     return JSON.stringify(entries.map((entry) => ({
       type: entry.type,
       id: entry.id,
-      quantity: entry.min === entry.max ? clampInteger(entry.min) : clampInteger(entry.min),
       min: entry.type === 'equipment' ? 1 : clampInteger(entry.min),
       max: entry.type === 'equipment' ? 1 : clampInteger(entry.max),
       dropRate: clampRate(entry.dropRate),
