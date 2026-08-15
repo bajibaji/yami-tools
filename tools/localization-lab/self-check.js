@@ -42,6 +42,17 @@ assert.deepEqual(core.classifyText('skill', 'value'), null) // value 位置单 t
 assert.deepEqual(core.classifyText('inventory', 'value'), null)
 assert.deepEqual(core.classifyText('skill shop', 'value'), { confidence: 'medium' }) // 多词英文保留
 assert.deepEqual(core.classifyText('skill', 'attr'), { confidence: 'medium' }) // 属性值不受枚举排除影响
+// 2b. v0.2.1 噪声过滤：全部引擎标签剥离 + 无中文残留必须含 ≥2 字母单词（完工工程实测：注释/]x2/X10/裸标签是主要误报源）
+assert.deepEqual(core.classifyText('<italic>'), null) // 裸标签残留
+assert.deepEqual(core.classifyText('<bold>攻击</bold>'), { confidence: 'high' }) // 标签内中文照常
+assert.deepEqual(core.classifyText('</size>'), null)
+assert.deepEqual(core.classifyText(']x2'), null) // ref 后缀段（[<ref:ID>]x2 的残留）
+assert.deepEqual(core.classifyText('X10'), null) // 单字母+数字占位
+assert.deepEqual(core.classifyText('x2'), null)
+assert.deepEqual(core.classifyText('5x'), null)
+assert.deepEqual(core.classifyText('HP'), { confidence: 'medium' }) // 2 字母单词保留
+assert.deepEqual(core.classifyText('Del'), { confidence: 'medium' })
+assert.deepEqual(core.classifyText('Attack'), { confidence: 'medium' })
 
 // 3. 归一化合并
 assert.equal(core.normalizeText('恢复<color:00ff00>50</color>HP'), '恢复50HP')
@@ -82,12 +93,36 @@ const file = {
   title: '编辑器标题',                                      // 排除 key
   script: 'print(1)',                                       // 代码 → 跳过
 }
-const cands = core.collectCandidates(file, 'items', stringIds, new Set([core.loopListAttributeId(attribute)]))
+const attrCands = core.collectAttributeCandidates(file, 'items', stringIds, new Set([core.loopListAttributeId(attribute)]))
+const attrTexts = attrCands.map((c) => c.zhCN)
+assert.ok(attrTexts.includes('治疗药剂'))
+assert.ok(attrTexts.includes('已本地化'))
+assert.equal(attrCands.filter((c) => c.kind === 'segment').length, 1)
+const cands = core.collectCandidates(file, 'items') // 命令树只走显示路径，属性另走 collectAttributeCandidates
 const texts = cands.map((c) => c.zhCN)
-assert.ok(texts.includes('治疗药剂'))
-assert.ok(texts.includes('已本地化'))
 assert.ok(texts.includes('冷却时间 <local:_cd> 秒'))
-assert.equal(cands.filter((c) => c.kind === 'segment').length, 1)
+assert.ok(!texts.includes('治疗药剂'))
+// 5c. 命令树位置规则（v0.2.1，完工工程 692→285 的噪声来源）：comment 永不扫；conditions 比较跳过；value 只留 operand.value（显示模板）与 properties[n].value（setText 文本）
+const cmdFile = {
+  events: [{ commands: [
+    { id: 'a', params: { content: '显示文本' } },                               // content → 候选
+    { id: 'b', params: { comment: '开发者注释' } },                              // comment → 跳过
+    { id: 'c', params: { branches: [{ conditions: [{ value: '物资' }] }] } },    // 条件比较 → 跳过
+    { id: 'd', params: { value: '树' } },                                        // 普通 params.value → 跳过
+    { id: 'e', params: { operand: { value: '物资' } } },                         // operand 短标识 → 跳过
+    { id: 'f', params: { operand: { value: '冷却时间 <local:_cd> 秒' } } },      // operand 显示模板 → 候选
+    { id: 'g', params: { properties: [{ value: '价格 <local:_p>' }] } },         // properties 文本 → 候选
+  ] }],
+}
+const cmdCands = core.collectCandidates(cmdFile, 'events', new Set(), new Set())
+const cmdTexts = cmdCands.map((c) => c.zhCN)
+assert.ok(cmdTexts.includes('显示文本'))
+assert.ok(cmdTexts.includes('冷却时间 <local:_cd> 秒'))
+assert.ok(cmdTexts.includes('价格 <local:_p>'))
+assert.ok(!cmdTexts.includes('开发者注释'))
+assert.ok(!cmdTexts.includes('物资'))
+assert.ok(!cmdTexts.includes('树'))
+
 // 孤儿：全树扫描，白名单外属性也能发现（备注属性不在 stringAttrIds 里）
 const occs = core.collectOrphanRefs({ attributes: [{ key: 'a2', value: 'x<ref:ffffffffffffffff>' }] })
 assert.equal(occs.length, 1)
@@ -143,25 +178,24 @@ assert.equal(missing.length, 2)
 assert.ok(missing.find((m) => m.id === 'b').missingLangs.includes('en'))
 assert.ok(missing.find((m) => m.id === 'd').missingLangs.includes('en'))
 
-// 6b. 疑似占位符：脏词 / 与原文相同（含 CJK 才判定；版本号不算）
+// 6b. 疑似占位符（v0.2.1 用户拍板：只判脏词）——「与原文相同」是开发者有意状态（完工工程 zh-TW/ja 与 zh-CN 相同 200+ 条），不再当占位；空译文归「缺翻译」
 const suspicious = core.findSuspiciousTranslations({ list: [
   { id: 's1', name: '村里最好的剑', contents: { 'zh-CN': '村里最好的剑', en: 'shit' } },
-  { id: 's2', name: '确认', contents: { 'zh-CN': '确认删除', en: '确认删除' } },
+  { id: 's2', name: '确认', contents: { 'zh-CN': '确认删除', en: '确认删除' } }, // 与原文相同 → 不判占位
   { id: 's3', name: '版本', contents: { 'zh-CN': 'v1.1.43', en: 'v1.1.43' } },
   { id: 's4', name: 'ok', contents: { 'zh-CN': '确定', en: 'OK' } },
-  { id: 's5', name: '未填', contents: { 'zh-CN': '未填', en: '' } },
+  { id: 's5', name: '未填', contents: { 'zh-CN': '未填', en: '' } },              // 空译文 → 归缺翻译，不判占位
+  { id: 's6', name: '待办', contents: { 'zh-CN': '待办', en: '待翻译' } },
 ] }, ['zh-CN', 'en'])
 assert.equal(suspicious.length, 2)
 assert.ok(suspicious.find((m) => m.id === 's1').suspicious[0].reason === '占位词')
-assert.ok(suspicious.find((m) => m.id === 's2').suspicious[0].reason.includes('与原文相同'))
-// zh-TW：简体字未转繁 vs 同形词区分
+assert.ok(suspicious.find((m) => m.id === 's6').suspicious[0].reason === '占位词')
+// zh-TW 与原文相同不再判定
 const suspTW = core.findSuspiciousTranslations({ list: [
-  { id: 't1', contents: { 'zh-CN': '游戏设置', 'zh-TW': '游戏设置' } }, // 戏/设 简体独有 → 未转繁
-  { id: 't2', contents: { 'zh-CN': '梅林', 'zh-TW': '梅林' } },       // 同形专名 → 请确认
+  { id: 't1', contents: { 'zh-CN': '游戏设置', 'zh-TW': '游戏设置' } },
+  { id: 't2', contents: { 'zh-CN': '梅林', 'zh-TW': '梅林' } },
 ] }, ['zh-CN', 'zh-TW'])
-assert.equal(suspTW.length, 2)
-assert.ok(suspTW.find((m) => m.id === 't1').suspicious[0].reason.includes('简体未转繁'))
-assert.ok(suspTW.find((m) => m.id === 't2').suspicious[0].reason.includes('同形'))
+assert.equal(suspTW.length, 0)
 
 // 7. 路径导航与段替换
 const obj = { attributes: [{ value: '攻击<ref:aaaaaaaaaaaaaaaa>+5' }], events: [{ commands: [{ params: { content: 'x' } }] }] }
@@ -274,7 +308,7 @@ assert.ok(usedRefs.has('aaaaaaaaaaaaaaaa'))
 assert.ok(usedRefs.has('bbbbbbbbbbbbbbbb')) // 嵌套引用也算
 assert.ok(!usedRefs.has('cccccccccccccccc'))
 
-// 14. buildScanResult 引用过滤：只扫被引用资产；缺翻译/疑似占位只留被引用条目
+// 14. buildScanResult 引用过滤：只扫被引用资产；候选=界面显示路径、attributeCandidates=数据属性、缺翻译/疑似占位只留被引用条目
 const scanA = core.buildScanResult(
   [
     { file: 'Assets/A.aaaaaaaaaaaaaaaa.item', type: 'items', data: { attributes: [{ key: 'k', value: '治疗药剂' }] } },
@@ -284,7 +318,8 @@ const scanA = core.buildScanResult(
     references: { data: [{ guid: 'cccccccccccccccc', type: 'events', data: { type: 'startup', commands: [{ id: 'x', params: { item: 'aaaaaaaaaaaaaaaa' } }] } }], scripts: [], plugins: {}, commands: {}, config: {} } },
 )
 assert.equal(scanA.referenced, true)
-assert.equal(scanA.candidates.length, 1) // 只有被引用的 A
+assert.equal(scanA.candidates.length, 0) // 属性文本不进界面候选
+assert.equal(scanA.attributeCandidates.length, 1) // 只有被引用的 A 的数据属性
 assert.equal(scanA.unreferenced.total, 1)
 assert.equal(scanA.unreferenced.byType.items, 1)
 const scanB = core.buildScanResult(
@@ -292,7 +327,7 @@ const scanB = core.buildScanResult(
   { attributeJson: { keys: [{ id: 'k', key: 'name', type: 'string' }] }, localizationJson: { list: [] }, languages: ['zh-CN', 'en'], includeUnreferenced: true,
     references: { data: [{ guid: 'cccccccccccccccc', type: 'events', data: { type: 'startup', commands: [{ id: 'x', params: { item: 'aaaaaaaaaaaaaaaa' } }] } }], scripts: [], plugins: {}, commands: {}, config: {} } },
 )
-assert.equal(scanB.candidates.length, 2) // 含未引用 → 全部扫
+assert.equal(scanB.attributeCandidates.length, 2) // 含未引用 → 全部扫
 const scanC = core.buildScanResult(
   [{ file: 'Assets/A.aaaaaaaaaaaaaaaa.item', type: 'items', data: { attributes: [{ key: 'k', value: '<ref:dddddddddddddddd>' }] } }],
   { attributeJson: { keys: [] }, languages: ['zh-CN', 'en'],
@@ -307,10 +342,122 @@ assert.equal(scanC.missing.length, 1) // dddd 被引用保留
 assert.equal(scanC.suspicious.length, 0) // eeee 未被引用 → 疑似占位被过滤
 assert.equal(scanC.unreferencedMissing, 0)
 assert.equal(scanC.unreferencedSuspicious, 1)
-// 15. 已本地化列表：被引用且条目存在的文本
-assert.equal(scanC.localized.length, 1) // dddd 条目被资产引用且存在
-assert.equal(scanC.localized[0].zh, 'a')
-assert.ok(scanC.localized[0].locations.length >= 1)
-assert.equal(scanC.localized[0].langs.en, '')
+// 15. 已本地化列表：按引用位置分档——界面显示路径 / 数据属性（数据 tab）
+assert.equal(scanC.localized.length, 0) // dddd 只被属性引用 → 不在界面已本地化
+assert.equal(scanC.attributeLocalized.length, 1) // dddd 在数据属性 tab
+assert.equal(scanC.attributeLocalized[0].zh, 'a')
+assert.ok(scanC.attributeLocalized[0].locations.length >= 1)
+assert.equal(scanC.attributeLocalized[0].langs.en, '')
+// 界面显示路径（.ui 文本节点 content）引用 → 界面已本地化
+const scanD = core.buildScanResult(
+  [{ file: 'Assets/UI/标题.aaaaaaaaaaaaaaa1.ui', type: 'ui', data: { nodes: [{ class: 'text', presetId: 'abc', content: '<ref:dddddddddddddddd>' }] } }],
+  { attributeJson: { keys: [] }, languages: ['zh-CN', 'en'], includeUnreferenced: true,
+    localizationJson: { list: [{ id: 'dddddddddddddddd', name: 'a', contents: { 'zh-CN': 'a', en: '' } }] },
+    references: { data: [], scripts: [], plugins: {}, commands: {}, config: {} } },
+)
+assert.equal(scanD.localized.length, 1)
+assert.equal(scanD.attributeLocalized.length, 0)
+// 15b. setText 覆盖的占位节点：编辑器内容运行时被写入值替换——不进候选，其 ref 也不计入界面已本地化
+const scanE = core.buildScanResult(
+  [
+    { file: 'Assets/UI/界面.bbbbbbbbbbbbbba1.ui', type: 'ui', data: { nodes: [
+      { class: 'text', presetId: 'p1', content: '占位模板文本' },
+      { class: 'text', presetId: 'p2', content: '真实界面文本' },
+    ] } },
+    { file: 'Assets/! 事件/事件.ccccccccccccccca1.event', type: 'events', data: { type: 'startup', commands: [
+      { id: 'setText', params: { element: { type: 'by-id', presetId: 'p1' }, properties: [{ key: 'content', value: '<local:name>' }] } },
+    ] } },
+  ],
+  { attributeJson: { keys: [] }, languages: ['zh-CN', 'en'], localizationJson: { list: [] }, includeUnreferenced: true,
+    references: { data: [], scripts: [], plugins: {}, commands: {}, config: {} } },
+)
+assert.equal(scanE.candidates.length, 1) // 占位模板文本被排除
+assert.equal(scanE.candidates[0].zhCN, '真实界面文本')
+assert.equal(core.collectSetTextTargets({ commands: [{ id: 'setText', params: { element: { type: 'by-id', presetId: 'abc' } } }] }).has('abc'), true)
+
+// 16. 引擎格式 Excel（open-yami）：与编辑器 to-excel/from-excel 同算法（main.js:112-254）
+const oyTree = { list: [
+  { id: 'aaaaaaaaaaaaaaaa', name: '确定', contents: { 'zh-CN': '确定', en: 'OK' } },
+  { class: 'folder', name: '技能', expanded: false, children: [
+    { id: 'bbbbbbbbbbbbbbbb', name: '', contents: { 'zh-CN': '攻击', en: 'Attack' } },
+  ] },
+  { class: 'folder', name: 'UI', expanded: false, children: [
+    { class: 'folder', name: '主菜单', expanded: false, children: [
+      { id: 'cccccccccccccccc', name: '继续', contents: { 'zh-CN': '继续', en: '' } },
+    ] },
+  ] },
+] }
+const oyRows = core.openYamiRows(oyTree, ['zh-CN', 'en'])
+assert.equal(oyRows.length, 6) // 3 叶子 + 3 文件夹
+const oyLeaves = oyRows.filter((r) => !(r.isDir === 1))
+const oyDirs = oyRows.filter((r) => r.isDir === 1)
+assert.equal(oyLeaves.length, 3)
+assert.equal(oyDirs.length, 3)
+for (const r of oyDirs) assert.equal(/^[0-9a-f]{16}$/.test(r.id), true) // 文件夹 ID 每次导出重新生成（引擎 generate64bit）
+const oyA = oyRows.find((r) => r.id === 'aaaaaaaaaaaaaaaa')
+assert.equal(oyA.contents['zh-CN'], '确定')
+assert.equal(oyA.contents.en, 'OK')
+assert.equal(oyA.parentID, '') // 根叶子无父
+const oyB = oyRows.find((r) => r.id === 'bbbbbbbbbbbbbbbb')
+assert.equal(oyDirs.find((r) => r.id === oyB.parentID).name, '技能') // 子行 parentID 指向文件夹行
+assert.ok(oyRows.indexOf(oyB) < oyRows.findIndex((r) => r.id === oyB.parentID)) // 子行在文件夹行之前（引擎导出顺序）
+// 导入还原：叶子 ID/内容保留，文件夹结构/名称保留（文件夹 ID 不持久）
+const oyRestored = core.localizationFromOpenYami(oyRows)
+const restoredIds = []
+;(function walk(items) { for (const item of items) { if (item.children) walk(item.children); else restoredIds.push(item.id) } })(oyRestored)
+assert.deepEqual(restoredIds.sort(), ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb', 'cccccccccccccccc'])
+const restoredFolders = []
+;(function walk(items) { for (const item of items) { if (item.children) { restoredFolders.push(item.name); walk(item.children) } } })(oyRestored)
+assert.deepEqual(restoredFolders.sort(), ['UI', '主菜单', '技能']) // 默认按 UTF-16 码点排序
+const oyRestoredUI = oyRestored.find((r) => r.children && r.name === 'UI')
+const oyRestoredC = oyRestoredUI.children.find((r) => r.children).children[0]
+assert.equal(oyRestoredC.contents['zh-CN'], '继续')
+assert.equal(oyRestoredC.contents.en, '')
+const oyDiff = core.diffLocalizationTrees(oyTree.list, oyRestored)
+assert.equal(oyDiff.added.length, 0)
+assert.equal(oyDiff.removed.length, 0)
+assert.equal(oyDiff.updated.length, 0)
+assert.equal(oyDiff.foldersBefore, 3)
+assert.equal(oyDiff.foldersAfter, 3)
+// 未知 parentID 且文件夹行永不出现 → 引擎同样丢弃（占位仅存 dataMap，不进根节点）
+assert.deepEqual(core.localizationFromOpenYami([{ id: 'dddddddddddddddd', name: 'x', parentID: 'eeeeeeeeeeeeeeee', isDir: 0, contents: { 'zh-CN': 'x' } }]), [])
+// 文件夹行后到（引擎导出顺序：子行在前）→ 占位并入真实文件夹，结构正确
+const lateRows = [
+  { id: 'ffffffffffffffff', name: '子', parentID: 'eeeeeeeeeeeeeeee', isDir: 0, contents: { 'zh-CN': '子' } },
+  { id: 'eeeeeeeeeeeeeeee', name: '父', parentID: '', isDir: 1 },
+]
+const lateTree = core.localizationFromOpenYami(lateRows)
+assert.equal(lateTree.length, 1)
+assert.equal(lateTree[0].name, '父')
+assert.equal(lateTree[0].children[0].id, 'ffffffffffffffff')
+// 差异统计：内容更新/新增/移除按叶子 ID 判定
+const oyDiff2 = core.diffLocalizationTrees(oyTree.list, [
+  { id: 'aaaaaaaaaaaaaaaa', name: '确定', contents: { 'zh-CN': '确定', en: 'Okay' } },
+  { id: 'ffffffffffffffff', name: '新增', contents: { 'zh-CN': '新增' } },
+])
+assert.deepEqual(oyDiff2.added, ['ffffffffffffffff'])
+assert.deepEqual(oyDiff2.updated, ['aaaaaaaaaaaaaaaa'])
+assert.equal(oyDiff2.removed.length, 2)
+assert.equal(oyDiff2.foldersAfter, 0)
+
+// 17. 导入候选查找必须覆盖数据属性候选（回归：数据属性 sheet 被误判孤儿 → 资产不替换、条目照建）
+//     fixtures: 界面候选在 candidates、数据属性候选在 attributeCandidates，两者共用同一 ID 空间
+const fakeScan = {
+  candidates: [{ id: '111111111111111a', zhCN: '界面文本', sourceType: 'ui', locations: [{ file: 'A.ui', path: [], kind: 'full' }] }],
+  attributeCandidates: [{ id: '222222222222222b', zhCN: '物品名称', sourceType: 'item', locations: [{ file: 'B.item', path: [], kind: 'full' }] }],
+}
+assert.equal(core.findCandidateById(fakeScan, '111111111111111a').sourceType, 'ui')
+assert.equal(core.findCandidateById(fakeScan, '222222222222222b').sourceType, 'item') // 之前只查 candidates 会得到 undefined
+assert.equal(core.findCandidateById(fakeScan, '333333333333333c'), undefined)
+const fakeAdditions = [
+  { id: '111111111111111a', zhCN: '界面文本', handle: '' },
+  { id: '222222222222222b', zhCN: '物品名称', handle: '' }, // 数据属性行：必须产生替换分组，而不是孤儿
+  { id: '333333333333333c', zhCN: '孤儿建议', handle: '' }, // 孤儿修复行
+]
+const classified = core.classifyImportAdditions(fakeScan, fakeAdditions)
+assert.equal(classified.groups.length, 2)
+assert.deepEqual(classified.groups.map((g) => g.file).sort(), ['A.ui', 'B.item'])
+assert.equal(classified.orphanAdds.length, 1)
+assert.equal(classified.orphanAdds[0].id, '333333333333333c')
 
 console.log('localization lab self-check passed')

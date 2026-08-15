@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0d0f14" />
     <title>YAHZJ · 快速本地化</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260813-localization-lab-6" />
+    <link rel="stylesheet" href="./styles.css?v=20260813-localization-lab-13" />
   </head>
   <body>
     <div id="scan-progress" class="scan-progress hidden"><div id="scan-progress-fill" class="scan-progress-fill"></div></div>
@@ -44,10 +44,13 @@
             <span>孤儿引用</span><strong id="metric-orphans">--</strong><small>ref 指向不存在的 ID · 可创建缺失条目</small>
           </button>
           <button class="metric-card" data-filter="suspicious" type="button">
-            <span>疑似占位</span><strong id="metric-suspicious">--</strong><small>脏词 / 与原文相同的翻译</small>
+            <span>疑似占位</span><strong id="metric-suspicious">--</strong><small>译文是占位脏词（shit/test/待翻译…）</small>
           </button>
           <button class="metric-card" data-filter="localized" type="button">
-            <span>已本地化</span><strong id="metric-localized">--</strong><small>已引用条目 · 原文/译文可编辑</small>
+            <span>已本地化</span><strong id="metric-localized">--</strong><small>界面显示路径引用的条目 · 原文/译文可编辑</small>
+          </button>
+          <button class="metric-card" data-filter="attributes" type="button">
+            <span>数据属性</span><strong id="metric-attributes">--</strong><small>物品/技能/装备/状态等数据文件的名称与描述</small>
           </button>
         </section>
 
@@ -109,8 +112,8 @@
     </div>
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
     <script src="../../vendor/exceljs.min.js"></script>
-    <script src="./app.js?v=20260813-localization-lab-6"></script>
-    <script src="../version.json"></script>
+    <script src="./app.js?v=20260815-localization-lab-14"></script>
+    <script src="../version.json?v=20260815-tools-version-1"></script>
     <script>document.querySelectorAll('[data-app-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS['localization-lab']||{}).version})</script>
   </body>
 </html>

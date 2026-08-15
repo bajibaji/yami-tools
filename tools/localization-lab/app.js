@@ -3,10 +3,10 @@
 'use strict'
 
 const REF_RE = /<ref:([0-9a-f]{16})>/gi
-const COLOR_RE = /<color:[^>]*>|<\/color>/gi
-const LOCAL_RE = /<local:[^>]*>/gi
-const GLOBAL_RE = /<global:[0-9a-f]{16}>/gi
-const IMAGE_RE = /<image:[0-9a-f]{16}>/gi
+// 引擎运行时全部文本标签（printer.js regexps + local.js）：color/italic/bold/size/image/local/global/ref
+// 统一剥离：<tag>、</tag>、<tag:参数>——纯标签残留不算文本，标签内文字照常判定
+const MARKUP_STRIP_RE = /<\/?[a-z][a-z0-9-]*(?::[^>]*)?>/gi
+const MARKUP_TAG_RE = /<\/?[a-z][a-z0-9-]*(?::[^>]*)?>/i
 const CJK_RE = /[一-鿿]/
 const GUID_RE = /^[0-9a-f]{16}$/i
 const LONG_HEX_RE = /^[0-9a-f]{32}$/i
@@ -22,9 +22,10 @@ const PLACEHOLDER_WORD_RE = /^(shit|fuck|xxx+|test|todo|tbd|fixme|tmp|placeholde
 // 简体独有字（繁体写法不同的常用字）：zh-TW 与 zh-CN 相同且含其中一字 → 大概率没转繁
 const SIMPLIFIED_ONLY_RE = /[国语文这们个说见话关开长东车门问无时来会风龙电马鸟鱼觉让军兴样经结层还进书办对产发里离实学写处号业队极间几线验联尔场块买卖头听谁课岁义亿与云专丰为乐习乡亏亲从仑仓仪价众传伤伦伪体余佣侠侣侦侧侨归忆忧怀状犹独猎猫环现玛疗疯盘监着础确礼积称稳穷窃竞笔签简类粮紧约级纪纳纷纸纹纺纽练组细织终绍经绑绕绘给络绝绞统继绩维综绿绵缆编缘缩缴罚罢罗聪肃肤胁胜脑肿胶脸腾胆腻舆举舰舱艺节苍苏劳荣药获营萨蓝虑虫虽虾蚀蚁蚕蛮观规览计订认议记讲设访证评识诉诊词译试诗诚话询该详语误说请诸读课谁调谈谊谋谢谣谨谱谷贝负贡财责货质贩贪购贮贯贱贴贵贸费贺资贾贿赁赐赔赏赚赛赠赞赢赵赶趋践踪跃转轮软轻载辅辈辉辐输辖辙边达过迈迁运还这进远违连迟选适递逻遗辽邮邻郑钟铁铅铜银铸铺链锁锋锐错锡锤锦键锯锻镇镜镐长门闲间闷闹闻阅队阶阳阴阵际陆陈险难随隐虽电雾静页顶项顺须顾顿顽颁领颈频颗题额颠颤风飘飞饭饮饰饱饲饶饺饼饿馆马驱驳驴驶驾骄骆验骑骗骤发鱼鲜鲁鸦鸭鸽鹅鹊鹤鹏鹰麦黄齐龄龙龟亚严两丽举击势动劲历压厌员吴启吨园围图圣坚堕备复声壳奖夺奋妇妆妈婴孙学宁宝审宽宾导寻将尘届屿岭峡岛岗币师带帮干庆应庙库废张强归当录彻忆态恒恶恼惨惩惯懒战戏护报担据挥损换摆摇摄数断敌斗旧旷显晓晒晕术杀杂权条杨枪柜栏标树桥检欢欧汉汤沟没泪泽洁洒浇测济浏浑浓涂润涨渐渔渗湾湿满滥滨滤灵灿炉点炼烧烫热爱爷墙]/
 
-// 命令树文本字段白名单：引擎实测 CJK 与 <ref:> 只出现在这些 key（name 是 .ui 编辑器标签、script 是代码，均排除）
-const BASE_TEXT_KEYS = ['value', 'content', 'comment', 'tag', 'operand']
-const SKIP_KEYS = new Set(['name', 'script', 'description', 'namespace', 'id', 'key', 'type', 'enum', 'note', 'title'])
+// 命令树文本字段白名单：引擎运行时只有「最终进入 UI.Text.content 的字符串」才会走 Local.replace——
+// comment 是开发者注释永不显示（完工工程实测 677 处全是注释噪声）；value 只保留 operand.value 与 properties[n].value
+const BASE_TEXT_KEYS = ['value', 'content', 'tag', 'operand']
+const SKIP_KEYS = new Set(['name', 'script', 'description', 'namespace', 'id', 'key', 'type', 'enum', 'note', 'title', 'comment'])
 // ponytail: 按当前工程命令 tag 噪声起步的排除清单，误报由 Excel 置信度列人工过滤兜底；
 // tag/operand 位置整值排除；value 位置仅排除单 token（多词英文保留），防误杀真实文本
 const COMMAND_TAG_DENYLIST = new Set([
@@ -62,7 +63,7 @@ function serializeLike(data, originalText) {
 }
 
 function normalizeText(text) {
-  return String(text).replace(COLOR_RE, '').replace(LOCAL_RE, '').replace(GLOBAL_RE, '').replace(/\s+/g, ' ').trim()
+  return String(text).replace(MARKUP_STRIP_RE, '').replace(/\s+/g, ' ').trim()
 }
 
 /** 按 <ref:ID> 切分字符串，返回非 ref 段数组（含前后文本）；hasRef 指示是否含 ref。 */
@@ -78,10 +79,11 @@ function splitRefSegments(value) {
 }
 
 /** 单段文本判定：返回 {confidence:'high'|'medium'} 或 null（排除 GUID/数字/颜色/路径/命令枚举等）。
-    判定前先剥 color/local/global 标签——纯标签残留（如「 +<local:num>」）不算文本，含中文的标签文本照常 high。 */
+    判定前先剥全部引擎文本标签（color/italic/bold/size/image/local/global…）——纯标签残留不算文本；
+    无 CJK 的残留必须含 ≥2 字母的英文单词才算候选（「]x2」「X10」「<italic>」这类 ref 后缀/占位/裸标签是噪声）。 */
 function classifyText(segment, key = '') {
   const raw = String(segment ?? '')
-  const text = raw.replace(COLOR_RE, '').replace(LOCAL_RE, '').replace(GLOBAL_RE, '').replace(IMAGE_RE, '')
+  const text = raw.replace(MARKUP_STRIP_RE, '')
   const trimmed = text.trim()
   if (!trimmed) return null
   // 路径判定必须在 CJK 之前（中文路径如「Assets/物品/a.item」不能算文本）
@@ -89,16 +91,13 @@ function classifyText(segment, key = '') {
   if (CJK_RE.test(text)) return { confidence: 'high' }
   if (GUID_RE.test(trimmed) || LONG_HEX_RE.test(trimmed) || HEX8_RE.test(trimmed) || COLOR_HEX_RE.test(trimmed)) return null
   if (NUMERIC_RE.test(trimmed)) return null
-  if (/^<[a-z]+:[^>]*>$/i.test(trimmed)) return null
-  if (/^[A-Za-z]$/.test(trimmed)) return null
   if (key === 'tag' || key === 'operand') {
     if (COMMAND_TAG_DENYLIST.has(trimmed.toLowerCase())) return null
   } else if (key === 'value' && !/\s/.test(trimmed) && COMMAND_TAG_DENYLIST.has(trimmed.toLowerCase())) {
     return null // value 位置单 token 引擎枚举（菜单页签/方向/商店等），多词文本保留
   }
-  if (EN_TEXT_RE.test(trimmed) && trimmed.length >= 2) return { confidence: 'medium' }
-  if (/[A-Za-z]/.test(trimmed)) return { confidence: 'medium' }
-  return null
+  if (!/[A-Za-z]{2,}/.test(trimmed)) return null // 无中文残留必须含 ≥2 字母单词（HP/OK/Del/Attack 保留；x2/X10/]x2/单字母/纯符号丢弃）
+  return { confidence: 'medium' }
 }
 
 /** attribute.json：收集 type==='string' 的属性 ID（文本型属性名单）。 */
@@ -170,70 +169,125 @@ function collectRefKeys(root) {
   return refKeys
 }
 
-/** 单个资产文件扫描：attributes[].value（文本型属性）+ 命令树白名单 key → 未本地化候选（孤儿引用由 collectOrphanRefs 单独全树扫描）。 */
-function collectCandidates(fileJson, type, stringAttrIds, skipAttrIds) {
+/** 单段值判定并记录候选（共用的 handleValue：ref 分段 / 整值判定）。 */
+function scanValueCandidates(value, path, key, type, out) {
+  const { hasRef, segments } = splitRefSegments(value)
+  if (hasRef) {
+    segments.forEach((segment, index) => {
+      if (!segment || !segment.trim()) return
+      const cls = classifyText(segment, key)
+      if (cls) out.push({ kind: 'segment', segmentIdx: index, zhCN: segment, confidence: cls.confidence, path, raw: value, sourceType: type })
+    })
+  } else {
+    const cls = classifyText(value, key)
+    if (cls) out.push({ kind: 'full', segmentIdx: -1, zhCN: value, confidence: cls.confidence, path, raw: value, sourceType: type })
+  }
+}
+
+/** 单个资产文件命令树扫描：界面显示路径的未本地化候选（数据属性另走 collectAttributeCandidates）。
+    placeholderPresetIds = 被事件 setText 覆盖的界面节点——其编辑器内容是占位模板，运行时显示的是写入值（已单独扫描）。 */
+function collectCandidates(fileJson, type, placeholderPresetIds = null) {
   const candidates = []
-  const note = (candidate) => { candidate.sourceType = type; candidates.push(candidate) }
-  const handleValue = (value, path, key) => {
-    const { hasRef, segments } = splitRefSegments(value)
-    if (hasRef) {
-      segments.forEach((segment, index) => {
-        if (!segment || !segment.trim()) return
-        const cls = classifyText(segment, key)
-        if (cls) note({ kind: 'segment', segmentIdx: index, zhCN: segment, confidence: cls.confidence, path, raw: value })
-      })
-    } else {
-      const cls = classifyText(value, key)
-      if (cls) note({ kind: 'full', segmentIdx: -1, zhCN: value, confidence: cls.confidence, path, raw: value })
-    }
-  }
-  for (let i = 0; i < (fileJson.attributes || []).length; i++) {
-    const attr = fileJson.attributes[i]
-    if (attr && typeof attr.value === 'string' && stringAttrIds.has(attr.key) && !skipAttrIds.has(attr.key)) {
-      handleValue(attr.value, `attributes[${i}].value`, 'attr') // 'attr' 不参与命令 tag 排除（属性文本不是命令枚举）
-    }
-  }
   const keys = new Set(BASE_TEXT_KEYS.filter((k) => !SKIP_KEYS.has(k)))
   for (const key of collectRefKeys(fileJson)) keys.add(key)
+  // value 位置规则：引擎里 value 只在两类路径是「显示文本」——operand.value（setValue 字符串常量）
+  // 与 properties[n].value（setText 文本属性）；其余 params.value/条件 value 是数据标识（树/矿/物资…）
+  const valuePathIsText = (p) => {
+    const m = /^(.*)\.([^.]+)$/.exec(p)
+    if (!m) return false
+    return /(?:^|\.)operand$/.test(m[1]) || /properties\[\d+\]$/.test(m[1])
+  }
+  // operand.value 字符串常量：含标签/空格/≥5 字 → 显示模板；短单 token 纯字词 → 标识符（物资/按下…）
+  const operandValueLooksDisplay = (v) => {
+    const s = String(v)
+    if (MARKUP_TAG_RE.test(s) || /\s/.test(s)) return true
+    return s.replace(MARKUP_STRIP_RE, '').trim().length >= 5
+  }
   const walk = (node, path) => {
-    if (Array.isArray(node)) { node.forEach((item, i) => walk(item, `${path}[${i}]`)); return }
+    if (Array.isArray(node)) { node.forEach((item, i) => walk(item, path + '[' + i + ']')); return }
     if (!node || typeof node !== 'object') return
     for (const [key, value] of Object.entries(node)) {
-      if (key === 'attributes') continue // 属性数组由文本型属性白名单单独处理，不走命令树（防重复）
-      if (typeof value === 'string' && keys.has(key)) handleValue(value, path ? `${path}.${key}` : key, key)
-      else if (value && typeof value === 'object') walk(value, path ? `${path}.${key}` : key)
+      if (key === 'attributes') continue // 属性数组由 collectAttributeCandidates 单独处理，不走命令树（防重复）
+      const childPath = path ? path + '.' + key : key
+      if (key === 'conditions' && Array.isArray(value)) continue // 条件比较：标识符比较，永不显示
+      if (typeof value === 'string' && keys.has(key)) {
+        // .ui 文本节点 content 且 presetId 被 setText 覆盖 → 占位模板，运行时被写入值替换
+        if (key === 'content' && placeholderPresetIds && typeof node.presetId === 'string' && placeholderPresetIds.has(node.presetId.toLowerCase())) continue
+        if (key === 'value' && !valuePathIsText(childPath)) continue
+        if (key === 'value' && childPath.endsWith('.operand.value') && !operandValueLooksDisplay(value)) continue
+        scanValueCandidates(value, childPath, key, type, candidates)
+      } else if (value && typeof value === 'object') walk(value, childPath)
     }
   }
   walk(fileJson, '')
   return candidates
 }
 
+/** 数据属性扫描：attributes[].value（attribute.json 里 type==='string' 的属性：名称/描述）→ 数据属性 tab 的候选。
+    本地化 = 界面显示内容（用户拍板），数据属性是内部数据，单独立 tab 不混进界面候选。 */
+function collectAttributeCandidates(fileJson, type, stringAttrIds, skipAttrIds) {
+  const candidates = []
+  for (let i = 0; i < (fileJson.attributes || []).length; i++) {
+    const attr = fileJson.attributes[i]
+    if (attr && typeof attr.value === 'string' && stringAttrIds.has(attr.key) && !skipAttrIds.has(attr.key)) {
+      scanValueCandidates(attr.value, 'attributes[' + i + '].value', 'attr', type, candidates) // 'attr' 不参与命令 tag 排除（属性文本不是命令枚举）
+    }
+  }
+  return candidates
+}
+
+
 /** 孤儿引用全树扫描：不依赖文本字段白名单——任何含 <ref:ID> 的字符串值都检查目标 ID 是否存在。
-    记录上下文：attrKey（属性 ID）、nodeName（.ui 节点编辑器标签）、refIndex/refCount（同值内第几个 ref）。 */
+    记录上下文：attrKey（属性 ID）、nodeName（.ui 节点编辑器标签）、presetId（所在节点，占位模板判定用）、refIndex/refCount。 */
 function collectOrphanRefs(fileJson) {
   const occurrences = []
-  const collect = (value, path, attrKey, nodeName) => {
+  const collect = (value, path, attrKey, nodeName, presetId) => {
     const matches = [...String(value).matchAll(/<ref:([0-9a-f]{16})>/gi)]
     for (let i = 0; i < matches.length; i++) {
-      occurrences.push({ refId: matches[i][1].toLowerCase(), path, attrKey: attrKey || null, nodeName: nodeName || null, refIndex: i, refCount: matches.length })
+      occurrences.push({ refId: matches[i][1].toLowerCase(), path, attrKey: attrKey || null, nodeName: nodeName || null, presetId: presetId || null, refIndex: i, refCount: matches.length })
     }
   }
   for (let i = 0; i < (fileJson.attributes || []).length; i++) {
     const attr = fileJson.attributes[i]
-    if (attr && typeof attr.value === 'string') collect(attr.value, `attributes[${i}].value`, attr.key || null, null)
+    if (attr && typeof attr.value === 'string') collect(attr.value, 'attributes[' + i + '].value', attr.key || null, null, null)
   }
-  const walk = (node, path, nodeName) => {
-    if (Array.isArray(node)) { node.forEach((item, i) => walk(item, `${path}[${i}]`, nodeName)); return }
+  const walk = (node, path, nodeName, presetId) => {
+    if (Array.isArray(node)) { node.forEach((item, i) => walk(item, path + '[' + i + ']', nodeName, presetId)); return }
     if (!node || typeof node !== 'object') return
     const name = typeof node.name === 'string' && node.name.trim() ? node.name : nodeName
+    const pid = typeof node.presetId === 'string' && node.presetId ? node.presetId.toLowerCase() : presetId
     for (const [key, value] of Object.entries(node)) {
       if (key === 'attributes' || key === 'name') continue
-      if (typeof value === 'string') collect(value, path ? `${path}.${key}` : key, null, name)
-      else if (value && typeof value === 'object') walk(value, path ? `${path}.${key}` : key, name)
+      if (typeof value === 'string') collect(value, path ? path + '.' + key : key, null, name, pid)
+      else if (value && typeof value === 'object') walk(value, path ? path + '.' + key : key, name, pid)
     }
   }
-  walk(fileJson, '', null)
+  walk(fileJson, '', null, null)
   return occurrences
+}
+
+/** setText 目标节点集合：被事件 setText 写入的界面节点 presetId——其 .ui 编辑器内容是占位模板，运行时显示的是写入值。 */
+function collectSetTextTargets(data) {
+  const set = new Set()
+  const walk = (node) => {
+    if (Array.isArray(node)) { node.forEach(walk); return }
+    if (!node || typeof node !== 'object') return
+    if (node.id === 'setText' && node.params && node.params.element && typeof node.params.element === 'object' && typeof node.params.element.presetId === 'string' && node.params.element.presetId) {
+      set.add(node.params.element.presetId.toLowerCase())
+    }
+    for (const value of Object.values(node)) if (value && typeof value === 'object') walk(value)
+  }
+  walk(data)
+  return set
+}
+
+/** 引用出现位置分类：attribute=数据属性（数据 tab）；display=界面显示路径；other=不显示（注释/条件/标签等）。 */
+function refPathKind(path) {
+  if (/^attributes\[\d+\]\.value$/.test(path)) return 'attribute'
+  if (/\.content$/.test(path)) return 'display'
+  if (/properties\[\d+\]\.value$/.test(path)) return 'display'
+  if (/\.operand\.value$/.test(path)) return 'display'
+  return 'other'
 }
 
 /** 文件名核心：去路径、去扩展名、去尾部 16hex GUID（「010.兽人.c65e716280b38eef.actor」→「010.兽人」）。 */
@@ -331,9 +385,9 @@ function findMissingTranslations(localizationJson, languages) {
   return missing
 }
 
-/** 疑似占位符翻译：脏词（shit/xxx/待翻译…）或与中文原文完全相同（含 CJK 才判定，版本号/数字不算）。 */
+/** 疑似占位翻译：译文是明显占位脏词（shit/xxx/test/待翻译…）。
+    「与原文相同」不再判定——完工工程实测 188 条 zh-TW + 40 条 ja 与 zh-CN 相同是开发者有意状态（未翻译该语言），不是占位符；空译文由「缺翻译」视图负责。 */
 function findSuspiciousTranslations(localizationJson, languages) {
-  const primary = languages[0]
   const suspicious = []
   const walk = (items, folder) => {
     for (const item of items || []) {
@@ -341,18 +395,10 @@ function findSuspiciousTranslations(localizationJson, languages) {
       else if (item && item.id && item.contents) {
         const langs = {}
         for (const lang of languages) langs[lang] = typeof item.contents[lang] === 'string' ? item.contents[lang] : ''
-        const zhVal = langs[primary].trim()
         const flagged = []
         for (const lang of languages.slice(1)) {
           const value = langs[lang].trim()
-          if (!value) continue
-          let reason = null
-          if (PLACEHOLDER_WORD_RE.test(value)) reason = '占位词'
-          else if (zhVal && CJK_RE.test(zhVal) && value === zhVal) {
-            // 简体独有字没转成繁体 → 大概率没翻译；无简体字可能是同形词（专名/单字），请人工确认
-            reason = lang === 'zh-TW' && SIMPLIFIED_ONLY_RE.test(value) ? '简体未转繁（疑似未翻译）' : '与原文相同（可能同形，请确认）'
-          }
-          if (reason) flagged.push({ lang, value, reason })
+          if (value && PLACEHOLDER_WORD_RE.test(value)) flagged.push({ lang, value, reason: '占位词' })
         }
         if (flagged.length) suspicious.push({ id: item.id, name: item.name || '', folder: folder || '', languages: langs, suspicious: flagged })
       }
@@ -448,6 +494,82 @@ function referencedLocalizationIds(assets, localizationJson) {
   return out
 }
 
+/** 引擎本地化 Excel（open-yami 表）行生成：与编辑器 to-excel（main.js:112-158）同算法——
+    整棵树导出：文件夹每次导出重新生成 16hex ID（子行在前、文件夹行在后），parentID 表达层级，
+    叶子保留真实 ID 与全部语言 contents。列序：ID | Name | 语言… | parentID | isDir。 */
+function openYamiRows(localizationJson, languages) {
+  const rows = []
+  const walk = (items, parentID) => {
+    for (const item of items || []) {
+      if (item && Array.isArray(item.children)) {
+        const id = randomHex16()
+        walk(item.children, id)
+        rows.push({ id, name: item.name || '', parentID, isDir: 1 })
+      } else if (item && item.id) {
+        const contents = {}
+        for (const lang of languages) contents[lang] = item.contents && typeof item.contents[lang] === 'string' ? item.contents[lang] : ''
+        rows.push({ id: item.id, name: item.name || '', parentID, isDir: 0, contents })
+      }
+    }
+  }
+  walk(localizationJson && localizationJson.list, '')
+  return rows
+}
+
+/** 解析引擎格式行：与编辑器 from-excel（main.js:162-254）同算法——isDir===1 建文件夹（expanded:false），
+    其余建条目（contents = 非系统列的全部语言）；dataMap 按 id 建节点，parentID 挂载；
+    未知 parentID 建空名文件夹占位，文件夹行后到时合并子级；整体替换 localization.list（文件夹 ID 不持久，叶子 ID 保留）。 */
+function localizationFromOpenYami(rows) {
+  const dataMap = new Map()
+  const rootNodes = []
+  for (const row of rows || []) {
+    const isDir = row.isDir === 1 || row.isDir === '1'
+    const rowData = isDir
+      ? { class: 'folder', id: String(row.id || ''), name: String(row.name || ''), parentID: String(row.parentID || ''), expanded: false, children: [] }
+      : { id: String(row.id || ''), name: String(row.name || ''), parentID: String(row.parentID || ''), contents: { ...(row.contents || {}) } }
+    const existing = dataMap.get(rowData.id)
+    if (existing && existing.class === 'folder') {
+      rowData.children = existing.children
+      dataMap.delete(rowData.id)
+    }
+    dataMap.set(rowData.id, rowData)
+    if (rowData.parentID) {
+      const parent = dataMap.get(rowData.parentID)
+      if (parent) {
+        parent.children = parent.children || []
+        parent.children.push(rowData)
+      } else {
+        dataMap.set(rowData.parentID, { class: 'folder', id: rowData.parentID, name: '', expanded: false, children: [rowData] })
+      }
+    } else {
+      rootNodes.push(rowData)
+    }
+  }
+  return rootNodes
+}
+
+/** 引擎格式导入差异：按叶子 ID 统计 新增/更新/移除 与文件夹数变化（预览用）。 */
+function diffLocalizationTrees(currentList, nextList) {
+  const flat = (items) => {
+    const map = new Map()
+    const walk = (nodes) => { for (const item of nodes || []) { if (item && Array.isArray(item.children)) walk(item.children); else if (item && item.id) map.set(item.id, item) } }
+    walk(items)
+    return map
+  }
+  const oldMap = flat(currentList)
+  const newMap = flat(nextList)
+  const added = []
+  const updated = []
+  const removed = []
+  for (const [id, item] of newMap) {
+    if (!oldMap.has(id)) added.push(id)
+    else if (JSON.stringify(item.contents) !== JSON.stringify(oldMap.get(id).contents)) updated.push(id)
+  }
+  for (const [id] of oldMap) if (!newMap.has(id)) removed.push(id)
+  const countFolders = (items) => { let n = 0; const walk = (nodes) => { for (const item of nodes || []) { if (item && Array.isArray(item.children)) { n += 1; walk(item.children) } } }; walk(items); return n }
+  return { added, updated, removed, foldersBefore: countFolders(currentList), foldersAfter: countFolders(nextList) }
+}
+
 function buildScanResult(assets, { attributeJson, localizationJson, languages, references, includeUnreferenced }) {
   const used = references ? referencedFileIds(references) : null
   let scanAssets = assets
@@ -467,40 +589,54 @@ function buildScanResult(assets, { attributeJson, localizationJson, languages, r
   const stringAttrIds = buildStringAttributeIds(attributeJson)
   const skipAttrIds = new Set([loopListAttributeId(attributeJson)])
   const attrNames = buildAttributeNames(attributeJson)
+  // setText 覆盖的界面节点（占位模板）：目标来自任何被引用资产，过滤前全量收集
+  const placeholders = new Set()
+  for (const { data } of assets) for (const p of collectSetTextTargets(data)) placeholders.add(p)
   const candidates = []
+  const attributeCandidates = []
   const orphanOccurrences = []
-  const localizedLocations = new Map()
+  const displayLocations = new Map()
+  const attributeLocations = new Map()
   for (const { file, type, data } of scanAssets) {
-    const result = collectCandidates(data, type, stringAttrIds, skipAttrIds)
-    for (const c of result) c.file = file
-    candidates.push(...result)
+    for (const c of collectCandidates(data, type, placeholders)) { c.file = file; candidates.push(c) }
+    for (const c of collectAttributeCandidates(data, type, stringAttrIds, skipAttrIds)) { c.file = file; attributeCandidates.push(c) }
     for (const o of collectOrphanRefs(data)) {
-      if (ids.has(o.refId)) {
-        if (!localizedLocations.has(o.refId)) localizedLocations.set(o.refId, [])
-        if (localizedLocations.get(o.refId).length < 40) localizedLocations.get(o.refId).push({ file, path: o.path })
+      if (!ids.has(o.refId)) {
+        o.file = file
+        o.attrName = o.attrKey ? (attrNames.get(String(o.attrKey).toLowerCase()) || '') : ''
+        orphanOccurrences.push(o)
         continue
       }
-      o.file = file
-      o.attrName = o.attrKey ? (attrNames.get(String(o.attrKey).toLowerCase()) || '') : ''
-      orphanOccurrences.push(o)
+      let kind = refPathKind(o.path)
+      if (kind === 'display' && o.presetId && placeholders.has(o.presetId)) kind = 'other' // 占位模板里的 ref 运行时被 setText 覆盖，不显示
+      const map = kind === 'attribute' ? attributeLocations : kind === 'display' ? displayLocations : null
+      if (map) {
+        if (!map.has(o.refId)) map.set(o.refId, [])
+        if (map.get(o.refId).length < 40) map.get(o.refId).push({ file, path: o.path })
+      }
     }
   }
-  // 已本地化：被扫描资产引用且条目存在的文本（浏览/编辑用）
-  const localizedLeaves = new Map()
-  const leafWalk = (items, folder) => {
-    for (const item of items || []) {
-      if (item && Array.isArray(item.children)) leafWalk(item.children, item.name || '')
-      else if (item && item.id && localizedLocations.has(String(item.id).toLowerCase())) localizedLeaves.set(String(item.id).toLowerCase(), { leaf: item, folder: folder || '' })
+  // 已本地化：被引用且条目存在——按引用位置分两档：界面显示路径 / 数据属性
+  const buildLocalized = (locations) => {
+    const leaves = new Map()
+    const leafWalk = (items, folder) => {
+      for (const item of items || []) {
+        if (item && Array.isArray(item.children)) leafWalk(item.children, item.name || '')
+        else if (item && item.id && locations.has(String(item.id).toLowerCase())) leaves.set(String(item.id).toLowerCase(), { leaf: item, folder: folder || '' })
+      }
     }
+    leafWalk(localizationJson && localizationJson.list, '')
+    const out = []
+    for (const [id, { leaf, folder }] of leaves) {
+      const langs = {}
+      for (const lang of languages) langs[lang] = typeof leaf.contents[lang] === 'string' ? leaf.contents[lang] : ''
+      out.push({ id, name: leaf.name || '', folder, zh: langs[languages[0]] || '', langs, locations: locations.get(id) || [] })
+    }
+    out.sort((a, b) => (a.name || a.zh).localeCompare(b.name || b.zh, 'zh-CN'))
+    return out
   }
-  leafWalk(localizationJson && localizationJson.list, '')
-  const localized = []
-  for (const [id, { leaf, folder }] of localizedLeaves) {
-    const langs = {}
-    for (const lang of languages) langs[lang] = typeof leaf.contents[lang] === 'string' ? leaf.contents[lang] : ''
-    localized.push({ id, name: leaf.name || '', folder, zh: langs[languages[0]] || '', langs, locations: localizedLocations.get(id) || [] })
-  }
-  localized.sort((a, b) => (a.name || a.zh).localeCompare(b.name || b.zh, 'zh-CN'))
+  const localized = buildLocalized(displayLocations) // 界面显示路径里的已本地化条目（编辑原文/译文）
+  const attributeLocalized = buildLocalized(attributeLocations) // 数据属性里的已本地化条目（数据 tab）
   let missing = findMissingTranslations(localizationJson, languages)
   let suspicious = findSuspiciousTranslations(localizationJson, languages)
   let unreferencedMissing = 0
@@ -515,7 +651,8 @@ function buildScanResult(assets, { attributeJson, localizationJson, languages, r
     suspicious = keepSuspicious
   }
   return {
-    candidates: mergeCandidates(candidates), orphans: groupOrphans(orphanOccurrences), missing, suspicious, localized, languages: [...languages],
+    candidates: mergeCandidates(candidates), attributeCandidates: mergeCandidates(attributeCandidates),
+    orphans: groupOrphans(orphanOccurrences), missing, suspicious, localized, attributeLocalized, languages: [...languages],
     referenced: !!used, unreferenced, unreferencedMissing, unreferencedSuspicious,
   }
 }
@@ -661,12 +798,36 @@ function validateImportRows(rows, existingById, languages) {
   return { errors, warnings, additions, fills, ignored }
 }
 
+/** 按候选 ID 查找候选：先查界面候选，再查数据属性候选。
+    两者共用同一 ID 空间（candidateIdMap 按 normalized 分配），只查 candidates 会把数据属性 sheet 整张漏掉。 */
+function findCandidateById(scan, id) {
+  return scan.candidates.find((c) => c.id === id) || scan.attributeCandidates.find((c) => c.id === id)
+}
+
+/** 把导入新增行分类为「需替换资产文件的候选×文件分组」与「孤儿修复行（找不到候选，资产文件已引用该 ID，无需替换）」。
+    数据属性候选（attributeCandidates）必须参与查找——只查 candidates 会把数据属性 sheet 的每行都误判成孤儿：
+    资产文件不被替换成 <ref:ID>，而 localization 条目照常创建，用户看到「新增 N 条」但游戏里仍是硬编码中文（静默失败）。 */
+function classifyImportAdditions(scan, additions) {
+  const groups = []
+  const seenGroups = new Set()
+  const orphanAdds = []
+  for (const row of additions) {
+    const candidate = findCandidateById(scan, row.id)
+    if (!candidate) { orphanAdds.push(row); continue }
+    for (const loc of candidate.locations) {
+      const key = `${row.id}::${loc.file}`
+      if (!seenGroups.has(key)) { seenGroups.add(key); groups.push({ candidate, file: loc.file }) }
+    }
+  }
+  return { groups, orphanAdds }
+}
+
 const core = {
-  REF_RE, COLOR_RE, LOCAL_RE, GLOBAL_RE, normalizeText, splitRefSegments, classifyText,
-  buildStringAttributeIds, loopListAttributeId, localizationIds, buildAttributeNames, collectRefKeys, collectCandidates,
+  REF_RE, MARKUP_STRIP_RE, MARKUP_TAG_RE, normalizeText, splitRefSegments, classifyText,
+  buildStringAttributeIds, loopListAttributeId, localizationIds, buildAttributeNames, collectRefKeys, collectCandidates, collectAttributeCandidates, collectSetTextTargets, refPathKind,
   collectOrphanRefs, orphanSuggestion, groupOrphans, mergeCandidates, findMissingTranslations, findSuspiciousTranslations,
-  buildScanResult, assetGuid, referencedFileIds, referencedLocalizationIds,
-  locateValue, setValue, replaceSegment, applyAssetReplacement, localizationInsertion, validateImportRows,
+  buildScanResult, assetGuid, referencedFileIds, referencedLocalizationIds, openYamiRows, localizationFromOpenYami, diffLocalizationTrees,
+  locateValue, setValue, replaceSegment, applyAssetReplacement, localizationInsertion, validateImportRows, findCandidateById, classifyImportAdditions,
   randomHex16, EXT_TYPE, LOCALIZATION_FOLDER, ORPHAN_FOLDER, serializeLike, clone,
 }
 globalThis.LocalizationLabCore = core
@@ -684,7 +845,7 @@ function initializeLocalizationLab() {
     projectState: $('#project-state'), pickProject: $('#pick-project'), restoreProject: $('#restore-project'),
     folderFallback: $('#folder-fallback'), btnExport: $('#btn-export'), btnImport: $('#btn-import'), importXlsx: $('#import-xlsx'),
     btnRescan: $('#btn-rescan'), filterSource: $('#filter-source'), filterConfidence: $('#filter-confidence'), filterQuery: $('#filter-query'),
-    metricCandidates: $('#metric-candidates'), metricMissing: $('#metric-missing'), metricMissingLangs: $('#metric-missing-langs'), metricOrphans: $('#metric-orphans'), metricSuspicious: $('#metric-suspicious'), metricLocalized: $('#metric-localized'),
+    metricCandidates: $('#metric-candidates'), metricMissing: $('#metric-missing'), metricMissingLangs: $('#metric-missing-langs'), metricOrphans: $('#metric-orphans'), metricSuspicious: $('#metric-suspicious'), metricLocalized: $('#metric-localized'), metricAttributes: $('#metric-attributes'),
     listBody: $('#list-body'), scanStatus: $('#scan-status'), btnFixOrphans: $('#btn-fix-orphans'), btnSaveFills: $('#btn-save-fills'), chkUnreferenced: $('#chk-unreferenced'), langSelect: $('#lang-select'),
     importPreview: $('#import-preview'), importPreviewSummary: $('#import-preview-summary'), importPreviewBody: $('#import-preview-body'),
     btnCancelImport: $('#btn-cancel-import'), btnConfirmImport: $('#btn-confirm-import'), toastRegion: $('#toast-region'),
@@ -694,28 +855,114 @@ function initializeLocalizationLab() {
   }
   const state = {
     rootHandle: null, lastRootHandle: null, scan: null, filter: 'candidates', filterSourceValue: 'all', filterConfidenceValue: 'all', filterQueryValue: '',
-    importRows: null, importErrors: null, importAdditions: null, importFills: null, importIgnored: [], selectedIds: new Set(), pendingFiles: [],
+    importRows: null, importErrors: null, importAdditions: null, importFills: null, importIgnored: [], importTree: null, selectedIds: new Set(), pendingFiles: [],
     orphanTexts: new Map(), fillDrafts: new Map(), candidateLangs: new Map(), langValue: '', candidateIdMap: new Map(), watchPaths: [], watchTimer: null, watchSnapshot: new Map(), watchRunning: false,
     scanAssets: null, scanAttribute: null, references: null, filterReferenced: true, // 引用过滤：默认只扫被引擎打包算法判定的已引用资产
+    // 数据属性（名称/描述）单独成 tab（attributeCandidates/attributeLocalized），不混进界面候选
+    // 富文本显示解析：颜色索引调色板（config.indexedColors）/ 全局变量名（variables.json）/ 图片文件（manifest.images）/ 嵌套 ref 文本
+    indexedColors: null, variableNames: new Map(), imageFiles: new Map(), fallbackFiles: null, imageCache: new Map(), localizationTextMap: null, editCells: new Set(), // 条目视图里正在编辑的单元格（默认显示富文本，点 ✎ 切到源代码输入框）
   }
   const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-  /** 原文富文本渲染：<color:RRGGBB[AA]>…</color> 渲染成彩色字；其余标签保留原样文本（已转义）。 */
+  /** 原文富文本渲染 v2（2026-08-14 用户要求）：展示时把标签解析成实际内容，编辑框仍显示源代码——
+      <color:RRGGBB[AA]> → 彩色；<color:N> → config.indexedColors[N] 调色板色；<italic>/<bold> → 斜体/粗体；
+      <global:ID>/<global::ID> → 全局变量名（:: 带 @）；<ref:ID> → 引用条目的中文原文；
+      <image:guid[,...]> → 图片（渲染后由 hydrateImages 异步填图）；<local:xxx> → 局部变量名徽标（运行时值未知）。 */
   function renderRichText(text) {
-    const pieces = String(text).split(/(<\/color>|<color:[0-9a-f]{6}(?:[0-9a-f]{2})?>)/i)
+    const s = String(text)
     let html = ''
-    let open = false
-    for (const piece of pieces) {
-      if (!piece) continue
-      if (/^<\/color>$/i.test(piece)) { if (open) html += '</span>'; open = false; continue }
-      const color = /^<color:([0-9a-f]{6}(?:[0-9a-f]{2})?)>$/i.exec(piece)
-      if (color) { if (open) html += '</span>'; open = true; html += `<span style="color:#${color[1]}">`; continue }
-      if (/^<color:[^>]*>$/i.test(piece)) continue // 无法识别的颜色标签丢弃，内文照常显示
-      html += escapeHtml(piece)
+    let open = null
+    const openColor = (hex) => { if (open) html += '</span>'; open = hex; html += '<span style="color:#' + hex + '">' }
+    const closeColor = () => { if (open) { html += '</span>'; open = null } }
+    const TAG_RE = /(<color:(?:[0-9a-f]{6}(?:[0-9a-f]{2})?|\d{1,2})>|<\/color>|<italic>|<\/italic>|<bold>|<\/bold>|<size:[^>]*>|<\/size>|<image:[0-9a-f]{16}(?:,[^>]*)?>|<global::?[0-9a-f]{16}>|<ref:[0-9a-f]{16}>|<local:[^>]*>)/gi
+    let last = 0
+    let m
+    while ((m = TAG_RE.exec(s))) {
+      if (m.index > last) html += escapeHtml(s.slice(last, m.index))
+      const tag = m[0]
+      if (tag === '</color>') closeColor()
+      else if ((m = /^<color:([0-9a-f]{6})(?:[0-9a-f]{2})?>$/i.exec(tag))) openColor(m[1])
+      else if ((m = /^<color:(\d{1,2})>$/.exec(tag))) {
+        const entry = state.indexedColors && state.indexedColors[parseInt(m[1], 10)]
+        openColor(entry && typeof entry.code === 'string' && /^[0-9a-f]{6}/i.test(entry.code) ? entry.code.slice(0, 6) : 'ffffff')
+      }
+      else if (tag === '<italic>') html += '<i>'
+      else if (tag === '</italic>') html += '</i>'
+      else if (tag === '<bold>') html += '<b>'
+      else if (tag === '</bold>') html += '</b>'
+      else if (/^<\/?size:[^>]*>$/.test(tag)) { /* 字号标签：纯展示忽略 */ }
+      else if ((m = /^<global::?([0-9a-f]{16})>$/.exec(tag))) {
+        const id = m[1].toLowerCase()
+        const dynamic = tag.startsWith('<global::')
+        const name = state.variableNames.get(id) || ''
+        html += '<span class="tag-global" title="全局变量 ' + escapeHtml(id) + '">' + escapeHtml((dynamic ? '@' : '') + (name || id)) + '</span>'
+      }
+      else if ((m = /^<ref:([0-9a-f]{16})>$/.exec(tag))) {
+        const id = m[1].toLowerCase()
+        const zh = getLocalizationText(id)
+        html += zh !== undefined
+          ? '<span class="tag-ref" title="本地化条目 ' + escapeHtml(id) + '">' + renderRichText(zh) + '</span>'
+          : '<span class="tag-ref tag-ref-missing" title="本地化条目不存在：' + escapeHtml(id) + '">' + escapeHtml(id) + '</span>'
+      }
+      else if ((m = /^<image:([0-9a-f]{16})(?:,([^>]*))?>$/.exec(tag))) {
+        const id = m[1].toLowerCase()
+        const info = state.imageFiles.get(id)
+        const name = info ? info.name : id
+        html += '<span class="tag-image" data-guid="' + escapeHtml(id) + '" data-params="' + escapeHtml(m[2] || '') + '" data-path="' + escapeHtml(info ? info.path : '') + '" title="图片 ' + escapeHtml(name) + '">🖼 ' + escapeHtml(name) + '</span>'
+      }
+      else if ((m = /^<local:([^>]*)>$/.exec(tag))) {
+        html += '<span class="tag-local" title="局部变量（运行时值）">' + escapeHtml(m[1]) + '</span>'
+      }
+      last = TAG_RE.lastIndex
     }
-    if (open) html += '</span>'
+    if (last < s.length) html += escapeHtml(s.slice(last))
+    closeColor()
     return html
   }
-  /** 顶部进度条：total<=0 隐藏；indeterminate 为 true 时走流动动画。 */
+  /** 嵌套 <ref:ID> 的显示文本：localization 叶子 id → zh-CN（缓存按 scanLocalization 对象身份失效）。 */
+  function getLocalizationText(id) {
+    const primary = state.scan && state.scan.languages[0]
+    if (state.localizationTextMap && state.localizationTextMap.source === state.scanLocalization) return state.localizationTextMap.map.get(id)
+    const map = new Map()
+    const walk = (items) => { for (const item of items || []) { if (item && Array.isArray(item.children)) walk(item.children); else if (item && item.id && item.contents) map.set(String(item.id).toLowerCase(), typeof item.contents[primary] === 'string' ? item.contents[primary] : '') } }
+    walk(state.scanLocalization && state.scanLocalization.list)
+    state.localizationTextMap = { source: state.scanLocalization, map }
+    return map.get(id)
+  }
+/** 富文本显示元数据：颜色索引调色板（config.indexedColors）/ 全局变量名（variables.json 树）/ 图片文件（manifest.images guid → 路径名）。 */
+function loadDisplayMetadata(manifest, configJson, variablesJson) {
+  state.indexedColors = configJson && Array.isArray(configJson.indexedColors) ? configJson.indexedColors : null
+  state.variableNames = new Map()
+  const walkVars = (items) => { for (const item of items || []) { if (item && Array.isArray(item.children)) walkVars(item.children); else if (item && item.id && typeof item.name === 'string') state.variableNames.set(String(item.id).toLowerCase(), item.name) } }
+  walkVars(variablesJson)
+  state.imageFiles = new Map()
+  for (const entry of (manifest && manifest.images) || []) {
+    const guid = core.assetGuid(entry.path)
+    if (guid) state.imageFiles.set(guid.toLowerCase(), { path: entry.path, name: String(entry.path).split('/').pop() || entry.path })
+  }
+}
+  /** 异步把 .tag-image 占位换成实际图片（剪裁参数 guid,cx,cy,cw,ch[,w,h]；缓存 dataURL）。 */
+  async function hydrateImages(container) {
+    const chips = [...container.querySelectorAll('.tag-image[data-path]')]
+    for (const chip of chips) {
+      const cacheKey = chip.dataset.guid + ':' + (chip.dataset.params || '')
+      try {
+        if (!state.imageCache.has(cacheKey)) {
+          let file = null
+          if (state.rootHandle) file = await (await getHandle(state.rootHandle, chip.dataset.path)).getFile()
+          else if (state.fallbackFiles) file = state.fallbackFiles.get(chip.dataset.path) || null
+          if (!file) continue
+          const nums = (chip.dataset.params || '').split(',').map((n) => parseInt(n, 10)).filter((n) => !Number.isNaN(n))
+          const bitmap = nums.length >= 4 ? await createImageBitmap(file, nums[0], nums[1], nums[2], nums[3]) : await createImageBitmap(file)
+          const canvas = document.createElement('canvas')
+          canvas.width = bitmap.width
+          canvas.height = bitmap.height
+          canvas.getContext('2d').drawImage(bitmap, 0, 0)
+          state.imageCache.set(cacheKey, canvas.toDataURL('image/png'))
+        }
+        chip.innerHTML = '<img class="tag-image-img" src="' + state.imageCache.get(cacheKey) + '" alt="" style="height:1.2em;vertical-align:middle" />'
+      } catch { /* 读不到就保留文件名文本 */ }
+    }
+  }
   function setScanProgress(done, total, indeterminate) {
     if (indeterminate) {
       els.scanProgress.classList.remove('hidden')
@@ -749,7 +996,7 @@ function initializeLocalizationLab() {
       if (scan.unreferencedSuspicious) skipped.push(`未引用疑似占位 ${scan.unreferencedSuspicious} 条已跳过`)
       if (skipped.length) extra = ` · ${skipped.join(' · ')}（可勾选「含未引用资产」查看）`
     }
-    return `扫描完成 · ${scan.candidates.length} 候选 · ${scan.missing.length} 缺翻译 · ${scan.orphans.length} 孤儿 · ${scan.suspicious.length} 疑似占位${extra}`
+    return `扫描完成 · ${scan.candidates.length} 候选（界面） · ${scan.attributeCandidates.length} 数据属性 · ${scan.missing.length} 缺翻译 · ${scan.orphans.length} 孤儿 · ${scan.suspicious.length} 疑似占位${extra}`
   }
   /** 从缓存资产重算扫描结果（切换「含未引用资产」时用，不重读文件）。 */
   function rescanFromCache() {
@@ -865,6 +1112,8 @@ function initializeLocalizationLab() {
         readJson(root, 'Data/plugins.json').catch(() => undefined),
         readJson(root, 'Data/commands.json').catch(() => undefined),
       ])
+      const variablesJson = await readJson(root, 'Data/variables.json').catch(() => undefined)
+      loadDisplayMetadata(manifest, configJson, variablesJson)
       const languages = (configJson.localization && configJson.localization.languages && configJson.localization.languages.map((l) => l.name)) || ['zh-CN', 'en']
       const total = [...SCAN_TYPES, ...REF_ONLY_TYPES, 'script'].reduce((n, type) => n + (manifest[type] || []).length, 0)
       setScanProgress(0, total)
@@ -961,6 +1210,9 @@ function initializeLocalizationLab() {
       references.plugins = byPath.has('Data/plugins.json') ? await readData('Data/plugins.json').catch(() => undefined) : undefined
       references.commands = byPath.has('Data/commands.json') ? await readData('Data/commands.json').catch(() => undefined) : undefined
       references.config = configJson
+      state.fallbackFiles = byPath
+      const variablesJson = byPath.has('Data/variables.json') ? await readData('Data/variables.json').catch(() => undefined) : undefined
+      loadDisplayMetadata(manifest, configJson, variablesJson)
       state.scanAssets = assets
       state.scanAttribute = attributeJson
       state.references = references
@@ -993,18 +1245,20 @@ function initializeLocalizationLab() {
     els.metricOrphans.textContent = scan.orphans.length
     els.metricSuspicious.textContent = scan.suspicious.length
     els.metricLocalized.textContent = scan.localized.length
+    els.metricAttributes.textContent = scan.attributeCandidates.length
     els.chkUnreferenced.checked = !state.filterReferenced
     // 语言切换下拉：单语言模式（译文列只显示当前语言）；默认第一个非原文语言
     els.langSelect.innerHTML = scan.languages.map((lang) => `<option value="${escapeHtml(lang)}">${escapeHtml(lang)}${lang === scan.languages[0] ? '（原文）' : ''}</option>`).join('')
     if (!scan.languages.includes(state.langValue)) state.langValue = scan.languages[1] || scan.languages[0]
     els.langSelect.value = state.langValue
     // 会话内稳定的候选 ID（与引擎同格式 16hex）：重扫/切换过滤不换 ID，Excel 导出与「本地化」按钮共用
-    for (const c of scan.candidates) {
+    for (const c of [...scan.candidates, ...scan.attributeCandidates]) {
       let id = state.candidateIdMap.get(c.normalized)
       if (!id) { id = core.randomHex16(); state.candidateIdMap.set(c.normalized, id) }
       c.id = id
     }
-    state.selectedIds = new Set(scan.candidates.map((c) => c.normalized)) // 默认全选，导出范围由勾选控制
+    state.selectedIds = new Set([...scan.candidates, ...scan.attributeCandidates].map((c) => c.normalized)) // 默认全选，导出范围由勾选控制
+    state.editCells.clear()
     for (const o of scan.orphans) {
       if (o.suggestion && !state.orphanTexts.has(o.refId)) state.orphanTexts.set(o.refId, o.suggestion) // 保留用户已填的文本
     }
@@ -1018,8 +1272,10 @@ function initializeLocalizationLab() {
     else if (state.filter === 'orphans') html = renderOrphanRows(scan.orphans)
     else if (state.filter === 'suspicious') html = renderSuspiciousRows(scan.suspicious)
     else if (state.filter === 'localized') html = renderLocalizedRows(scan.localized)
+    else if (state.filter === 'attributes') html = renderAttributeRows(scan)
     else html = renderCandidateRows(scan.candidates)
     els.listBody.innerHTML = html || '<div class="empty-state">没有匹配的条目。</div>'
+    hydrateImages(els.listBody) // 异步把 <image:...> 标签换成实际图片（失败保留文件名）
     els.listBody.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
       checkbox.addEventListener('change', () => {
         if (checkbox.checked) state.selectedIds.add(checkbox.dataset.key)
@@ -1039,16 +1295,28 @@ function initializeLocalizationLab() {
     els.listBody.querySelectorAll('.btn-edit-text').forEach((button) => {
       button.addEventListener('click', () => startTextEdit(button))
     })
+    els.listBody.querySelectorAll('.btn-edit-cell').forEach((button) => {
+      button.addEventListener('click', () => { state.editCells.add(button.dataset.cell); renderList() })
+    })
+    els.listBody.querySelectorAll('.btn-cell-done').forEach((button) => {
+      button.addEventListener('click', () => { state.editCells.delete(button.dataset.cell); renderList() })
+    })
+    const firstEdit = els.listBody.querySelector('.fill-input')
+    if (firstEdit) firstEdit.focus()
     els.listBody.querySelectorAll('.btn-localize-now').forEach((button) => {
       button.addEventListener('click', () => {
-        const candidate = state.scan && state.scan.candidates.find((c) => c.normalized === button.dataset.key)
+        const scan = state.scan
+        const candidate = scan && (scan.candidates.find((c) => c.normalized === button.dataset.key) || scan.attributeCandidates.find((c) => c.normalized === button.dataset.key))
         if (candidate) localizeCandidateNow(candidate)
       })
     })
     els.listBody.querySelectorAll('.fill-input').forEach((input) => {
+      const autosize = () => { if (input.tagName === 'TEXTAREA') { input.style.height = 'auto'; input.style.height = (input.scrollHeight + 2) + 'px' } }
+      autosize()
       input.addEventListener('input', () => {
         state.fillDrafts.set(`${input.dataset.id}::${input.dataset.lang}`, input.value)
         input.classList.toggle('dirty', !!input.value.trim())
+        autosize()
       })
     })
     els.listBody.querySelectorAll('.candidate-lang-input').forEach((input) => {
@@ -1058,7 +1326,7 @@ function initializeLocalizationLab() {
       })
     })
     els.btnFixOrphans.classList.toggle('hidden', state.filter !== 'orphans' || !state.rootHandle)
-    els.btnSaveFills.classList.toggle('hidden', !['missing', 'suspicious', 'localized'].includes(state.filter) || !state.rootHandle)
+    els.btnSaveFills.classList.toggle('hidden', !['missing', 'suspicious', 'localized', 'attributes'].includes(state.filter) || !state.rootHandle)
   }
   // 单语言模式：译文列只显示语言下拉选中的语言（可切换）；原文(zh-CN)列固定
   function langCellValue(languages, id) {
@@ -1066,6 +1334,16 @@ function initializeLocalizationLab() {
     const draft = state.fillDrafts.get(key)
     return { key, draft, value: draft !== undefined ? draft : (languages[state.langValue] || '') }
   }
+/** 条目视图的可编辑富文本单元格：默认渲染富文本（正常显示），点 ✎ 切到输入框（显示源代码）；输入值进 fillDrafts，「保存修改」写回 localization.json。 */
+function richCell(opts) {
+  const cellKey = opts.id + '::' + opts.lang
+  const editing = state.editCells.has(cellKey)
+  const td = opts.tdClass ? '<td class="' + opts.tdClass + '">' : '<td>'
+  if (editing) {
+    return td + '<div class="cell-edit-row"><textarea class="fill-input fill-textarea' + (opts.wide ? ' fill-wide' : '') + (opts.dirty ? ' dirty' : '') + (opts.extraClass ? ' ' + opts.extraClass : '') + '" data-id="' + escapeHtml(opts.id) + '" data-lang="' + escapeHtml(opts.lang) + '" placeholder="待翻译" rows="2">' + escapeHtml(opts.input) + '</textarea><button class="btn-cell-done" type="button" data-cell="' + escapeHtml(cellKey) + '" title="完成编辑">✓</button></div>' + (opts.suffix || '') + '</td>'
+  }
+  return td + '<span class="raw col-zh rich-text">' + renderRichText(opts.display) + '</span><button class="btn-edit-cell" type="button" data-cell="' + escapeHtml(cellKey) + '" title="编辑（显示源代码）">✎</button>' + (opts.suffix || '') + '</td>'
+}
   function renderCandidateRows(candidates) {
     const scan = state.scan
     const query = state.filterQueryValue
@@ -1106,10 +1384,18 @@ function initializeLocalizationLab() {
       const langCell = !langEditable
         ? `<td class="col-muted">—</td>`
         : editable
-          ? `<td><input class="fill-input${dirty ? ' dirty' : ''}" type="text" data-id="${escapeHtml(m.id)}" data-lang="${escapeHtml(state.langValue)}" value="${escapeHtml(value)}" placeholder="待翻译" /></td>`
+          ? richCell({ id: m.id, lang: state.langValue, display: m.languages[state.langValue] || '', input: value, dirty })
           : `<td class="${m.languages[state.langValue] ? 'col-muted' : 'col-danger'}">${m.languages[state.langValue] ? renderRichText(m.languages[state.langValue]) : '(空)'}</td>`
+      const primary = scan.languages[0]
+      const zhKey = `${m.id}::${primary}`
+      const zhDraft = state.fillDrafts.get(zhKey)
+      const zhValue = zhDraft !== undefined ? zhDraft : (m.languages[primary] || '')
+      const zhDirty = zhDraft !== undefined && zhDraft !== (m.languages[primary] || '')
+      const zhCell = editable
+        ? richCell({ id: m.id, lang: primary, display: zhValue, input: zhValue, dirty: zhDirty, wide: true, tdClass: 'col-text', suffix: `<div class="text-id">${escapeHtml(m.id)}</div>` })
+        : `<td class="col-text"><span class="raw col-zh rich-text">${renderRichText(m.languages[primary] || '')}</span><div class="text-id">${escapeHtml(m.id)}</div></td>`
       return `<tr>
-        <td>${escapeHtml(m.name)}</td><td class="col-text"><span class="raw col-zh rich-text">${renderRichText(m.languages[scan.languages[0]] || '')}</span><div class="text-id">${escapeHtml(m.id)}</div></td>
+        <td>${escapeHtml(m.name)}</td>${zhCell}
         ${langCell}
         <td class="col-danger">${m.missingLangs.join(', ')}</td></tr>`
     }).join('')}</tbody></table>`
@@ -1147,10 +1433,18 @@ function initializeLocalizationLab() {
       const langCell = !langEditable
         ? `<td class="col-muted">—</td>`
         : editable
-          ? `<td><input class="fill-input${dirty ? ' dirty' : ''}${suspect.length ? ' fill-suspect' : ''}" type="text" data-id="${escapeHtml(m.id)}" data-lang="${escapeHtml(state.langValue)}" value="${escapeHtml(value)}" placeholder="待翻译" /></td>`
+          ? richCell({ id: m.id, lang: state.langValue, display: m.languages[state.langValue] || '', input: value, dirty, extraClass: suspect.length ? 'fill-suspect' : '' })
           : `<td class="${suspect.length ? 'col-danger' : 'col-muted'}">${m.languages[state.langValue] ? renderRichText(m.languages[state.langValue]) : '(空)'}</td>`
+      const primary = scan.languages[0]
+      const zhKey = `${m.id}::${primary}`
+      const zhDraft = state.fillDrafts.get(zhKey)
+      const zhValue = zhDraft !== undefined ? zhDraft : (m.languages[primary] || '')
+      const zhDirty = zhDraft !== undefined && zhDraft !== (m.languages[primary] || '')
+      const zhCell = editable
+        ? richCell({ id: m.id, lang: primary, display: zhValue, input: zhValue, dirty: zhDirty, wide: true, tdClass: 'col-text', suffix: `<div class="text-id">${escapeHtml(m.id)}</div>` })
+        : `<td class="col-text"><span class="raw col-zh rich-text">${renderRichText(m.languages[primary] || '')}</span><div class="text-id">${escapeHtml(m.id)}</div></td>`
       return `<tr>
-        <td>${escapeHtml(m.name)}</td><td class="col-text"><span class="raw col-zh rich-text">${renderRichText(m.languages[scan.languages[0]] || '')}</span><div class="text-id">${escapeHtml(m.id)}</div></td>
+        <td>${escapeHtml(m.name)}</td>${zhCell}
         ${langCell}
         <td class="col-muted">${escapeHtml(m.suspicious.map((s) => `${s.lang}：${s.reason}（「${s.value}」）`).join('；'))}</td></tr>`
     }).join('')}</tbody></table>`
@@ -1172,12 +1466,12 @@ function initializeLocalizationLab() {
       const dirty = draft !== undefined && draft !== (m.langs[state.langValue] || '')
       const zhDirty = zhDraft !== undefined && zhDraft !== m.zh
       const zhCell = editable
-        ? `<td class="col-text"><input class="fill-input fill-wide${zhDirty ? ' dirty' : ''}" type="text" data-id="${escapeHtml(m.id)}" data-lang="${escapeHtml(primary)}" value="${escapeHtml(zhValue)}" /><div class="text-id">${escapeHtml(m.id)}</div></td>`
+        ? richCell({ id: m.id, lang: primary, display: zhValue, input: zhValue, dirty: zhDirty, wide: true, tdClass: 'col-text', suffix: `<div class="text-id">${escapeHtml(m.id)}</div>` })
         : `<td class="col-text"><span class="raw col-zh rich-text">${renderRichText(m.zh)}</span><div class="text-id">${escapeHtml(m.id)}</div></td>`
       const langCell = !langEditable
         ? `<td class="col-muted">—</td>`
         : editable
-          ? `<td><input class="fill-input${dirty ? ' dirty' : ''}" type="text" data-id="${escapeHtml(m.id)}" data-lang="${escapeHtml(state.langValue)}" value="${escapeHtml(value)}" placeholder="待翻译" /></td>`
+          ? richCell({ id: m.id, lang: state.langValue, display: m.langs[state.langValue] || '', input: value, dirty })
           : `<td class="${m.langs[state.langValue] ? 'col-muted' : 'col-danger'}">${m.langs[state.langValue] ? renderRichText(m.langs[state.langValue]) : '(空)'}</td>`
       const locations = m.locations.slice(0, 3).map((l) => `<span class="loc-file">${escapeHtml(l.file)}</span><span class="loc-path">${escapeHtml(l.path)}</span>`).join('')
       const more = m.locations.length > 3 ? `<span class="loc-path">…共 ${m.locations.length} 处</span>` : ''
@@ -1189,6 +1483,13 @@ function initializeLocalizationLab() {
         <td class="col-loc">${locations}${more}</td></tr>`
     }).join('')}</tbody></table>`
   }
+  /** 数据属性 tab：数据文件的属性文本（名称/描述）——上半部分未本地化候选（可勾选/本地化），下半部分已本地化条目（可编辑原文/译文）。 */
+  function renderAttributeRows(scan) {
+    if (!scan.attributeCandidates.length && !scan.attributeLocalized.length) return '<div class="empty-state">没有数据属性条目。</div>'
+    const candBlock = scan.attributeCandidates.length ? `<h3 class="list-section">未本地化的数据属性（名称/描述）</h3>` + renderCandidateRows(scan.attributeCandidates) : ''
+    const locBlock = scan.attributeLocalized.length ? `<h3 class="list-section">已本地化的数据属性条目（编辑原文/译文）</h3>` + renderLocalizedRows(scan.attributeLocalized) : ''
+    return candBlock + locBlock
+  }
 
   // ---- 导出 Excel ----
   async function buildExportWorkbook() {
@@ -1196,6 +1497,17 @@ function initializeLocalizationLab() {
     const workbook = new ExcelJS.Workbook()
     const primary = scan.languages[0]
     const other = scan.languages.filter((l) => l !== primary)
+    // 引擎兼容表 open-yami：与 Yami 编辑器本地化界面导出算法一致（main.js to-excel）——
+    // 整棵树：文件夹每次导出重新生成 16hex ID，parentID 表达层级，叶子保留真实 ID 与全部语言列
+    const yamiSheet = workbook.addWorksheet('open-yami')
+    yamiSheet.columns = [{ header: 'ID', key: 'id', width: 20 }, { header: 'Name', key: 'name', width: 10 }, ...scan.languages.map((v) => ({ header: v, key: v, width: 10 })), { header: 'parentID', key: 'parentID', width: 20 }, { header: 'isDir', key: 'isDir', width: 10 }]
+    yamiSheet.getRow(1).font = { bold: true }
+    yamiSheet.views = [{ state: 'frozen', ySplit: 1 }]
+    core.openYamiRows(state.scanLocalization, scan.languages).forEach((row) => {
+      const values = { id: row.id, name: row.name, parentID: row.parentID, isDir: row.isDir }
+      for (const lang of scan.languages) values[lang] = row.contents[lang]
+      yamiSheet.addRow(values)
+    })
     const candidates = scan.candidates.filter((c) => state.selectedIds.has(c.normalized))
     const addSheet = workbook.addWorksheet('待本地化')
     addSheet.columns = ['ID', `原文(${primary})`, ...other, '处理方式', '置信度', '来源', '出现位置'].map((h) => ({ header: h, width: h === '出现位置' ? 46 : 14 }))
@@ -1204,6 +1516,26 @@ function initializeLocalizationLab() {
     candidates.forEach((c, i) => {
       c.id = c.id || randomHex16()
       const row = addSheet.getRow(i + 2)
+      const locations = c.locations.map((l) => `${l.file} :: ${l.path}`).join('\n')
+      row.getCell(1).value = c.id
+      row.getCell(2).value = c.zhCN
+      other.forEach((lang, j) => { row.getCell(3 + j).value = state.candidateLangs.get(`${c.normalized}::${lang}`) || '' })
+      row.getCell(3 + other.length).value = '替换'
+      row.getCell(4 + other.length).value = c.confidence === 'high' ? '高' : '中'
+      row.getCell(5 + other.length).value = typeLabel(c.sourceType)
+      row.getCell(6 + other.length).value = locations
+      row.getCell(2).alignment = { wrapText: true }
+      row.getCell(6 + other.length).alignment = { wrapText: true }
+    })
+    // 数据属性表：数据文件属性文本（名称/描述）的未本地化候选，列结构同待本地化
+    const attributeCandidates = scan.attributeCandidates.filter((c) => state.selectedIds.has(c.normalized))
+    const attrSheet = workbook.addWorksheet('数据属性')
+    attrSheet.columns = ['ID', `原文(${primary})`, ...other, '处理方式', '置信度', '来源', '出现位置'].map((h) => ({ header: h, width: h === '出现位置' ? 46 : 14 }))
+    attrSheet.getRow(1).font = { bold: true }
+    attrSheet.views = [{ state: 'frozen', ySplit: 1 }]
+    attributeCandidates.forEach((c, i) => {
+      c.id = c.id || randomHex16()
+      const row = attrSheet.getRow(i + 2)
       const locations = c.locations.map((l) => `${l.file} :: ${l.path}`).join('\n')
       row.getCell(1).value = c.id
       row.getCell(2).value = c.zhCN
@@ -1255,15 +1587,16 @@ function initializeLocalizationLab() {
     const guideSheet = workbook.addWorksheet('说明')
     guideSheet.getRow(1).values = [null, '快速本地化 · 填写指引']
     const guide = [
-      '1. 「待本地化」表：导出时已预分配 ID（请勿修改），每行是工程中尚未本地化的文本。填好各语言列后，导入时会把原文替换为 <ref:ID> 引用。',
+      '1. 「待本地化」表：界面显示路径上尚未本地化的文本；「数据属性」表：数据文件的属性文本（名称/描述）。导出时已预分配 ID（请勿修改），填好各语言列后，导入时会把原文替换为 <ref:ID> 引用。',
       '2. 「处理方式」列可改为「忽略」：该行导入时跳过，不创建条目也不替换。',
       '3. 「缺翻译」表：已存在的本地化条目，补填缺失语言列即可；导入时写回 localization.json。',
       '4. 删除整行 = 放弃该条（待本地化表中的 ID 不会写入工程）；请勿只删单元格留下空行。',
       '5. 语言列由 Data/config.json 的 localization.languages 决定，未来加语言只需在配置中追加并重新导出。',
       '6. 同一 Excel 重复导入是安全的（已处理过的条目自动跳过）；导入前工具会重新扫描工程，发现文件被外部改动会中止导入。',
       '7. 「孤儿引用」表：引用的条目不存在于 localization.json。在「建议文本」列填中文原文，导入时按引用 ID 创建条目（资产文件无需改动）；留空则跳过该行。',
-      '8. 「疑似占位」表：翻译疑似占位符（脏词/与中文原文相同）。直接在语言列填入正确译文，导入时按 ID 写回。',
+      '8. 「疑似占位」表：译文是占位脏词（shit/test/待翻译…）。直接在语言列填入正确译文，导入时按 ID 写回。',
       '9. 新增条目会按来源类型分组写入 localization.json 的「快速本地化」文件夹（物品/装备/技能/状态/事件/界面/触发器/角色/孤儿修复）。',
+      '10. 「open-yami」表（第一张）：与 Yami 编辑器本地化界面导出/导入算法一致——整棵条目树，文件夹行 isDir=1、叶子保留真实 ID，parentID 表达层级。该表可直接在编辑器「从Excel导入」使用；本工具导入含该表的文件时按整树替换（叶子 ID 保留、引用不失效），可与其他工作表共存但以本表为准。',
     ]
     guide.forEach((line, i) => { guideSheet.getRow(i + 3).values = [null, line] })
     guideSheet.getColumn(2).width = 120
@@ -1298,10 +1631,36 @@ function initializeLocalizationLab() {
   async function readImportWorkbook(buffer) {
     const workbook = new ExcelJS.Workbook()
     await workbook.xlsx.load(buffer)
+    // 引擎兼容格式：存在 open-yami 表 → 整体树导入（与编辑器 from-excel 同算法）
+    const treeSheet = workbook.getWorksheet('open-yami')
+    if (treeSheet) {
+      const treeHeader = treeSheet.getRow(1)
+      const treeCols = {}
+      treeHeader.eachCell({ includeEmpty: false }, (cell, col) => { const value = cellText(cell.value).trim(); if (value) treeCols[value] = col })
+      if (!treeCols.ID || !treeCols.isDir) throw new Error('open-yami 表缺少 ID/isDir 列')
+      const treeRows = []
+      for (let r = 2; r <= treeSheet.rowCount; r++) {
+        const row = treeSheet.getRow(r)
+        const id = cellText(row.getCell(treeCols.ID).value)
+        if (!id.trim()) continue
+        const contents = {}
+        for (const [key, col] of Object.entries(treeCols)) {
+          if (!['ID', 'Name', 'parentID', 'isDir'].includes(key)) contents[key] = cellText(row.getCell(col).value)
+        }
+        treeRows.push({
+          id, name: cellText(row.getCell(treeCols.Name).value),
+          parentID: cellText(row.getCell(treeCols.parentID).value),
+          isDir: cellText(row.getCell(treeCols.isDir).value),
+          contents,
+        })
+      }
+      if (!treeRows.length) throw new Error('open-yami 表没有数据行')
+      return { treeRows }
+    }
     const rows = []
     for (const sheet of workbook.worksheets) {
       const name = sheet.name
-      const isAdd = name.includes('待本地化')
+      const isAdd = name.includes('待本地化') || name.includes('数据属性')
       const isOrphan = name.includes('孤儿引用')
       const isFill = name.includes('缺翻译') || name.includes('疑似占位')
       if (!isAdd && !isFill && !isOrphan) continue
@@ -1343,10 +1702,20 @@ function initializeLocalizationLab() {
   async function handleImportFile(file) {
     if (!state.scan || !state.rootHandle) { toast('只读导入模式无法写回工程，请使用「选择工程」授权后导入', 'error'); return }
     try {
-      const rows = await readImportWorkbook(await file.arrayBuffer())
+      const loaded = await readImportWorkbook(await file.arrayBuffer())
+      if (loaded.treeRows) {
+        // 引擎格式：整树替换，统计差异供预览
+        const newList = core.localizationFromOpenYami(loaded.treeRows)
+        const diff = core.diffLocalizationTrees(state.scanLocalization.list, newList)
+        state.importTree = { newList, diff }
+        state.importRows = state.importErrors = state.importAdditions = state.importFills = state.importIgnored = null
+        renderImportPreview()
+        return
+      }
+      const rows = loaded
       const existingById = new Map()
       const collect = (items) => { for (const item of items || []) { if (item && Array.isArray(item.children)) collect(item.children); else if (item && item.id && item.contents) existingById.set(item.id, { zhCN: typeof item.contents[state.scan.languages[0]] === 'string' ? item.contents[state.scan.languages[0]] : '', leaf: item }) } }
-      collect(state.scanLocalization)
+      collect(state.scanLocalization && state.scanLocalization.list)
       const { errors, additions, fills, ignored } = core.validateImportRows(rows, existingById, state.scan.languages)
       state.importRows = rows
       state.importErrors = errors
@@ -1357,14 +1726,23 @@ function initializeLocalizationLab() {
     } catch (error) { toast(`导入失败：${error.message}`, 'error'); console.error(error) }
   }
   function renderImportPreview() {
+    if (state.importTree) {
+      const { diff } = state.importTree
+      const changed = diff.added.length + diff.updated.length + diff.removed.length
+      els.importPreview.classList.remove('hidden')
+      els.importPreviewSummary.textContent = `open-yami 表（引擎格式）整树导入：新增 ${diff.added.length} 条 · 更新 ${diff.updated.length} 条 · 移除 ${diff.removed.length} 条 · 文件夹 ${diff.foldersBefore} → ${diff.foldersAfter} 个`
+      els.importPreviewBody.innerHTML = `<div class="ok">＋ 将整体替换 localization.json 条目树（叶子 ID 保留，引用不失效；文件夹 ID 每次导出重新生成）</div>`
+        + (diff.added.length ? `<div class="ok">＋ 新增 ${diff.added.length} 条：${escapeHtml(diff.added.slice(0, 6).join(' '))}${diff.added.length > 6 ? ' …' : ''}</div>` : '')
+        + (diff.updated.length ? `<div class="warn">⊙ 更新 ${diff.updated.length} 条（译文/内容有变化的条目）</div>` : '')
+        + (diff.removed.length ? `<div class="err">✕ 移除 ${diff.removed.length} 条（表格里不存在的条目会被删除）</div>` : '')
+        + `<div class="ok">＋ 先备份 localization.json，写回格式仿生；不影响资产文件</div>`
+      els.btnConfirmImport.disabled = changed === 0
+      return
+    }
     const { errors, additions, fills, importIgnored } = state
     els.importPreview.classList.remove('hidden')
-    const involved = new Set()
-    const orphanAdds = additions.filter((row) => !state.scan.candidates.some((c) => c.id === row.id))
-    for (const row of additions) {
-      const candidate = state.scan.candidates.find((c) => c.id === row.id)
-      if (candidate) candidate.locations.forEach((l) => involved.add(l.file))
-    }
+    const { groups: importGroups, orphanAdds } = core.classifyImportAdditions(state.scan, additions)
+    const involved = new Set(importGroups.map((g) => g.file))
     const replacementFiles = involved.size ? `，替换 ${involved.size} 个资产文件中的原文` : ''
     const orphanNote = orphanAdds.length ? `（其中孤儿修复 ${orphanAdds.length} 条，仅写 localization.json，资产文件无需改动）` : ''
     els.importPreviewSummary.textContent = `将新增 ${additions.length} 条本地化${replacementFiles} · 补译 ${fills.length} 条 · 忽略 ${importIgnored.length} 条 · 错误 ${errors.length} 条`
@@ -1378,6 +1756,34 @@ function initializeLocalizationLab() {
     els.btnConfirmImport.disabled = errors.length > 0 || (additions.length === 0 && fills.length === 0)
   }
   async function confirmImport() {
+    if (state.importTree) {
+      const { newList, diff } = state.importTree
+      els.btnConfirmImport.disabled = true
+      try {
+        setScanProgress(0, 0, true)
+        const localizationJson = await readJson(state.rootHandle, 'Data/localization.json')
+        localizationJson.list = newList
+        const backupRoot = await state.rootHandle.getDirectoryHandle('Lootsmith Backups', { create: true })
+        const backupDir = await backupRoot.getDirectoryHandle(formatNow(), { create: true })
+        const writeFileTo = async (handle, content) => {
+          const file = await handle.createWritable()
+          await file.write(content)
+          await file.close()
+        }
+        await writeFileTo(await backupDir.getFileHandle('localization.json', { create: true }), await readText(state.rootHandle, 'Data/localization.json'))
+        const original = await readText(state.rootHandle, 'Data/localization.json')
+        await writeFileTo(await getHandle(state.rootHandle, 'Data/localization.json'), core.serializeLike(localizationJson, original))
+        state.importTree = null
+        els.importPreview.classList.add('hidden')
+        toast(`open-yami 导入完成：新增 ${diff.added.length} · 更新 ${diff.updated.length} · 移除 ${diff.removed.length}（备份于 Lootsmith Backups/${backupDir.name}）`, 'success')
+        await finishAfterWrite(new Map(), localizationJson)
+      } catch (error) {
+        els.btnConfirmImport.disabled = false
+        toast(`导入中止：${error.message}`, 'error')
+        console.error(error)
+      }
+      return
+    }
     const { importRows, importAdditions, importFills, importErrors } = state
     if (importErrors.length) { toast('存在错误行，请修正后重新导入', 'error'); return }
     if (!importAdditions.length && !importFills.length) { toast('没有可导入的内容', 'info'); return }
@@ -1389,17 +1795,7 @@ function initializeLocalizationLab() {
       ])
       // 2) 读取待写资产文件并校验（按 候选×文件 分组：同一候选同一文件的多个位置须一次调用先校验后替换）
       const filesToWrite = new Map()
-      const groups = []
-      const seenGroups = new Set()
-      for (const row of importAdditions) {
-        if (row.handle && row.handle.trim() === '忽略') continue
-        const candidate = state.scan.candidates.find((c) => c.id === row.id)
-        if (!candidate) continue // 孤儿修复行：资产文件已引用该 ID，无需替换资产
-        for (const loc of candidate.locations) {
-          const key = `${row.id}::${loc.file}`
-          if (!seenGroups.has(key)) { seenGroups.add(key); groups.push({ candidate, file: loc.file }) }
-        }
-      }
+      const { groups } = core.classifyImportAdditions(state.scan, importAdditions.filter((row) => !(row.handle && row.handle.trim() === '忽略')))
       for (const { candidate, file } of groups) {
         if (!filesToWrite.has(file)) {
           try {
@@ -1430,7 +1826,7 @@ function initializeLocalizationLab() {
       const additions = []
       for (const row of importAdditions) {
         if (row.handle && row.handle.trim() === '忽略') continue
-        const candidate = state.scan.candidates.find((c) => c.id === row.id)
+        const candidate = core.findCandidateById(state.scan, row.id)
         additions.push({ id: row.id, zhCN: row.zhCN, langs: row.langs, folder: row.folder || (candidate ? typeLabel(candidate.sourceType) : '其他') })
       }
       core.localizationInsertion(localizationJson, additions, importFills, state.scan.languages)
@@ -1439,6 +1835,7 @@ function initializeLocalizationLab() {
       // 6) 完成：重置导入状态并重扫
       state.importRows = state.importErrors = state.importAdditions = state.importFills = null
       state.importIgnored = []
+      state.importTree = null
       els.importPreview.classList.add('hidden')
       toast(`导入完成：新增 ${additions.length} 条 · 补译 ${importFills.length} 条 · 备份于 Lootsmith Backups/${backupDir.name}`, 'success')
       await finishAfterWrite(filesToWrite, localizationJson)
@@ -1483,7 +1880,7 @@ function initializeLocalizationLab() {
 
   // ---- 原文编辑：候选行的 ✎ 按钮 → 单元格内联编辑（保存后条目 zh-CN/导出用新文本，导入校验仍按扫描原文） ----
   function startTextEdit(button) {
-    const candidate = state.scan && state.scan.candidates.find((c) => c.normalized === button.dataset.key)
+    const candidate = state.scan && (state.scan.candidates.find((c) => c.normalized === button.dataset.key) || state.scan.attributeCandidates.find((c) => c.normalized === button.dataset.key))
     if (!candidate) return
     const cell = button.closest('td')
     const old = candidate.zhCN
@@ -1811,6 +2208,7 @@ function initializeLocalizationLab() {
   els.btnCancelImport.addEventListener('click', () => {
     state.importRows = state.importErrors = state.importAdditions = state.importFills = null
     state.importIgnored = []
+    state.importTree = null
     els.importPreview.classList.add('hidden')
   })
   els.btnConfirmImport.addEventListener('click', confirmImport)
@@ -1831,6 +2229,7 @@ function initializeLocalizationLab() {
       els.backupPanel.classList.add('hidden')
       state.importRows = state.importErrors = state.importAdditions = state.importFills = null
       state.importIgnored = []
+      state.importTree = null
     }
   })
 

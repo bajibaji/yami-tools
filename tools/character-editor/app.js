@@ -735,7 +735,13 @@
     return entries
   }
 
-  async function scanProject({ rootHandle = state.rootHandle, files = null } = {}) {
+  async function scanProject({ rootHandle = state.rootHandle, files = null, force = false } = {}) {
+    if (state.pending.size > 0 && !force) {
+      // 未保存草稿保护：手动「重新扫描」/切换工程会重建全部 stores 并清空草稿，未保存改动将永久丢失。
+      // 自动同步路径（scheduledRescan）已有自己的跳过保护，这里只拦手动入口。
+      const confirmMessage = `有 ${state.pending.size} 个角色存在未保存修改，重新扫描将丢失全部未保存改动。确定继续？`
+      if (!window.confirm(confirmMessage)) return
+    }
     stopAutoSync()
     state.errors = []; state.drafts.clear(); state.pending.clear(); state.selectedResource = null; state.metadataHandles = []
     state.actorAttributeCache.clear()
@@ -1875,6 +1881,16 @@
     return value?.dirtyModes || []
   }
 
+  // 仿生写回：引擎原生序列化 = 2 空格缩进 + CRLF + 无尾随换行（实测 @1 通用英雄角色 .actor：1417 CRLF / 0 裸 LF / 以 } 结尾）。
+  // 按原文件换行风格与尾随换行有无写回，避免每次保存把全文件换成 LF+尾换行造成整文件 diff（与快速本地化工具同一兼容底线）。
+  function serializeLike(data, originalText) {
+    const json = JSON.stringify(data, null, 2)
+    const crlf = String(originalText || '').includes('\r\n')
+    const body = crlf ? json.replace(/\n/g, '\r\n') : json
+    if (!String(originalText || '').endsWith('\n')) return body
+    return body + (crlf ? '\r\n' : '\n')
+  }
+
   async function writeRoleModes(role, modes, backupComplete = false) {
     // 固定写入顺序：actorAttributes 重建 attributes 数组后，attribute 用最新掉落草稿覆盖 loopList，最后写事件。
     const normalizedModes = WRITE_MODE_ORDER.filter((mode) => modes.includes(mode) && role.stores[mode])
@@ -1883,7 +1899,7 @@
     for (const mode of normalizedModes) updateRoleData(role, mode)
     // updateRoleData 已就地改写 role.data，立即失效缓存（写文件可能失败，失效必须发生在 data 变更后）。
     invalidateActorAttributeCache(role)
-    const text = JSON.stringify(role.data, null, 2) + '\n'
+    const text = serializeLike(role.data, role.raw)
     if (state.rootHandle && role.handle?.createWritable) {
       await writeTextHandle(role.handle, text)
     } else if (role.file) {
