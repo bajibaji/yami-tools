@@ -4,5 +4,5 @@ window.TOOL_VERSIONS = {
   "map-editor": { "version": "0.7.0" },
   "idle-lab": { "version": "0.1.0 beta" },
   "localization-lab": { "version": "0.2.1 beta" },
-  "save-lab": { "version": "0.1.0" }
+  "save-lab": { "version": "0.1.1" }
 };

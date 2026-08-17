@@ -23,6 +23,13 @@
     viewer: $('viewer'),
     editArea: $('edit-area'),
     editText: $('edit-text'),
+    sourceArea: $('source-area'),
+    sourceText: $('source-text'),
+    btnSource: $('btn-source'),
+    searchInput: $('search-input'),
+    searchCount: $('search-count'),
+    searchPrev: $('search-prev'),
+    searchNext: $('search-next'),
     btnCopy: $('btn-copy'),
     btnEdit: $('btn-edit'),
     btnSave: $('btn-save'),
@@ -37,7 +44,9 @@
     rootName: '',
     saveEntries: [],       // Save 目录文件 { name, size, lastModified, kind }
     selected: null,        // { name, text, json, isJson }
-    editing: false,
+    viewMode: 'tree',      // 'tree' | 'source' | 'edit'
+    searchMatches: [],     // 搜索匹配位置（源码文本偏移）
+    searchIndex: -1,
     meta: null,            // 工程元数据映射
     pollTimer: null,
     pollSnapshot: new Map(),
@@ -329,7 +338,8 @@
       ['进度存档', ['save', 'global']],
       ['元数据', ['meta']],
       ['旁路数据', ['json']],
-      ['备份/草稿', ['bak', 'tmp', 'other']],
+      ['备份文件', ['bak']],
+      ['其他文件', ['tmp', 'other']],
     ]
     const html = []
     for (const [title, kinds] of groups) {
@@ -379,7 +389,7 @@
 
   // ---------- 选择存档文件 ----------
   async function selectSaveFile(name) {
-    stopEditing()
+    setViewMode('tree')
     const entry = state.saveEntries.find((e) => e.name === name)
     if (!entry) return
     for (const item of els.saveList.querySelectorAll('.save-item')) {
@@ -399,6 +409,13 @@
     let parseError = null
     try { json = JSON.parse(text) } catch (error) { parseError = error }
     state.selected = { name, text, json, parseError, size: entry.size, lastModified: entry.lastModified }
+    state.searchMatches = []
+    state.searchIndex = -1
+    els.searchInput.value = ''
+    els.searchCount.textContent = ''
+    els.btnSource.disabled = Boolean(parseError)
+    els.btnEdit.disabled = Boolean(parseError)
+    els.btnCopy.disabled = false
     renderFileInfo()
     renderMetaPreview()
     renderViewer()
@@ -481,34 +498,58 @@
     parallaxes: '视差', subscenes: '子场景', index: '索引', subdata: '子场景数据',
   }
 
+  // 视图切换：tree / source / edit
+  function setViewMode(mode) {
+    state.viewMode = mode
+    const sel = state.selected
+    els.viewer.classList.toggle('hidden', mode !== 'tree')
+    els.editArea.classList.toggle('hidden', mode !== 'edit')
+    els.sourceArea.classList.toggle('hidden', mode !== 'source')
+    els.btnEdit.classList.toggle('hidden', mode === 'edit')
+    els.btnSave.classList.toggle('hidden', mode !== 'edit')
+    els.btnCancelEdit.classList.toggle('hidden', mode !== 'edit')
+    els.btnSource.textContent = mode === 'source' ? '树视图' : '源码'
+    if (mode === 'edit' && sel) els.editText.value = JSON.stringify(sel.json, null, 2)
+    if (mode === 'source' && sel) {
+      els.sourceText.value = JSON.stringify(sel.json, null, 2)
+      runSearch()
+    }
+  }
+
   function renderViewer() {
     const sel = state.selected
-    if (!sel) { els.viewer.innerHTML = '<div class="empty-state">选择左侧存档文件查看内容。</div>'; return }
-    els.viewer.classList.remove('hidden')
-    els.editArea.classList.add('hidden')
+    if (!sel) {
+      els.viewer.innerHTML = '<div class="empty-state">选择左侧存档文件查看内容。</div>'
+      return
+    }
     els.viewer.innerHTML = ''
     if (sel.parseError) {
       els.viewer.innerHTML = `<div class="empty-state">JSON 解析失败：${escapeHtml(sel.parseError.message)}<br />该文件可能已损坏（可尝试引擎的 .bak 自动回退）。</div>`
+      return
+    }
+    if (state.viewMode === 'source' || state.viewMode === 'edit') {
+      setViewMode(state.viewMode)
       return
     }
     const annotate = els.chkAnnotate.checked
     const expandAll = els.chkExpand.checked
     const tree = document.createElement('div')
     tree.className = 'json-tree'
-    tree.appendChild(renderNode(sel.json, '', '', 0, annotate, expandAll))
+    // 根节点：不勾选全部展开时也默认展开第一层（顶层词条可见）
+    tree.appendChild(renderNode(sel.json, '', '', 0, annotate, expandAll, true))
     els.viewer.appendChild(tree)
     hydrateImages(tree)
   }
 
-  function renderNode(value, key, parentKey, depth, annotate, expandAll) {
+  // 惰性渲染：折叠的节点先不渲染子内容，点击展开时才生成（大存档不卡）
+  function renderNode(value, key, parentKey, depth, annotate, expandAll, isRoot = false) {
     const container = document.createElement('div')
     container.className = 'jt-node'
     const row = document.createElement('div')
     row.className = 'jt-row'
     if (key !== '') {
-      const known = annotate && KNOWN_KEYS[key] ? ' known' : ''
       const keyEl = document.createElement('span')
-      keyEl.className = 'jt-key' + known
+      keyEl.className = 'jt-key'
       keyEl.textContent = JSON.stringify(key)
       const colon = document.createElement('span')
       colon.className = 'jt-colon'
@@ -533,7 +574,7 @@
       row.classList.add('collapsible')
       const toggle = document.createElement('span')
       toggle.className = 'jt-toggle'
-      toggle.textContent = expandAll ? '▾' : '▸'
+      toggle.textContent = '▸'
       const valueEl = document.createElement('span')
       valueEl.className = 'jt-collapsed'
       valueEl.textContent = summary
@@ -543,15 +584,24 @@
         const tag = valueAnnotation(value, key, parentKey, depth)
         if (tag) row.appendChild(tag)
       }
+      // 惰性渲染：展开时才生成子节点
       const body = document.createElement('div')
       body.className = 'jt-node'
-      body.hidden = !expandAll
-      for (const childKey of entries) {
-        body.appendChild(renderNode(value[childKey], childKey, key, depth + 1, annotate, expandAll))
+      body.hidden = true
+      let rendered = false
+      const ensureRendered = () => {
+        if (rendered) return
+        rendered = true
+        for (const childKey of entries) {
+          body.appendChild(renderNode(value[childKey], childKey, key, depth + 1, annotate, expandAll, false))
+        }
       }
+      const expanded = isRoot ? true : expandAll
+      if (expanded) { body.hidden = false; ensureRendered(); toggle.textContent = '▾' }
       row.addEventListener('click', () => {
         body.hidden = !body.hidden
         toggle.textContent = body.hidden ? '▸' : '▾'
+        if (!body.hidden) ensureRendered()
       })
       container.appendChild(row)
       container.appendChild(body)
@@ -569,16 +619,21 @@
     return container
   }
 
-  // 键注解：属性 key / 变量 id 等
+  // 键注解：属性 key / 变量 ID / 已知字段名
   function keyAnnotation(key, value, parentKey) {
     const meta = state.meta
     if (!meta) return null
     const attrName = meta.attributes.get(key)
     if (attrName && attrName !== key) return `属性：${attrName}`
-    if (typeof value === 'string' && GUID_RE.test(value) && value.length === 16) {
-      const varName = meta.variables.get(value)
-      if (varName) return `变量：${varName}`
+    // 变量 ID 作为键（如 global.save 的 variables）→ 中文变量名
+    if (typeof key === 'string' && key.length === 16 && GUID_RE.test(key)) {
+      const varName = meta.variables.get(key)
+      if (varName && varName !== key) return `变量：${varName}`
     }
+    // 已知字段名（值注解已处理时间类的键除外，避免重复）
+    if (key === 'playTime' || key === 'timestamp') return null
+    const known = KNOWN_KEYS[key]
+    if (known) return known
     return null
   }
 
@@ -601,7 +656,13 @@
         const locName = meta.localization.get(value)
         if (locName) return makeTag('', '本地化', locName, value)
       }
-      if (value.startsWith('data:image/')) return makeTag('', '截图', `dataURL ${formatSize(value.length)}`, '')
+      if (value.startsWith('data:image/')) {
+        // 树内直接显示 base64 解码后的图片缩略图
+        const div = document.createElement('span')
+        div.className = 'jt-annot'
+        div.innerHTML = `<img class="annot-shot" src="${value}" alt="截图" /><span class="annot-name">截图 dataURL ${formatSize(value.length)}</span>`
+        return div
+      }
       return null
     }
     if (key === 'timestamp' && typeof value === 'number' && value > 100000000000) {
@@ -620,29 +681,74 @@
     return div
   }
 
-  // 异步加载图片注解（portrait/icon/图片资产 GUID → 工程图片文件 → clip 裁剪）
+  // 异步加载图片注解（portrait/icon/图片资产 GUID → 工程图片文件），并行加载 + 缓存
   const imageCache = new Map()
   async function hydrateImages(root) {
     const holders = root.querySelectorAll('.jt-annot img.annot-img[data-img-guid]')
     if (holders.length === 0) return
+    const tasks = []
     for (const img of holders) {
-      const guid = img.dataset.imgGuid
-      const meta = state.meta
-      const path = meta.images.get(guid)
-      if (!path) { img.style.display = 'none'; continue }
-      if (imageCache.has(guid)) { img.src = imageCache.get(guid); continue }
-      try {
-        const blob = state.root
-          ? await (await getHandle(state.root, path)).getFile()
-          : await state.virtual[path].getFile ? await state.virtual[path].getFile() : state.virtual[path]
-        const url = URL.createObjectURL(blob)
-        imageCache.set(guid, url)
-        img.src = url
-      } catch (error) {
-        console.warn('图片加载失败', path, error)
-        img.style.display = 'none'
-      }
+      tasks.push((async () => {
+        const guid = img.dataset.imgGuid
+        const meta = state.meta
+        const path = meta.images.get(guid)
+        if (!path) { img.style.display = 'none'; return }
+        if (imageCache.has(guid)) { img.src = imageCache.get(guid); return }
+        try {
+          const blob = state.root
+            ? await (await getHandle(state.root, path)).getFile()
+            : (state.virtual[path] || null)
+          if (!blob) { img.style.display = 'none'; return }
+          const url = URL.createObjectURL(blob)
+          imageCache.set(guid, url)
+          img.src = url
+        } catch (error) {
+          console.warn('图片加载失败', path, error)
+          img.style.display = 'none'
+        }
+      })())
     }
+    await Promise.allSettled(tasks)
+  }
+
+  // ---------- 搜索（源码视图定位 + 计数 + 上下跳转） ----------
+  function runSearch() {
+    const text = els.sourceText.value
+    const query = els.searchInput.value.trim()
+    state.searchMatches = []
+    state.searchIndex = -1
+    if (!query || !text) { els.searchCount.textContent = ''; return }
+    const matches = []
+    let index = 0
+    while (true) {
+      const found = text.indexOf(query, index)
+      if (found === -1) break
+      matches.push(found)
+      index = found + query.length
+    }
+    state.searchMatches = matches
+    if (matches.length > 0) {
+      state.searchIndex = 0
+      jumpToSearchMatch()
+    }
+    els.searchCount.textContent = matches.length > 0 ? `1/${matches.length}` : '0'
+  }
+
+  function jumpToSearchMatch() {
+    const { searchMatches, searchIndex } = state
+    if (searchMatches.length === 0 || searchIndex < 0) return
+    const textarea = els.sourceText
+    const pos = searchMatches[searchIndex]
+    textarea.focus()
+    textarea.setSelectionRange(pos, pos + els.searchInput.value.trim().length)
+    textarea.scrollTop = Math.max(0, (pos / textarea.value.length) * (textarea.scrollHeight - textarea.clientHeight) - 60)
+    els.searchCount.textContent = `${searchIndex + 1}/${searchMatches.length}`
+  }
+
+  function stepSearch(delta) {
+    if (state.searchMatches.length === 0) return
+    state.searchIndex = (state.searchIndex + delta + state.searchMatches.length) % state.searchMatches.length
+    jumpToSearchMatch()
   }
 
   // ---------- 编辑 ----------
@@ -650,30 +756,20 @@
     const sel = state.selected
     if (!sel) return
     if (sel.parseError) { toast('该文件 JSON 已损坏，无法编辑（可先修复后再试）', 'error'); return }
-    stopEditing()
-    state.editing = true
-    els.editText.value = JSON.stringify(sel.json, null, 2)
-    els.viewer.classList.add('hidden')
-    els.editArea.classList.remove('hidden')
-    els.btnEdit.classList.add('hidden')
-    els.btnSave.classList.remove('hidden')
-    els.btnCancelEdit.classList.remove('hidden')
-    els.btnCopy.disabled = false
+    setViewMode('edit')
+    els.btnSource.disabled = true
     setStatus(`编辑 ${sel.name} · 保存前自动备份到 Lootsmith Backups`)
   }
 
-  function stopEditing() {
-    state.editing = false
-    els.editArea.classList.add('hidden')
-    els.viewer.classList.remove('hidden')
-    els.btnEdit.classList.remove('hidden')
-    els.btnSave.classList.add('hidden')
-    els.btnCancelEdit.classList.add('hidden')
+  function cancelEditing() {
+    setViewMode('tree')
+    els.btnSource.disabled = false
+    setStatus('已取消编辑')
   }
 
   async function saveEdit() {
     const sel = state.selected
-    if (!sel || !state.editing) return
+    if (!sel || state.viewMode !== 'edit') return
     let json
     try {
       json = JSON.parse(els.editText.value)
@@ -710,7 +806,7 @@
     }
     sel.json = json
     sel.text = compact
-    stopEditing()
+    cancelEditing()
     renderFileInfo()
     renderMetaPreview()
     renderViewer()
@@ -736,7 +832,9 @@
   async function copyJson() {
     const sel = state.selected
     if (!sel) return
-    const text = state.editing ? els.editText.value : sel.text
+    let text = sel.text
+    if (state.viewMode === 'edit') text = els.editText.value
+    else if (state.viewMode === 'source') text = els.sourceText.value
     try {
       await navigator.clipboard.writeText(text)
       toast('已复制到剪贴板', 'success')
@@ -747,7 +845,7 @@
 
   // ---------- 刷新与轮询 ----------
   async function refresh() {
-    if (state.editing) { toast('编辑模式下已暂停自动刷新', ''); return }
+    if (state.viewMode === 'edit') { toast('编辑模式下已暂停自动刷新', ''); return }
     await listSaveFiles()
     renderSaveList()
     if (state.selected) {
@@ -773,7 +871,7 @@
     stopPolling()
     refreshPollSnapshot()
     state.pollTimer = setInterval(async () => {
-      if (document.hidden || state.editing || !state.root) return
+      if (document.hidden || state.viewMode === 'edit' || !state.root) return
       try {
         await listSaveFiles()
         let changed = false
@@ -796,15 +894,31 @@
   els.btnCopy.addEventListener('click', copyJson)
   els.btnEdit.addEventListener('click', startEditing)
   els.btnSave.addEventListener('click', saveEdit)
-  els.btnCancelEdit.addEventListener('click', () => { stopEditing(); setStatus('已取消编辑') })
+  els.btnCancelEdit.addEventListener('click', cancelEditing)
+  els.btnSource.addEventListener('click', () => {
+    if (!state.selected || state.selected.parseError) return
+    setViewMode(state.viewMode === 'source' ? 'tree' : 'source')
+  })
+  els.searchInput.addEventListener('input', () => {
+    if (state.viewMode !== 'source' && state.selected && !state.selected.parseError) setViewMode('source')
+    runSearch()
+  })
+  els.searchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); stepSearch(event.shiftKey ? -1 : 1) }
+  })
+  els.searchPrev.addEventListener('click', () => stepSearch(-1))
+  els.searchNext.addEventListener('click', () => stepSearch(1))
   els.folderFallback.addEventListener('change', () => {
     if (els.folderFallback.files && els.folderFallback.files.length) pickFallback(els.folderFallback.files)
   })
-  els.chkAnnotate.addEventListener('change', () => { if (state.selected && !state.editing) renderViewer() })
-  els.chkExpand.addEventListener('change', () => { if (state.selected && !state.editing) renderViewer() })
+  els.chkAnnotate.addEventListener('change', () => { if (state.selected && !state.selected.parseError && state.viewMode === 'tree') renderViewer() })
+  els.chkExpand.addEventListener('change', () => { if (state.selected && !state.selected.parseError && state.viewMode === 'tree') renderViewer() })
 
   // ---------- 启动 ----------
   async function init() {
+    els.btnSource.disabled = true
+    els.btnEdit.disabled = true
+    els.btnCopy.disabled = true
     // 联动：自动尝试加载其他工具记住的工程位置
     let remembered = null
     try { remembered = await setting('last-project-handle') } catch {}

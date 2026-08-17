@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0d0f14" />
-    <title>YAHZJ · 存档台</title>
+    <title>YA TOOLS · 存档台</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260816-save-lab-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260817-save-lab-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -14,8 +14,8 @@
         <div class="brand-block">
           <div class="brand-mark">🕹</div>
           <div>
-            <div class="eyebrow">YAMI RPG TOOLKIT</div>
-            <div class="brand-name">YAHZJ<span>存档台 <em class="version-tag" data-app-version>v0.1.0</em></span></div>
+            <div class="eyebrow">OPEN YAMI TOOLKIT</div>
+            <div class="brand-name">YA TOOLS<span>存档台 <em class="version-tag" data-app-version>v0.1.1</em></span></div>
           </div>
         </div>
         <div class="topbar-actions">
@@ -50,6 +50,13 @@
           <div class="viewer-toolbar">
             <div class="viewer-tools">
               <label class="field field-inline" title="展开/折叠 JSON 树"><input type="checkbox" id="chk-expand" /><span>全部展开</span></label>
+              <button id="btn-source" class="button" type="button" title="切换 JSON 源码文本视图（只读）">源码</button>
+              <span class="search-box" title="在源码中搜索文本">
+                <input id="search-input" type="search" placeholder="搜索…" autocomplete="off" />
+                <span id="search-count" class="search-count"></span>
+                <button id="search-prev" class="button button-mini" type="button" title="上一个匹配">↑</button>
+                <button id="search-next" class="button button-mini" type="button" title="下一个匹配">↓</button>
+              </span>
               <button id="btn-copy" class="button" type="button" title="复制当前文件的原始 JSON 文本">复制 JSON</button>
               <button id="btn-edit" class="button" type="button" title="切换到 JSON 编辑模式（保存前会先备份）">编辑</button>
               <button id="btn-save" class="button button-primary hidden" type="button" title="校验 JSON 并写回存档文件（自动备份到 Lootsmith Backups）">保存修改</button>
@@ -62,6 +69,9 @@
           <div id="edit-area" class="edit-area hidden">
             <textarea id="edit-text" spellcheck="false" aria-label="JSON 编辑区"></textarea>
           </div>
+          <div id="source-area" class="edit-area hidden">
+            <textarea id="source-text" class="source-text" readonly spellcheck="false" aria-label="JSON 源码视图"></textarea>
+          </div>
         </section>
       </main>
 
@@ -72,7 +82,7 @@
       </footer>
     </div>
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
-    <script src="./app.js?v=20260816-save-lab-1"></script>
+    <script src="./app.js?v=20260817-save-lab-2"></script>
     <script src="../version.json?v=20260815-tools-version-2"></script>
     <script>document.querySelectorAll('[data-app-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS['save-lab']||{}).version})</script>
   </body>
