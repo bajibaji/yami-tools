@@ -122,7 +122,7 @@ html, body {
 /* Banner 英雄区 */
 .hub-hero {
   position: relative;
-  padding: 36px 32px;
+  padding: 26px 32px;
   background: linear-gradient(135deg, rgba(27, 32, 43, 0.8), rgba(23, 27, 36, 0.95));
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -182,7 +182,7 @@ html, body {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 28px 26px;
+  padding: 13px 26px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
