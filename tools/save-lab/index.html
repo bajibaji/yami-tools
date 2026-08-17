@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0d0f14" />
+    <title>YAHZJ · 存档台</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css?v=20260816-save-lab-1" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <div class="brand-mark">🕹</div>
+          <div>
+            <div class="eyebrow">YAMI RPG TOOLKIT</div>
+            <div class="brand-name">YAHZJ<span>存档台 <em class="version-tag" data-app-version>v0.1.0</em></span></div>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <a class="hub-back" href="../../index.html">← 工具合集</a>
+          <span id="project-state" class="project-state">尚未选择游戏工程</span>
+          <button id="restore-project" class="button hidden" type="button">加载上次工程</button>
+          <button id="pick-project" class="button" type="button">选择工程</button>
+          <button id="btn-refresh" class="button" type="button" disabled title="重新读取 Save 目录（游戏内存档后可刷新）">刷新 ↻</button>
+          <input id="folder-fallback" type="file" webkitdirectory directory multiple hidden />
+        </div>
+      </header>
+
+      <main class="workspace">
+        <!-- 左侧：存档文件列表 -->
+        <section class="save-list-panel">
+          <div class="panel-head">
+            <h2>Save 文件</h2>
+            <span id="save-dir-path" class="save-dir-path" title="存档目录位置"></span>
+          </div>
+          <div id="save-list" class="save-list">
+            <div class="empty-state">选择游戏工程后，这里会列出 Save 目录下的存档文件。</div>
+          </div>
+          <div class="panel-foot">
+            <label class="field field-inline field-check" title="把存档里的 GUID / 键名注解成游戏内的中文名称与图片"><input type="checkbox" id="chk-annotate" checked /><span>显示中文/GUID 映射</span></label>
+          </div>
+        </section>
+
+        <!-- 右侧：查看 / 编辑区 -->
+        <section class="viewer-panel">
+          <div id="file-info" class="file-info hidden"></div>
+          <div id="meta-preview" class="meta-preview hidden"></div>
+          <div class="viewer-toolbar">
+            <div class="viewer-tools">
+              <label class="field field-inline" title="展开/折叠 JSON 树"><input type="checkbox" id="chk-expand" /><span>全部展开</span></label>
+              <button id="btn-copy" class="button" type="button" title="复制当前文件的原始 JSON 文本">复制 JSON</button>
+              <button id="btn-edit" class="button" type="button" title="切换到 JSON 编辑模式（保存前会先备份）">编辑</button>
+              <button id="btn-save" class="button button-primary hidden" type="button" title="校验 JSON 并写回存档文件（自动备份到 Lootsmith Backups）">保存修改</button>
+              <button id="btn-cancel-edit" class="button hidden" type="button">取消编辑</button>
+            </div>
+          </div>
+          <div id="viewer" class="viewer">
+            <div class="empty-state">选择左侧存档文件查看内容。</div>
+          </div>
+          <div id="edit-area" class="edit-area hidden">
+            <textarea id="edit-text" spellcheck="false" aria-label="JSON 编辑区"></textarea>
+          </div>
+        </section>
+      </main>
+
+      <footer class="statusbar">
+        <span id="status-text">等待选择工程</span>
+        <span class="status-spacer"></span>
+        <span>只读查看为主 · 编辑保存自动备份到 Lootsmith Backups · 游戏运行时写档可能被覆盖</span>
+      </footer>
+    </div>
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+    <script src="./app.js?v=20260816-save-lab-1"></script>
+    <script src="../version.json?v=20260815-tools-version-2"></script>
+    <script>document.querySelectorAll('[data-app-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS['save-lab']||{}).version})</script>
+  </body>
+</html>

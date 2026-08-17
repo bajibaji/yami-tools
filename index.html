@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#11131a" />
-    <title>YAHZJ · Yami 工具合集</title>
+    <title>YA TOOLS· 妙妙工具箱</title>
     <link rel="stylesheet" href="./assets/hub.css?v=20260812-hub-6" />
   </head>
   <body>
@@ -14,8 +14,8 @@
         <div class="brand-block">
           <div class="brand-mark">◫</div>
           <div>
-            <div class="eyebrow">YAMI RPG TOOLKIT</div>
-            <div class="brand-name">YAHZJ<span>工具合集 <em class="version-tag" data-hub-version>v0.8.0</em></span></div>
+            <div class="eyebrow">OPEN YAMI TOOLKIT</div>
+            <div class="brand-name">YA TOOLS<span>妙妙工具箱 <em class="version-tag" data-hub-version>v0.8.0</em></span></div>
           </div>
         </div>
         <div class="hub-status-badge">
@@ -105,6 +105,23 @@
               <span class="tool-action">启动工具</span>
             </div>
           </a>
+
+          <!-- 存档台 -->
+          <a class="tool-card" href="./tools/save-lab/">
+            <div class="card-glow"></div>
+            <div class="tool-card-header">
+              <span class="tool-icon icon-save">🕹</span>
+              <span class="tool-version" data-tool-version>v0.1.0</span>
+            </div>
+            <div class="tool-card-body">
+              <h2 class="tool-card-title">存档台 <span class="card-arrow">→</span></h2>
+              <p class="tool-card-desc">查看游戏存档的格式化 JSON 与 meta 截图，把 GUID 和键名注解成游戏内的中文名称与图片；支持编辑写回，保存前自动备份。</p>
+            </div>
+            <div class="tool-card-footer">
+              <span class="tool-tag">工程联动 · 中文/GUID 映射 · 自动备份</span>
+              <span class="tool-action">启动工具</span>
+            </div>
+          </a>
         </section>
       </main>
 
@@ -119,6 +136,6 @@
       </footer>
     </div>
       <script src="./tools/version.json?v=20260815-tools-version-2"></script>
-    <script>document.querySelectorAll('[data-hub-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS.hub||{}).version});const order=['character-editor','map-editor','idle-lab','localization-lab'];document.querySelectorAll('[data-tool-version]').forEach((e,i)=>{e.textContent='v'+((window.TOOL_VERSIONS[order[i]]||{}).version||'')})</script>
+    <script>document.querySelectorAll('[data-hub-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS.hub||{}).version});const order=['character-editor','map-editor','idle-lab','localization-lab','save-lab'];document.querySelectorAll('[data-tool-version]').forEach((e,i)=>{e.textContent='v'+((window.TOOL_VERSIONS[order[i]]||{}).version||'')})</script>
   </body>
 </html>
