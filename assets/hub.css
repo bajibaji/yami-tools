@@ -254,6 +254,12 @@ html, body {
   background: rgba(111, 217, 207, 0.05);
 }
 
+.icon-perf {
+  color: var(--violet, #b18cff);
+  border-color: rgba(177, 140, 255, 0.22);
+  background: rgba(177, 140, 255, 0.06);
+}
+
 .tool-version {
   font-size: 11px;
   font-weight: 600;

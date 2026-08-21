@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#11131a" />
     <title>YA TOOLS· 妙妙工具箱</title>
-    <link rel="stylesheet" href="./assets/hub.css?v=20260817-hub-11" />
+    <link rel="stylesheet" href="./assets/hub.css?v=20260821-hub-12" />
   </head>
   <body>
     <div class="hub-shell">
@@ -122,6 +122,23 @@
               <span class="tool-action">启动工具</span>
             </div>
           </a>
+            <!-- 性能测试台 -->
+            <a class="tool-card" href="./tools/perf-lab/">
+              <div class="card-glow"></div>
+              <div class="tool-card-header">
+                <span class="tool-icon icon-perf">⏱</span>
+                <span class="tool-version" data-tool-version>v0.1.0</span>
+              </div>
+              <div class="tool-card-body">
+                <h2 class="tool-card-title">性能测试台 <span class="card-arrow">→</span></h2>
+                <p class="tool-card-desc">真实运行工程源码，批量测试各场景计算压力（16.7ms 帧预算），支持角色克隆压测、基线回归对比与事件级瓶颈定位。</p>
+              </div>
+              <div class="tool-card-footer">
+                <span class="tool-tag">真实运行 · 只读 · 16.7ms 帧预算</span>
+                <span class="tool-action">启动工具</span>
+              </div>
+            </a>
+
         </section>
       </main>
 
@@ -135,7 +152,7 @@
         <div class="footer-right">本地工具 · 数据无上传 · <em data-hub-version>v0.8.0</em></div>
       </footer>
     </div>
-      <script src="./tools/version.json?v=20260815-tools-version-2"></script>
-    <script>document.querySelectorAll('[data-hub-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS.hub||{}).version});const order=['character-editor','map-editor','idle-lab','localization-lab','save-lab'];document.querySelectorAll('[data-tool-version]').forEach((e,i)=>{e.textContent='v'+((window.TOOL_VERSIONS[order[i]]||{}).version||'')})</script>
+      <script src="./tools/version.json?v=20260821-tools-version-3"></script>
+    <script>document.querySelectorAll('[data-hub-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS.hub||{}).version});const order=['character-editor','map-editor','idle-lab','localization-lab','save-lab','perf-lab'];document.querySelectorAll('[data-tool-version]').forEach((e,i)=>{e.textContent='v'+((window.TOOL_VERSIONS[order[i]]||{}).version||'')})</script>
   </body>
 </html>
