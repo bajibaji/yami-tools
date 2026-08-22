@@ -17,9 +17,12 @@ const SCOPE = self.registration.scope                     // 绝对 URL，形如
 const SCOPE_PATH = new URL(SCOPE).pathname                // 路径部分，形如 /tools/perf-lab/
 const RUN_PREFIX = SCOPE_PATH + 'run/'                    // 虚拟游戏根目录（路径）
 const CORE_URL = SCOPE + 'perf-core.js'                   // 注入到游戏页的探针（绝对 URL）
-const CORE_VERSION = '20260821-perf-lab-2'                // 探针缓存版本（更新探针必须同步升级）
+const CORE_VERSION = '20260822-perf-lab-8'                // 探针缓存版本（更新探针必须同步升级）
 
 let providerClientId = null                               // 持有工程目录句柄的工具页 client.id
+let providerRoot = null                                   // 可结构化克隆时由 SW 直接读取目录
+let providerFiles = null                                  // fallback 导入的 path -> { blob, mime }
+let storedRootPromise = null
 let requestSeq = 0
 const pending = new Map()                                 // seq -> { timer }
 const REQUEST_TIMEOUT_MS = 30000
@@ -38,6 +41,15 @@ self.addEventListener('message', (event) => {
   if (data.type === 'perf-provider-hello') {
     providerClientId = event.source.id
     if (event.ports && event.ports[0]) event.ports[0].postMessage({ type: 'perf-provider-ok' })
+    return
+  }
+  if (data.type === 'perf-provider-config') {
+    providerClientId = event.source.id
+    providerRoot = data.root || null
+    providerFiles = data.files
+      ? new Map(data.files.map(([rel, blob, mime]) => [rel, { blob, mime }]))
+      : null
+    if (event.ports && event.ports[0]) event.ports[0].postMessage({ type: 'perf-provider-config-ok' })
     return
   }
   if (data.type === 'perf-file-response') {
@@ -104,6 +116,70 @@ function askProvider(rel) {
   })
 }
 
+const MIME_BY_EXT = {
+  '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.css': 'text/css',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif',
+  '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.flac': 'audio/flac',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff': 'font/woff', '.woff2': 'font/woff2',
+}
+
+function mimeFor(rel) {
+  const ext = String(rel).toLowerCase().match(/\.[a-z0-9]+$/)?.[0] || ''
+  return MIME_BY_EXT[ext] || 'application/octet-stream'
+}
+
+async function readDirect(rel) {
+  const cached = providerFiles?.get(rel)
+  if (cached) return { ok: true, blob: cached.blob, mime: cached.mime || mimeFor(rel) }
+  if (!providerRoot) providerRoot = await loadStoredRoot()
+  if (!providerRoot) return null
+  try {
+    const parts = rel.split('/').filter(Boolean)
+    let directory = providerRoot
+    for (const part of parts.slice(0, -1)) directory = await directory.getDirectoryHandle(part)
+    const file = await (await directory.getFileHandle(parts.at(-1))).getFile()
+    return { ok: true, blob: file, mime: file.type || mimeFor(rel) }
+  } catch {
+    return null
+  }
+}
+
+function loadStoredRoot() {
+  if (storedRootPromise) return storedRootPromise
+  storedRootPromise = new Promise((resolve) => {
+    const request = indexedDB.open('loot-smith-settings', 1)
+    request.onerror = () => resolve(null)
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains('settings')) request.result.createObjectStore('settings')
+    }
+    request.onsuccess = () => {
+      const transaction = request.result.transaction('settings', 'readonly')
+      const get = transaction.objectStore('settings').get('last-project-handle')
+      get.onerror = () => resolve(null)
+      get.onsuccess = () => resolve(get.result || null)
+    }
+  })
+  return storedRootPromise
+}
+
+async function readProjectFile(rel) {
+  return await readDirect(rel) || askProvider(rel)
+}
+
+function compatibilityBootstrap() {
+  return `<script>(()=>{
+    if(typeof window.require==='function')return;
+    const denied=()=>Promise.reject(new Error('Node.js file access is unavailable in the browser performance sandbox'));
+    const denySync=()=>{throw new Error('Node.js file access is unavailable in the browser performance sandbox')};
+    const join=(...parts)=>parts.filter(Boolean).join('/').replace(/\\\\/g,'/').replace(/\\/{2,}/g,'/');
+    const fs={promises:{readFile:denied,writeFile:denied,mkdir:denied,copyFile:denied},existsSync:()=>false,readFileSync:denySync,writeFileSync:denySync,mkdirSync:denySync,copyFile:denySync};
+    const modules={fs,path:{join,resolve:join},os:{homedir:()=>''}};
+    // Ceiling: only startup-safe Node builtins are stubbed. Benchmark Electron I/O with a future native runner.
+    window.require=(id)=>{if(id in modules)return modules[id];throw new Error('Unsupported Node.js module in browser performance sandbox: '+id)};
+    window.__YAMI_PERF_COMPAT__=['Node.js 文件访问已禁用（仅测游戏计算与渲染）'];
+  })()</script>`
+}
+
 /* ---------- 虚拟文件服务 ---------- */
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return
@@ -113,11 +189,13 @@ self.addEventListener('fetch', (event) => {
   event.respondWith((async () => {
     // 游戏入口：注入运行时探针（每次读取的都是工程原始文件，不会重复注入）
     if (rel === 'index.html') {
-      const res = await askProvider(rel)
+      const res = await readProjectFile(rel)
       if (!res.ok) return new Response(res.error || 'index.html 读取失败', { status: res.status || 502 })
       try {
         let html = await res.blob.text()
+        const bootstrap = compatibilityBootstrap()
         const inject = `<script src="${CORE_URL}?v=${CORE_VERSION}"></script>`
+        html = html.replace(/<head([^>]*)>/i, `<head$1>\n${bootstrap}`)
         html = html.replace(/<\/body>/i, `${inject}\n</body>`)
         return new Response(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
       } catch (e) {
@@ -125,7 +203,7 @@ self.addEventListener('fetch', (event) => {
       }
     }
 
-    const res = await askProvider(rel)
+    const res = await readProjectFile(rel)
     if (!res.ok) return new Response(res.error || 'Not found', { status: res.status || 404 })
     const headers = { 'Content-Type': res.mime }
     return new Response(res.blob, { status: 200, headers })

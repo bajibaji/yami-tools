@@ -39,9 +39,11 @@
 
 缓存版本：`styles.css?v=20260821-perf-lab-1`、`app.js?v=20260821-perf-lab-1`、SW 注册 `./sw.js?v=20260821-perf-lab-1`（改线上资源必须同步升版本参数，防 GitHub Pages 缓存）。
 
+当前缓存版本已升至 `20260822-perf-lab-8`，应用/探针版本为 v0.2.1。
+
 ## 4. 与已有约定的对齐
 
-- 工程记忆：IndexedDB `loot-smith-settings` 的 `last-project-handle`，与其他工具共用；恢复权限 `readwrite`（与 save-lab 一致，仅为了跨工具句柄兼容，本工具不写文件）；
+- 工程记忆：IndexedDB `loot-smith-settings` 的 `last-project-handle`，与其他工具共用；本工具仅请求 `read` 权限，不写文件；
 - fallback 导入：`webkitdirectory` 相对路径去首段（`p.indexOf('/')` 规则，与 save-lab/localization-lab 相同）；
 - 自动同步：根目录模式 FileSystemObserver → 500ms 防抖重扫；无 FSO 时 5s 轮询 `Data/manifest.json` 的 lastModified+size；测试进行中不打断（提示测试后手动重扫）；导入模式手动重扫；
 - 纯只读：无任何写回路径（区别于其他工具，没有「保存」概念）。
@@ -84,3 +86,16 @@
 - **C 事件级定位**：`wrapEventHandlers()` 包装 `EventManager.activeEvents` 里每个 handler 的 `update`，名称 `type :: 文件名`（`event.path` 取 basename）；`eventStats` 进 snapshot/报告/侧栏事件 Top。事件会动态增减，靠每 60 帧 `refreshWraps()` 补包。
 - 探针新增 API：`isSceneReady()/pressure(level)/diag()`；缓存版本全部升 `?v=20260821-perf-lab-2`（SW 注册、styles、app、探针注入均带版本）。
 - 验证：夹具 E2E 通过（含事件 Top 断言、基线保存、二次运行 ΔP95 对比）；真实工程只读冒烟——单场景 PASS、**7 场景批量 7/7 成功**（世界/地下城/城镇100-102/森林道路/沙漠道路）、压测 x2 实测克隆 8 角色成功。
+
+## 9. v0.2.1 兼容修复（2026-08-22）
+
+- 工程扫描不再硬编码要求 `Dist/Script/main.js`，以工程自己的 `index.html` 为脚本清单，兼容 `D:\new-game` 的 `Dist/Script/` 和 `D:\GAME-20240905` 的旧版 `Script/` 布局；
+- `Game.update/deferredRendering/loop` 包装保留全部参数，避免旧版 `Game.update(timestamp)` 丢失时间戳；
+- 更新器与渲染器改为按方法分别标记，同一模块同时具有 `update/render` 时两边都能统计；
+- 场景角色兼容 `Scene.actor.list`（新版）与 `Scene.actors`（旧版）；压测 `xN` 改为最终总角色数为 N 倍，上限 200；
+- 主判定严格保持 `P95 <= 帧预算`，并要求至少采到 1 帧，避免空样本误判 PASS；
+- 运行时就绪不再只看旧引擎很早就赋值的 `Data.manifest`，还要求更新器与渲染器已经安装，避免对尚未初始化完成的空壳采样并误报 PASS；
+- 文件服务优先把目录句柄或 fallback `File` 表一次性交给 Service Worker 直接读取，避免大工程每个资源都经工具页 MessageChannel 往返；不支持句柄克隆时自动保留旧转发路径；
+- Service Worker 重启后会从共用的 `loot-smith-settings/last-project-handle` 恢复目录句柄，防止长测试中途丢失直读通道；
+- 旧工程若在浏览器启动分支直接调用 `require('fs'/'path'/'os')`，入口会注入严格只读垫片：读取失败后由引擎走默认数据，写操作拒绝；报告 `compatibility` 明示该模式。上限是桌面文件 I/O 不参与测量，后续若要测这部分需做 Electron 原生 runner；
+- 最小回归：`node tools/perf-lab/self-check.js`。

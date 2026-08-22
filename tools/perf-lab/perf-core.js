@@ -23,7 +23,7 @@
   'use strict'
   if (window.__YAMI_PERF__) return
 
-  const VERSION = '0.2.0'
+  const VERSION = '0.2.1'
   const MAX_SAMPLES = 12000 // 约 3.3 分钟 @60fps
 
   const perf = {
@@ -54,11 +54,12 @@
   /** 包装更新器/渲染器列表里的每个模块，只做耗时统计（不叠加进整帧合计，避免重复计算） */
   function wrapModules(list, method, stats) {
     try {
+      const wrappedKey = `__yamiPerfWrapped_${method}__`
       for (const mod of Array.from(list || [])) {
-        if (!mod || typeof mod[method] !== 'function' || mod.__yamiPerfWrapped__) continue
+        if (!mod || typeof mod[method] !== 'function' || mod[wrappedKey]) continue
         const name = (mod.constructor && mod.constructor.name) || 'anonymous'
         const orig = mod[method].bind(mod)
-        Object.defineProperty(mod, '__yamiPerfWrapped__', { value: true, configurable: true })
+        Object.defineProperty(mod, wrappedKey, { value: true, configurable: true })
         mod[method] = function wrappedPerfModule(...args) {
           const t0 = now()
           let result
@@ -74,14 +75,15 @@
     try {
       if (typeof EventManager === 'undefined' || !Array.isArray(EventManager.activeEvents)) return
       for (const event of EventManager.activeEvents) {
-        if (!event || typeof event.update !== 'function' || event.__yamiPerfWrapped__) continue
+        if (!event || typeof event.update !== 'function' || event.__yamiPerfEventWrapped__) continue
         let name = 'event'
         try {
-          const file = String(event.path || '').split('/').pop() || 'unknown'
-          name = `${event.type || 'unknown'} :: ${file}`
+          const file = String(event.path || event.initial?.path || event.commands?.path || '').split('/').pop() || 'unknown'
+          const type = event.type || event.initial?.type || event.commands?.type || 'unknown'
+          name = `${type} :: ${file}`
         } catch { /* 个别事件对象取不到标识就用默认名 */ }
         const orig = event.update.bind(event)
-        Object.defineProperty(event, '__yamiPerfWrapped__', { value: true, configurable: true })
+        Object.defineProperty(event, '__yamiPerfEventWrapped__', { value: true, configurable: true })
         event.update = function wrappedPerfEvent(...args) {
           const t0 = now()
           let result
@@ -96,22 +98,22 @@
   function hookGame() {
     if (typeof Game === 'undefined' || typeof Game.update !== 'function' || Game.__yamiPerfHooked__) return
     const update = Game.update.bind(Game)
-    Game.update = function perfUpdate() {
+    Game.update = function perfUpdate(...args) {
       const t0 = now()
-      try { return update() } finally { frameUpdateMs += now() - t0 }
+      try { return update(...args) } finally { frameUpdateMs += now() - t0 }
     }
     if (typeof Game.deferredRendering === 'function') {
       const render = Game.deferredRendering.bind(Game)
-      Game.deferredRendering = function perfRender() {
+      Game.deferredRendering = function perfRender(...args) {
         const t0 = now()
-        try { return render() } finally { frameRenderMs += now() - t0 }
+        try { return render(...args) } finally { frameRenderMs += now() - t0 }
       }
     }
     if (typeof Game.loop === 'function') {
       const loop = Game.loop.bind(Game)
-      Game.loop = function perfLoop(timestamp) {
+      Game.loop = function perfLoop(...args) {
         const t0 = now()
-        try { return loop(timestamp) } finally { frameLoopMs = now() - t0 }
+        try { return loop(...args) } finally { frameLoopMs = now() - t0 }
       }
     }
     Object.defineProperty(Game, '__yamiPerfHooked__', { value: true, configurable: true })
@@ -167,26 +169,61 @@
   requestAnimationFrame(tick)
 
   /* ---------- 压测：克隆场景角色（真实压力，不影响工程） ---------- */
+  function actorManager() {
+    if (typeof Scene === 'undefined') return null
+    return Scene.actor || Scene.actors || Scene.binding?.actor || Scene.binding?.actors || null
+  }
+
+  function actorList() {
+    const manager = actorManager()
+    return Array.from(manager?.list || manager || [])
+  }
+
+  function moduleCount(list) {
+    try { return Array.from(list || []).length } catch { return Number(list?.length || list?.list?.length || 0) }
+  }
+
+  function createPressureActor(context, manager, source, node) {
+    if (typeof context?.createActor === 'function') return context.createActor(node)
+    if (!manager || typeof manager.append !== 'function' || typeof source?.constructor !== 'function') return null
+    const actor = new source.constructor(node.data)
+    actor.name = node.name
+    actor.presetId = node.presetId
+    actor.selfVarId = node.presetId
+    actor.setTeam(node.teamId)
+    actor.setPosition(node.x, node.y)
+    actor.updateAngle(node.angle)
+    if (node.scale !== 1) actor.setScale(node.scale)
+    manager.append(actor)
+    return actor
+  }
+
   function pressure(level) {
     const out = { ok: false, level: level || 'none', original: 0, target: 0, cloned: 0, error: '' }
     if (!level || level === 'none') { out.ok = true; return out }
     try {
-      const context = Scene.binding || (Scene.contexts && Scene.contexts[Scene.pointer]) || null
-      if (typeof Scene === 'undefined' || !Scene.actor || !context || typeof context.createActor !== 'function') {
-        out.error = 'Scene API 不可用（角色克隆需要当前场景上下文 Scene.binding.createActor）'
+      if (typeof Scene === 'undefined') {
+        out.error = 'Scene API 不可用'
         return out
       }
-      const src = Array.from(Scene.actor.list || [])
+      const context = Scene.binding || (Scene.contexts && Scene.contexts[Scene.pointer]) || null
+      const manager = actorManager()
+      if (!context || !manager) {
+        out.error = 'Scene API 不可用（当前场景角色管理器未就绪）'
+        return out
+      }
+      const src = actorList()
       out.original = src.length
       if (!src.length) {
         out.error = '当前场景没有可克隆的角色'
         return out
       }
       const multiplier = level === 'x2' ? 2 : level === 'x5' ? 5 : level === 'x10' ? 10 : 0
-      out.target = Math.min(200, Math.round(src.length * multiplier))
+      out.target = Math.max(out.original, Math.min(200, Math.round(src.length * multiplier)))
+      const cloneTarget = Math.max(0, out.target - out.original)
       let guard = 0
       let index = 0
-      while (out.cloned < out.target && guard < 600) {
+      while (out.cloned < cloneTarget && guard < 600) {
         const actor = src[index % src.length]
         index += 1
         guard += 1
@@ -198,16 +235,16 @@
             name: (actor.name || '压测角色') + '·压测' + out.cloned,
             presetId: (actor.presetId || 'perf') + '_p' + out.cloned,
             data: actor.data,
-            x: (actor.x || 0) + (out.cloned % 10) * 32,
-            y: (actor.y || 0) + Math.floor(out.cloned / 10) * 32,
+            x: (actor.x || 0) + (out.cloned % 10) * 0.25,
+            y: (actor.y || 0) + Math.floor(out.cloned / 10) * 0.25,
             teamId: actor.teamId || '',
             angle: 0,
             scale: 1,
           }
-          if (context.createActor(node)) out.cloned += 1
+          if (createPressureActor(context, manager, actor, node)) out.cloned += 1
         } catch { /* 单个克隆失败继续 */ }
       }
-      out.ok = out.cloned > 0
+      out.ok = cloneTarget === 0 || out.cloned > 0
       if (!out.ok) out.error = '克隆失败：没有角色被成功创建'
     } catch (e) {
       out.error = String((e && e.message) || e)
@@ -262,11 +299,15 @@
     try {
       if (typeof Scene === 'undefined') return null
       const scene = Scene
+      const count = (value) => Number(value?.count ?? value?.length ?? 0)
+      const actors = actorList()
+      const animations = Array.from(scene.animation?.list || scene.animations || scene.binding?.animations || [])
+      const triggers = Array.from(scene.trigger?.list || scene.triggers || scene.binding?.triggers || [])
       return {
-        sceneId: scene.current ? scene.current.id : null,
-        actors: `${scene.visibleActors ? scene.visibleActors.count : 0}/${scene.actor ? scene.actor.list.length : 0}`,
-        animations: `${scene.visibleAnimations ? scene.visibleAnimations.count : 0}/${scene.animation ? scene.animation.list.length : 0}`,
-        triggers: `${scene.visibleTriggers ? scene.visibleTriggers.count : 0}/${scene.trigger ? scene.trigger.list.length : 0}`,
+        sceneId: scene.binding?.id || scene.current?.id || null,
+        actors: `${count(scene.visibleActors)}/${actors.length}`,
+        animations: `${count(scene.visibleAnimations)}/${animations.length}`,
+        triggers: `${count(scene.visibleTriggers)}/${triggers.length}`,
         particles: scene.particleCount || 0,
         uiElements: typeof UI !== 'undefined' && UI.manager ? UI.manager.list.length : 0,
         textures: typeof GL !== 'undefined' && GL.textureManager ? GL.textureManager.count : 0,
@@ -304,6 +345,7 @@
       renderers: topModules(perf.rendererStats, 6),
       events: topModules(perf.eventStats, 10),
       scene: sceneStats(),
+      compatibility: Array.isArray(window.__YAMI_PERF_COMPAT__) ? window.__YAMI_PERF_COMPAT__.slice() : [],
     }
   }
 
@@ -315,11 +357,15 @@
         && typeof Time !== 'undefined'
         && typeof Data !== 'undefined'
         && !!Data.manifest
+        && moduleCount(Game.updaters) > 0
+        && moduleCount(Game.renderers) > 0
     },
-          /** 调试：查看关键运行时 API 在探针作用域里的可见性 */
-      diag() {
+    /** 调试：查看关键运行时 API 在探针作用域里的可见性 */
+    diag() {
         return {
           Game: typeof Game,
+          GameUpdaters: typeof Game !== 'undefined' ? moduleCount(Game.updaters) : -1,
+          GameRenderers: typeof Game !== 'undefined' ? moduleCount(Game.renderers) : -1,
           Time: typeof Time,
           Data: typeof Data,
           Scene: typeof Scene,
@@ -335,12 +381,11 @@
           activeEvents: typeof EventManager !== 'undefined' && EventManager.activeEvents ? EventManager.activeEvents.length : -1,
         }
       },
-      /** 场景系统是否初始化完成（Scene.load 前置检查，避免 setObjectLists 竞态） */
-      isSceneReady() {
-        return typeof Scene !== 'undefined' && !!Scene.actor && !!Scene.entity
-      },
-      /** 切换到指定场景（GUID），返回 Promise */
-/** 切换到指定场景（GUID），返回 Promise */
+    /** 场景系统是否初始化完成（Scene.load 前置检查，避免 setObjectLists 竞态） */
+    isSceneReady() {
+      return typeof Scene !== 'undefined' && !!actorManager()
+    },
+    /** 切换到指定场景（GUID），返回 Promise */
     loadScene(guid) {
       if (typeof Scene === 'undefined' || typeof Scene.load !== 'function') {
         return Promise.reject(new Error('Scene.load 不可用'))

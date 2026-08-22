@@ -9,8 +9,8 @@
 (() => {
   'use strict'
 
-  const APP_VERSION = '0.2.0'
-  const SW_VERSION = '20260821-perf-lab-2'
+  const APP_VERSION = '0.2.1'
+  const SW_VERSION = '20260822-perf-lab-8'
   const RUN_PATH = './run/index.html'
   const BASELINE_STORAGE_KEY = 'perf-lab-baseline'
 
@@ -121,8 +121,8 @@
     try { root = await setting('last-project-handle') } catch {}
     if (!root) { toast('没有找到上次的工程记录', 'error'); return }
     try {
-      let permission = await root.queryPermission({ mode: 'readwrite' })
-      if (permission !== 'granted') permission = await root.requestPermission({ mode: 'readwrite' })
+      let permission = await root.queryPermission({ mode: 'read' })
+      if (permission !== 'granted') permission = await root.requestPermission({ mode: 'read' })
       if (permission !== 'granted') { toast('上次工程授权已失效，请重新选择', 'error'); return }
       await setupRoot(root)
     } catch (error) {
@@ -133,7 +133,7 @@
 
   async function pickProject() {
     try {
-      const root = await window.showDirectoryPicker({ mode: 'readwrite' })
+      const root = await window.showDirectoryPicker({ mode: 'read' })
       await setupRoot(root)
     } catch (error) {
       if (error && error.name === 'AbortError') return
@@ -242,7 +242,8 @@
     setStatus('正在扫描工程…')
     els.btnStart.disabled = true
     try {
-      const probes = ['index.html', 'Dist/Script/main.js', 'Data/manifest.json']
+      // 入口文件决定实际脚本布局：新工程使用 Dist/Script，旧工程可直接使用 Script。
+      const probes = ['index.html', 'Data/manifest.json']
       for (const rel of probes) {
         let ok = false
         if (state.root) {
@@ -250,7 +251,7 @@
         } else {
           ok = !!state.virtual[rel]
         }
-        if (!ok) throw new Error(`缺少游戏文件：${rel}（请选择游戏工程根目录，且工程已编译出 Dist）`)
+        if (!ok) throw new Error(`缺少游戏文件：${rel}（请选择包含 index.html 与 Data/manifest.json 的游戏工程根目录）`)
       }
 
       const manifest = await readJsonSafe('Data/manifest.json')
@@ -382,6 +383,16 @@
     })
   }
 
+  function withTimeout(promise, timeoutMs, message) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message || '操作超时')), timeoutMs)
+      Promise.resolve(promise).then(
+        (value) => { clearTimeout(timer); resolve(value) },
+        (error) => { clearTimeout(timer); reject(error) },
+      )
+    })
+  }
+
   async function ensureServiceWorker() {
     if (!('serviceWorker' in navigator)) throw new Error('当前浏览器不支持 Service Worker（请用 Chrome/Edge 最新版，且必须 https 或 localhost）')
     const registration = await navigator.serviceWorker.register(`./sw.js?v=${SW_VERSION}`, { scope: './' })
@@ -399,6 +410,20 @@
       }
       registration.active.postMessage({ type: 'perf-provider-hello' }, [channel.port2])
     })
+    // File/目录句柄可结构化克隆给 Worker；资源请求由 SW 直接读取，避免每个文件都跨页面往返。
+    try {
+      await new Promise((resolve, reject) => {
+        const channel = new MessageChannel()
+        const timer = setTimeout(() => reject(new Error('Service Worker 文件源配置超时')), 30000)
+        channel.port1.onmessage = () => { clearTimeout(timer); resolve() }
+        const files = state.virtual
+          ? Object.entries(state.virtual).map(([rel, file]) => [rel, file, file.type || mimeFor(rel)])
+          : null
+        registration.active.postMessage({ type: 'perf-provider-config', root: state.root, files }, [channel.port2])
+      })
+    } catch (error) {
+      console.warn('Service Worker 直接文件源不可用，回退到页面转发：', error)
+    }
     state.providerReady = true
   }
 
@@ -443,17 +468,17 @@
     const runUrl = new URL(RUN_PATH, location.href)
     runUrl.searchParams.set('t', String(Date.now()))
     els.gameFrame.src = runUrl.href
-    await waitFor(() => !!perfWindow(), 120000, '游戏页面加载超时：探针未注入。请确认工程 index.html 存在、Dist/Script/main.js 已编译')
+    await waitFor(() => !!perfWindow(), 120000, '游戏页面加载超时：探针未注入。请确认工程 index.html 引用的运行时脚本都存在')
 
     const win = els.gameFrame.contentWindow
     const probe = win.__YAMI_PERF__
-    await waitFor(() => probe.isReady(), 120000, '游戏初始化超时（Data.manifest 未就绪）')
+    await waitFor(() => probe.isReady(), 180000, '游戏初始化超时（帧更新器/渲染器未就绪）')
 
     if (key !== '__startup') {
       setStatus('正在切换场景：' + label)
       try {
-        await waitFor(() => probe.isSceneReady(), 60000, '场景系统初始化超时（Scene.actor/entity 未就绪）')
-        await probe.loadScene(key)
+        await waitFor(() => probe.isSceneReady(), 60000, '场景系统初始化超时（角色管理器未就绪）')
+        await withTimeout(probe.loadScene(key), 60000, 'Scene.load 超过 60 秒未完成')
       } catch (error) {
         return { key, label, ok: false, error: '场景加载失败：' + error.message }
       }
@@ -512,7 +537,7 @@
   function buildReport(key, label, budget, snap, samples, pressureResult, reason) {
     const compute = snap.compute || {}
     const verdict = {
-      pass: compute.p95 <= budget && compute.avg <= budget,
+      pass: Number(snap.samples) > 0 && compute.p95 <= budget,
       p95: compute.p95,
       avg: compute.avg,
       budget,
@@ -534,6 +559,7 @@
       renderers: snap.renderers || [],
       events: snap.events || [],
       scene: snap.scene || null,
+      compatibility: snap.compatibility || [],
       samples,
       startedAt: new Date().toISOString(),
     }
@@ -744,7 +770,8 @@
     els.mVerdict.textContent = v.pass ? 'PASS' : 'FAIL'
     els.verdictCard.classList.remove('pass', 'fail')
     els.verdictCard.classList.add(v.pass ? 'pass' : 'fail')
-    els.runInfo.textContent = `采样：${report.samples.length} 帧 · ${v.reason} · 超预算帧：${report.compute.overBudgetCount ?? 0}`
+    const compatibility = report.compatibility.length ? ` · 兼容模式：${report.compatibility.join('；')}` : ''
+    els.runInfo.textContent = `采样：${report.samples.length} 帧 · ${v.reason} · 超预算帧：${report.compute.overBudgetCount ?? 0}${compatibility}`
   }
 
   function renderBatchTable() {
@@ -777,7 +804,7 @@
   function topBottleneck(report) {
     let top = null
     for (const m of report.updaters || []) if (!top || m.avg > top.avg) top = m
-    return top ? { full: `更新器 ${top.name} avg ${top.avg.toFixed(2)}ms`, short: `${top.name} ${top.avg.toFixed(2)}ms` } : null
+    return top ? { full: `更新器 ${top.name} avg ${top.avg.toFixed(2)}ms`, short: `${top.name} ${top.avg.toFixed(2)}ms` } : { full: '', short: '' }
   }
 
   function escapeHtml(value) {
@@ -850,6 +877,7 @@
       lines.push(`- 计算耗时：avg ${r.compute.avg} / P95 ${r.compute.p95} / P99 ${r.compute.p99} / max ${r.compute.max} ms`)
       lines.push(`- 帧间隔：avg ${r.frame.avg} / P95 ${r.frame.p95} ms；实时 FPS ${r.fps}`)
       if (r.pressure && r.pressure.level !== 'none') lines.push(`- 压测：${r.pressure.level}（原 ${r.pressure.original} 个角色 → 克隆 ${r.pressure.cloned} 个）`)
+      if (r.compatibility && r.compatibility.length) lines.push(`- 兼容模式：${r.compatibility.join('；')}`)
       if (r.scene) lines.push(`- 场景统计：角色 ${r.scene.actors} · 动画 ${r.scene.animations} · 触发器 ${r.scene.triggers} · 粒子 ${r.scene.particles} · UI ${r.scene.uiElements} · 纹理 ${r.scene.textures}`)
       if (result.diff) {
         lines.push(`- 基线对比：ΔP95 ${result.diff.dp95 > 0 ? '+' : ''}${result.diff.dp95}ms，Δavg ${result.diff.dAvg > 0 ? '+' : ''}${result.diff.dAvg}ms${result.diff.regress ? '，**有退化**' : ''}`)
