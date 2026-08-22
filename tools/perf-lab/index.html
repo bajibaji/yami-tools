@@ -4,164 +4,101 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0d0f14" />
-    <title>YA TOOLS · 性能测试台</title>
+    <title>YA TOOLS · Electron 性能分析台</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260822-perf-lab-8" />
+    <link rel="stylesheet" href="./styles.css?v=20260822-perf-analysis-1" />
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-block">
-          <div class="brand-mark">⏱</div>
+          <div class="brand-mark">⌁</div>
           <div>
-            <div class="eyebrow">OPEN YAMI TOOLKIT</div>
-            <div class="brand-name">YA TOOLS<span>性能测试台 <em class="version-tag" data-app-version>v0.2.1</em></span></div>
+            <div class="eyebrow">ELECTRON RUNTIME ANALYSIS</div>
+            <div class="brand-name">YA TOOLS<span>性能分析台 <em class="version-tag" data-app-version>v0.3.0</em></span></div>
           </div>
         </div>
         <div class="topbar-actions">
           <a class="hub-back" href="../../index.html">← 工具合集</a>
-          <span id="project-state" class="project-state">尚未选择游戏工程</span>
-          <button id="restore-project" class="button hidden" type="button">加载上次工程</button>
-          <button id="pick-project" class="button" type="button">选择工程</button>
-          <button id="btn-rescan" class="button hidden" type="button" title="重新扫描工程（场景列表）">重新扫描 ↻</button>
-          <input id="folder-fallback" type="file" webkitdirectory directory multiple hidden />
+          <button id="export-report" class="button" type="button" disabled>导出分析</button>
+          <button id="clear-reports" class="button" type="button" disabled>清空</button>
         </div>
       </header>
 
       <main class="workspace">
-        <!-- 左侧：测试设置 / 基线 / 分模块报告 -->
-        <section class="side-panel">
-          <div class="panel-body">
-            <div class="panel-head"><h2>测试场景（可多选批量测试）</h2></div>
-            <div class="scenario-toolbar">
-              <button id="btn-select-all" class="button button-mini" type="button">全选</button>
-              <button id="btn-select-none" class="button button-mini" type="button">清空</button>
-              <span id="scenario-count" class="scenario-count">已选 1 项</span>
-            </div>
-            <div id="scenario-list" class="scenario-list">
-              <label class="check-row"><input type="checkbox" class="scenario-check" value="__startup" checked /><span class="check-text">启动流程（默认启动）</span></label>
-            </div>
-
-            <div class="field-row">
-              <label class="field field-col" for="pressure-select">
-                <span class="field-label">压测强度（每场景）</span>
-                <select id="pressure-select" class="input">
-                  <option value="none">无（测场景原始负载）</option>
-                  <option value="x2">角色 ×2（克隆一倍角色）</option>
-                  <option value="x5">角色 ×5</option>
-                  <option value="x10">角色 ×10（上限 200）</option>
-                </select>
-              </label>
-              <label class="field field-col" for="duration-input">
-                <span class="field-label">每场景时长（秒）</span>
-                <input id="duration-input" class="input" type="number" min="5" max="600" step="5" value="30" />
-              </label>
-              <label class="field field-col" for="budget-input">
-                <span class="field-label">帧预算（ms）</span>
-                <input id="budget-input" class="input" type="number" min="1" max="100" step="0.1" value="16.7" />
-              </label>
-            </div>
-
-            <p class="hint">
-              判定口径：<b>每帧计算压力 = Game.update（逻辑）+ Game.deferredRendering（渲染）</b>；
-              P95 ≤ 帧预算判 <b class="pass-text">PASS</b>（默认 60fps 预算 16.7ms）。压测只影响沙箱本次运行，不写回工程。
-            </p>
-
-            <button id="btn-start" class="button button-primary button-block" type="button" disabled>开始测试</button>
-            <button id="btn-stop" class="button button-block hidden" type="button">停止测试</button>
-            <p id="run-hint" class="hint hidden">测试期间请保持本页签在前台、游戏画面可见（后台标签页会被浏览器节流）。</p>
-
-            <hr class="separator" />
-
-            <div class="panel-head"><h2>基线（改版回归对比）</h2></div>
-            <p id="baseline-info" class="hint">还没有基线：跑完一次测试后可保存为基线，之后每次自动对比。</p>
-            <div class="field-row">
-              <button id="btn-baseline-save" class="button" type="button" disabled>保存为基线</button>
-              <button id="btn-baseline-clear" class="button" type="button" disabled>清除基线</button>
-            </div>
-
-            <hr class="separator" />
-
-            <div class="panel-head"><h2>报告</h2></div>
-            <button id="btn-export-json" class="button button-block" type="button" disabled>导出 JSON 报告</button>
-            <button id="btn-export-md" class="button button-block" type="button" disabled>导出 Markdown 报告</button>
-
-            <div class="panel-head"><h2>事件耗时 Top（事件级定位）</h2></div>
-            <div id="event-bars" class="bars"><div class="empty-state small">测试后显示</div></div>
-
-            <div class="panel-head"><h2>更新器耗时 Top</h2></div>
-            <div id="updater-bars" class="bars"><div class="empty-state small">测试后显示</div></div>
-
-            <div class="panel-head"><h2>渲染器耗时 Top</h2></div>
-            <div id="renderer-bars" class="bars"><div class="empty-state small">测试后显示</div></div>
+        <aside class="side-panel">
+          <div class="panel-head"><h2>真机采集文件</h2></div>
+          <input id="trace-input" type="file" accept=".json,application/json" multiple hidden />
+          <input id="spector-input" type="file" accept=".json,application/json" multiple hidden />
+          <div id="trace-drop" class="drop-zone" role="button" tabindex="0">
+            <span class="drop-icon">CPU</span>
+            <span><b>DevTools Performance</b><small>导入 trace JSON</small></span>
           </div>
-        </section>
+          <div id="spector-drop" class="drop-zone" role="button" tabindex="0">
+            <span class="drop-icon">GL</span>
+            <span><b>Spector.js</b><small>导入 capture JSON</small></span>
+          </div>
 
-        <!-- 右侧：游戏画面 / 批量结果 / 实时指标 -->
+          <div class="panel-head"><h2>已载入</h2></div>
+          <div id="source-list" class="source-list"><div class="empty-state small">尚未导入报告</div></div>
+
+          <div class="panel-head"><h2>回归基线</h2></div>
+          <p id="baseline-info" class="hint">尚未保存分析基线</p>
+          <div class="button-row">
+            <button id="save-baseline" class="button" type="button" disabled>保存基线</button>
+            <button id="clear-baseline" class="icon-button" type="button" disabled title="清除基线" aria-label="清除基线">×</button>
+          </div>
+
+          <div class="source-note">
+            <span>采集器</span>
+            <a href="https://github.com/BabylonJS/Spector.js" target="_blank" rel="noreferrer">Spector.js · MIT</a>
+            <span>CPU/GC/帧数据使用 Electron 内置 Chromium DevTools。</span>
+          </div>
+        </aside>
+
         <section class="main-panel">
-          <div id="game-wrap" class="game-wrap">
-            <iframe id="game-frame" title="游戏运行时（真实运行所选工程）"></iframe>
-            <div id="game-overlay" class="game-overlay">
-              <div class="overlay-title">性能测试台</div>
-              <div class="overlay-text">① 选择游戏工程 → ② 勾选场景 → ③ 点「开始测试」</div>
-              <div class="overlay-text">工具会在沙箱 iframe 里真实运行工程源码，批量测量每帧计算压力</div>
-            </div>
+          <nav class="tabs" aria-label="分析视图">
+            <button class="tab active" type="button" data-tab="overview">总览</button>
+            <button class="tab" type="button" data-tab="cpu">CPU 与长帧</button>
+            <button class="tab" type="button" data-tab="webgl">WebGL</button>
+          </nav>
+
+          <div id="empty-view" class="empty-view">
+            <div class="empty-symbol">⌁</div>
+            <h1>导入真机采集报告</h1>
+            <p>支持 Electron DevTools Performance trace 与 Spector.js WebGL capture。</p>
           </div>
 
-          <div id="batch-progress" class="batch-progress hidden"></div>
-          <div id="batch-table-wrap" class="batch-table-wrap hidden">
-            <table id="batch-table" class="batch-table">
-              <thead>
-                <tr>
-                  <th>场景</th><th>压测</th><th>帧数</th><th>FPS</th><th>P95</th><th>ΔP95</th><th>超预算</th><th>判定</th><th>主要瓶颈</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
+          <div id="dashboard" class="dashboard hidden">
+            <section data-panel="overview">
+              <div id="metrics-grid" class="metrics-grid"></div>
+              <div class="section-head"><h2>诊断结论</h2></div>
+              <div id="findings" class="findings"></div>
+            </section>
 
-          <div class="metrics-grid">
-            <div class="metric-card">
-              <div class="metric-label">实时 FPS</div>
-              <div id="m-fps" class="metric-value">--</div>
-            </div>
-            <div class="metric-card">
-              <div class="metric-label">平均计算耗时</div>
-              <div id="m-avg" class="metric-value">--</div>
-            </div>
-            <div class="metric-card">
-              <div class="metric-label">P95 计算耗时</div>
-              <div id="m-p95" class="metric-value">--</div>
-            </div>
-            <div class="metric-card">
-              <div class="metric-label">最大计算耗时</div>
-              <div id="m-max" class="metric-value">--</div>
-            </div>
-            <div class="metric-card">
-              <div class="metric-label">帧预算占用（P95）</div>
-              <div id="m-budget" class="metric-value">--</div>
-            </div>
-            <div class="metric-card verdict">
-              <div class="metric-label">判定</div>
-              <div id="m-verdict" class="metric-value">未测试</div>
-            </div>
-          </div>
+            <section data-panel="cpu" class="hidden">
+              <div class="section-head"><h2>CPU 热点</h2><span>按采样时间排序</span></div>
+              <div class="table-wrap"><table><thead><tr><th>函数</th><th>采样耗时</th><th>样本</th><th>位置</th></tr></thead><tbody id="hotspot-body"></tbody></table></div>
+              <div class="section-head"><h2>主线程长任务</h2><span>阈值 50ms</span></div>
+              <div class="table-wrap"><table><thead><tr><th>开始时间</th><th>持续时间</th><th>任务</th></tr></thead><tbody id="task-body"></tbody></table></div>
+            </section>
 
-          <div class="scene-line">
-            <span id="scene-info" class="scene-info">场景统计：--</span>
-            <span id="run-info" class="run-info">采样：-- 帧</span>
+            <section data-panel="webgl" class="hidden">
+              <div class="section-head"><h2>WebGL 上下文</h2></div>
+              <div id="context-facts" class="facts"></div>
+              <div class="section-head"><h2>命令统计</h2><span>按耗时排序</span></div>
+              <div class="table-wrap"><table><thead><tr><th>命令</th><th>次数</th><th>捕获耗时</th></tr></thead><tbody id="webgl-body"></tbody></table></div>
+            </section>
           </div>
         </section>
       </main>
 
-      <footer class="statusbar">
-        <span id="status-text">等待选择工程</span>
-        <span class="status-spacer"></span>
-        <span id="budget-text">帧预算：16.7 ms/帧（60fps）</span>
-      </footer>
+      <footer class="statusbar"><span id="status-text">等待导入真机报告</span><span class="status-spacer"></span><span>离线分析 · 不运行游戏 · 不写入工程</span></footer>
     </div>
-
     <div id="toast-region"></div>
-    <script src="./app.js?v=20260822-perf-lab-8"></script>
+    <script src="./analyzer-core.js?v=20260822-perf-analysis-1"></script>
+    <script src="./app.js?v=20260822-perf-analysis-1"></script>
+    <script src="../version.json?v=20260822-tools-version-5"></script>
+    <script>document.querySelectorAll('[data-app-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS['perf-lab']||{}).version})</script>
   </body>
 </html>

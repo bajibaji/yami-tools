@@ -1,97 +1,41 @@
 'use strict'
 
 const assert = require('assert')
-const fs = require('fs')
-const vm = require('vm')
+const core = require('./analyzer-core.js')
 
-let clock = 0
-let receivedTimestamp = null
-const frames = []
+const trace = core.analyze({ traceEvents: [
+  { ph: 'M', name: 'thread_name', pid: 1, tid: 2, ts: 0, args: { name: 'CrRendererMain' } },
+  { ph: 'X', name: 'RunTask', pid: 1, tid: 2, ts: 0, dur: 80000 },
+  { ph: 'X', name: 'MajorGC', pid: 1, tid: 2, ts: 20000, dur: 10000 },
+  { ph: 'I', name: 'BeginFrame', pid: 9, tid: 9, ts: 0 },
+  { ph: 'I', name: 'BeginFrame', pid: 9, tid: 9, ts: 20000 },
+  { ph: 'P', name: 'ProfileChunk', pid: 1, tid: 2, ts: 30000, args: { data: { cpuProfile: { nodes: [{ id: 7, callFrame: { functionName: 'Scene.update', url: 'scene.js', lineNumber: 9 } }], samples: [7, 7] }, timeDeltas: [5000, 7000] } } },
+] })
+assert.strictEqual(trace.kind, 'trace')
+assert.strictEqual(trace.metrics.longTaskCount, 1)
+assert.strictEqual(trace.metrics.gcMs, 10)
+assert.strictEqual(trace.metrics.frameP95Ms, 20)
+assert.strictEqual(trace.hotspots[0].name, 'Scene.update')
+assert.strictEqual(trace.hotspots[0].totalMs, 12)
+assert.strictEqual(trace.hotspots[0].samples, 2)
 
-class SharedModule {
-  update() { clock += 2 }
-  render() { clock += 3 }
-}
+const spector = core.analyze({
+  canvas: { width: 1920, height: 1080 },
+  context: { capabilities: { RENDERER: 'ANGLE GPU', VENDOR: 'Google', VERSION: 'WebGL 2.0', SAMPLES: 4, MAX_TEXTURE_SIZE: 16384 } },
+  commands: [
+    { name: 'drawArrays', startTime: 1, endTime: 4, DrawState: { redundantCommandIds: [1, 2] } },
+    { name: 'drawElements', startTime: 4, endTime: 8 },
+  ],
+  listenCommandsStartTime: 1,
+  listenCommandsEndTime: 8,
+  frameMemory: { Texture2d: 1048576, Buffer: 1024 },
+  analyses: [{ analyserName: 'CommandsSummary', total: 2, draw: 2, clear: 0 }],
+})
+assert.strictEqual(spector.kind, 'spector')
+assert.strictEqual(spector.metrics.drawCalls, 2)
+assert.strictEqual(spector.metrics.redundantCommands, 2)
+assert.strictEqual(spector.metrics.frameMemoryBytes, 1049600)
+assert.strictEqual(spector.context.Renderer, 'ANGLE GPU')
 
-class Actor {
-  constructor(data) {
-    this.data = data
-    this.name = '测试角色'
-    this.presetId = 'actor'
-    this.teamId = 'team'
-    this.x = 1
-    this.y = 2
-    this.parent = null
-  }
-  setTeam(teamId) { this.teamId = teamId }
-  setPosition(x, y) { this.x = x; this.y = y }
-  updateAngle() {}
-  setScale() {}
-}
-
-class ActorList extends Array {
-  append(actor) {
-    actor.parent = this
-    this.push(actor)
-    return true
-  }
-}
-
-const shared = new SharedModule()
-const actors = new ActorList()
-actors.append(new Actor({ id: 'actor-data' }))
-
-const context = {
-  console,
-  performance: { now: () => clock },
-  requestAnimationFrame: (callback) => { frames.push(callback); return frames.length },
-  setTimeout,
-  Data: { manifest: {} },
-  Time: { fps: 60 },
-  EventManager: { activeEvents: [] },
-  UI: { manager: { list: [] } },
-  GL: { textureManager: { count: 0 } },
-  Scene: {
-    binding: null,
-    actors,
-    visibleActors: [],
-    visibleAnimations: [],
-    visibleTriggers: [],
-    load: async () => {},
-  },
-  Game: {
-    updaters: [shared],
-    renderers: [shared],
-    update(timestamp) {
-      receivedTimestamp = timestamp
-      for (const module of this.updaters) module.update()
-      for (const module of this.renderers) module.render()
-    },
-    loop() {},
-  },
-}
-context.window = context
-
-vm.runInNewContext(fs.readFileSync(__dirname + '/perf-core.js', 'utf8'), context)
-const probe = context.__YAMI_PERF__
-assert(probe, '探针应成功安装')
-assert.strictEqual(probe.isSceneReady(), true, '默认空场景的旧版 Scene.actors 应被识别为就绪')
-
-probe.start()
-context.Game.update(123)
-frames.shift()(clock)
-
-const snapshot = probe.stop()
-assert.strictEqual(receivedTimestamp, 123, '包装 Game.update 后必须保留 timestamp 参数')
-assert(snapshot.compute.p95 >= 5, '旧版 Game.update 内含更新和渲染时应记录完整帧耗时')
-assert(snapshot.updaters.some((item) => item.name === 'SharedModule'), '同一模块的 update 应被统计')
-assert(snapshot.renderers.some((item) => item.name === 'SharedModule'), '同一模块的 render 也应被统计')
-
-context.Scene.binding = { id: 'old-scene' }
-const pressure = probe.pressure('x2')
-assert.strictEqual(pressure.original, 1)
-assert.strictEqual(pressure.target, 2)
-assert.strictEqual(pressure.cloned, 1, 'x2 表示最终总数为两倍，不是额外克隆两倍')
-assert.strictEqual(actors.length, 2, '旧版 Scene.actors.append 压测路径应可用')
-
-console.log('perf-lab self-check passed')
+assert.throws(() => core.analyze({ nope: true }), /无法识别/)
+console.log('perf-analysis self-check passed')

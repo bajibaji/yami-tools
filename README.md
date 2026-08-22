@@ -10,7 +10,7 @@
 | **角色编辑器** | 可视化编排角色掉落表、掉落事件与人物属性 |
 | **地图编辑器** | 10×10 地图格、通行关系、等级和刷怪池的 Excel/JSON 编辑 |
 | **挂机验证台** | 按游戏真实数值模型模拟战斗/成长/收益，定位数值瓶颈 |
-| **性能测试台** | 浏览器沙箱真实运行工程源码，按 60fps 帧预算 16.7ms 测量每帧计算压力 |
+| **性能分析台** | 分析 Electron 真机游玩的 DevTools trace 与 Spector.js WebGL capture |
 | **快速本地化** | 找未本地化文本、缺翻译、孤儿引用，导出/导入翻译 Excel |
 
 ---
@@ -136,18 +136,17 @@
 
 ---
 
-## 性能测试台
+## 性能分析台
 
-在浏览器沙箱里真实运行所选工程的网页版源码（不修改工程、纯只读），测量每一帧的**计算压力**：
+只分析打包游戏或 Open Yami 试玩窗口在 **Electron 真机环境**中产生的报告，不再在网页 iframe 中模拟运行游戏：
 
-- 口径：计算耗时 = `Game.update()`（逻辑更新）+ `Game.deferredRendering()`（渲染）；
-- 判定：采样统计 **P95 ≤ 帧预算（默认 60fps 的 16.7ms）** 判 PASS；
-- 批量场景：勾选多个场景一次跑完，可选「角色 ×2/×5/×10」真实克隆压测，产出对比表；
-- 基线回归：保存基线后每次自动对比 ΔP95/Δavg，变慢的更新器/渲染器/事件标红；
-- 事件级定位：报告 `EventManager.activeEvents` 每个事件处理器的耗时 Top（事件类型 :: 事件文件名）；
-- 原理：Service Worker 把工具页变成游戏工程的虚拟文件服务器（File System Access API 目录句柄按需供文件），游戏在 iframe 里加载真实 `Dist/Script/*.js`，运行时探针只读包装计时，游戏存档落在工具页同源 IndexedDB（沙箱隔离，不影响桌面工程 Save 目录）。
+- CPU / GC / 长帧：导入 Electron 内置 Chromium DevTools 的 Performance trace JSON；
+- WebGL：导入现成开源扩展 [Spector.js](https://github.com/BabylonJS/Spector.js) 的 capture JSON；
+- 分析：主线程长任务、帧间隔 P95、GC 占用、CPU 热点、Draw Call、GL 命令、冗余状态和帧资源内存；
+- 回归：保存当前摘要为本机基线，后续报告自动显示差值；
+- 安全：报告全程在浏览器本地解析，不上传、不运行游戏、不读写工程。
 
-注意事项：测试期间保持页签前台、游戏画面可见（后台标签页会被浏览器节流）；音频解锁等需要点击的操作在 iframe 内完成即可；工具兼容入口加载 `Dist/Script/` 的新工程和直接加载 `Script/` 的旧工程，TypeScript 工程需先由编辑器完成编译。
+Spector.js 使用上游原版扩展（MIT），本仓库不维护自研采集插件。详细采集步骤见 `tools/perf-lab/README.md`。
 
 ---
 

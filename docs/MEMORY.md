@@ -102,16 +102,15 @@
 - `小工具合集与地图Excel导出方案.txt`（v1 旧版）
 
 
-## 9. 性能测试台（tools/perf-lab/，v0.2.0 回归测试台，2026-08-21 起）
+## 9. Electron 性能分析台（tools/perf-lab/，v0.3.0）
 
-- 用户需求：工具页**根据游戏真实源码做性能测试**，判定标准「每帧计算压力 ≤ 16.7ms（60fps）」。实现不是静态估算：Service Worker 把工具页变成工程虚拟文件服务器（拦截 `<scope>/run/**` → 工程相对路径 → MessageChannel 向工具页按需要文件），游戏在 iframe 里真实加载工程的 `index.html` + `Dist/Script/*.js`；SW 服务 index.html 时注入 `perf-core.js` 运行时探针。
-- 口径：`compute = Game.update() + Game.deferredRendering()`（逻辑+渲染），**不用帧间隔**（含 vsync 等待）；主判定 **P95 ≤ 帧预算（默认 16.7ms）PASS**，最大帧/超预算帧数复核（「严格每一帧」会被加载/GC 尖峰误报）。探针只读包装 `Game.update/deferredRendering/loop` + 各 updater/renderer（`__yamiPerfWrapped__` 幂等标记）；`Game.defer` 已 resolve，渲染微任务在同一帧 rAF 回调后执行，探针 rAF 晚注册故结算时序正确。
-- 三件套：`sw.js`（虚拟文件服务+探针注入，30s 超时）、`perf-core.js`（探针，`window.__YAMI_PERF__`）、`app.js`（工程加载复用 `loot-smith-settings`/`last-project-handle`，场景列表来自 `Data/manifest.json`，轮询 snapshot，PASS/FAIL + JSON/Markdown 导出）。纯只读、游戏存档落在工具页同源 IndexedDB（与工程 Save 隔离）。缓存版本 `?v=20260821-perf-lab-2`（SW/styles/app/探针注入全部带版本）。
-- 工程同步：FileSystemObserver → 500ms 防抖重扫；无 FSO 回退 5s 轮询 manifest lastModified+size；测试中不打断。
-- 已知限制：必须 https/localhost；页签前台 + iframe 可见（后台 rAF 节流）；音频等手势在 iframe 内点击解锁；工程需已编译出 Dist。**关键坑①运行时是顶层 `let` 单例（`Data/Game/Time/Scene/UI/GL` 不是 window 属性）**——父页不能 `iframe.contentWindow.Game`，一切访问由 perf-core 裸标识符代查（`__YAMI_PERF__.isReady()/loadScene()`）；**关键坑②`Game.updaters/renderers` 在异步 initialize 里整体重建**——`tick()` 每 60 帧 + `start()` 时 `refreshWraps()` 幂等补包（`__yamiPerfWrapped__`），勿删；**关键坑③sw.js 的 RUN_PREFIX 必须用 `new URL(scope).pathname + 'run/'` 和请求 pathname 比**（拿绝对 URL 字符串去比 pathname 永不匹配——首跑 404 的根因）。
-- v0.2.0（用户要求 A/B/C 全做）：**A 批量+压测**——场景多选、逐场景重载沙箱，`pressure(x2/x5/x10)` 用 `Scene.binding.createActor` 克隆本地角色（**坑④：createActor 在 SceneContext=Scene.binding 上，SceneManager 上是 undefined**；**坑⑤：Scene.load 前必须 `isSceneReady()`（Scene.actor&&Scene.entity），否则首场景竞态 setObjectLists**）；**B 基线回归**——localStorage `perf-lab-baseline`，每次运行 diff ΔP95/Δavg（退化阈值 >0.5ms 或 >15%）+ 模块/事件 Top5 退化清单；**C 事件级**——包装 `EventManager.activeEvents` 每个 handler.update，名称为 `type :: 文件名`，动态增减靠 60 帧 refreshWraps 补包。探针新增 `isSceneReady/pressure/diag`。
-- 验证（2026-08-21）：夹具 E2E（`.e2e-tmp/test-perf.js`）全绿（fallback 导入 → SW 虚拟服务 → iframe 运行 → PASS → 模块/事件 Top → JSON 下载 → 基线保存 → 二次运行 ΔP95 → 零 pageerror）；真实工程 `D:\new-game` 只读冒烟（`.e2e-tmp/verify-real-perf.js`）——单场景 PASS、**7 场景批量 7/7 成功**（世界/地下城/城镇100-102/森林道路/沙漠道路，P95 0.1~0.6ms 无头环境仅链路验证）、压测 x2 实测克隆 8 角色成功。工程自身噪声：Excel操作 插件 dist 含 `require("fs")`，纯浏览器沙箱报 ReferenceError（Electron 才兼容），不阻断测量。
-- 交接文档：`docs/HANDOFF-PERF-LAB.md`（含 v0.2.0 升级记录、验收清单与下一步候选：真机模式、快速批量、可保存预设）。
+- 2026-08-22 用户否决浏览器模拟口径：浏览器沙箱、iframe、Service Worker、角色克隆压测和自研运行时探针全部删除，不再给“真机性能”结论。
+- 当前定位：只分析真实 Electron 游戏正常游玩时由成熟工具采集的离线报告；网页不运行游戏、不读写工程。
+- CPU/GC/长帧采集：Electron 内置 Chromium DevTools Performance，导入 trace JSON；解析主线程长任务、帧间隔 P95、GC 和 `ProfileChunk` CPU 热点。
+- WebGL 采集：上游 [BabylonJS/Spector.js](https://github.com/BabylonJS/Spector.js) 原版扩展（MIT），导入 capture JSON；解析 Draw Call、GL 命令、冗余状态、帧资源内存和 WebGL 上下文。
+- 核心文件：`analyzer-core.js`（Node/浏览器共用纯函数）、`app.js`（导入/渲染/基线/导出）、`self-check.js`（双格式最小回归）。
+- 验证：自造 DevTools trace + Spector.js 上游 `test/integration/fixtures/captured-frame.json` 均通过；浏览器实际导入后总览、CPU、WebGL 和基线视图正常。
+- 交接文档：`docs/HANDOFF-PERF-LAB.md`。
 
 
 - 主页卡片顺序（用户 2026-08-21 明确）：性能测试台卡片放**最后一个**（存档台之后）；`index.html` 的 `order` 数组同步为 `...,'save-lab','perf-lab'`，不要移回中间。

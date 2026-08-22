@@ -1,63 +1,57 @@
-# 性能测试台（perf-lab · 回归测试台）
+# Electron 性能分析台
 
-在浏览器沙箱里**真实运行**所选 Yami 工程的网页版，批量测量每一帧的计算压力，按 60fps 预算判定，并支持压测、基线回归对比与事件级瓶颈定位。纯只读，不写回工程。
+本工具只做离线分析。游戏必须在真实 Electron 环境中正常游玩，采集由现成工具完成：
 
-## 能做什么
+| 范围 | 采集工具 | 导入文件 |
+| --- | --- | --- |
+| CPU、GC、主线程、长帧 | Electron 自带 Chromium DevTools Performance | trace JSON |
+| WebGL 命令、Draw Call、纹理/缓冲内存 | [BabylonJS/Spector.js](https://github.com/BabylonJS/Spector.js) 原版扩展 | capture JSON |
 
-| 功能 | 说明 |
-| --- | --- |
-| 批量场景（A） | 勾选多个场景一次跑完，逐场景重载沙箱、真实运行并产出对比表 |
-| 压测（A） | 每场景可选「角色 ×2 / ×5 / ×10」：按真实 `Scene.createActor` 克隆场景角色（上限 200），测高负载下的每帧压力 |
-| 基线回归（B） | 跑完一次可「保存为基线」；之后每次运行自动对比 ΔP95/Δavg，P95 涨幅超过阈值（>0.5ms 或 >15%）标红，并列出变慢的更新器/渲染器/事件 |
-| 事件级定位（C） | 探针包装 `EventManager.activeEvents` 每个事件处理器，报告「事件类型 :: 事件文件名」耗时 Top |
-| 帧预算判定 | 计算耗时 P95 ≤ 预算（默认 16.7ms）判 **PASS**，否则 **FAIL**；同时给出最大帧与超预算帧数 |
-| 报告导出 | JSON（含全部帧样本与 diff）与 Markdown 报告 |
+浏览器快速回归、Service Worker 虚拟工程和 iframe 运行器已经移除。
 
-## 判定口径
+## 采集 CPU / GC / 长帧
 
+1. 在 Open Yami 的游戏试玩窗口或打包后的 Electron 游戏中打开 DevTools。
+2. 进入 **Performance** 面板，点击录制。
+3. 正常游玩并复现卡顿；建议一次录制 15～60 秒，只覆盖一个明确问题。
+4. 停止录制，使用 Performance 面板的保存功能导出 trace JSON。
+5. 回到性能分析台，将 JSON 拖入“DevTools Performance”。
+
+分析台会读取主线程任务、帧标记、V8 CPU Profile 和 GC 事件。不同 Electron/Chromium 版本的 trace 字段可能略有差异；缺少 CPU Profile 时页面会明确提示。
+
+## 采集 WebGL
+
+Spector.js 是成熟的通用 WebGL 调试扩展，MIT 许可证。本项目直接使用上游扩展，不修改其采集逻辑。
+
+上游安装方式：
+
+1. 获取 [Spector.js 仓库](https://github.com/BabylonJS/Spector.js)。
+2. 使用仓库中的 `extensions/` 目录作为未打包扩展。
+3. Open Yami 编辑器启动时会从安装目录的 `extension/` 加载扩展；试玩窗口与编辑器共用 Electron session。
+4. 打包后的独立 Electron 游戏必须由其主进程调用 `session.defaultSession.loadExtension(<Spector extensions 目录>)`，或使用该游戏已经支持的扩展加载方式。
+5. 正常游玩到目标画面，使用 Spector.js 捕获目标帧并保存 capture JSON。
+6. 将 JSON 拖入分析台的“Spector.js”区域。
+
+Spector.js 单次捕获最多 10000 条 GL 命令。达到上限时分析台会提示报告可能被截断。
+
+## 分析结果
+
+- **总览**：采集时长、帧间隔 P95、最长任务、长任务数量、GC、Draw Call、GL 命令和帧资源内存。
+- **CPU 与长帧**：V8 Profile 热点与超过 50ms 的主线程任务。
+- **WebGL**：Renderer/Vendor/WebGL 版本、命令次数与捕获耗时。
+- **诊断结论**：帧预算超限、GC 占用、冗余 GL 状态、Draw Call 偏高和捕获截断。
+- **基线**：保存在当前浏览器 `localStorage`，只比较摘要指标。
+
+## 验证
+
+```powershell
+node --check tools/perf-lab/app.js
+node --check tools/perf-lab/analyzer-core.js
+node tools/perf-lab/self-check.js
 ```
-每帧计算压力 = Game.update()（逻辑更新，含全部 updater）
-             + Game.deferredRendering()（渲染，含全部 renderer）
-```
 
-- 主标准：**P95(计算耗时) ≤ 帧预算**，默认 16.7ms（60fps）；
-- 参考指标：平均/最大/P99 计算耗时、超预算帧数、实时 FPS、帧间隔 P95（含垂直同步等待）；
-- 严格意义上「每一帧都 ≤16.7ms」几乎不可能（加载/GC 偶发尖峰），所以用 P95 做工业级判定，最大帧与超预算帧数用于复核。
-
-## 使用步骤
-
-1. 用 Chrome/Edge 打开工具（GitHub Pages 或本地 `http://127.0.0.1:4173/tools/perf-lab/`）；
-2. 点「选择工程」选中游戏工程根目录（含 `index.html`、`Data/manifest.json`，脚本可由入口加载新版 `Dist/Script/` 或旧版 `Script/`）；不支持目录选择时走文件夹导入（只读）；
-3. 勾选要测的场景（可全选批量）、选压测强度、每场景时长与帧预算；
-4. 点「开始测试」→ 保持页签前台 → 等待批量完成；
-5. 看结果表（PASS/FAIL、ΔP95、主要瓶颈）与侧栏事件/更新器/渲染器 Top；跑完第一版可「保存为基线」，之后每次自动对比；
-6. 导出 JSON / Markdown 报告。
-
-## 原理（四件套）
-
-| 文件 | 职责 |
-| --- | --- |
-| `sw.js` | Service Worker：拦截 `./run/**` 虚拟路径，把请求映射成工程内相对路径，通过 MessageChannel 向工具页按需索取文件（工具页持有目录句柄）；服务 `index.html` 时注入探针 |
-| `perf-core.js` | 注入游戏页的运行时探针：只读包装 `Game.update/deferredRendering/loop`、各 updater/renderer 与每个激活事件处理器；提供 `isReady/isSceneReady/loadScene/pressure/start/stop/snapshot/samples/diag` API |
-| `app.js` | 工程选择/扫描、SW 握手、批量测试调度、压测注入、基线存取与 diff、实时指标、判定与报告导出 |
-| `index.html` + `styles.css` | 工具页 UI |
-
-游戏运行时数据（IndexedDB 存档等）落在工具页同源，与桌面工程 `Save/` 目录完全隔离；压测克隆的角色只存在于本次沙箱运行里，不写回工程。
-
-## 限制与注意事项
-
-- 必须 https 或 localhost（Service Worker 要求安全上下文）；
-- 测试期间页签保持前台，iframe 保持可见，否则浏览器节流 rAF；
-- iframe 分辨率按工程配置渲染，WebGL 能力取决于宿主浏览器；无头/后台环境测出的数值不代表真机，只用于回归对比时注意环境一致；
-- 音频/输入等需要用户手势的功能，在 iframe 内点击一次即可；
-- 工具按工程自己的 `index.html` 加载脚本，兼容新版 `Dist/Script/` 与旧版直接使用 `Script/` 的工程；TypeScript 工程仍须先由 Yami 编辑器编译；
-- 工程里如果有个别插件脚本只能在 Electron 环境运行（如 dist 里直接写 `require("fs")`），沙箱会打 console 报错，但不影响性能测量本身；
-- 对旧工程里启动阶段直接调用的 `fs/path/os`，沙箱提供只读兼容垫片：存档读取会回退默认数据，所有写操作都会拒绝；报告会标记该模式，桌面文件 I/O 不计入性能结果；
-- 压测按当前场景已有角色为模板克隆，场景里没有本地角色时压测会提示跳过；
-- 自动同步：根目录模式用 FileSystemObserver 监听工程变化自动重扫（测试进行中不打断，结束后点「重新扫描」生效）；导入模式请手动重扫。
+`self-check.js` 覆盖 DevTools trace 和 Spector capture 两种格式。Spector 解析还使用上游仓库的 `test/integration/fixtures/captured-frame.json` 做过真实格式验证。
 
 ## 版本
 
-- v0.2.1（2026-08-22）：兼容旧版 `Script/` 工程；修复旧版帧时间参数丢失、渲染器漏统计、角色压测倍数多算与零样本误判 PASS；
-- v0.2.0（2026-08-21）：批量场景 + 角色克隆压测（A）、基线保存与回归 diff（B）、事件级耗时定位（C）；
-- v0.1.0（2026-08-21）：首版，真实运行 + 16.7ms 帧预算判定 + 报告导出。
+- v0.3.0（2026-08-22）：移除浏览器快速回归，改为 Electron DevTools + Spector.js 真机报告分析台。
