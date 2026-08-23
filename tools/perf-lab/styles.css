@@ -96,3 +96,18 @@ tbody tr:last-child td { border-bottom: none; }
 /* ---------- v0.4.0 真机探针 ---------- */
 .probe-script { width: 100%; min-height: 150px; margin-top: 8px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: 11px/1.5 Consolas, "Courier New", monospace; resize: vertical; white-space: pre; }
 .probe-script:focus { outline: none; border-color: var(--accent); }
+
+/* ---------- 使用说明弹窗 ---------- */
+.help-modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.help-modal.hidden { display: none; }
+.help-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.65); }
+.help-dialog { position: relative; width: min(860px, 100%); max-height: 88vh; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); overflow: hidden; }
+.help-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+.help-header h2 { margin: 0; font-size: 16px; }
+.help-body { padding: 16px 20px; overflow-y: auto; font-size: 13px; line-height: 1.7; color: var(--text); }
+.help-body h3 { margin: 18px 0 6px; font-size: 14px; color: var(--accent-2); border-left: 3px solid var(--accent); padding-left: 8px; }
+.help-body h4 { margin: 12px 0 4px; font-size: 13px; color: var(--text); }
+.help-body p, .help-body li { color: var(--muted); }
+.help-body ol, .help-body ul { padding-left: 20px; margin: 6px 0; }
+.help-body code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 12px; color: var(--accent-2); }
+.help-body a { color: var(--accent-2); }

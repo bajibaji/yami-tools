@@ -13,6 +13,7 @@
     traceInput: $('trace-input'), spectorInput: $('spector-input'), probeInput: $('probe-input'),
     traceDrop: $('trace-drop'), spectorDrop: $('spector-drop'), probeDrop: $('probe-drop'),
     copyProbe: $('copy-probe'), probeScript: $('probe-script'),
+    helpButton: $('help-button'), helpModal: $('help-modal'), helpClose: $('help-close'),
     clear: $('clear-reports'), saveBaseline: $('save-baseline'), clearBaseline: $('clear-baseline'), exportReport: $('export-report'),
     sourceList: $('source-list'), status: $('status-text'), baselineInfo: $('baseline-info'),
     empty: $('empty-view'), dashboard: $('dashboard'), metrics: $('metrics-grid'), findings: $('findings'),
@@ -338,6 +339,14 @@
       toast('探针脚本已复制（兼容模式）', 'success')
     }
   })
+
+  function openHelp() { els.helpModal.classList.remove('hidden') }
+  function closeHelp() { els.helpModal.classList.add('hidden') }
+  els.helpButton.addEventListener('click', openHelp)
+  els.helpClose.addEventListener('click', closeHelp)
+  els.helpModal.addEventListener('click', (event) => { if (event.target.hasAttribute('data-help-close')) closeHelp() })
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !els.helpModal.classList.contains('hidden')) closeHelp() })
+
 
   bindDrop(els.traceDrop, els.traceInput, 'trace')
   bindDrop(els.spectorDrop, els.spectorInput, 'spector')
