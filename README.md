@@ -142,6 +142,7 @@
 
 - CPU / GC / 长帧：导入 Electron 内置 Chromium DevTools 的 Performance trace JSON；
 - WebGL：导入现成开源扩展 [Spector.js](https://github.com/BabylonJS/Spector.js) 的 capture JSON；
+- 逐帧定位：粘贴工具页提供的「真机探针」到 Electron DevTools 控制台，游玩后导出 JSON，分析哪段更新器/渲染器/事件最常把帧顶超 16.7ms；
 - 分析：主线程长任务、帧间隔 P95、GC 占用、CPU 热点、Draw Call、GL 命令、冗余状态和帧资源内存；
 - 回归：保存当前摘要为本机基线，后续报告自动显示差值；
 - 安全：报告全程在浏览器本地解析，不上传、不运行游戏、不读写工程。

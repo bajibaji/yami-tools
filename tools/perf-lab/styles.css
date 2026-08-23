@@ -92,3 +92,7 @@ tbody tr:last-child td { border-bottom: none; }
   .finding { grid-template-columns: 34px 1fr; }
   .finding span:last-child { grid-column: 2; }
 }
+
+/* ---------- v0.4.0 真机探针 ---------- */
+.probe-script { width: 100%; min-height: 150px; margin-top: 8px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: 11px/1.5 Consolas, "Courier New", monospace; resize: vertical; white-space: pre; }
+.probe-script:focus { outline: none; border-color: var(--accent); }

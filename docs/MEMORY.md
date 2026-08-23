@@ -102,13 +102,16 @@
 - `小工具合集与地图Excel导出方案.txt`（v1 旧版）
 
 
-## 9. Electron 性能分析台（tools/perf-lab/，v0.3.0）
+## 9. Electron 性能分析台（tools/perf-lab/，v0.4.0）
 
 - 2026-08-22 用户否决浏览器模拟口径：浏览器沙箱、iframe、Service Worker、角色克隆压测和自研运行时探针全部删除，不再给“真机性能”结论。
 - 当前定位：只分析真实 Electron 游戏正常游玩时由成熟工具采集的离线报告；网页不运行游戏、不读写工程。
 - CPU/GC/长帧采集：Electron 内置 Chromium DevTools Performance，导入 trace JSON；解析主线程长任务、帧间隔 P95、GC 和 `ProfileChunk` CPU 热点。
 - WebGL 采集：上游 [BabylonJS/Spector.js](https://github.com/BabylonJS/Spector.js) 原版扩展（MIT），导入 capture JSON；解析 Draw Call、GL 命令、冗余状态、帧资源内存和 WebGL 上下文。
 - 核心文件：`analyzer-core.js`（Node/浏览器共用纯函数）、`app.js`（导入/渲染/基线/导出）、`self-check.js`（双格式最小回归）。
+- v0.4.0 新增「Yami 真机逐帧探针」：工具页生成 `PROBE_SCRIPT`，粘贴到 Electron DevTools 控制台运行，包装 `Game.update/deferredRendering`、各 updater/renderer 与 `EventManager.activeEvents`，逐帧计算 `update+render`，超 16.7ms 的帧记录 Top5 元凶；`window.__YAMI_PERF_PROBE__.copy()` 导出 JSON。`analyzer-core.analyzeProbe()` 聚合「超帧元凶（更新器/渲染器/事件按出现次数与累计 ms）」和「最差帧 Top60」；页面新增「超帧定位」页。不改工程、不写文件。
+- 验证：自造 trace + Spector 上游 fixture + 探针模拟运行（假 Game/EventManager/rAF 30 帧 → copy JSON → analyzer 解析）全部通过；浏览器冒烟三类报告导入与四个视图正常。
+
 - 验证：自造 DevTools trace + Spector.js 上游 `test/integration/fixtures/captured-frame.json` 均通过；浏览器实际导入后总览、CPU、WebGL 和基线视图正常。
 - 交接文档：`docs/HANDOFF-PERF-LAB.md`。
 

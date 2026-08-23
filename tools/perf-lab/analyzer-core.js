@@ -1,4 +1,4 @@
-/* DevTools Performance trace + Spector.js capture 纯函数解析核心。 */
+/* DevTools Performance trace + Spector.js capture + Yami 真机逐帧探针 纯函数解析核心。 */
 (function (root, factory) {
   const api = factory()
   if (typeof module === 'object' && module.exports) module.exports = api
@@ -15,17 +15,22 @@
   }
 
   function analyze(raw) {
+    if (raw && (raw.kind === 'yami-probe' || (raw.budgetMs && Array.isArray(raw.overBudgetFrames) && raw.compute))) {
+      return analyzeProbe(raw)
+    }
     if (Array.isArray(raw) || Array.isArray(raw?.traceEvents)) return analyzeTrace(raw)
     const capture = raw?.capture || raw
     if (Array.isArray(capture?.commands) && capture?.context) return analyzeSpector(capture)
-    throw new Error('无法识别报告格式；需要 DevTools trace JSON 或 Spector.js capture JSON')
+    throw new Error('无法识别报告格式；需要 DevTools trace、Spector.js capture 或 Yami 真机探针 JSON')
   }
+
+  /* ============================ DevTools Performance trace ============================ */
 
   function analyzeTrace(raw) {
     const events = (Array.isArray(raw) ? raw : raw.traceEvents).filter((event) => event && Number.isFinite(event.ts))
     if (!events.length) throw new Error('traceEvents 为空')
     const minTs = Math.min(...events.map((event) => event.ts))
-    const maxTs = Math.max(...events.map((event) => event.ts + finite(event.dur)))
+    const maxTs = events.reduce((max, event) => Math.max(max, event.ts + finite(event.dur)), 0)
     const metadata = new Map()
     for (const event of events) {
       if (event.ph === 'M' && event.name === 'thread_name') metadata.set(`${event.pid}:${event.tid}`, event.args?.name || event.args?.data?.name || '')
@@ -117,6 +122,8 @@
     }).sort((a, b) => b.totalMs - a.totalMs)
   }
 
+  /* ============================ Spector.js capture ============================ */
+
   function analyzeSpector(capture) {
     const commands = capture.commands || []
     const commandMap = new Map()
@@ -164,6 +171,75 @@
     }
   }
 
+  /* ============================ Yami 真机逐帧探针 ============================ */
+
+  function analyzeProbe(raw) {
+    const compute = raw.compute || {}
+    const frame = raw.frame || {}
+    const overBudgetFrames = Array.isArray(raw.overBudgetFrames) ? raw.overBudgetFrames : []
+    const budgetMs = finite(raw.budgetMs, 16.7)
+    const updaters = raw.updaters || []
+    const renderers = raw.renderers || []
+    const events = raw.events || []
+    const metrics = {
+      durationMs: round(raw.durationMs),
+      frameCount: finite(raw.samples, 0),
+      computeAvgMs: round(compute.avg),
+      computeP95Ms: round(compute.p95),
+      computeP99Ms: round(compute.p99),
+      computeMaxMs: round(compute.max),
+      frameP95Ms: round(frame.p95),
+      frameMaxMs: round(frame.max),
+      overBudgetFrames: finite(compute.overBudgetCount, overBudgetFrames.length),
+      budgetMs,
+    }
+    const findings = []
+    if (metrics.overBudgetFrames > 0) {
+      findings.push({ level: 'bad', title: `${metrics.overBudgetFrames} 帧超过 ${budgetMs}ms 预算`, detail: `计算 P95 ${metrics.computeP95Ms}ms，最大 ${metrics.computeMaxMs}ms；查看「超帧定位」页找元凶。` })
+    }
+    if (metrics.computeP95Ms > budgetMs) {
+      findings.push({ level: 'bad', title: '计算耗时 P95 超过帧预算', detail: `P95 ${metrics.computeP95Ms}ms > ${budgetMs}ms（60fps 预算）。` })
+    }
+    if (metrics.computeMaxMs > budgetMs * 2) {
+      findings.push({ level: 'warn', title: '存在明显尖峰帧', detail: `最大计算耗时 ${metrics.computeMaxMs}ms，超过预算 ${budgetMs}ms 的 2 倍。` })
+    }
+    const causes = aggregateOverBudgetCauses(overBudgetFrames)
+    if (causes.length) {
+      const top = causes[0]
+      findings.push({ level: 'bad', title: `超帧元凶：${top.kind} ${top.name}`, detail: `在 ${top.count} 个超帧帧中出现，累计 ${top.totalMs}ms；优先检查该处。` })
+    }
+    return {
+      kind: 'probe',
+      metrics,
+      findings,
+      causes,
+      worstFrames: [...overBudgetFrames].sort((a, b) => finite(b.compute) - finite(a.compute)).slice(0, 60),
+      updaters,
+      renderers,
+      events,
+      scene: raw.scene || null,
+      budgetMs,
+    }
+  }
+
+  function aggregateOverBudgetCauses(frames) {
+    const map = new Map()
+    for (const frame of frames) {
+      for (const kind of ['updaters', 'renderers', 'events']) {
+        for (const item of frame[kind] || []) {
+          if (!item || !item.name) continue
+          const key = `${kind}:${item.name}`
+          const entry = map.get(key) || { kind: kind === 'updaters' ? '更新器' : kind === 'renderers' ? '渲染器' : '事件', name: item.name, count: 0, totalMs: 0, maxMs: 0 }
+          entry.count += 1
+          entry.totalMs += finite(item.ms)
+          entry.maxMs = Math.max(entry.maxMs, finite(item.ms))
+          map.set(key, entry)
+        }
+      }
+    }
+    return [...map.values()].sort((a, b) => b.totalMs - a.totalMs).slice(0, 30)
+  }
+
   function countNamedArrays(value, key) {
     let count = 0
     const seen = new Set()
@@ -177,5 +253,5 @@
     return count
   }
 
-  return { analyze, analyzeTrace, analyzeSpector, percentile }
+  return { analyze, analyzeTrace, analyzeSpector, analyzeProbe, percentile }
 })

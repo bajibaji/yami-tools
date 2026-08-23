@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0d0f14" />
     <title>YA TOOLS · Electron 性能分析台</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260822-perf-analysis-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260822-perf-analysis-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -15,7 +15,7 @@
           <div class="brand-mark">⌁</div>
           <div>
             <div class="eyebrow">ELECTRON RUNTIME ANALYSIS</div>
-            <div class="brand-name">YA TOOLS<span>性能分析台 <em class="version-tag" data-app-version>v0.3.0</em></span></div>
+            <div class="brand-name">YA TOOLS<span>性能分析台 <em class="version-tag" data-app-version>v0.4.0</em></span></div>
           </div>
         </div>
         <div class="topbar-actions">
@@ -30,6 +30,7 @@
           <div class="panel-head"><h2>真机采集文件</h2></div>
           <input id="trace-input" type="file" accept=".json,application/json" multiple hidden />
           <input id="spector-input" type="file" accept=".json,application/json" multiple hidden />
+          <input id="probe-input" type="file" accept=".json,application/json" multiple hidden />
           <div id="trace-drop" class="drop-zone" role="button" tabindex="0">
             <span class="drop-icon">CPU</span>
             <span><b>DevTools Performance</b><small>导入 trace JSON</small></span>
@@ -38,6 +39,18 @@
             <span class="drop-icon">GL</span>
             <span><b>Spector.js</b><small>导入 capture JSON</small></span>
           </div>
+          <div id="probe-drop" class="drop-zone" role="button" tabindex="0">
+            <span class="drop-icon">FR</span>
+            <span><b>Yami 真机探针</b><small>导入逐帧探针 JSON</small></span>
+          </div>
+
+          <div class="panel-head"><h2>真机探针（逐帧定位）</h2></div>
+          <p class="hint">
+            在 Electron 游戏 DevTools 控制台粘贴下方脚本，游玩目标片段；结束后执行
+            <code>window.__YAMI_PERF_PROBE__.copy()</code>，把复制的 JSON 保存为文件后拖入上方「Yami 真机探针」。
+          </p>
+          <button id="copy-probe" class="button button-block" type="button">复制探针脚本</button>
+          <textarea id="probe-script" class="probe-script" readonly spellcheck="false" aria-label="真机探针脚本"></textarea>
 
           <div class="panel-head"><h2>已载入</h2></div>
           <div id="source-list" class="source-list"><div class="empty-state small">尚未导入报告</div></div>
@@ -52,7 +65,7 @@
           <div class="source-note">
             <span>采集器</span>
             <a href="https://github.com/BabylonJS/Spector.js" target="_blank" rel="noreferrer">Spector.js · MIT</a>
-            <span>CPU/GC/帧数据使用 Electron 内置 Chromium DevTools。</span>
+            <span>CPU/GC/帧数据使用 Electron 内置 Chromium DevTools；探针脚本不改工程。</span>
           </div>
         </aside>
 
@@ -61,12 +74,13 @@
             <button class="tab active" type="button" data-tab="overview">总览</button>
             <button class="tab" type="button" data-tab="cpu">CPU 与长帧</button>
             <button class="tab" type="button" data-tab="webgl">WebGL</button>
+            <button class="tab" type="button" data-tab="probe">超帧定位</button>
           </nav>
 
           <div id="empty-view" class="empty-view">
             <div class="empty-symbol">⌁</div>
             <h1>导入真机采集报告</h1>
-            <p>支持 Electron DevTools Performance trace 与 Spector.js WebGL capture。</p>
+            <p>支持 Electron DevTools Performance trace、Spector.js WebGL capture 与 Yami 真机逐帧探针。</p>
           </div>
 
           <div id="dashboard" class="dashboard hidden">
@@ -89,6 +103,13 @@
               <div class="section-head"><h2>命令统计</h2><span>按耗时排序</span></div>
               <div class="table-wrap"><table><thead><tr><th>命令</th><th>次数</th><th>捕获耗时</th></tr></thead><tbody id="webgl-body"></tbody></table></div>
             </section>
+
+            <section data-panel="probe" class="hidden">
+              <div class="section-head"><h2>超预算帧元凶</h2><span>来自真机逐帧探针</span></div>
+              <div id="probe-causes" class="findings"></div>
+              <div class="section-head"><h2>最差帧 Top 60</h2><span>按计算耗时排序</span></div>
+              <div class="table-wrap"><table><thead><tr><th>帧号</th><th>计算耗时</th><th>更新</th><th>渲染</th><th>帧内 Top 更新器</th><th>帧内 Top 事件</th></tr></thead><tbody id="probe-frames"></tbody></table></div>
+            </section>
           </div>
         </section>
       </main>
@@ -96,9 +117,9 @@
       <footer class="statusbar"><span id="status-text">等待导入真机报告</span><span class="status-spacer"></span><span>离线分析 · 不运行游戏 · 不写入工程</span></footer>
     </div>
     <div id="toast-region"></div>
-    <script src="./analyzer-core.js?v=20260822-perf-analysis-1"></script>
-    <script src="./app.js?v=20260822-perf-analysis-1"></script>
-    <script src="../version.json?v=20260822-tools-version-5"></script>
+    <script src="./analyzer-core.js?v=20260822-perf-analysis-2"></script>
+    <script src="./app.js?v=20260822-perf-analysis-2"></script>
+    <script src="../version.json?v=20260822-tools-version-6"></script>
     <script>document.querySelectorAll('[data-app-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS['perf-lab']||{}).version})</script>
   </body>
 </html>

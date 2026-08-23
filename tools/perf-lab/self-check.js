@@ -38,4 +38,25 @@ assert.strictEqual(spector.metrics.frameMemoryBytes, 1049600)
 assert.strictEqual(spector.context.Renderer, 'ANGLE GPU')
 
 assert.throws(() => core.analyze({ nope: true }), /无法识别/)
+const probe = core.analyze({
+  kind: 'yami-probe',
+  budgetMs: 16.7,
+  durationMs: 10,
+  samples: 600,
+  compute: { avg: 8, p95: 20, p99: 25, max: 30, overBudgetCount: 5 },
+  frame: { avg: 16.7, p95: 20, max: 30 },
+  updaters: [{ name: 'SceneManager', avg: 5, max: 12, count: 600, total: 3000 }],
+  renderers: [],
+  events: [{ name: 'common :: 刷怪.event', avg: 4, max: 15, count: 600, total: 2400 }],
+  overBudgetFrames: [
+    { frame: 10, compute: 21, update: 12, render: 9, updaters: [{ name: 'SceneManager', ms: 8 }], renderers: [], events: [{ name: 'common :: 刷怪.event', ms: 6 }] },
+    { frame: 11, compute: 22, update: 13, render: 9, updaters: [{ name: 'SceneManager', ms: 9 }], renderers: [], events: [{ name: 'common :: 刷怪.event', ms: 5 }] },
+  ],
+})
+assert.strictEqual(probe.kind, 'probe')
+assert.strictEqual(probe.metrics.overBudgetFrames, 5)
+assert.strictEqual(probe.causes[0].name, 'SceneManager')
+assert.strictEqual(probe.causes[0].count, 2)
+assert.strictEqual(probe.worstFrames[0].frame, 11)
+
 console.log('perf-analysis self-check passed')

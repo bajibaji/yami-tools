@@ -1,6 +1,6 @@
-/* Electron 性能分析台 · perf-lab v0.3.0
- * 只分析现成工具导出的报告：Electron/Chrome DevTools Performance trace + Spector.js capture。
- * 不运行游戏、不注入自研采集器、不读写游戏工程。
+/* Electron 性能分析台 · perf-lab v0.4.0
+ * 分析三类真机报告：DevTools Performance trace、Spector.js capture、Yami 真机逐帧探针。
+ * 新增「超帧定位」：导入探针 JSON 后，按“哪段代码最常导致帧超过 16.7ms”排序展示。
  */
 (() => {
   'use strict'
@@ -10,13 +10,91 @@
   const state = { reports: [], activeTab: 'overview', baseline: loadBaseline() }
   const $ = (id) => document.getElementById(id)
   const els = {
-    traceInput: $('trace-input'), spectorInput: $('spector-input'), traceDrop: $('trace-drop'), spectorDrop: $('spector-drop'),
+    traceInput: $('trace-input'), spectorInput: $('spector-input'), probeInput: $('probe-input'),
+    traceDrop: $('trace-drop'), spectorDrop: $('spector-drop'), probeDrop: $('probe-drop'),
+    copyProbe: $('copy-probe'), probeScript: $('probe-script'),
     clear: $('clear-reports'), saveBaseline: $('save-baseline'), clearBaseline: $('clear-baseline'), exportReport: $('export-report'),
     sourceList: $('source-list'), status: $('status-text'), baselineInfo: $('baseline-info'),
     empty: $('empty-view'), dashboard: $('dashboard'), metrics: $('metrics-grid'), findings: $('findings'),
     hotspotBody: $('hotspot-body'), taskBody: $('task-body'), webglBody: $('webgl-body'), contextFacts: $('context-facts'),
+    probeCauses: $('probe-causes'), probeFrames: $('probe-frames'),
     tabs: [...document.querySelectorAll('[data-tab]')], panels: [...document.querySelectorAll('[data-panel]')], toast: $('toast-region'),
   }
+
+  const PROBE_SCRIPT = `(() => {
+  'use strict'
+  if (window.__YAMI_PERF_PROBE__) return window.__YAMI_PERF_PROBE__
+  const BUDGET = 16.7
+  const MAX_SAMPLES = 12000
+  const state = { running: true, startedAt: performance.now(), samples: [], overBudgetFrames: [], updaterTotal: new Map(), rendererTotal: new Map(), eventTotal: new Map() }
+  let frameUpdate = 0
+  let frameRender = 0
+  let frameUpdaterMs = new Map()
+  let frameRendererMs = new Map()
+  let frameEventMs = new Map()
+  const now = () => performance.now()
+  const finite = (v, f) => Number.isFinite(Number(v)) ? Number(v) : (f || 0)
+  const round2 = (v) => Math.round(finite(v, 0) * 100) / 100
+  function rec(map, name, ms) { const s = map.get(name) || { name: name, sum: 0, count: 0, max: 0 }; s.sum += ms; s.count += 1; if (ms > s.max) s.max = ms; map.set(name, s) }
+  function addFrame(map, name, ms) { map.set(name, (map.get(name) || 0) + ms) }
+  function wrapModules(list, method, totalMap, frameMap) {
+    try { for (const mod of Array.from(list || [])) { if (!mod || typeof mod[method] !== 'function' || mod.__yamiPerfProbeWrapped__) continue; const name = (mod.constructor && mod.constructor.name) || 'anonymous'; const orig = mod[method].bind(mod); Object.defineProperty(mod, '__yamiPerfProbeWrapped__', { value: true, configurable: true }); mod[method] = function () { const t0 = now(); let r; try { r = orig.apply(this, arguments) } finally { const ms = now() - t0; rec(totalMap, name, ms); addFrame(frameMap, name, ms) } return r } } } catch (e) {}
+  }
+  function wrapEventHandlers() {
+    try { const list = (typeof EventManager !== 'undefined' && EventManager.activeEvents) ? EventManager.activeEvents : []; for (const event of Array.from(list)) { if (!event || typeof event.update !== 'function' || event.__yamiPerfProbeWrapped__) continue; let name = 'event'; try { const file = String(event.path || '').split('/').pop() || 'unknown'; name = (event.type || 'unknown') + ' :: ' + file } catch (e) {} const orig = event.update.bind(event); Object.defineProperty(event, '__yamiPerfProbeWrapped__', { value: true, configurable: true }); event.update = function () { const t0 = now(); let r; try { r = orig.apply(this, arguments) } finally { const ms = now() - t0; rec(state.eventTotal, name, ms); addFrame(frameEventMs, name, ms) } return r } } } catch (e) {}
+  }
+  function hookGame() {
+    const G = typeof Game !== 'undefined' ? Game : null
+    if (!G || typeof G.update !== 'function' || G.__yamiPerfProbeHooked__) return
+    const u = G.update.bind(G); G.update = function () { const t0 = now(); try { return u.apply(this, arguments) } finally { frameUpdate += now() - t0 } }
+    if (typeof G.deferredRendering === 'function') { const r = G.deferredRendering.bind(G); G.deferredRendering = function () { const t0 = now(); try { return r.apply(this, arguments) } finally { frameRender += now() - t0 } } }
+    Object.defineProperty(G, '__yamiPerfProbeHooked__', { value: true, configurable: true })
+  }
+  function refresh() { hookGame(); if (typeof Game !== 'undefined') { wrapModules(Game.updaters, 'update', state.updaterTotal, frameUpdaterMs); wrapModules(Game.renderers, 'render', state.rendererTotal, frameRendererMs) } wrapEventHandlers() }
+  refresh()
+  let lastTick = now()
+  function tick() {
+    requestAnimationFrame(tick)
+    const t = now(); const interval = t - lastTick; lastTick = t
+    if (!state.running) return
+    const compute = frameUpdate + frameRender
+    state.samples.push({ frame: state.samples.length + 1, interval: interval, update: frameUpdate, render: frameRender, compute: compute, fps: (typeof Time !== 'undefined' && Time.fps) || 0 })
+    if (state.samples.length > MAX_SAMPLES) state.samples.shift()
+    if (compute > BUDGET) {
+      const top = (map) => Array.from(map.entries()).map(function (e) { return { name: e[0], ms: round2(e[1]) } }).sort(function (a, b) { return b.ms - a.ms }).slice(0, 5)
+      state.overBudgetFrames.push({ frame: state.samples.length, compute: round2(compute), update: round2(frameUpdate), render: round2(frameRender), updaters: top(frameUpdaterMs), renderers: top(frameRendererMs), events: top(frameEventMs) })
+    }
+    frameUpdate = 0; frameRender = 0; frameUpdaterMs = new Map(); frameRendererMs = new Map(); frameEventMs = new Map()
+  }
+  requestAnimationFrame(tick)
+  setInterval(refresh, 1000)
+  function stat(map) { return Array.from(map.values()).map(function (s) { return { name: s.name, avg: round2(s.sum / s.count), max: round2(s.max), count: s.count, total: round2(s.sum) } }).sort(function (a, b) { return b.total - a.total }) }
+  function stop() {
+    state.running = false
+    const samples = state.samples
+    const comp = samples.map(function (s) { return s.compute }).sort(function (a, b) { return a - b })
+    const p = function (q) { return comp.length ? comp[Math.min(comp.length - 1, Math.round(q * (comp.length - 1)))] : 0 }
+    const frameValues = samples.map(function (s) { return s.interval }).sort(function (a, b) { return a - b })
+    const out = {
+      kind: 'yami-probe', version: 1, budgetMs: BUDGET, startedAt: new Date(state.startedAt).toISOString(), durationMs: round2((performance.now() - state.startedAt) / 1000), samples: samples.length,
+      compute: { avg: round2(samples.reduce(function (a, b) { return a + b.compute }, 0) / Math.max(1, samples.length)), p95: round2(p(0.95)), p99: round2(p(0.99)), max: round2(comp.length ? comp[comp.length - 1] : 0), overBudgetCount: state.overBudgetFrames.length },
+      frame: { avg: round2(samples.reduce(function (a, b) { return a + b.interval }, 0) / Math.max(1, samples.length)), p95: round2(frameValues.length ? frameValues[Math.min(frameValues.length - 1, Math.round(0.95 * (frameValues.length - 1)))] : 0), max: round2(frameValues.length ? frameValues[frameValues.length - 1] : 0) },
+      updaters: stat(state.updaterTotal), renderers: stat(state.rendererTotal), events: stat(state.eventTotal), overBudgetFrames: state.overBudgetFrames.slice(0, 500),
+      scene: (typeof Scene !== 'undefined') ? { actors: (Scene.visibleActors ? Scene.visibleActors.count : 0) + '/' + (Scene.actor ? Scene.actor.list.length : 0), uiElements: (typeof UI !== 'undefined' && UI.manager) ? UI.manager.list.length : 0, textures: (typeof GL !== 'undefined' && GL.textureManager) ? GL.textureManager.count : 0 } : null
+    }
+    window.__YAMI_PERF_PROBE_LAST__ = out
+    return out
+  }
+  window.__YAMI_PERF_PROBE__ = {
+    start: function () { state.samples.length = 0; state.overBudgetFrames.length = 0; state.updaterTotal.clear(); state.rendererTotal.clear(); state.eventTotal.clear(); state.running = true; state.startedAt = performance.now(); return true },
+    stop: stop,
+    snapshot: function () { return { running: state.running, samples: state.samples.length, overBudget: state.overBudgetFrames.length } },
+    copy: function () { const out = stop(); try { copy(JSON.stringify(out)) } catch (e) { console.log(JSON.stringify(out)) } return out }
+  }
+  return window.__YAMI_PERF_PROBE__
+})()`
+
+  els.probeScript.value = PROBE_SCRIPT
 
   function toast(message, kind = '') {
     const node = document.createElement('div')
@@ -50,7 +128,8 @@
         const raw = JSON.parse(await file.text())
         const analysis = core.analyze(raw)
         if (expectedKind && analysis.kind !== expectedKind) {
-          throw new Error(expectedKind === 'trace' ? '这不是 DevTools Performance trace' : '这不是 Spector.js capture')
+          const names = { trace: 'DevTools Performance trace', spector: 'Spector.js capture', probe: 'Yami 真机探针' }
+          throw new Error(`这不是 ${names[expectedKind] || expectedKind}`)
         }
         state.reports = state.reports.filter((entry) => entry.kind !== analysis.kind)
         state.reports.push({ ...analysis, fileName: file.name, importedAt: Date.now() })
@@ -78,6 +157,7 @@
     renderFindings()
     renderCpu()
     renderWebgl()
+    renderProbe()
     switchTab(state.activeTab)
   }
 
@@ -88,8 +168,8 @@
     }
     els.sourceList.innerHTML = state.reports.map((report) => `
       <div class="source-row">
-        <span class="source-icon">${report.kind === 'trace' ? 'CPU' : 'GL'}</span>
-        <span class="source-copy"><b>${escapeHtml(report.fileName)}</b><small>${report.kind === 'trace' ? 'DevTools Performance' : 'Spector.js WebGL'}</small></span>
+        <span class="source-icon">${report.kind === 'trace' ? 'CPU' : report.kind === 'spector' ? 'GL' : 'FR'}</span>
+        <span class="source-copy"><b>${escapeHtml(report.fileName)}</b><small>${report.kind === 'trace' ? 'DevTools Performance' : report.kind === 'spector' ? 'Spector.js WebGL' : 'Yami 真机探针'}</small></span>
         <button class="icon-button" type="button" data-remove="${report.kind}" title="移除报告" aria-label="移除报告">×</button>
       </div>`).join('')
     els.sourceList.querySelectorAll('[data-remove]').forEach((button) => button.addEventListener('click', () => {
@@ -101,15 +181,20 @@
   function combinedSummary() {
     const trace = state.reports.find((report) => report.kind === 'trace')
     const spector = state.reports.find((report) => report.kind === 'spector')
+    const probe = state.reports.find((report) => report.kind === 'probe')
     return {
-      durationMs: trace?.metrics.durationMs,
-      frameP95Ms: trace?.metrics.frameP95Ms,
+      durationMs: trace?.metrics.durationMs ?? probe?.metrics.durationMs,
+      frameP95Ms: trace?.metrics.frameP95Ms ?? probe?.metrics.frameP95Ms,
       maxTaskMs: trace?.metrics.maxTaskMs,
       longTaskCount: trace?.metrics.longTaskCount,
       gcMs: trace?.metrics.gcMs,
       drawCalls: spector?.metrics.drawCalls,
       glCommands: spector?.metrics.commandCount,
       gpuMemory: spector?.metrics.frameMemoryBytes,
+      probeComputeP95: probe?.metrics.computeP95Ms,
+      probeComputeAvg: probe?.metrics.computeAvgMs,
+      probeComputeMax: probe?.metrics.computeMaxMs,
+      probeOverBudget: probe?.metrics.overBudgetFrames,
     }
   }
 
@@ -130,6 +215,10 @@
       ['最长主线程任务', formatMs(summary.maxTaskMs), deltaFor('maxTaskMs', summary.maxTaskMs)],
       ['长任务数量', Number.isFinite(summary.longTaskCount) ? summary.longTaskCount : '--', deltaFor('longTaskCount', summary.longTaskCount)],
       ['GC 总耗时', formatMs(summary.gcMs), deltaFor('gcMs', summary.gcMs)],
+      ['探针计算 P95', formatMs(summary.probeComputeP95), deltaFor('probeComputeP95', summary.probeComputeP95)],
+      ['探针平均计算', formatMs(summary.probeComputeAvg), deltaFor('probeComputeAvg', summary.probeComputeAvg)],
+      ['探针最大计算', formatMs(summary.probeComputeMax), deltaFor('probeComputeMax', summary.probeComputeMax)],
+      ['探针超预算帧', Number.isFinite(summary.probeOverBudget) ? summary.probeOverBudget : '--', deltaFor('probeOverBudget', summary.probeOverBudget)],
       ['WebGL Draw Call', Number.isFinite(summary.drawCalls) ? summary.drawCalls : '--', deltaFor('drawCalls', summary.drawCalls)],
       ['WebGL 命令', Number.isFinite(summary.glCommands) ? summary.glCommands : '--', deltaFor('glCommands', summary.glCommands)],
       ['帧资源内存', formatBytes(summary.gpuMemory), deltaFor('gpuMemory', summary.gpuMemory)],
@@ -143,7 +232,7 @@
       els.findings.innerHTML = '<div class="finding ok"><b>未发现明确瓶颈</b><span>当前导入范围内没有超过分析阈值的项目。</span></div>'
       return
     }
-    els.findings.innerHTML = findings.map((finding) => `<div class="finding ${finding.level}"><span class="finding-source">${finding.source === 'trace' ? 'CPU' : 'GL'}</span><b>${escapeHtml(finding.title)}</b><span>${escapeHtml(finding.detail)}</span></div>`).join('')
+    els.findings.innerHTML = findings.map((finding) => `<div class="finding ${finding.level}"><span class="finding-source">${finding.source === 'trace' ? 'CPU' : finding.source === 'spector' ? 'GL' : 'FR'}</span><b>${escapeHtml(finding.title)}</b><span>${escapeHtml(finding.detail)}</span></div>`).join('')
   }
 
   function renderCpu() {
@@ -166,6 +255,30 @@
     }
     els.webglBody.innerHTML = report.commands.slice(0, 40).map((item) => `<tr><td>${escapeHtml(item.name)}</td><td>${item.count}</td><td>${formatMs(item.totalMs)}</td></tr>`).join('')
     els.contextFacts.innerHTML = Object.entries(report.context).map(([key, value]) => `<div class="fact"><span>${escapeHtml(key)}</span><b>${escapeHtml(value)}</b></div>`).join('')
+  }
+
+  function renderProbe() {
+    const probe = state.reports.find((entry) => entry.kind === 'probe')
+    if (!probe) {
+      els.probeCauses.innerHTML = '<div class="empty-state small">导入 Yami 真机探针 JSON 后显示</div>'
+      els.probeFrames.innerHTML = '<tr><td colspan="6">导入后显示</td></tr>'
+      return
+    }
+    if (probe.causes.length) {
+      els.probeCauses.innerHTML = probe.causes.map((cause) => `
+        <div class="finding bad">
+          <span class="finding-source">${cause.kind}</span>
+          <b>${escapeHtml(cause.name)}</b>
+          <span>出现在 ${cause.count} 个超帧帧中，累计 ${formatMs(cause.totalMs)}，单帧最大 ${formatMs(cause.maxMs)}。</span>
+        </div>`).join('')
+    } else {
+      els.probeCauses.innerHTML = '<div class="finding ok"><b>没有超预算帧</b><span>探针采集期间没有帧计算耗时超过 16.7ms。</span></div>'
+    }
+    els.probeFrames.innerHTML = probe.worstFrames.length ? probe.worstFrames.map((frame) => {
+      const topUpdater = frame.updaters?.[0]?.name ? `${frame.updaters[0].name} ${formatMs(frame.updaters[0].ms)}` : '—'
+      const topEvent = frame.events?.[0]?.name ? `${frame.events[0].name} ${formatMs(frame.events[0].ms)}` : '—'
+      return `<tr><td>${frame.frame}</td><td>${formatMs(frame.compute)}</td><td>${formatMs(frame.update)}</td><td>${formatMs(frame.render)}</td><td title="${escapeHtml(topUpdater)}">${escapeHtml(topUpdater)}</td><td title="${escapeHtml(topEvent)}">${escapeHtml(topEvent)}</td></tr>`
+    }).join('') : '<tr><td colspan="6">没有超过预算的帧</td></tr>'
   }
 
   function renderBaseline() {
@@ -215,8 +328,20 @@
     input.addEventListener('change', () => { importFiles(input.files, kind); input.value = '' })
   }
 
+  els.copyProbe.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(PROBE_SCRIPT)
+      toast('探针脚本已复制，粘贴到 Electron DevTools 控制台即可', 'success')
+    } catch {
+      els.probeScript.select()
+      document.execCommand('copy')
+      toast('探针脚本已复制（兼容模式）', 'success')
+    }
+  })
+
   bindDrop(els.traceDrop, els.traceInput, 'trace')
   bindDrop(els.spectorDrop, els.spectorInput, 'spector')
+  bindDrop(els.probeDrop, els.probeInput, 'probe')
   els.tabs.forEach((button) => button.addEventListener('click', () => switchTab(button.dataset.tab)))
   els.clear.addEventListener('click', () => { state.reports = []; render() })
   els.saveBaseline.addEventListener('click', saveBaseline)
