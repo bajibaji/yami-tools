@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0d0f14" />
     <title>YA TOOLS · Electron 性能分析台</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260822-perf-analysis-7" />
+    <link rel="stylesheet" href="./styles.css?v=20260824-perf-analysis-11" />
   </head>
   <body>
     <div class="app-shell">
@@ -15,7 +15,7 @@
           <div class="brand-mark">⌁</div>
           <div>
             <div class="eyebrow">ELECTRON RUNTIME ANALYSIS</div>
-            <div class="brand-name">YA TOOLS<span>性能分析台 <em class="version-tag" data-app-version>v0.4.0</em></span></div>
+            <div class="brand-name">YA TOOLS<span>性能分析台 <em class="version-tag" data-app-version>v0.4.1</em></span></div>
           </div>
         </div>
         <div class="topbar-actions">
@@ -95,7 +95,7 @@
               <div class="section-head"><h2>CPU 热点</h2><span>按采样时间排序</span></div>
               <div class="table-wrap"><table><thead><tr><th>函数</th><th>采样耗时</th><th>样本</th><th>位置</th></tr></thead><tbody id="hotspot-body"></tbody></table></div>
               <div class="section-head"><h2>主线程长任务</h2><span>阈值 50ms</span></div>
-              <div class="table-wrap"><table><thead><tr><th>开始时间</th><th>持续时间</th><th>任务</th></tr></thead><tbody id="task-body"></tbody></table></div>
+              <div class="table-wrap"><table><thead><tr><th>开始时间</th><th>持续时间</th><th>归因</th><th>证据</th></tr></thead><tbody id="task-body"></tbody></table></div>
             </section>
 
             <section data-panel="webgl" class="hidden">
@@ -106,10 +106,12 @@
             </section>
 
             <section data-panel="probe" class="hidden">
-              <div class="section-head"><h2>超预算帧元凶</h2><span>来自真机逐帧探针</span></div>
+              <div class="section-head"><h2>采集期间耗时排行</h2><span>更新器 / 渲染器 / 事件总耗时</span></div>
+              <div id="probe-modules" class="table-wrap"></div>
+              <div class="section-head"><h2>超预算帧元凶</h2><span>只显示累计 ≥0.05ms 的有效元凶</span></div>
               <div id="probe-causes" class="findings"></div>
               <div class="section-head"><h2>最差帧 Top 60</h2><span>按计算耗时排序</span></div>
-              <div class="table-wrap"><table><thead><tr><th>帧号</th><th>计算耗时</th><th>更新</th><th>渲染</th><th>帧内 Top 更新器</th><th>帧内 Top 事件</th></tr></thead><tbody id="probe-frames"></tbody></table></div>
+              <div class="table-wrap"><table><thead><tr><th>帧号</th><th>发生时间</th><th>计算耗时</th><th>更新</th><th>渲染</th><th>归因覆盖</th><th>帧内 Top 更新器</th><th>帧内 Top 事件</th></tr></thead><tbody id="probe-frames"></tbody></table></div>
             </section>
           </div>
         </section>
@@ -145,6 +147,7 @@
               <li>停止录制，点保存 / 导出为 <b>trace JSON</b>；</li>
               <li>回到本工具，把 JSON 拖进「<b>DevTools Performance</b>」区域。</li>
             </ol>
+            <div class="help-callout warn"><b>不要同时运行真机探针</b>：探针会进入 CPU Profile，污染热点结果。路线 A 与路线 C 必须在同一场景分别复现两次。</div>
             <p class="help-result"><b>能看</b>：主线程长任务、CPU 热点函数、GC、帧间隔 P95。适合先确认“是不是主线程太忙”。</p>
 
             <h3><span class="route-badge">B</span> 看 WebGL（Spector.js）</h3>
@@ -159,6 +162,7 @@
             <h3><span class="route-badge">C</span> 推荐：定位 16.7ms 超帧元凶（Yami 真机探针）</h3>
             <ol>
               <li>在左侧「真机探针」点「<b>复制探针脚本</b>」；</li>
+              <li><b>关闭并重新打开游戏窗口</b>，卸载之前运行过的旧探针；</li>
               <li>打开 <b>Electron 游戏窗口</b>，按 F12 → <b>Console</b>，先输入 <code>typeof Game</code>——必须是 <code>"object"</code>；</li>
               <li>粘贴探针脚本并回车，正常游玩卡顿片段；</li>
               <li>游玩结束，执行<b>下面这段完整代码</b>，直接下载 JSON；</li>
@@ -185,7 +189,7 @@ window.__YAMI_PERF_PROBE__.download()
               <li><b>总览</b>：先看帧预算 / 长任务 / GC / 超预算帧。有红色诊断就先处理。</li>
               <li><b>CPU 与长帧</b>：CPU 热点按总耗时排序，定位到 <code>Dist/Script/*.js:行号</code>；长任务看卡顿瞬间。</li>
               <li><b>WebGL</b>：Draw Call 高、冗余命令多、纹理内存大时去查渲染 / 粒子 / 图层。</li>
-              <li><b>超帧定位</b>：探针导入后看“元凶列表”——按在超帧帧里出现次数和累计耗时排序；再点最差帧表格看具体是哪一帧、哪个模块 / 事件最贵。</li>
+              <li><b>超帧定位</b>：先看归因覆盖率；覆盖足够时才看高置信元凶。覆盖不足会明确要求重采，不会硬猜。</li>
             </ul>
 
             <h3>基线怎么用</h3>
@@ -204,9 +208,9 @@ window.__YAMI_PERF_PROBE__.download()
       </div>
     </div>
 
-    <script src="./analyzer-core.js?v=20260822-perf-analysis-7"></script>
-    <script src="./app.js?v=20260822-perf-analysis-7"></script>
-    <script src="../version.json?v=20260822-tools-version-6"></script>
+    <script src="./analyzer-core.js?v=20260824-perf-analysis-11"></script>
+    <script src="./app.js?v=20260824-perf-analysis-11"></script>
+    <script src="../version.json?v=20260824-tools-version-7"></script>
     <script>document.querySelectorAll('[data-app-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS['perf-lab']||{}).version})</script>
 
   </body>

@@ -1,4 +1,4 @@
-/* Electron 性能分析台 · perf-lab v0.4.0
+/* Electron 性能分析台 · perf-lab v0.4.1
  * 分析三类真机报告：DevTools Performance trace、Spector.js capture、Yami 真机逐帧探针。
  * 新增「超帧定位」：导入探针 JSON 后，按“哪段代码最常导致帧超过 16.7ms”排序展示。
  */
@@ -6,7 +6,7 @@
   'use strict'
 
   const core = window.YamiPerfAnalyzer
-  const BASELINE_KEY = 'yami-perf-analysis-baseline-v1'
+  const BASELINE_KEY = 'yami-perf-analysis-baseline-v2'
   const state = { reports: [], activeTab: 'overview', baseline: loadBaseline() }
   const $ = (id) => document.getElementById(id)
   const els = {
@@ -18,16 +18,21 @@
     sourceList: $('source-list'), status: $('status-text'), baselineInfo: $('baseline-info'),
     empty: $('empty-view'), dashboard: $('dashboard'), metrics: $('metrics-grid'), findings: $('findings'),
     hotspotBody: $('hotspot-body'), taskBody: $('task-body'), webglBody: $('webgl-body'), contextFacts: $('context-facts'),
-    probeCauses: $('probe-causes'), probeFrames: $('probe-frames'),
+    probeCauses: $('probe-causes'), probeFrames: $('probe-frames'), probeModules: $('probe-modules'),
     tabs: [...document.querySelectorAll('[data-tab]')], panels: [...document.querySelectorAll('[data-panel]')], toast: $('toast-region'),
   }
 
   const PROBE_SCRIPT = `(() => {
   'use strict'
-  if (window.__YAMI_PERF_PROBE__) return window.__YAMI_PERF_PROBE__
+  const PROBE_VERSION = 2
+  if (window.__YAMI_PERF_PROBE__) {
+    if (window.__YAMI_PERF_PROBE__.version >= PROBE_VERSION) return window.__YAMI_PERF_PROBE__
+    console.warn('当前游戏窗口仍装着旧版性能探针。请关闭并重新打开游戏窗口，再粘贴新版脚本；旧包装无法安全热升级。')
+    return window.__YAMI_PERF_PROBE__
+  }
   const BUDGET = 16.7
   const MAX_SAMPLES = 12000
-  const state = { running: true, startedAt: Date.now(), hooked: { game: false, updaters: 0, renderers: 0, events: 0 }, samples: [], overBudgetFrames: [], updaterTotal: new Map(), rendererTotal: new Map(), eventTotal: new Map() }
+  const state = { running: true, startedAt: Date.now(), startedPerf: performance.now(), frameSeq: 0, hooked: { game: false, updaters: 0, renderers: 0, events: 0 }, samples: [], overBudgetFrames: [], updaterTotal: new Map(), rendererTotal: new Map(), eventTotal: new Map() }
   let frameUpdate = 0
   let frameRender = 0
   let frameUpdaterMs = new Map()
@@ -36,13 +41,35 @@
   const now = () => performance.now()
   const finite = (v, f) => Number.isFinite(Number(v)) ? Number(v) : (f || 0)
   const round2 = (v) => Math.round(finite(v, 0) * 100) / 100
+  const round3 = (v) => Math.round(finite(v, 0) * 1000) / 1000
   function rec(map, name, ms) { const s = map.get(name) || { name: name, sum: 0, count: 0, max: 0 }; s.sum += ms; s.count += 1; if (ms > s.max) s.max = ms; map.set(name, s) }
   function addFrame(map, name, ms) { map.set(name, (map.get(name) || 0) + ms) }
-  function wrapModules(list, method, totalMap, frameMap) {
-    try { for (const mod of Array.from(list || [])) { if (!mod || typeof mod[method] !== 'function' || mod.__yamiPerfProbeWrapped__) continue; const name = (mod.constructor && mod.constructor.name) || 'anonymous'; const orig = mod[method].bind(mod); Object.defineProperty(mod, '__yamiPerfProbeWrapped__', { value: true, configurable: true }); mod[method] = function () { const t0 = now(); let r; try { r = orig.apply(this, arguments) } finally { const ms = now() - t0; rec(totalMap, name, ms); addFrame(frameMap, name, ms) } return r } } } catch (e) {}
+  function moduleName(mod, list, index, kind) {
+    const known = []
+    try { if (typeof Callback !== 'undefined') known.push(['Callback', Callback]) } catch (e) {}
+    try { if (typeof Loader !== 'undefined') known.push(['Loader', Loader]) } catch (e) {}
+    try { if (typeof File !== 'undefined') known.push(['File', File]) } catch (e) {}
+    try { if (typeof Input !== 'undefined') known.push(['Input', Input]) } catch (e) {}
+    try { if (typeof Timer !== 'undefined') known.push(['Timer', Timer]) } catch (e) {}
+    try { if (typeof Scene !== 'undefined') known.push(['Scene', Scene]) } catch (e) {}
+    try { if (typeof Camera !== 'undefined') known.push(['Camera', Camera]) } catch (e) {}
+    try { if (typeof EventManager !== 'undefined') known.push(['EventManager', EventManager]) } catch (e) {}
+    try { if (typeof Trigger !== 'undefined') known.push(['Trigger', Trigger]) } catch (e) {}
+    try { if (typeof UI !== 'undefined') known.push(['UI', UI]) } catch (e) {}
+    try { if (typeof AudioManager !== 'undefined') known.push(['AudioManager', AudioManager]) } catch (e) {}
+    try { if (typeof CacheList !== 'undefined') known.push(['CacheList', CacheList]) } catch (e) {}
+    try { if (typeof OffscreenStart !== 'undefined') known.push(['OffscreenStart', OffscreenStart]) } catch (e) {}
+    try { if (typeof OffscreenEnd !== 'undefined') known.push(['OffscreenEnd', OffscreenEnd]) } catch (e) {}
+    for (const entry of known) if (entry[1] === mod) return entry[0] + (entry[0] === 'Callback' ? '#' + index : '')
+    try { for (const key of Object.keys(list.moduleMap || {})) if (list.moduleMap[key] === mod) return key } catch (e) {}
+    const ctor = mod && mod.constructor && mod.constructor.name
+    return ctor && ctor !== 'Object' && ctor !== 'Function' ? ctor : kind + '#' + index
+  }
+  function wrapModules(list, method, totalMap, kind) {
+    try { Array.from(list || []).forEach(function (mod, index) { const mark = '__yamiPerfProbeWrapped_' + method + '__'; if (!mod || typeof mod[method] !== 'function' || mod[mark]) return; const name = moduleName(mod, list, index, kind); const orig = mod[method].bind(mod); Object.defineProperty(mod, mark, { value: true, configurable: true }); mod[method] = function () { const t0 = now(); let r; try { r = orig.apply(this, arguments) } finally { const ms = now() - t0; rec(totalMap, name, ms); addFrame(method === 'render' ? frameRendererMs : frameUpdaterMs, name, ms) } return r } }) } catch (e) {}
   }
   function wrapEventHandlers() {
-    try { const list = (typeof EventManager !== 'undefined' && EventManager.activeEvents) ? EventManager.activeEvents : []; for (const event of Array.from(list)) { if (!event || typeof event.update !== 'function' || event.__yamiPerfProbeWrapped__) continue; let name = 'event'; try { const file = String(event.path || '').split('/').pop() || 'unknown'; name = (event.type || 'unknown') + ' :: ' + file } catch (e) {} const orig = event.update.bind(event); Object.defineProperty(event, '__yamiPerfProbeWrapped__', { value: true, configurable: true }); event.update = function () { const t0 = now(); let r; try { r = orig.apply(this, arguments) } finally { const ms = now() - t0; rec(state.eventTotal, name, ms); addFrame(frameEventMs, name, ms) } return r } } } catch (e) {}
+    try { const list = (typeof EventManager !== 'undefined' && EventManager.activeEvents) ? EventManager.activeEvents : []; for (const event of Array.from(list)) { if (!event || typeof event.update !== 'function' || event.__yamiPerfProbeEventWrapped__) continue; let name = 'event'; try { const initial = event.initial || event.commands || {}; const eventType = event.type || initial.type || ''; const eventPath = event.path || initial.path || ''; const file = String(eventPath || '').split('/').pop() || ''; const parentName = (event.parent && event.parent.constructor && event.parent.constructor.name) ? '(' + event.parent.constructor.name + ')' : ''; name = (eventType || 'event') + ' :: ' + (file || parentName || 'unknown') } catch (e) {} const orig = event.update.bind(event); Object.defineProperty(event, '__yamiPerfProbeEventWrapped__', { value: true, configurable: true }); event.update = function () { const t0 = now(); let r; try { r = orig.apply(this, arguments) } finally { const ms = now() - t0; rec(state.eventTotal, name, ms); addFrame(frameEventMs, name, ms) } return r } } } catch (e) {}
   }
   function hookGame() {
     const G = typeof Game !== 'undefined' ? Game : null
@@ -52,7 +79,7 @@
     if (typeof G.deferredRendering === 'function') { const r = G.deferredRendering.bind(G); G.deferredRendering = function () { const t0 = now(); try { return r.apply(this, arguments) } finally { frameRender += now() - t0 } } }
     Object.defineProperty(G, '__yamiPerfProbeHooked__', { value: true, configurable: true })
   }
-  function refresh() { hookGame(); if (typeof Game !== 'undefined') { wrapModules(Game.updaters, 'update', state.updaterTotal, frameUpdaterMs); wrapModules(Game.renderers, 'render', state.rendererTotal, frameRendererMs); state.hooked.updaters = (Game.updaters && Game.updaters.length) || 0; state.hooked.renderers = (Game.renderers && Game.renderers.length) || 0 } wrapEventHandlers(); if (typeof EventManager !== 'undefined' && EventManager.activeEvents) state.hooked.events = EventManager.activeEvents.length }
+  function refresh() { hookGame(); if (typeof Game !== 'undefined') { wrapModules(Game.updaters, 'update', state.updaterTotal, 'Updater'); wrapModules(Game.renderers, 'render', state.rendererTotal, 'Renderer'); state.hooked.updaters = (Game.updaters && Game.updaters.length) || 0; state.hooked.renderers = (Game.renderers && Game.renderers.length) || 0 } wrapEventHandlers(); if (typeof EventManager !== 'undefined' && EventManager.activeEvents) state.hooked.events = EventManager.activeEvents.length }
   refresh()
   let lastTick = now()
   function tick() {
@@ -60,11 +87,15 @@
     const t = now(); const interval = t - lastTick; lastTick = t
     if (!state.running) return
     const compute = frameUpdate + frameRender
-    state.samples.push({ frame: state.samples.length + 1, interval: interval, update: frameUpdate, render: frameRender, compute: compute, fps: (typeof Time !== 'undefined' && Time.fps) || 0 })
+    state.frameSeq += 1
+    state.samples.push({ frame: state.frameSeq, elapsedMs: round2(t - state.startedPerf), interval: interval, update: frameUpdate, render: frameRender, compute: compute, fps: (typeof Time !== 'undefined' && Time.fps) || 0 })
     if (state.samples.length > MAX_SAMPLES) state.samples.shift()
     if (compute > BUDGET) {
-      const top = (map) => Array.from(map.entries()).map(function (e) { return { name: e[0], ms: round2(e[1]) } }).sort(function (a, b) { return b.ms - a.ms }).slice(0, 5)
-      state.overBudgetFrames.push({ frame: state.samples.length, compute: round2(compute), update: round2(frameUpdate), render: round2(frameRender), updaters: top(frameUpdaterMs), renderers: top(frameRendererMs), events: top(frameEventMs) })
+      const top = (map) => Array.from(map.entries()).map(function (e) { return { name: e[0], ms: round3(e[1]) } }).sort(function (a, b) { return b.ms - a.ms }).slice(0, 5)
+      const updaterItems = top(frameUpdaterMs); const rendererItems = top(frameRendererMs); const eventItems = top(frameEventMs)
+      const attributedUpdate = Array.from(frameUpdaterMs.values()).reduce(function (a, b) { return a + b }, 0)
+      const attributedRender = Array.from(frameRendererMs.values()).reduce(function (a, b) { return a + b }, 0)
+      state.overBudgetFrames.push({ frame: state.frameSeq, elapsedMs: round2(t - state.startedPerf), compute: round2(compute), update: round2(frameUpdate), render: round2(frameRender), attributedUpdate: round2(attributedUpdate), attributedRender: round2(attributedRender), unattributed: round2(Math.max(0, compute - attributedUpdate - attributedRender)), updaters: updaterItems, renderers: rendererItems, events: eventItems })
     }
     frameUpdate = 0; frameRender = 0; frameUpdaterMs = new Map(); frameRendererMs = new Map(); frameEventMs = new Map()
   }
@@ -78,18 +109,19 @@
     const p = function (q) { return comp.length ? comp[Math.min(comp.length - 1, Math.round(q * (comp.length - 1)))] : 0 }
     const frameValues = samples.map(function (s) { return s.interval }).sort(function (a, b) { return a - b })
     const out = {
-      kind: 'yami-probe', version: 1, budgetMs: BUDGET, startedAt: new Date(state.startedAt).toISOString(), durationMs: round2((Date.now() - state.startedAt) / 1000), samples: samples.length,
+      kind: 'yami-probe', version: PROBE_VERSION, budgetMs: BUDGET, startedAt: new Date(state.startedAt).toISOString(), durationMs: Date.now() - state.startedAt, samples: samples.length,
       compute: { avg: round2(samples.reduce(function (a, b) { return a + b.compute }, 0) / Math.max(1, samples.length)), p95: round2(p(0.95)), p99: round2(p(0.99)), max: round2(comp.length ? comp[comp.length - 1] : 0), overBudgetCount: state.overBudgetFrames.length },
       frame: { avg: round2(samples.reduce(function (a, b) { return a + b.interval }, 0) / Math.max(1, samples.length)), p95: round2(frameValues.length ? frameValues[Math.min(frameValues.length - 1, Math.round(0.95 * (frameValues.length - 1)))] : 0), max: round2(frameValues.length ? frameValues[frameValues.length - 1] : 0) },
-      updaters: stat(state.updaterTotal), renderers: stat(state.rendererTotal), events: stat(state.eventTotal), overBudgetFrames: state.overBudgetFrames.slice(0, 500),
+      updaters: stat(state.updaterTotal), renderers: stat(state.rendererTotal), events: stat(state.eventTotal), overBudgetFrames: state.overBudgetFrames.slice(), timeline: samples.map(function (s) { return { frame: s.frame, elapsedMs: s.elapsedMs, interval: round2(s.interval), update: round2(s.update), render: round2(s.render), compute: round2(s.compute) } }),
       hooked: state.hooked,
-      scene: (typeof Scene !== 'undefined') ? { actors: (Scene.visibleActors ? Scene.visibleActors.count : 0) + '/' + (Scene.actor ? Scene.actor.list.length : 0), uiElements: (typeof UI !== 'undefined' && UI.manager) ? UI.manager.list.length : 0, textures: (typeof GL !== 'undefined' && GL.textureManager) ? GL.textureManager.count : 0 } : null
+      scene: (typeof Scene !== 'undefined') ? { actors: ((Scene.visibleActors && Scene.visibleActors.count) || 0) + '/' + ((Scene.actor && Scene.actor.list) ? Scene.actor.list.length : 0), uiElements: (typeof UI !== 'undefined' && UI.manager && UI.manager.list) ? UI.manager.list.length : 0, textures: (typeof GL !== 'undefined' && GL.textureManager) ? (GL.textureManager.count || 0) : 0 } : null
     }
     window.__YAMI_PERF_PROBE_LAST__ = out
     return out
   }
   window.__YAMI_PERF_PROBE__ = {
-    start: function () { state.samples.length = 0; state.overBudgetFrames.length = 0; state.updaterTotal.clear(); state.rendererTotal.clear(); state.eventTotal.clear(); state.hooked = { game: false, updaters: 0, renderers: 0, events: 0 }; state.running = true; state.startedAt = Date.now(); return true },
+    version: PROBE_VERSION,
+    start: function () { state.samples.length = 0; state.overBudgetFrames.length = 0; state.updaterTotal.clear(); state.rendererTotal.clear(); state.eventTotal.clear(); state.hooked = { game: false, updaters: 0, renderers: 0, events: 0 }; state.running = true; state.startedAt = Date.now(); state.startedPerf = now(); state.frameSeq = 0; refresh(); return true },
     stop: stop,
     snapshot: function () { return { running: state.running, samples: state.samples.length, overBudget: state.overBudgetFrames.length } },
     check: function () { return { game: state.hooked.game, updaters: state.hooked.updaters, renderers: state.hooked.renderers, events: state.hooked.events, samples: state.samples.length } },
@@ -118,6 +150,13 @@
   }
 
   function formatMs(value) { return Number.isFinite(value) ? `${value.toFixed(2)} ms` : '--' }
+  function formatDuration(value) {
+    if (!Number.isFinite(value)) return '--'
+    if (value < 1000) return formatMs(value)
+    const seconds = value / 1000
+    if (seconds < 60) return `${seconds.toFixed(2)} 秒`
+    return `${Math.floor(seconds / 60)} 分 ${(seconds % 60).toFixed(1)} 秒`
+  }
   function formatBytes(value) {
     if (!Number.isFinite(value)) return '--'
     if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(2)} MB`
@@ -189,8 +228,8 @@
     const probe = state.reports.find((report) => report.kind === 'probe')
     return {
       durationMs: trace?.metrics.durationMs ?? probe?.metrics.durationMs,
-      frameP95Ms: trace?.metrics.frameP95Ms ?? probe?.metrics.frameP95Ms,
-      maxTaskMs: trace?.metrics.maxTaskMs,
+      frameP95Ms: probe?.metrics.frameP95Ms ?? trace?.metrics.frameP95Ms,
+      maxTaskMs: trace?.metrics.maxActionableTaskMs,
       longTaskCount: trace?.metrics.longTaskCount,
       gcMs: trace?.metrics.gcMs,
       drawCalls: spector?.metrics.drawCalls,
@@ -200,6 +239,8 @@
       probeComputeAvg: probe?.metrics.computeAvgMs,
       probeComputeMax: probe?.metrics.computeMaxMs,
       probeOverBudget: probe?.metrics.overBudgetFrames,
+      probeAttribution: probe?.metrics.attributionCoverage,
+      probeSlowCluster: probe?.metrics.longestSlowCluster,
     }
   }
 
@@ -215,7 +256,7 @@
   function renderMetrics() {
     const summary = combinedSummary()
     const cards = [
-      ['采集时长', formatMs(summary.durationMs), deltaFor('durationMs', summary.durationMs)],
+      ['采集时长', formatDuration(summary.durationMs), deltaFor('durationMs', summary.durationMs)],
       ['帧间隔 P95', formatMs(summary.frameP95Ms), deltaFor('frameP95Ms', summary.frameP95Ms)],
       ['最长主线程任务', formatMs(summary.maxTaskMs), deltaFor('maxTaskMs', summary.maxTaskMs)],
       ['长任务数量', Number.isFinite(summary.longTaskCount) ? summary.longTaskCount : '--', deltaFor('longTaskCount', summary.longTaskCount)],
@@ -224,6 +265,8 @@
       ['探针平均计算', formatMs(summary.probeComputeAvg), deltaFor('probeComputeAvg', summary.probeComputeAvg)],
       ['探针最大计算', formatMs(summary.probeComputeMax), deltaFor('probeComputeMax', summary.probeComputeMax)],
       ['探针超预算帧', Number.isFinite(summary.probeOverBudget) ? summary.probeOverBudget : '--', deltaFor('probeOverBudget', summary.probeOverBudget)],
+      ['探针归因覆盖率', Number.isFinite(summary.probeAttribution) ? `${summary.probeAttribution.toFixed(1)}%` : '--', deltaFor('probeAttribution', summary.probeAttribution)],
+      ['最长持续卡顿', Number.isFinite(summary.probeSlowCluster) ? `${summary.probeSlowCluster} 帧` : '--', deltaFor('probeSlowCluster', summary.probeSlowCluster)],
       ['WebGL Draw Call', Number.isFinite(summary.drawCalls) ? summary.drawCalls : '--', deltaFor('drawCalls', summary.drawCalls)],
       ['WebGL 命令', Number.isFinite(summary.glCommands) ? summary.glCommands : '--', deltaFor('glCommands', summary.glCommands)],
       ['帧资源内存', formatBytes(summary.gpuMemory), deltaFor('gpuMemory', summary.gpuMemory)],
@@ -247,8 +290,8 @@
       els.taskBody.innerHTML = '<tr><td colspan="3">导入 DevTools Performance trace 后显示</td></tr>'
       return
     }
-    els.hotspotBody.innerHTML = trace.hotspots.length ? trace.hotspots.slice(0, 30).map((item) => `<tr><td title="${escapeHtml(item.url)}">${escapeHtml(item.name)}</td><td>${formatMs(item.totalMs)}</td><td>${item.samples}</td><td>${escapeHtml(item.location)}</td></tr>`).join('') : '<tr><td colspan="4">该 trace 没有 CPU Profile 样本</td></tr>'
-    els.taskBody.innerHTML = trace.longTasks.length ? trace.longTasks.slice(0, 30).map((item) => `<tr><td>${formatMs(item.startMs)}</td><td>${formatMs(item.durationMs)}</td><td>${escapeHtml(item.name)}</td></tr>`).join('') : '<tr><td colspan="3">没有超过 50ms 的主线程任务</td></tr>'
+    els.hotspotBody.innerHTML = trace.hotspots.length ? trace.hotspots.slice(0, 30).map((item) => `<tr><td title="${escapeHtml(item.url)}">${escapeHtml(item.name)}</td><td>${formatMs(item.totalMs)}</td><td>${item.samples}</td><td>${escapeHtml(item.location)}</td></tr>`).join('') : `<tr><td colspan="4">${trace.profile?.probeMs > 1 ? '本次 CPU Profile 被真机探针污染，无法得出游戏热点；关闭探针后单独重录 DevTools' : trace.profile?.samples ? '本次录制没有采到可映射到游戏源码的热点' : '该 trace 没有 CPU Profile 样本'}</td></tr>`
+    els.taskBody.innerHTML = trace.longTasks.length ? trace.longTasks.slice(0, 30).map((item) => `<tr><td>${formatMs(item.startMs)}</td><td>${formatMs(item.durationMs)}</td><td>${escapeHtml(item.cause || item.name)}</td><td>${escapeHtml(item.evidence?.map((entry) => `${entry.name} ${entry.durationMs}ms`).join(' / ') || '—')}</td></tr>`).join('') : '<tr><td colspan="4">没有可归因的游戏长任务；DevTools 自身启动开销已排除</td></tr>'
   }
 
   function renderWebgl() {
@@ -262,13 +305,30 @@
     els.contextFacts.innerHTML = Object.entries(report.context).map(([key, value]) => `<div class="fact"><span>${escapeHtml(key)}</span><b>${escapeHtml(value)}</b></div>`).join('')
   }
 
+    function renderProbeModules(probe) {
+      const rows = []
+      for (const [kind, list] of [['更新器', probe.updaters || []], ['渲染器', probe.renderers || []], ['事件', probe.events || []]]) {
+        for (const item of list.slice(0, 8)) rows.push({ kind, name: item.name, avg: item.avg, max: item.max, total: item.total, count: item.count })
+      }
+      rows.sort((a, b) => b.total - a.total)
+      if (!rows.length) {
+        els.probeModules.innerHTML = '<div class="empty-state small">暂无模块/事件数据</div>'
+        return
+      }
+      els.probeModules.innerHTML = `<table class="batch-table"><thead><tr><th>类型</th><th>模块/事件</th><th>平均</th><th>最大</th><th>总耗时</th><th>次数</th></tr></thead><tbody>` + rows.map((item) => `<tr><td>${item.kind}</td><td title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</td><td>${formatMs(item.avg)}</td><td>${formatMs(item.max)}</td><td>${formatMs(item.total)}</td><td>${item.count}</td></tr>`).join('') + '</tbody></table>'
+    }
+
+
   function renderProbe() {
     const probe = state.reports.find((entry) => entry.kind === 'probe')
     if (!probe) {
       els.probeCauses.innerHTML = '<div class="empty-state small">导入 Yami 真机探针 JSON 后显示</div>'
-      els.probeFrames.innerHTML = '<tr><td colspan="6">导入后显示</td></tr>'
+      els.probeModules.innerHTML = '<div class="empty-state small">暂无模块/事件数据</div>'
+      els.probeFrames.innerHTML = '<tr><td colspan="8">导入后显示</td></tr>'
       return
     }
+    renderProbeModules(probe)
+
     if (probe.causes.length) {
       els.probeCauses.innerHTML = probe.causes.map((cause) => `
         <div class="finding bad">
@@ -276,14 +336,19 @@
           <b>${escapeHtml(cause.name)}</b>
           <span>出现在 ${cause.count} 个超帧帧中，累计 ${formatMs(cause.totalMs)}，单帧最大 ${formatMs(cause.maxMs)}。</span>
         </div>`).join('')
+    } else if (probe.metrics.overBudgetFrames) {
+      els.probeCauses.innerHTML = `<div class="finding bad"><span class="finding-source">证据</span><b>无法点名具体元凶</b><span>存在 ${probe.metrics.overBudgetFrames} 个超预算帧，但帧内归因覆盖率只有 ${probe.metrics.attributionCoverage.toFixed(1)}%。请用新版探针重新采集。</span></div>`
     } else {
       els.probeCauses.innerHTML = '<div class="finding ok"><b>没有超预算帧</b><span>探针采集期间没有帧计算耗时超过 16.7ms。</span></div>'
     }
     els.probeFrames.innerHTML = probe.worstFrames.length ? probe.worstFrames.map((frame) => {
       const topUpdater = frame.updaters?.[0]?.name ? `${frame.updaters[0].name} ${formatMs(frame.updaters[0].ms)}` : '—'
       const topEvent = frame.events?.[0]?.name ? `${frame.events[0].name} ${formatMs(frame.events[0].ms)}` : '—'
-      return `<tr><td>${frame.frame}</td><td>${formatMs(frame.compute)}</td><td>${formatMs(frame.update)}</td><td>${formatMs(frame.render)}</td><td title="${escapeHtml(topUpdater)}">${escapeHtml(topUpdater)}</td><td title="${escapeHtml(topEvent)}">${escapeHtml(topEvent)}</td></tr>`
-    }).join('') : '<tr><td colspan="6">没有超过预算的帧</td></tr>'
+      const compute = Number(frame.compute) || 0
+      const attributed = (Number(frame.attributedUpdate) || 0) + (Number(frame.attributedRender) || 0)
+      const coverage = compute ? Math.min(100, attributed / compute * 100) : 0
+      return `<tr><td>${frame.frame}</td><td>${formatMs(frame.elapsedMs)}</td><td>${formatMs(frame.compute)}</td><td>${formatMs(frame.update)}</td><td>${formatMs(frame.render)}</td><td>${coverage.toFixed(1)}%</td><td title="${escapeHtml(topUpdater)}">${escapeHtml(topUpdater)}</td><td title="${escapeHtml(topEvent)}">${escapeHtml(topEvent)}</td></tr>`
+    }).join('') : '<tr><td colspan="8">没有超过预算的帧</td></tr>'
   }
 
   function renderBaseline() {

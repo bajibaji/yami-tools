@@ -68,4 +68,46 @@ const noGameProbe = core.analyze({
 })
 assert.ok(noGameProbe.findings.some((finding) => finding.title.includes('没有抓到游戏运行时')))
 
+// 真实报告回归：元数据 ts=0 不得把 60 秒录制拉成数小时；Profiler 启动不是游戏长任务；
+// 两个 profile 可复用相同 node id，但只能选择 Renderer 进程自己的 profile。
+const realShapeTrace = core.analyze({ traceEvents: [
+  { ph: 'M', name: 'process_name', pid: 10, tid: 0, ts: 0, args: { name: 'Renderer' } },
+  { ph: 'M', name: 'thread_name', pid: 10, tid: 20, ts: 0, args: { name: 'CrRendererMain' } },
+  { ph: 'M', name: 'process_name', pid: 30, tid: 0, ts: 0, args: { name: 'Browser' } },
+  { ph: 'X', name: 'RunTask', pid: 10, tid: 20, ts: 100000000, dur: 63000 },
+  { ph: 'X', name: 'CpuProfiler::StartProfiling', pid: 10, tid: 20, ts: 100000100, dur: 62500 },
+  { ph: 'I', name: 'FireAnimationFrame', pid: 10, tid: 20, ts: 100100000 },
+  { ph: 'I', name: 'FireAnimationFrame', pid: 10, tid: 20, ts: 100116700 },
+  { ph: 'P', name: 'ProfileChunk', id: 'renderer', pid: 10, tid: 21, ts: 100100000, args: { data: { cpuProfile: { nodes: [
+    { id: 3, callFrame: { functionName: '(idle)' } },
+    { id: 4, callFrame: { functionName: 'Scene.update', url: 'scene.js', lineNumber: 9 } },
+  ], samples: [3, 4] }, timeDeltas: [5000, 7000] } } },
+  { ph: 'P', name: 'ProfileChunk', id: 'browser', pid: 30, tid: 31, ts: 100100000, args: { data: { cpuProfile: { nodes: [
+    { id: 4, callFrame: { functionName: 'emit', url: 'node:events', lineNumber: 1 } },
+  ], samples: [4] }, timeDeltas: [9000] } } },
+] })
+assert.ok(realShapeTrace.metrics.durationMs < 1000)
+assert.strictEqual(realShapeTrace.metrics.longTaskCount, 0)
+assert.strictEqual(realShapeTrace.toolingTasks.length, 1)
+assert.strictEqual(realShapeTrace.hotspots[0].name, 'Scene.update')
+assert.ok(!realShapeTrace.hotspots.some((item) => item.name === 'emit'))
+
+// 旧探针回归：帧内明细为空时不得把 0.xms unknown 事件称为超帧元凶。
+const brokenProbe = core.analyze({
+  kind: 'yami-probe', version: 1, budgetMs: 16.7, durationMs: 78.58, samples: 7918,
+  compute: { avg: 6.22, p95: 33.9, p99: 92.9, max: 143.2, overBudgetCount: 627 },
+  frame: { avg: 9.92, p95: 35, max: 1957.6 },
+  updaters: [{ name: 'anonymous', avg: 0.7, max: 139.8, count: 55406, total: 38999.7 }],
+  renderers: [{ name: 'Object', avg: 0.01, max: 0.9, count: 4133, total: 30.5 }],
+  events: [{ name: 'event :: unknown', avg: 0, max: 0.4, count: 14524, total: 11.6 }],
+  scene: { actors: '114/0', uiElements: 0, textures: 223 },
+  overBudgetFrames: Array.from({ length: 20 }, (_, index) => ({ frame: 100 + index, compute: 100, update: 100, render: 0, updaters: [], renderers: [], events: [{ name: 'event :: unknown', ms: 0.1 }] })),
+})
+assert.strictEqual(brokenProbe.metrics.durationMs, 78580)
+assert.strictEqual(brokenProbe.metrics.attributionCoverage, 0)
+assert.strictEqual(brokenProbe.causes.length, 0)
+assert.ok(brokenProbe.findings.some((finding) => finding.title.includes('未记录到卡顿帧内部证据')))
+assert.ok(brokenProbe.findings.some((finding) => finding.title.includes('Scene 角色更新链')))
+assert.ok(!brokenProbe.findings.some((finding) => finding.title.includes('unknown')))
+
 console.log('perf-analysis self-check passed')
