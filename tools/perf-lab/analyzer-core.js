@@ -29,7 +29,7 @@
   function analyzeTrace(raw) {
     const events = (Array.isArray(raw) ? raw : raw.traceEvents).filter((event) => event && Number.isFinite(event.ts))
     if (!events.length) throw new Error('traceEvents 为空')
-    const minTs = Math.min(...events.map((event) => event.ts))
+    const minTs = events.reduce((min, event) => Math.min(min, event.ts), Infinity)
     const maxTs = events.reduce((max, event) => Math.max(max, event.ts + finite(event.dur)), 0)
     const metadata = new Map()
     for (const event of events) {
@@ -69,12 +69,12 @@
       eventCount: events.length,
       taskCount: tasks.length,
       longTaskCount: longTasks.length,
-      maxTaskMs: round(Math.max(0, ...tasks.map((task) => task.durationMs))),
+      maxTaskMs: round(tasks.reduce((max, task) => Math.max(max, task.durationMs), 0)),
       gcCount: gcEvents.length,
       gcMs: round(gcMs),
       frameCount: frameIntervals.length,
       frameP95Ms: frameIntervals.length ? round(percentile(frameIntervals, 0.95)) : null,
-      frameMaxMs: frameIntervals.length ? round(Math.max(...frameIntervals)) : null,
+      frameMaxMs: frameIntervals.length ? round(frameIntervals.reduce((max, value) => Math.max(max, value), 0)) : null,
       overBudgetFrames: frameIntervals.filter((value) => value > 16.7).length,
     }
     const findings = []
@@ -202,6 +202,9 @@
     }
     if (metrics.computeMaxMs > budgetMs * 2) {
       findings.push({ level: 'warn', title: '存在明显尖峰帧', detail: `最大计算耗时 ${metrics.computeMaxMs}ms，超过预算 ${budgetMs}ms 的 2 倍。` })
+    }
+    if (raw.hooked && !raw.hooked.game) {
+      findings.push({ level: 'warn', title: '探针没有抓到游戏运行时', detail: 'hooked.game=false：探针是在不含 Game/Scene 的页面里运行的；请粘贴到 Electron 游戏窗口的 DevTools Console，确认 typeof Game 为 object。' })
     }
     const causes = aggregateOverBudgetCauses(overBudgetFrames)
     if (causes.length) {

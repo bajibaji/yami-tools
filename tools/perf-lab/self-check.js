@@ -59,4 +59,13 @@ assert.strictEqual(probe.causes[0].name, 'SceneManager')
 assert.strictEqual(probe.causes[0].count, 2)
 assert.strictEqual(probe.worstFrames[0].frame, 11)
 
+const noGameProbe = core.analyze({
+  kind: 'yami-probe', budgetMs: 16.7, samples: 10,
+  compute: { avg: 0, p95: 0, p99: 0, max: 0, overBudgetCount: 0 },
+  frame: { avg: 5, p95: 5, max: 5 },
+  updaters: [], renderers: [], events: [], overBudgetFrames: [],
+  hooked: { game: false, updaters: 0, renderers: 0, events: 0 },
+})
+assert.ok(noGameProbe.findings.some((finding) => finding.title.includes('没有抓到游戏运行时')))
+
 console.log('perf-analysis self-check passed')

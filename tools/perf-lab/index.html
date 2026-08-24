@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0d0f14" />
     <title>YA TOOLS · Electron 性能分析台</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260822-perf-analysis-3" />
+    <link rel="stylesheet" href="./styles.css?v=20260822-perf-analysis-6" />
   </head>
   <body>
     <div class="app-shell">
@@ -125,65 +125,85 @@
           <h2 id="help-title">使用说明</h2>
           <button id="help-close" class="icon-button" type="button" aria-label="关闭说明">×</button>
         </div>
-        <div class="help-body">
-          <h3>这个工具解决什么问题</h3>
-          <p>性能分析台不做“模拟运行”，只分析你在 <b>真实 Electron 游戏</b>里录到的报告。它帮你回答：卡顿到底来自 CPU、WebGL 还是某段游戏逻辑把帧顶超了 16.7ms。</p>
+          <div class="help-body">
+            <div class="help-callout info">
+              <b>核心思路</b>：性能分析台不模拟游戏，只分析你在<b>真实 Electron 游戏</b>里录到的报告。你先采集，再导回来定位问题。
+            </div>
 
-          <h3>三条采集路线（任选其一或组合）</h3>
+            <h3>先选路线</h3>
+            <ul>
+              <li><b>只想知道“主线程是不是太忙”</b> → <span class="hl">路线 A</span>（DevTools Performance）</li>
+              <li><b>排查渲染 / Draw Call / 纹理内存</b> → <span class="hl">路线 B</span>（Spector.js）</li>
+              <li><b>想定位“哪段代码把帧顶超 16.7ms”</b> → <span class="hl">路线 C</span>（真机探针，<b>最推荐</b>）</li>
+            </ul>
 
-          <h4>路线 A · 最快看 CPU/长帧（DevTools Performance）</h4>
-          <ol>
-            <li>在游戏试玩窗口/打包游戏里按 <b>F12</b> 打开 DevTools；</li>
-            <li>切到 <b>Performance</b> 面板，点录制（圆点）；</li>
-            <li>正常游玩并复现卡顿，录 15～60 秒；</li>
-            <li>停止录制，点保存/导出为 <b>trace JSON</b>；</li>
-            <li>回到本工具，把 JSON 拖进「<b>DevTools Performance</b>」区域。</li>
-          </ol>
-          <p>能看：主线程长任务、CPU 热点函数、GC、帧间隔 P95。适合先确认“是不是主线程太忙”。</p>
+            <h3><span class="route-badge">A</span> 最快看 CPU / 长帧（DevTools Performance）</h3>
+            <ol>
+              <li>在游戏试玩窗口 / 打包游戏里按 <b>F12</b> 打开 DevTools；</li>
+              <li>切到 <b>Performance</b> 面板，点录制（圆点）；</li>
+              <li>正常游玩并复现卡顿，录 <b>15～60 秒</b>；</li>
+              <li>停止录制，点保存 / 导出为 <b>trace JSON</b>；</li>
+              <li>回到本工具，把 JSON 拖进「<b>DevTools Performance</b>」区域。</li>
+            </ol>
+            <p class="help-result"><b>能看</b>：主线程长任务、CPU 热点函数、GC、帧间隔 P95。适合先确认“是不是主线程太忙”。</p>
 
-          <h4>路线 B · 看 WebGL（Spector.js）</h4>
-          <ol>
-            <li>获取 <a href="https://github.com/BabylonJS/Spector.js" target="_blank" rel="noreferrer">Spector.js</a> 上游仓库的 <code>extensions/</code> 目录；</li>
-            <li>让游戏/编辑器加载该扩展（编辑器安装目录扩展目录，或打包游戏主进程 <code>loadExtension</code>）；</li>
-            <li>在游戏里用 Spector 捕获目标画面，保存 <b>capture JSON</b>；</li>
-            <li>把 JSON 拖进「<b>Spector.js</b>」区域。</li>
-          </ol>
-          <p>能看：Draw Call、GL 命令、冗余状态、纹理/缓冲内存、WebGL 上下文。适合排查“渲染/GPU 侧瓶颈”。</p>
+            <h3><span class="route-badge">B</span> 看 WebGL（Spector.js）</h3>
+            <ol>
+              <li>获取 <a href="https://github.com/BabylonJS/Spector.js" target="_blank" rel="noreferrer">Spector.js</a> 上游仓库的 <code>extensions/</code> 目录；</li>
+              <li>让游戏 / 编辑器加载该扩展（编辑器安装目录扩展目录，或打包游戏主进程 <code>loadExtension</code>）；</li>
+              <li>在游戏里用 Spector 捕获目标画面，保存 <b>capture JSON</b>；</li>
+              <li>把 JSON 拖进「<b>Spector.js</b>」区域。</li>
+            </ol>
+            <p class="help-result"><b>能看</b>：Draw Call、GL 命令、冗余状态、纹理 / 缓冲内存、WebGL 上下文。适合排查“渲染 / GPU 侧瓶颈”。</p>
 
-          <h4>路线 C · 推荐：定位 16.7ms 超帧元凶（Yami 真机探针）</h4>
-          <ol>
-            <li>在左侧「真机探针」点「<b>复制探针脚本</b>」；</li>
-            <li>在游戏 DevTools 的 <b>Console（控制台）</b>粘贴并回车；</li>
-            <li>正常游玩目标片段（卡顿的地方）；</li>
-            <li>在控制台执行：<code>window.__YAMI_PERF_PROBE__.copy()</code>；</li>
-            <li>把复制到的 JSON 保存成 <code>.json</code> 文件，拖回「<b>Yami 真机探针</b>」区域。</li>
-          </ol>
-          <p>能看：每帧计算耗时（Game.update + render）、超 16.7ms 的帧里到底是哪个更新器/渲染器/事件最耗时。这是回答“哪段代码把帧顶超”的主力路线。</p>
+            <h3><span class="route-badge">C</span> 推荐：定位 16.7ms 超帧元凶（Yami 真机探针）</h3>
+            <ol>
+              <li>在左侧「真机探针」点「<b>复制探针脚本</b>」；</li>
+              <li>打开 <b>Electron 游戏窗口</b>，按 F12 → <b>Console</b>，先输入 <code>typeof Game</code>——必须是 <code>"object"</code>；</li>
+              <li>粘贴探针脚本并回车，正常游玩卡顿片段；</li>
+              <li>游玩结束，执行<b>下面这段完整代码</b>，直接下载 JSON；</li>
+              <li>把下载的 <code>.json</code> 文件拖回「<b>Yami 真机探针</b>」区域。</li>
+            </ol>
+            <div class="help-code">
+              <div class="code-title">完整命令行（在游戏 DevTools Console 里依次执行）</div>
+              <pre><code>// 第一步：粘贴探针脚本（工具页左侧「复制探针脚本」获取）
+// 第二步：正常游玩卡顿片段
+// 第三步：导出结果（推荐 download，直接下载 JSON 文件）
+window.__YAMI_PERF_PROBE__.download()
 
-          <h3>导入后怎么看</h3>
-          <ul>
-            <li><b>总览</b>：先看帧预算/长任务/GC/超预算帧。有红色诊断就先处理。</li>
-            <li><b>CPU 与长帧</b>：CPU 热点按总耗时排序，定位到 <code>Dist/Script/*.js:行号</code>；长任务看卡顿瞬间。</li>
-            <li><b>WebGL</b>：Draw Call 高、冗余命令多、纹理内存大时去查渲染/粒子/图层。</li>
-            <li><b>超帧定位</b>：探针导入后看“元凶列表”——按在超帧帧里出现次数和累计耗时排序；再点最差帧表格看具体是哪一帧、哪个模块/事件最贵。</li>
-          </ul>
+// 如果想复制到剪贴板（再手动保存成 .json），改用：
+// window.__YAMI_PERF_PROBE__.copy()</code></pre>
+            </div>
+            <p class="help-result"><b>能看</b>：每帧计算耗时（Game.update + render）、超 16.7ms 的帧里到底是哪个更新器 / 渲染器 / 事件最耗时。这是回答“哪段代码把帧顶超”的主力路线。</p>
+            <div class="help-callout warn">
+              <b>注意</b>：如果 <code>typeof Game</code> 不是 <code>"object"</code>，说明探针跑在了错误页面，数据会是空的（<code>updaters: []</code>、<code>scene: null</code>）。必须在游戏自己的 DevTools Console 里跑。
+            </div>
 
-          <h3>基线怎么用</h3>
-          <p>导入报告后点「<b>保存基线</b>」记录当前摘要。以后改完代码再录一次并导入，总览卡片会出现绿色/红色差值（<code>+0.42</code> 表示变差），帮你判断这次改动有没有让性能退化。</p>
+            <h3>导入后怎么看</h3>
+            <ul>
+              <li><b>总览</b>：先看帧预算 / 长任务 / GC / 超预算帧。有红色诊断就先处理。</li>
+              <li><b>CPU 与长帧</b>：CPU 热点按总耗时排序，定位到 <code>Dist/Script/*.js:行号</code>；长任务看卡顿瞬间。</li>
+              <li><b>WebGL</b>：Draw Call 高、冗余命令多、纹理内存大时去查渲染 / 粒子 / 图层。</li>
+              <li><b>超帧定位</b>：探针导入后看“元凶列表”——按在超帧帧里出现次数和累计耗时排序；再点最差帧表格看具体是哪一帧、哪个模块 / 事件最贵。</li>
+            </ul>
 
-          <h3>常见坑</h3>
-          <ul>
-            <li>DevTools 录制必须导出 trace JSON，只截图 Performance Monitor 导不进来；</li>
-            <li>探针脚本必须在游戏运行时的控制台里粘贴（不能在其他页面粘贴）；</li>
-            <li>探针只统计主线程 JS 计算，GPU/渲染实际耗时需要配合 Spector 看；</li>
-            <li>不同机器的 GPU/CPU 不同，对比时尽量同一台机器、同一场景、同一分辨率。</li>
-          </ul>
-        </div>
+            <h3>基线怎么用</h3>
+            <p class="help-result">导入报告后点「<b>保存基线</b>」记录当前摘要。以后改完代码再录一次并导入，总览卡片会出现<b>绿色 / 红色差值</b>（<code>+0.42</code> 表示变差），帮你判断这次改动有没有让性能退化。</p>
+
+            <h3>常见坑</h3>
+            <ul>
+              <li>DevTools 录制<b>必须导出 trace JSON</b>，只截图 Performance Monitor 导不进来；</li>
+              <li>探针脚本必须在<b>游戏运行时的控制台</b>里粘贴（不能在其他页面粘贴）；</li>
+              <li>探针只统计主线程 JS 计算，GPU / 渲染实际耗时需要配合 Spector 看；</li>
+              <li>不同机器的 GPU / CPU 不同，对比时尽量<b>同一台机器、同一场景、同一分辨率</b>。</li>
+            </ul>
+          </div>
+
       </div>
     </div>
 
-    <script src="./analyzer-core.js?v=20260822-perf-analysis-3"></script>
-    <script src="./app.js?v=20260822-perf-analysis-3"></script>
+    <script src="./analyzer-core.js?v=20260822-perf-analysis-6"></script>
+    <script src="./app.js?v=20260822-perf-analysis-6"></script>
     <script src="../version.json?v=20260822-tools-version-6"></script>
     <script>document.querySelectorAll('[data-app-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS['perf-lab']||{}).version})</script>
 

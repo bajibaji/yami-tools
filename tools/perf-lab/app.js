@@ -27,7 +27,7 @@
   if (window.__YAMI_PERF_PROBE__) return window.__YAMI_PERF_PROBE__
   const BUDGET = 16.7
   const MAX_SAMPLES = 12000
-  const state = { running: true, startedAt: performance.now(), samples: [], overBudgetFrames: [], updaterTotal: new Map(), rendererTotal: new Map(), eventTotal: new Map() }
+  const state = { running: true, startedAt: Date.now(), hooked: { game: false, updaters: 0, renderers: 0, events: 0 }, samples: [], overBudgetFrames: [], updaterTotal: new Map(), rendererTotal: new Map(), eventTotal: new Map() }
   let frameUpdate = 0
   let frameRender = 0
   let frameUpdaterMs = new Map()
@@ -47,11 +47,12 @@
   function hookGame() {
     const G = typeof Game !== 'undefined' ? Game : null
     if (!G || typeof G.update !== 'function' || G.__yamiPerfProbeHooked__) return
+    state.hooked.game = true
     const u = G.update.bind(G); G.update = function () { const t0 = now(); try { return u.apply(this, arguments) } finally { frameUpdate += now() - t0 } }
     if (typeof G.deferredRendering === 'function') { const r = G.deferredRendering.bind(G); G.deferredRendering = function () { const t0 = now(); try { return r.apply(this, arguments) } finally { frameRender += now() - t0 } } }
     Object.defineProperty(G, '__yamiPerfProbeHooked__', { value: true, configurable: true })
   }
-  function refresh() { hookGame(); if (typeof Game !== 'undefined') { wrapModules(Game.updaters, 'update', state.updaterTotal, frameUpdaterMs); wrapModules(Game.renderers, 'render', state.rendererTotal, frameRendererMs) } wrapEventHandlers() }
+  function refresh() { hookGame(); if (typeof Game !== 'undefined') { wrapModules(Game.updaters, 'update', state.updaterTotal, frameUpdaterMs); wrapModules(Game.renderers, 'render', state.rendererTotal, frameRendererMs); state.hooked.updaters = (Game.updaters && Game.updaters.length) || 0; state.hooked.renderers = (Game.renderers && Game.renderers.length) || 0 } wrapEventHandlers(); if (typeof EventManager !== 'undefined' && EventManager.activeEvents) state.hooked.events = EventManager.activeEvents.length }
   refresh()
   let lastTick = now()
   function tick() {
@@ -81,16 +82,18 @@
       compute: { avg: round2(samples.reduce(function (a, b) { return a + b.compute }, 0) / Math.max(1, samples.length)), p95: round2(p(0.95)), p99: round2(p(0.99)), max: round2(comp.length ? comp[comp.length - 1] : 0), overBudgetCount: state.overBudgetFrames.length },
       frame: { avg: round2(samples.reduce(function (a, b) { return a + b.interval }, 0) / Math.max(1, samples.length)), p95: round2(frameValues.length ? frameValues[Math.min(frameValues.length - 1, Math.round(0.95 * (frameValues.length - 1)))] : 0), max: round2(frameValues.length ? frameValues[frameValues.length - 1] : 0) },
       updaters: stat(state.updaterTotal), renderers: stat(state.rendererTotal), events: stat(state.eventTotal), overBudgetFrames: state.overBudgetFrames.slice(0, 500),
+      hooked: state.hooked,
       scene: (typeof Scene !== 'undefined') ? { actors: (Scene.visibleActors ? Scene.visibleActors.count : 0) + '/' + (Scene.actor ? Scene.actor.list.length : 0), uiElements: (typeof UI !== 'undefined' && UI.manager) ? UI.manager.list.length : 0, textures: (typeof GL !== 'undefined' && GL.textureManager) ? GL.textureManager.count : 0 } : null
     }
     window.__YAMI_PERF_PROBE_LAST__ = out
     return out
   }
   window.__YAMI_PERF_PROBE__ = {
-    start: function () { state.samples.length = 0; state.overBudgetFrames.length = 0; state.updaterTotal.clear(); state.rendererTotal.clear(); state.eventTotal.clear(); state.running = true; state.startedAt = performance.now(); return true },
+    start: function () { state.samples.length = 0; state.overBudgetFrames.length = 0; state.updaterTotal.clear(); state.rendererTotal.clear(); state.eventTotal.clear(); state.hooked = { game: false, updaters: 0, renderers: 0, events: 0 }; state.running = true; state.startedAt = Date.now(); return true },
     stop: stop,
     snapshot: function () { return { running: state.running, samples: state.samples.length, overBudget: state.overBudgetFrames.length } },
-    copy: function () { const out = stop(); try { copy(JSON.stringify(out)) } catch (e) { console.log(JSON.stringify(out)) } return out }
+    copy: function () { const out = stop(); try { copy(JSON.stringify(out)) } catch (e) { console.log(JSON.stringify(out)) } return out },
+    download: function () { const out = stop(); const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'yami-probe-' + Date.now() + '.json'; document.body.appendChild(a); a.click(); setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url) }, 3000); return out }
   }
   return window.__YAMI_PERF_PROBE__
 })()`
