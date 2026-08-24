@@ -133,11 +133,14 @@ export default class sortActorRange {
       return;
     }
 
-    const jsLines = new Set(jsCode.split('\n').map(l => l.trim()).filter(Boolean));
+    // 收集原始 JS 源码中的非空行集合（用于精准判定行变动）
+    const jsLinesSet = new Set(
+      jsCode.split('\n').map(l => l.trim()).filter(Boolean)
+    );
+
     const lines = tsCode.split('\n');
     const htmlLines = [];
     let changedCount = 0;
-    let inInterfaceProps = false;
 
     lines.forEach((line, index) => {
       const trimmed = line.trim();
@@ -145,36 +148,38 @@ export default class sortActorRange {
       let lineType = '';
       let formattedCode = escapeHtml(line);
 
+      // 判断是否属于完全新增或被修改的行
+      const isUnchangedInJs = jsLinesSet.has(trimmed);
+
       if (trimmed === '// 接口属性') {
-        inInterfaceProps = true;
         lineType = 'line-added';
         changedCount++;
         formattedCode = `<span class="token-added">// 接口属性 (自动注入)</span>`;
-      } else if (inInterfaceProps && (trimmed.startsWith('call(') || trimmed.startsWith('onStart(') || trimmed.startsWith('update(') || trimmed.startsWith('constructor(') || trimmed.startsWith('onDestroy(') || trimmed.startsWith('}'))) {
-        inInterfaceProps = false;
-      }
-
-      if (inInterfaceProps && trimmed !== '// 接口属性') {
+      } else if (/^\s*[a-zA-Z0-9_$]+(\!|\?)\s*:\s*.+$/.test(line)) {
+        // 接口属性声明行（! 或 ?）
         lineType = 'line-added';
         changedCount++;
         formattedCode = formattedCode.replace(/^(\s*)([a-zA-Z0-9_$]+)(\!|\?)(\s*:\s*)(.+)$/, '$1<strong>$2$3</strong>$4<span class="token-added">$5</span>');
-      } else if (trimmed.includes('implements Script<')) {
+      } else if (!isUnchangedInJs && trimmed.length > 0) {
+        // 与老 JS 不同的行
         lineType = 'line-modified';
         changedCount++;
-        formattedCode = formattedCode.replace(/(implements\s+Script&lt;[a-zA-Z0-9_$]+&gt;)/, '<span class="token-changed">$1</span>');
-      } else if (trimmed.includes('CurrentEvent.')) {
-        lineType = 'line-modified';
-        changedCount++;
-        formattedCode = formattedCode.replace(/(CurrentEvent\.[a-zA-Z0-9_$]+)/g, '<span class="token-changed">$1</span>');
-      } else if (trimmed.includes('call(') && trimmed.includes('void | boolean')) {
-        lineType = 'line-modified';
-        changedCount++;
-        formattedCode = formattedCode.replace(/(:\s*void\s*\|\s*boolean)/g, '<span class="token-changed">$1</span>');
-      } else if (trimmed.includes(': any') || trimmed.includes(': number') || trimmed.includes(': boolean') || trimmed.includes(': string')) {
-        if (!jsLines.has(trimmed)) {
-          lineType = 'line-modified';
-          changedCount++;
-          formattedCode = formattedCode.replace(/(:\s*(?:any|number|boolean|string|Function|any\[\]))/g, '<span class="token-changed">$1</span>');
+
+        // 针对不同修改点进行精细词汇高亮
+        if (formattedCode.includes('implements Script&lt;')) {
+          formattedCode = formattedCode.replace(/(implements\s+Script&lt;[a-zA-Z0-9_$]+&gt;)/g, '<span class="token-changed">$1</span>');
+        }
+        if (formattedCode.includes('CurrentEvent.')) {
+          formattedCode = formattedCode.replace(/(CurrentEvent\.[a-zA-Z0-9_$]+)/g, '<span class="token-changed">$1</span>');
+        }
+        if (formattedCode.includes(': void | boolean')) {
+          formattedCode = formattedCode.replace(/(:\s*void\s*\|\s*boolean)/g, '<span class="token-changed">$1</span>');
+        }
+        if (formattedCode.includes(': any')) {
+          formattedCode = formattedCode.replace(/(:\s*any\b)/g, '<span class="token-changed">$1</span>');
+        }
+        if (/:\s*(?:number|string|boolean|Function|VariableSetter|Actor|Skill|State|Equipment|Item|UIElement)/.test(formattedCode)) {
+          formattedCode = formattedCode.replace(/(:\s*(?:number|string|boolean|Function|VariableSetter|Actor|Skill|State|Equipment|Item|UIElement)\b)/g, '<span class="token-changed">$1</span>');
         }
       }
 

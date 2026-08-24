@@ -11,8 +11,7 @@
 | **地图编辑器** | 10×10 地图格、通行关系、等级和刷怪池的 Excel/JSON 编辑 |
 | **挂机验证台** | 按游戏真实数值模型模拟战斗/成长/收益，定位数值瓶颈 |
 | **性能分析台** | 分析 Electron 真机游玩的 DevTools trace 与 Spector.js WebGL capture |
-| **快速本地化** | 找未本地化文本、缺翻译、孤儿引用，导出/导入翻译 Excel |
-| **脚本转换台** | 老版 Yami JS 插件与指令一键转换为现代规范 TypeScript (TS) 代码 |
+| **脚本转换** | 老版 Yami JS 插件与指令一键转换为现代规范 TypeScript (TS) 代码 |
 
 ---
 
@@ -149,6 +148,19 @@
 - 安全：报告全程在浏览器本地解析，不上传、不运行游戏、不读写工程。
 
 Spector.js 使用上游原版扩展（MIT），本仓库不维护自研采集插件。详细采集步骤见 `tools/perf-lab/README.md`。
+
+---
+
+## 脚本转换（v0.1.0）
+
+将老旧的 Yami RPG JS 插件与自定义指令代码一键转换为现代 TypeScript (TS) 规范脚本，专为迁移到新游戏工程设计：
+
+- **自动解析元数据与推导接口属性**：解析 `/* @plugin */` 注释，自动将 `@number`、`@string`、`@option`、`@variable-setter`、`@actor-getter` 等标签转换为标准 TS 接口属性并自动注入类中；
+- **自动推断泛型形态**：根据类方法与特征自动识别实现 `Script<Command>`（自定义指令）、`Script<Plugin>`（全局插件）、`Script<Trigger>`（触发器脚本）、`Script<SceneLight>`（光源脚本）、`Script<ImageElement>`（图像组件）等；
+- **运行时 API 现代化升级**：将老旧过时的 `Event.attributes` / `Event.triggerActor` / `Event.casterActor` 自动替换为 `CurrentEvent.*`；
+- **智能纠正与去重**：自动将 getter 参数的函数调用（如 `this.actor()`）修复为预求值属性读取（`this.actor`），并智能规范化老旧 JS 伪类型注释（如 `caster //:object`）；
+- **改动点代码高亮**：右侧 TS 代码视图中直接高亮显示自动生成的接口属性、升级的泛型类与修改的 API，直观清晰；
+- **批量转换与极速导出**：支持选择文件夹批量载入多个 `.js` 脚本并一键打包下载全部对应的 `.ts` 文件。
 
 ---
 
