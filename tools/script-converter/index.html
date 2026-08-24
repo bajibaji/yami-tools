@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0d0f14" />
+    <title>YA TOOLS · 脚本转换台</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css?v=20260824-script-converter-1" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <div class="brand-mark">⚡</div>
+          <div>
+            <div class="eyebrow">OPEN YAMI TOOLKIT</div>
+            <div class="brand-name">YA TOOLS<span>脚本转换台 <em class="version-tag" data-app-version>v0.1.0</em></span></div>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <a class="hub-back" href="../../index.html">← 工具合集</a>
+          <button id="btn-load-sample" class="button" type="button" title="载入根据角色距离排序的示例老 JS 代码">加载示例</button>
+          <button id="btn-pick-file" class="button" type="button">打开 JS 文件</button>
+          <button id="btn-pick-dir" class="button" type="button" title="批量选择文件夹中的所有 .js 脚本">批量转换目录</button>
+          <button id="btn-clear" class="button button-subtle" type="button">清空</button>
+          <input id="file-input" type="file" accept=".js" multiple hidden />
+          <input id="dir-input" type="file" webkitdirectory directory multiple hidden />
+        </div>
+      </header>
+
+      <!-- 批量文件抽屉（多文件时展示） -->
+      <div id="batch-drawer" class="batch-drawer hidden">
+        <div class="batch-drawer-head">
+          <div class="batch-title">
+            <span>批量文件列表 (<span id="batch-count">0</span>)</span>
+          </div>
+          <div class="batch-actions">
+            <button id="btn-batch-export" class="button button-primary button-mini" type="button">批量导出所有 .ts</button>
+            <button id="btn-close-batch" class="button button-mini" type="button">收起</button>
+          </div>
+        </div>
+        <div id="batch-list" class="batch-list"></div>
+      </div>
+
+      <main class="workspace">
+        <!-- 左侧：输入 JS 代码 -->
+        <section class="editor-pane source-pane">
+          <div class="pane-header">
+            <div class="pane-title">
+              <span class="badge badge-js">JS</span>
+              <span id="source-filename" class="filename">输入或粘贴老 JS 代码</span>
+            </div>
+            <div class="pane-tools">
+              <span id="source-stats" class="stats-tag">0 行</span>
+            </div>
+          </div>
+          <div class="pane-body">
+            <div class="editor-wrapper" id="source-wrapper">
+              <textarea id="source-code" placeholder="在此粘贴或拖入老旧的 Yami JS 插件/指令源码... (支持 /* @plugin */ 注解)" spellcheck="false"></textarea>
+              <div id="drop-overlay" class="drop-overlay hidden">
+                <div class="drop-message">
+                  <span class="drop-icon">📥</span>
+                  <span>松开鼠标载入 JS 脚本</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 中间：转换配置与诊断 -->
+        <aside class="control-pane">
+          <div class="control-section">
+            <label class="control-label">脚本目标形态</label>
+            <div class="select-wrapper">
+              <select id="select-script-type" class="select-field">
+                <option value="auto">自动推断 (推荐)</option>
+                <option value="Command">Script&lt;Command&gt; (自定义指令)</option>
+                <option value="Plugin">Script&lt;Plugin&gt; (全局插件)</option>
+                <option value="Trigger">Script&lt;Trigger&gt; (触发器脚本)</option>
+                <option value="Skill">Script&lt;Skill&gt; (技能脚本)</option>
+                <option value="State">Script&lt;State&gt; (状态脚本)</option>
+                <option value="Equipment">Script&lt;Equipment&gt; (装备脚本)</option>
+                <option value="Item">Script&lt;Item&gt; (物品脚本)</option>
+                <option value="ButtonElement">Script&lt;ButtonElement&gt; (按钮UI脚本)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="control-section">
+            <button id="btn-convert" class="button button-primary button-block" type="button">
+              <span>立即转换</span> <span class="arrow-icon">→</span>
+            </button>
+          </div>
+
+          <div class="control-section meta-summary-section">
+            <div class="section-title">元数据解析摘要</div>
+            <div id="meta-summary" class="meta-summary">
+              <div class="empty-hint">暂多元数据信息</div>
+            </div>
+          </div>
+
+          <div class="control-section diagnostics-section">
+            <div class="section-title">转换流水线与诊断</div>
+            <div id="diagnostics-list" class="diagnostics-list">
+              <div class="empty-hint">就绪</div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- 右侧：输出 TS 代码 -->
+        <section class="editor-pane target-pane">
+          <div class="pane-header">
+            <div class="pane-title">
+              <span class="badge badge-ts">TS</span>
+              <span id="target-filename" class="filename">转换结果 (符合当前引擎规范)</span>
+            </div>
+            <div class="pane-tools">
+              <span id="target-stats" class="stats-tag">0 行</span>
+              <button id="btn-copy-ts" class="button button-mini" type="button" title="复制转换后的 TS 代码到剪贴板">复制 TS</button>
+              <button id="btn-download-ts" class="button button-primary button-mini" type="button" title="下载 .ts 文件">下载 .ts</button>
+            </div>
+          </div>
+          <div class="pane-body">
+            <div class="editor-wrapper">
+              <textarea id="target-code" readonly placeholder="转换后的 TypeScript 脚本将在此生成..." spellcheck="false"></textarea>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="statusbar">
+        <span id="status-text">就绪 · 随时可粘贴代码或拖拽 .js 文件</span>
+        <span class="status-spacer"></span>
+        <span>100% 本地转换 · 自动识别泛型 · 自动生成接口属性 · 升级 CurrentEvent API</span>
+      </footer>
+    </div>
+
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+
+    <script src="./converter-core.js?v=20260824-script-converter-1"></script>
+    <script src="./app.js?v=20260824-script-converter-1"></script>
+    <script src="../version.json?v=20260824-tools-version-7"></script>
+    <script>
+      document.querySelectorAll('[data-app-version]').forEach((e) => {
+        e.textContent = 'v' + ((window.TOOL_VERSIONS && window.TOOL_VERSIONS['script-converter']) ? window.TOOL_VERSIONS['script-converter'].version : '0.1.0');
+      });
+    </script>
+  </body>
+</html>

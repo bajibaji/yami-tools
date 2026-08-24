@@ -106,6 +106,23 @@
             </div>
           </a>
 
+          <!-- 脚本转换台 -->
+          <a class="tool-card" href="./tools/script-converter/">
+            <div class="card-glow"></div>
+            <div class="tool-card-header">
+              <span class="tool-icon icon-script" style="color: #60a5fa;">⚡</span>
+              <span class="tool-version" data-tool-version>v0.1.0</span>
+            </div>
+            <div class="tool-card-body">
+              <h2 class="tool-card-title">脚本转换台 <span class="card-arrow">→</span></h2>
+              <p class="tool-card-desc">将老旧的 Yami RPG JS 插件与指令代码一键转换为现代 TypeScript 规范脚本，自动推导泛型、生成接口属性、升级 CurrentEvent API。</p>
+            </div>
+            <div class="tool-card-footer">
+              <span class="tool-tag">JS 转 TS · 自动推断泛型 · 批量转换</span>
+              <span class="tool-action">启动工具</span>
+            </div>
+          </a>
+
           <!-- 存档台 -->
           <a class="tool-card" href="./tools/save-lab/">
             <div class="card-glow"></div>
@@ -122,23 +139,23 @@
               <span class="tool-action">启动工具</span>
             </div>
           </a>
-            <!-- 性能测试台 -->
-            <a class="tool-card" href="./tools/perf-lab/">
-              <div class="card-glow"></div>
-              <div class="tool-card-header">
-                <span class="tool-icon icon-perf">⏱</span>
-                <span class="tool-version" data-tool-version>v0.4.0</span>
-              </div>
-              <div class="tool-card-body">
-                <h2 class="tool-card-title">性能分析台 <span class="card-arrow">→</span></h2>
-                <p class="tool-card-desc">分析 Electron 真机游玩时采集的 DevTools Performance 与 Spector.js 报告，定位 CPU、GC、长帧和 WebGL 瓶颈。</p>
-              </div>
-              <div class="tool-card-footer">
-                <span class="tool-tag">Electron 真机 · DevTools · Spector.js</span>
-                <span class="tool-action">启动工具</span>
-              </div>
-            </a>
 
+          <!-- 性能测试台 -->
+          <a class="tool-card" href="./tools/perf-lab/">
+            <div class="card-glow"></div>
+            <div class="tool-card-header">
+              <span class="tool-icon icon-perf">⏱</span>
+              <span class="tool-version" data-tool-version>v0.4.0</span>
+            </div>
+            <div class="tool-card-body">
+              <h2 class="tool-card-title">性能分析台 <span class="card-arrow">→</span></h2>
+              <p class="tool-card-desc">分析 Electron 真机游玩时采集的 DevTools Performance 与 Spector.js 报告，定位 CPU、GC、长帧和 WebGL 瓶颈。</p>
+            </div>
+            <div class="tool-card-footer">
+              <span class="tool-tag">Electron 真机 · DevTools · Spector.js</span>
+              <span class="tool-action">启动工具</span>
+            </div>
+          </a>
         </section>
       </main>
 
@@ -152,7 +169,11 @@
         <div class="footer-right">本地工具 · 数据无上传 · <em data-hub-version>v0.8.0</em></div>
       </footer>
     </div>
-      <script src="./tools/version.json?v=20260824-tools-version-7"></script>
-    <script>document.querySelectorAll('[data-hub-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS.hub||{}).version});const order=['character-editor','map-editor','idle-lab','localization-lab','save-lab','perf-lab'];document.querySelectorAll('[data-tool-version]').forEach((e,i)=>{e.textContent='v'+((window.TOOL_VERSIONS[order[i]]||{}).version||'')})</script>
+    <script src="./tools/version.json?v=20260824-tools-version-8"></script>
+    <script>
+      document.querySelectorAll('[data-hub-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS.hub||{}).version});
+      const order=['character-editor','map-editor','idle-lab','localization-lab','script-converter','save-lab','perf-lab'];
+      document.querySelectorAll('[data-tool-version]').forEach((e,i)=>{e.textContent='v'+((window.TOOL_VERSIONS[order[i]]||{}).version||'')});
+    </script>
   </body>
 </html>

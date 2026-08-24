@@ -12,6 +12,7 @@
 | **挂机验证台** | 按游戏真实数值模型模拟战斗/成长/收益，定位数值瓶颈 |
 | **性能分析台** | 分析 Electron 真机游玩的 DevTools trace 与 Spector.js WebGL capture |
 | **快速本地化** | 找未本地化文本、缺翻译、孤儿引用，导出/导入翻译 Excel |
+| **脚本转换台** | 老版 Yami JS 插件与指令一键转换为现代规范 TypeScript (TS) 代码 |
 
 ---
 
