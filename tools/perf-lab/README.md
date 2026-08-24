@@ -48,6 +48,7 @@ Spector.js 单次捕获最多 10000 条 GL 命令。达到上限时分析台会�
 4. 在控制台执行：
    ```js
    window.__YAMI_PERF_PROBE__.copy() // 复制到剪贴板
+   window.__YAMI_PERF_PROBE__.check() // 可选：确认 game/updaters/samples 是否正常
    window.__YAMI_PERF_PROBE__.download() // 或直接下载 JSON 文件
    ```
    （`copy()` 会把 JSON 复制到剪贴板；`download()` 会生成 `yami-probe-<时间戳>.json` 下载）

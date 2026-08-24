@@ -206,6 +206,9 @@
     if (raw.hooked && !raw.hooked.game) {
       findings.push({ level: 'warn', title: '探针没有抓到游戏运行时', detail: 'hooked.game=false：探针是在不含 Game/Scene 的页面里运行的；请粘贴到 Electron 游戏窗口的 DevTools Console，确认 typeof Game 为 object。' })
     }
+    if (!metrics.frameCount) {
+      findings.push({ level: 'warn', title: '探针没有采集到帧样本', detail: 'samples=0。请在 Electron 游戏窗口的 DevTools Console 运行探针，游玩一段时间后再执行 download()/copy()。' })
+    }
     const causes = aggregateOverBudgetCauses(overBudgetFrames)
     if (causes.length) {
       const top = causes[0]

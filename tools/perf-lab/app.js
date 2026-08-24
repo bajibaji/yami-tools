@@ -78,7 +78,7 @@
     const p = function (q) { return comp.length ? comp[Math.min(comp.length - 1, Math.round(q * (comp.length - 1)))] : 0 }
     const frameValues = samples.map(function (s) { return s.interval }).sort(function (a, b) { return a - b })
     const out = {
-      kind: 'yami-probe', version: 1, budgetMs: BUDGET, startedAt: new Date(state.startedAt).toISOString(), durationMs: round2((performance.now() - state.startedAt) / 1000), samples: samples.length,
+      kind: 'yami-probe', version: 1, budgetMs: BUDGET, startedAt: new Date(state.startedAt).toISOString(), durationMs: round2((Date.now() - state.startedAt) / 1000), samples: samples.length,
       compute: { avg: round2(samples.reduce(function (a, b) { return a + b.compute }, 0) / Math.max(1, samples.length)), p95: round2(p(0.95)), p99: round2(p(0.99)), max: round2(comp.length ? comp[comp.length - 1] : 0), overBudgetCount: state.overBudgetFrames.length },
       frame: { avg: round2(samples.reduce(function (a, b) { return a + b.interval }, 0) / Math.max(1, samples.length)), p95: round2(frameValues.length ? frameValues[Math.min(frameValues.length - 1, Math.round(0.95 * (frameValues.length - 1)))] : 0), max: round2(frameValues.length ? frameValues[frameValues.length - 1] : 0) },
       updaters: stat(state.updaterTotal), renderers: stat(state.rendererTotal), events: stat(state.eventTotal), overBudgetFrames: state.overBudgetFrames.slice(0, 500),
@@ -92,8 +92,9 @@
     start: function () { state.samples.length = 0; state.overBudgetFrames.length = 0; state.updaterTotal.clear(); state.rendererTotal.clear(); state.eventTotal.clear(); state.hooked = { game: false, updaters: 0, renderers: 0, events: 0 }; state.running = true; state.startedAt = Date.now(); return true },
     stop: stop,
     snapshot: function () { return { running: state.running, samples: state.samples.length, overBudget: state.overBudgetFrames.length } },
-    copy: function () { const out = stop(); try { copy(JSON.stringify(out)) } catch (e) { console.log(JSON.stringify(out)) } return out },
-    download: function () { const out = stop(); const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'yami-probe-' + Date.now() + '.json'; document.body.appendChild(a); a.click(); setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url) }, 3000); return out }
+    check: function () { return { game: state.hooked.game, updaters: state.hooked.updaters, renderers: state.hooked.renderers, events: state.hooked.events, samples: state.samples.length } },
+    copy: function () { const out = stop(); if (!out.hooked.game || !out.samples) console.warn('探针未采集到有效数据：hooked.game=' + out.hooked.game + '，samples=' + out.samples + '。请确认在 Electron 游戏窗口的 DevTools Console 运行，并在游玩一段时间后再导出。'); try { copy(JSON.stringify(out)) } catch (e) { console.log(JSON.stringify(out)) } return out },
+    download: function () { const out = stop(); if (!out.hooked.game || !out.samples) console.warn('探针未采集到有效数据：hooked.game=' + out.hooked.game + '，samples=' + out.samples + '。请确认在 Electron 游戏窗口的 DevTools Console 运行，并在游玩一段时间后再导出。'); const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'yami-probe-' + Date.now() + '.json'; document.body.appendChild(a); a.click(); setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url) }, 3000); return out }
   }
   return window.__YAMI_PERF_PROBE__
 })()`

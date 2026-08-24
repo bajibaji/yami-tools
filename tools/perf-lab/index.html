@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0d0f14" />
     <title>YA TOOLS · Electron 性能分析台</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260822-perf-analysis-6" />
+    <link rel="stylesheet" href="./styles.css?v=20260822-perf-analysis-7" />
   </head>
   <body>
     <div class="app-shell">
@@ -169,6 +169,7 @@
               <pre><code>// 第一步：粘贴探针脚本（工具页左侧「复制探针脚本」获取）
 // 第二步：正常游玩卡顿片段
 // 第三步：导出结果（推荐 download，直接下载 JSON 文件）
+window.__YAMI_PERF_PROBE__.check() // 可选：确认 game/updaters/samples 是否正常
 window.__YAMI_PERF_PROBE__.download()
 
 // 如果想复制到剪贴板（再手动保存成 .json），改用：
@@ -194,6 +195,7 @@ window.__YAMI_PERF_PROBE__.download()
             <ul>
               <li>DevTools 录制<b>必须导出 trace JSON</b>，只截图 Performance Monitor 导不进来；</li>
               <li>探针脚本必须在<b>游戏运行时的控制台</b>里粘贴（不能在其他页面粘贴）；</li>
+              <li>如果导出的 JSON 是空（<code>samples: 0</code>、<code>hooked.game: false</code>），先用 <code>window.__YAMI_PERF_PROBE__.check()</code> 看看，再去游戏 Console 里跑；</li>
               <li>探针只统计主线程 JS 计算，GPU / 渲染实际耗时需要配合 Spector 看；</li>
               <li>不同机器的 GPU / CPU 不同，对比时尽量<b>同一台机器、同一场景、同一分辨率</b>。</li>
             </ul>
@@ -202,8 +204,8 @@ window.__YAMI_PERF_PROBE__.download()
       </div>
     </div>
 
-    <script src="./analyzer-core.js?v=20260822-perf-analysis-6"></script>
-    <script src="./app.js?v=20260822-perf-analysis-6"></script>
+    <script src="./analyzer-core.js?v=20260822-perf-analysis-7"></script>
+    <script src="./app.js?v=20260822-perf-analysis-7"></script>
     <script src="../version.json?v=20260822-tools-version-6"></script>
     <script>document.querySelectorAll('[data-app-version]').forEach(e=>{e.textContent='v'+(window.TOOL_VERSIONS['perf-lab']||{}).version})</script>
 
