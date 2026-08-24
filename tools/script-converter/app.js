@@ -75,6 +75,7 @@ export default class sortActorRange {
 
   const state = {
     currentFilename: '根据角色相对坐标的距离排序.2061c85d76d05240.js',
+    currentTsCode: '',
     batchFiles: [], // [{ name, content, tsCode }]
     activeBatchIndex: -1
   };
@@ -82,7 +83,8 @@ export default class sortActorRange {
   // DOM 元素
   const dom = {
     sourceCode: document.getElementById('source-code'),
-    targetCode: document.getElementById('target-code'),
+    targetTsView: document.getElementById('target-ts-view'),
+    changesSummaryBadge: document.getElementById('changes-summary-badge'),
     sourceFilename: document.getElementById('source-filename'),
     targetFilename: document.getElementById('target-filename'),
     sourceStats: document.getElementById('source-stats'),
@@ -110,6 +112,87 @@ export default class sortActorRange {
     btnCloseBatch: document.getElementById('btn-close-batch')
   };
 
+  // HTML 转义
+  function escapeHtml(str) {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  // 渲染 TS 主代码视图并直接高亮变动点
+  function renderTsHighlightView(jsCode, result) {
+    const tsCode = result.tsCode || '';
+    state.currentTsCode = tsCode;
+
+    if (!tsCode) {
+      dom.targetTsView.innerHTML = '<div class="empty-hint">等待输入或载入 JS 代码...</div>';
+      if (dom.changesSummaryBadge) dom.changesSummaryBadge.textContent = '就绪';
+      return;
+    }
+
+    const jsLines = new Set(jsCode.split('\n').map(l => l.trim()).filter(Boolean));
+    const lines = tsCode.split('\n');
+    const htmlLines = [];
+    let changedCount = 0;
+    let inInterfaceProps = false;
+
+    lines.forEach((line, index) => {
+      const trimmed = line.trim();
+      const lineNum = index + 1;
+      let lineType = '';
+      let formattedCode = escapeHtml(line);
+
+      if (trimmed === '// 接口属性') {
+        inInterfaceProps = true;
+        lineType = 'line-added';
+        changedCount++;
+        formattedCode = `<span class="token-added">// 接口属性 (自动注入)</span>`;
+      } else if (inInterfaceProps && (trimmed.startsWith('call(') || trimmed.startsWith('onStart(') || trimmed.startsWith('update(') || trimmed.startsWith('constructor(') || trimmed.startsWith('onDestroy(') || trimmed.startsWith('}'))) {
+        inInterfaceProps = false;
+      }
+
+      if (inInterfaceProps && trimmed !== '// 接口属性') {
+        lineType = 'line-added';
+        changedCount++;
+        formattedCode = formattedCode.replace(/^(\s*)([a-zA-Z0-9_$]+)(\!|\?)(\s*:\s*)(.+)$/, '$1<strong>$2$3</strong>$4<span class="token-added">$5</span>');
+      } else if (trimmed.includes('implements Script<')) {
+        lineType = 'line-modified';
+        changedCount++;
+        formattedCode = formattedCode.replace(/(implements\s+Script&lt;[a-zA-Z0-9_$]+&gt;)/, '<span class="token-changed">$1</span>');
+      } else if (trimmed.includes('CurrentEvent.')) {
+        lineType = 'line-modified';
+        changedCount++;
+        formattedCode = formattedCode.replace(/(CurrentEvent\.[a-zA-Z0-9_$]+)/g, '<span class="token-changed">$1</span>');
+      } else if (trimmed.includes('call(') && trimmed.includes('void | boolean')) {
+        lineType = 'line-modified';
+        changedCount++;
+        formattedCode = formattedCode.replace(/(:\s*void\s*\|\s*boolean)/g, '<span class="token-changed">$1</span>');
+      } else if (trimmed.includes(': any') || trimmed.includes(': number') || trimmed.includes(': boolean') || trimmed.includes(': string')) {
+        if (!jsLines.has(trimmed)) {
+          lineType = 'line-modified';
+          changedCount++;
+          formattedCode = formattedCode.replace(/(:\s*(?:any|number|boolean|string|Function|any\[\]))/g, '<span class="token-changed">$1</span>');
+        }
+      }
+
+      const lineClass = lineType ? `diff-line ${lineType}` : 'diff-line';
+      htmlLines.push(`
+        <div class="${lineClass}">
+          <span class="line-num">${lineNum}</span>
+          <span class="line-code">${formattedCode || ' '}</span>
+        </div>
+      `);
+    });
+
+    dom.targetTsView.innerHTML = htmlLines.join('');
+    if (dom.changesSummaryBadge) {
+      dom.changesSummaryBadge.textContent = changedCount > 0 ? `✨ ${changedCount} 处改进已高亮` : '已规范化';
+    }
+  }
+
   // Toast 提示
   function showToast(message, type = 'info') {
     const toast = document.createElement('div');
@@ -136,16 +219,18 @@ export default class sortActorRange {
   // 更新统计标签
   function updateStats() {
     const sLines = dom.sourceCode.value ? dom.sourceCode.value.split('\n').length : 0;
-    const tLines = dom.targetCode.value ? dom.targetCode.value.split('\n').length : 0;
+    const tLines = state.currentTsCode ? state.currentTsCode.split('\n').length : 0;
     dom.sourceStats.textContent = `${sLines} 行 · ${dom.sourceCode.value.length} 字符`;
-    dom.targetStats.textContent = `${tLines} 行 · ${dom.targetCode.value.length} 字符`;
+    dom.targetStats.textContent = `${tLines} 行 · ${state.currentTsCode.length} 字符`;
   }
 
   // 执行转换
   function runConvert() {
     const jsCode = dom.sourceCode.value.trim();
     if (!jsCode) {
-      dom.targetCode.value = '';
+      state.currentTsCode = '';
+      dom.targetTsView.innerHTML = '<div class="empty-hint">等待输入或载入 JS 代码...</div>';
+      if (dom.changesSummaryBadge) dom.changesSummaryBadge.textContent = '就绪';
       dom.metaSummary.innerHTML = '<div class="empty-hint">暂多元数据信息</div>';
       dom.diagnosticsList.innerHTML = '<div class="empty-hint">等待输入代码</div>';
       updateStats();
@@ -157,8 +242,11 @@ export default class sortActorRange {
       const forceType = dom.selectScriptType.value === 'auto' ? null : dom.selectScriptType.value;
       const result = window.ScriptConverter.convertJsToTs(jsCode, { forceScriptType: forceType });
 
-      dom.targetCode.value = result.tsCode;
+      state.currentTsCode = result.tsCode;
       dom.targetFilename.textContent = getTargetFilename(state.currentFilename);
+
+      // 渲染 TS 高亮主视图
+      renderTsHighlightView(jsCode, result);
 
       // 渲染元数据摘要
       renderMetaSummary(result.meta);
@@ -236,7 +324,9 @@ export default class sortActorRange {
   });
 
   dom.selectScriptType.addEventListener('change', runConvert);
-  dom.btnConvert.addEventListener('click', runConvert);
+  if (dom.btnConvert) {
+    dom.btnConvert.addEventListener('click', runConvert);
+  }
 
   // 加载示例代码
   dom.btnLoadSample.addEventListener('click', () => {
@@ -250,10 +340,12 @@ export default class sortActorRange {
   // 清空
   dom.btnClear.addEventListener('click', () => {
     state.currentFilename = '未命名脚本.js';
+    state.currentTsCode = '';
     dom.sourceFilename.textContent = state.currentFilename;
     dom.targetFilename.textContent = '转换结果';
     dom.sourceCode.value = '';
-    dom.targetCode.value = '';
+    dom.targetTsView.innerHTML = '<div class="empty-hint">等待输入或载入 JS 代码...</div>';
+    if (dom.changesSummaryBadge) dom.changesSummaryBadge.textContent = '就绪';
     dom.metaSummary.innerHTML = '<div class="empty-hint">暂多元数据信息</div>';
     dom.diagnosticsList.innerHTML = '<div class="empty-hint">就绪</div>';
     updateStats();
@@ -262,7 +354,7 @@ export default class sortActorRange {
 
   // 复制 TS 代码
   dom.btnCopyTs.addEventListener('click', async () => {
-    const tsCode = dom.targetCode.value;
+    const tsCode = state.currentTsCode;
     if (!tsCode) {
       showToast('暂无可复制的 TS 代码', 'warning');
       return;
@@ -271,16 +363,13 @@ export default class sortActorRange {
       await navigator.clipboard.writeText(tsCode);
       showToast('已复制 TS 代码到剪贴板', 'success');
     } catch {
-      // 降级复制
-      dom.targetCode.select();
-      document.execCommand('copy');
-      showToast('已复制 TS 代码到剪贴板', 'success');
+      showToast('复制失败，请手动选择复制', 'error');
     }
   });
 
   // 下载单个 .ts 文件
   dom.btnDownloadTs.addEventListener('click', () => {
-    const tsCode = dom.targetCode.value;
+    const tsCode = state.currentTsCode;
     if (!tsCode) {
       showToast('暂无可下载的 TS 代码', 'warning');
       return;

@@ -182,7 +182,7 @@ html, body {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 13px 26px;
+  padding: 8px 26px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);

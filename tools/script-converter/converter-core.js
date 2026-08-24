@@ -21,8 +21,14 @@
     'ui': 'string',
     'event': 'string',
     'dialog': 'string',
+    'easing': 'string',
+    'team': 'string',
+    'attribute': 'string',
     'attribute-key': 'string',
+    'attribute-group': 'string',
+    'enum': 'string',
     'enum-value': 'string',
+    'enum-group': 'string',
     'number': 'number',
     'variable-number': 'number',
     'boolean': 'boolean',
@@ -34,8 +40,8 @@
     'state-getter': 'State',
     'equipment-getter': 'Equipment',
     'item-getter': 'Item',
-    'element-getter': 'Element',
-    'position-getter': 'any',
+    'element-getter': 'UIElement',
+    'position-getter': '{ x: number, y: number }',
     'actor': 'string',
     'region': 'string',
     'light': 'string',
@@ -47,6 +53,7 @@
     'element-id': 'string',
     'number[]': 'number[]',
     'string[]': 'string[]',
+    'boolean[]': 'boolean[]',
     'group[]': 'any[]'
   };
 
@@ -234,12 +241,18 @@
    * @returns {string} 泛型参数名称，例如 'Command', 'Plugin', 'Trigger'
    */
   function inferScriptType(code, meta) {
-    // 检查方法特征
+    // 检查方法与上下文特征
     if (/call\s*\([^)]*\)\s*\{/.test(code)) {
       return 'Command';
     }
-    if (/onHitActor\s*\(/.test(code) || /onStart\s*\(\s*trigger\s*:\s*Trigger\s*\)/.test(code)) {
+    if (/onHitActor\s*\(/.test(code) || /onStart\s*\(\s*trigger\s*:\s*Trigger\s*\)/.test(code) || /instanceof\s+Trigger\b/.test(code) || /trigger\.(x|y|caster|destroy)/.test(code)) {
       return 'Trigger';
+    }
+    if (/instanceof\s+ImageElement\b/.test(code) || /this\.imageElement\b/.test(code)) {
+      return 'ImageElement';
+    }
+    if (/instanceof\s+SceneLight\b/.test(code) || /constructor\s*\(\s*light\s*\)/.test(code)) {
+      return 'SceneLight';
     }
     if (/onSkillCast\s*\(/.test(code) || /onSkillAdd\s*\(/.test(code)) {
       return 'Skill';
@@ -291,10 +304,12 @@
     });
 
     // 3. 构建接口属性代码块
+    const metaParamKeys = new Set();
     let propertiesCode = '';
     if (meta.parameters && meta.parameters.length > 0) {
       const propLines = [];
       for (const p of meta.parameters) {
+        metaParamKeys.add(p.key);
         const tsType = inferTsType(p);
         const isOptional = p.isSetter || p.isGetter || p.tag.startsWith('actor-') || p.tag.startsWith('skill-') || p.tag.startsWith('state-') || p.tag.startsWith('item-') || p.tag.startsWith('equipment-') || p.tag.startsWith('element-');
         const modifier = isOptional ? '?' : '!';
@@ -316,8 +331,26 @@
       codeWithoutMeta = jsCode.slice(metaEndIdx);
     }
 
-    // 4. 转换类声明
-    let body = codeWithoutMeta;
+    // 4. 处理老旧 JS 中的行尾伪类型注释 (如 `caster //:object` 或 `numbers //:array`)
+    const pseudoTypeMap = {
+      number: 'number',
+      boolean: 'boolean',
+      string: 'string',
+      array: 'any[]',
+      object: 'any',
+      function: 'Function'
+    };
+
+    let body = codeWithoutMeta.replace(/^([ \t]*)([a-zA-Z0-9_$]+)[ \t]*\/\/:([a-zA-Z0-9_$]+)[ \t]*;?$/gm, (match, indent, name, type) => {
+      if (metaParamKeys.has(name)) {
+        // 如果已经是接口参数，避免重复声明，直接移除
+        return '';
+      }
+      const tsT = pseudoTypeMap[type] || 'any';
+      return `${indent}${name}?: ${tsT}`;
+    });
+
+    // 5. 转换类声明
     const classRegex = /export\s+default\s+class\s+([a-zA-Z0-9_$]+)(\s+extends\s+[a-zA-Z0-9_$.]+)?\s*\{/;
     const classMatch = body.match(classRegex);
 
@@ -344,7 +377,7 @@
       }
     }
 
-    // 5. 替换老旧运行时 API
+    // 6. 替换老旧运行时 API
     const apiReplacements = [
       { pattern: /\bEvent\.attributes\b/g, to: 'CurrentEvent.attributes', desc: 'Event.attributes -> CurrentEvent.attributes' },
       { pattern: /\bEvent\.triggerActor\b/g, to: 'CurrentEvent.triggerActor', desc: 'Event.triggerActor -> CurrentEvent.triggerActor' },

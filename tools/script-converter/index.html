@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0d0f14" />
-    <title>YA TOOLS · 脚本转换台</title>
+    <title>YA TOOLS · 脚本转换</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./styles.css?v=20260824-script-converter-1" />
   </head>
@@ -15,7 +15,7 @@
           <div class="brand-mark">⚡</div>
           <div>
             <div class="eyebrow">OPEN YAMI TOOLKIT</div>
-            <div class="brand-name">YA TOOLS<span>脚本转换台 <em class="version-tag" data-app-version>v0.1.0</em></span></div>
+            <div class="brand-name">YA TOOLS<span>脚本转换 <em class="version-tag" data-app-version>v0.1.0</em></span></div>
           </div>
         </div>
         <div class="topbar-actions">
@@ -49,7 +49,7 @@
           <div class="pane-header">
             <div class="pane-title">
               <span class="badge badge-js">JS</span>
-              <span id="source-filename" class="filename">输入或粘贴老 JS 代码</span>
+              <span id="source-filename" class="filename">输入或粘贴老 JS 源码</span>
             </div>
             <div class="pane-tools">
               <span id="source-stats" class="stats-tag">0 行</span>
@@ -78,11 +78,13 @@
                 <option value="Command">Script&lt;Command&gt; (自定义指令)</option>
                 <option value="Plugin">Script&lt;Plugin&gt; (全局插件)</option>
                 <option value="Trigger">Script&lt;Trigger&gt; (触发器脚本)</option>
+                <option value="SceneLight">Script&lt;SceneLight&gt; (光源脚本)</option>
+                <option value="ImageElement">Script&lt;ImageElement&gt; (图像元素脚本)</option>
+                <option value="ButtonElement">Script&lt;ButtonElement&gt; (按钮UI脚本)</option>
                 <option value="Skill">Script&lt;Skill&gt; (技能脚本)</option>
                 <option value="State">Script&lt;State&gt; (状态脚本)</option>
                 <option value="Equipment">Script&lt;Equipment&gt; (装备脚本)</option>
                 <option value="Item">Script&lt;Item&gt; (物品脚本)</option>
-                <option value="ButtonElement">Script&lt;ButtonElement&gt; (按钮UI脚本)</option>
               </select>
             </div>
           </div>
@@ -108,12 +110,13 @@
           </div>
         </aside>
 
-        <!-- 右侧：输出 TS 代码 -->
+        <!-- 右侧：改好的 TS (带高亮显示) -->
         <section class="editor-pane target-pane">
           <div class="pane-header">
             <div class="pane-title">
               <span class="badge badge-ts">TS</span>
               <span id="target-filename" class="filename">转换结果 (符合当前引擎规范)</span>
+              <span id="changes-summary-badge" class="changes-badge">就绪</span>
             </div>
             <div class="pane-tools">
               <span id="target-stats" class="stats-tag">0 行</span>
@@ -122,8 +125,10 @@
             </div>
           </div>
           <div class="pane-body">
-            <div class="editor-wrapper">
-              <textarea id="target-code" readonly placeholder="转换后的 TypeScript 脚本将在此生成..." spellcheck="false"></textarea>
+            <div class="editor-wrapper" id="target-wrapper">
+              <div id="target-ts-view" class="diff-view">
+                <div class="empty-hint">等待输入或载入 JS 代码...</div>
+              </div>
             </div>
           </div>
         </section>
