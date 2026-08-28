@@ -487,11 +487,43 @@ export default function AssetManagerPage () {
     window.addEventListener('mouseup', onMouseUp)
   }
 
+  // ---------- 默认恢复上次选中的文件夹与展开状态 ----------
+  const restoreLastView = useCallback((packList) => {
+    if (!packList || !packList.length) return
+    const savedPack = localStorage.getItem('am_last_pack')
+    const savedDir = localStorage.getItem('am_last_dir')
+    const matchedPack = (savedPack && packList.find(p => p.name === savedPack)) || packList[0]
+    const packName = matchedPack.name
+
+    setSelectedPack(packName)
+    const expPacks = new Set([packName])
+    const expDirs = new Set()
+
+    if (savedDir && savedPack === packName) {
+      setDirFilter(savedDir)
+      const parts = savedDir.replace(packName + '/', '').split('/')
+      let cur = packName
+      for (const pt of parts) {
+        cur += '/' + pt
+        expDirs.add(cur)
+      }
+    } else {
+      setDirFilter(null)
+    }
+
+    setExpandedPacks(expPacks)
+    setExpandedDirs(expDirs)
+  }, [])
+
   // ---------- 仅选中包（不自动展开） ----------
   const handleSelectPack = (packName) => {
     setSelectedPack(packName)
     setDirFilter(null)
     setQuery('')
+    try {
+      localStorage.setItem('am_last_pack', packName)
+      localStorage.removeItem('am_last_dir')
+    } catch (e) { /* ignore */ }
   }
 
   // ---------- 专门点击箭头折叠/展开包 ----------
@@ -518,6 +550,10 @@ export default function AssetManagerPage () {
     setSelectedPack(packName)
     setDirFilter(dirPath)
     setQuery('')
+    try {
+      localStorage.setItem('am_last_pack', packName)
+      localStorage.setItem('am_last_dir', dirPath)
+    } catch (e) { /* ignore */ }
   }
 
   // ---------- 素材库完整根路径：一次询问，之后统一拼接绝对路径 ----------
@@ -773,10 +809,7 @@ export default function AssetManagerPage () {
         setPacks(packList)
         setTotalFileCount(totalCount)
         setPhase('ready')
-        if (packList.length > 0) {
-          setSelectedPack(packList[0].name)
-          setExpandedPacks(new Set([packList[0].name]))
-        }
+        restoreLastView(packList)
         buildSearchIndex()
         warmupPacks(packList)
         writeManifest(rootHandle, allRecords, packList).then(ok => {
@@ -793,7 +826,7 @@ export default function AssetManagerPage () {
     }
     setScanning(false)
     setScanInfo('')
-  }, [toast, buildSearchIndex, warmupPacks])
+  }, [toast, buildSearchIndex, warmupPacks, restoreLastView])
 
   // 从库根目录清单秒恢复（换电脑/清缓存后），再后台增量校验
   const restoreFromManifest = useCallback(async (handle) => {
@@ -810,8 +843,7 @@ export default function AssetManagerPage () {
       await dbBulkPut('packs', packList.map(p => [p.name, p]))
       setPacks(packList)
       setTotalFileCount(packList.reduce((s, p) => s + p.count, 0))
-      setSelectedPack(packList[0] ? packList[0].name : null)
-      setExpandedPacks(packList[0] ? new Set([packList[0].name]) : new Set())
+      restoreLastView(packList)
       setPhase('ready')
       buildSearchIndex()
       warmupPacks(packList)
@@ -883,8 +915,7 @@ export default function AssetManagerPage () {
             setPacks(cachedPacks)
             const total = cachedPacks.reduce((s, p) => s + p.count, 0)
             setTotalFileCount(total)
-            setSelectedPack(cachedPacks[0].name)
-            setExpandedPacks(new Set([cachedPacks[0].name]))
+            restoreLastView(cachedPacks)
             setPhase('ready')
             buildSearchIndex()
             warmupPacks(cachedPacks)
@@ -900,7 +931,7 @@ export default function AssetManagerPage () {
         // ignore
       }
     })()
-  }, [runStreamScan, buildSearchIndex])
+  }, [runStreamScan, buildSearchIndex, restoreLastView])
 
   // 一键重新授权上次素材库（Chrome 重启后权限会复位，此为浏览器限制）
   const reauthorize = async () => {
@@ -917,8 +948,7 @@ export default function AssetManagerPage () {
       if (cachedPacks.length) {
         setPacks(cachedPacks)
         setTotalFileCount(cachedPacks.reduce((s, p) => s + p.count, 0))
-        setSelectedPack(cachedPacks[0].name)
-        setExpandedPacks(new Set([cachedPacks[0].name]))
+        restoreLastView(cachedPacks)
         setPhase('ready')
         buildSearchIndex()
         warmupPacks(cachedPacks)
