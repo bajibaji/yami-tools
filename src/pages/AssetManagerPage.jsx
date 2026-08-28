@@ -894,8 +894,13 @@ export default function AssetManagerPage () {
 
       await dbClear('files')
       await dbClear('packs')
+      // IDB 只存元数据，File 对象仅保留在 fallbackFilesMapRef 内存映射（避免 10 万级 File 双存撑爆存储）
       for (let i = 0; i < records.length; i += 5000) {
-        await dbBulkPut('files', records.slice(i, i + 5000).map(f => [f.rel, f]))
+        const metaOnly = records.slice(i, i + 5000).map(f => {
+          const { file, ...rest } = f
+          return [f.rel, rest]
+        })
+        await dbBulkPut('files', metaOnly)
         await new Promise(r => setTimeout(r, 0))
       }
 
