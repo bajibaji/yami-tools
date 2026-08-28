@@ -103,9 +103,27 @@ async function decodeFrames (files) {
   return out.filter(Boolean)
 }
 
-// 预览数据 MRU 缓存：避免来回切换动画重复解码，LRU 上限 8 个动画
+// 显存与内存安全释放工具：彻底释放 ImageBitmap / ObjectURL，杜绝显存泄漏
+export function freeAnimData (d) {
+  if (!d) return
+  if (d.image && typeof d.image.close === 'function') {
+    try { d.image.close() } catch (e) {}
+  }
+  if (Array.isArray(d.frames)) {
+    for (const f of d.frames) {
+      if (f && typeof f.close === 'function') {
+        try { f.close() } catch (e) {}
+      }
+    }
+  }
+  if (d.kind === 'gif' && d.url) {
+    URL.revokeObjectURL(d.url)
+  }
+}
+
+// 预览数据 MRU 缓存：避免来回切换动画重复解码，LRU 上限 12 个动画（淘汰时严格关闭 ImageBitmap）
 const previewCache = new Map()
-const PREVIEW_CACHE_MAX = 8
+const PREVIEW_CACHE_MAX = 12
 const previewKey = (anim, cfg) => anim.id + '|' + JSON.stringify(cfg || {})
 
 export function loadAnimDataCached (anim, cfg) {
@@ -121,10 +139,7 @@ export function loadAnimDataCached (anim, cfg) {
     const oldest = [...previewCache.entries()].sort((a, b) => a[1].last - b[1].last)[0]
     if (oldest) {
       previewCache.delete(oldest[0])
-      oldest[1].promise.then(d => {
-        if (d && d.frames) for (const bmp of d.frames) bmp.close && bmp.close()
-        if (d && d.kind === 'gif' && d.url) URL.revokeObjectURL(d.url)
-      }).catch(() => {})
+      oldest[1].promise.then(d => freeAnimData(d)).catch(() => {})
     }
   }
   return promise
@@ -173,32 +188,55 @@ export const VirtualList = React.memo(function VirtualList ({ items, rowHeight, 
 // 多行网格动画缩略图规格：取每行第 2 帧排成方块（BDragon strip / 多行 sheet 通用）
 export const GRID_THUMB_SPEC = { mode: 'grid2nd' }
 
+// 全局单例 IntersectionObserver：避免成百上千个组件实例监听风暴
+let globalThumbObserver = null
+const thumbObserverCallbacks = new Map()
+
+function getGlobalThumbObserver () {
+  if (typeof IntersectionObserver === 'undefined') return null
+  if (!globalThumbObserver) {
+    globalThumbObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          const cb = thumbObserverCallbacks.get(entry.target)
+          if (cb) {
+            cb()
+            thumbObserverCallbacks.delete(entry.target)
+            globalThumbObserver.unobserve(entry.target)
+          }
+        }
+      }
+    }, { rootMargin: '150px' })
+  }
+  return globalThumbObserver
+}
+
 export const Thumb = memo(function Thumb ({ entry, size = 32, className = 'am-thumb', thumbSpec = null }) {
   const [url, setUrl] = useState(() => getMemCachedThumb(entry, thumbSpec))
-  const [isVisible, setIsVisible] = useState(false)
+  const [isVisible, setIsVisible] = useState(() => Boolean(getMemCachedThumb(entry, thumbSpec)))
   const containerRef = useRef(null)
 
   useEffect(() => {
     const cached = getMemCachedThumb(entry, thumbSpec)
     if (cached) {
       setUrl(cached)
+      setIsVisible(true)
       return
     }
 
     const el = containerRef.current
     if (!el) return
-    if (typeof IntersectionObserver === 'undefined') {
+    const obs = getGlobalThumbObserver()
+    if (!obs) {
       setIsVisible(true)
       return
     }
-    const observer = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) {
-        setIsVisible(true)
-        observer.disconnect()
-      }
-    }, { rootMargin: '100px' })
-    observer.observe(el)
-    return () => observer.disconnect()
+    thumbObserverCallbacks.set(el, () => setIsVisible(true))
+    obs.observe(el)
+    return () => {
+      thumbObserverCallbacks.delete(el)
+      obs.unobserve(el)
+    }
   }, [entry?.rel, entry?.size, thumbSpec])
 
   useEffect(() => {
@@ -217,7 +255,7 @@ export const Thumb = memo(function Thumb ({ entry, size = 32, className = 'am-th
   )
 })
 
-// ---------- 画廊网格卡片（轻量高效，0 内存浪费，支持卡片快捷收藏） ----------
+// ---------- 画廊网格卡片（原生 GPU 加速 CSS，0 JS 动画开销，支持卡片快捷收藏） ----------
 const gifPreviewCache = new Map() // rel -> objectURL, LRU 64
 function gifPreviewUrl (entry) {
   if (!entry) return null
@@ -271,18 +309,13 @@ export const GalleryCard = memo(function GalleryCard ({
   }
 
   return (
-    <motion.div
+    <div
       data-anim-id={anim.id}
       className={`gallery-card ${selected ? 'selected' : ''} ${isMultiSelected ? 'multi-selected' : ''}`}
       onClick={() => onSelect(anim.id)}
       onDoubleClick={() => onDoubleClick?.(anim)}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      initial={{ opacity: 0, y: 3 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.1, ease: 'easeOut' }}
-      whileHover={{ y: -2 }}
     >
       <div className="gallery-thumb-wrap">
         {showCheckbox && (
@@ -330,7 +363,7 @@ export const GalleryCard = memo(function GalleryCard ({
           {anim.pack}{anim.dir ? ` / ${anim.dir}` : ''}
         </div>
       </div>
-    </motion.div>
+    </div>
   )
 })
 

@@ -128,13 +128,22 @@ export function parseSheetJson (text) {
 function pushSequence (anims, dir, pack, list, preset, previewGif, aseEntry, htmlEntry) {
   if (!list.length) return
 
-  // 特殊判定：如果只有 2~3 张图片，且名称包含 VFX / Effect / 技能名，或者包名匹配 Paimon 等特效包，
-  // 这类素材（如 "Acid VFX 01.png", "Acid VFX 02.png"）每一张都是独立的一行 Sprite Sheet 特效，不应错误合并为 2 帧的畸形序列
-  const isVfxPack = /paimon|vfx|effect|acid|fire|ice|thunder|water|wind|holy|dark|earth|skill/i.test(pack) ||
-    /vfx|effect|acid|fire|ice|thunder|water|wind|projectile|slash|hit/i.test(dir) ||
-    list.some(f => /vfx|effect|acid|fire|ice|thunder|water|wind|projectile|slash|hit/i.test(f.name))
+  const lastDirSeg = (dir.split('/').pop() || '').toLowerCase().trim()
+  const isDedicatedFrameDir = /^(png|pngs|frames|separated|individual|images|single frames|frames_png)$/i.test(lastDirSeg)
+  const isPureFrameNaming = list.length >= 2 && list.every(f => /^(\d+|frame[_\-\s]?\d+|f\d+|img[_\-\s]?\d+)$/i.test(stripExt(f.name)))
 
-  if (isVfxPack && list.length <= 3) {
+  // 特殊判定：名称包含 VFX / Effect / 技能名，或者包名匹配 Paimon 等特效包，
+  // 这类素材（如 "Acid VFX 01.png", "Acid VFX 02.png", ... "Acid VFX 10.png"）
+  // 每一张都是独立的一张 Sprite Sheet 特效，不应错误合并为多帧畸形序列
+  const isVfxPack = Boolean(preset?.vfxPack) ||
+    /paimon|vfx|effect|acid|fire|ice|thunder|water|wind|holy|dark|earth|skill|spell|hit|slash/i.test(pack) ||
+    /vfx|effect|acid|fire|ice|thunder|water|wind|projectile|slash|hit|spell/i.test(dir) ||
+    list.some(f => /vfx|effect|acid|fire|ice|thunder|water|wind|projectile|slash|hit|spell/i.test(f.name))
+
+  const isIndependentVfxSheets = isVfxPack && !isDedicatedFrameDir && !isPureFrameNaming &&
+    (list.some(f => /(vfx|effect|skill|spell|hit|slash|projectile|burst|impact|buff|debuff|\d+x\d+)/i.test(f.name)) || list.length <= 16)
+
+  if (isIndependentVfxSheets && !isDedicatedFrameDir && !isPureFrameNaming) {
     for (const f of list) {
       const base = stripExt(f.name)
       const dim = parseDimensionFromName(f.name)

@@ -1207,13 +1207,13 @@ export default function AssetManagerPage () {
     }
   }
 
-  const toggleMulti = (id) => {
+  const toggleMulti = useCallback((id) => {
     setMultiSel(s => {
       const n = new Set(s)
       if (n.has(id)) n.delete(id); else n.add(id)
       return n
     })
-  }
+  }, [])
 
   const handleSelectAllCurrent = () => {
     setMultiSel(new Set(visibleAnims.map(a => a.id)))
@@ -1309,7 +1309,7 @@ export default function AssetManagerPage () {
           <div className="header-brand">
             <IconPackage size={18} className="brand-logo" />
             <span className="brand-title">ASSET WORKBENCH</span>
-            <span className="pro-pill">v1.1.2</span>
+            <span className="pro-pill">v1.2.0</span>
           </div>
 
           <button type="button" className="btn select-lib-btn" onClick={pickLibrary}>

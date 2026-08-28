@@ -28,8 +28,9 @@ export const BUILTIN_PRESETS = [
     match: 'paimon|acid|vfx|battle vfx|water|fire effect|ice effect|thunder|smoke|wind effect|holy vfx|dark vfx|earth effect|buff|separated',
     fps: 15,
     gifFirst: false,
-    sheetMeta: 'auto',    // 有 txt/json 就用，没有走 alpha 自动切
+    sheetMeta: 'auto',
     sheetByDir: true,
+    vfxPack: true,        // 特效包标记：每个带有 VFX/编号的 PNG 均为独立精灵表
     numericPool: false,
     previewGifPattern: 'preview|预览|sample|cover|thumb'
   },

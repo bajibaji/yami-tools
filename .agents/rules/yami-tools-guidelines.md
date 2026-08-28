@@ -45,3 +45,16 @@ Assets in the gallery MUST maintain global uniqueness to avoid cluttering the UI
   2. `public/tools/version.json` (`asset-manager.version`)
   3. `src/data/tools.js` (`tools.find(t => t.id === 'asset-manager').version` & `HUB_VERSION`)
   4. `src/pages/AssetManagerPage.jsx` (Header badge `<span className="pro-pill">v...</span>`)
+
+## 6. Paimon & VFX Sheet Clustering & Slicing
+**Rule:**
+- In Paimon or VFX asset packs, files containing effect names (e.g. `Acid VFX 01.png`, `Fire 02.png`, `Slash 03.png`) in parent folders are independent SpriteSheets (`type: 'sheet'`), NOT a multi-frame sequence.
+- Never merge multiple VFX sheets into a single sequence unless they are in a dedicated frame directory (`separated/`, `frames/`, `png/`) or have pure numeric frame names.
+- When slicing Paimon/VFX sheets without metadata, prioritize clean equal-width square grid inference (`inferSheetGrid`) over alpha transparency slicing to avoid ragged frames on glowing particles.
+
+## 7. Performance & GPU Memory Lifecycle
+**Rule:**
+- `ImageBitmap` allocations MUST be explicitly closed (`bmp.close()`) when evicted from cache or unmounted. For `sheet` / `strip` animations, `d.image` holds the GPU texture and must be closed.
+- Gallery cards in large grids MUST use pure CSS GPU transitions instead of `framer-motion` (`<motion.div>`) to prevent main-thread animation listener bloat.
+- Lazy thumbnails MUST use a single shared global `IntersectionObserver` instead of instantiating an observer per card.
+- All handler props passed into memoized gallery cards MUST be wrapped in `useCallback` to prevent cascading re-renders.

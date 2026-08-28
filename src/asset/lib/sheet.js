@@ -139,30 +139,21 @@ export function resolveSheetFrames (image, metaFrames, cfg, animName = '') {
     return metaFrames
   }
 
-  // 4. 智能网格推断优先（针对 SoggySocks / Paimon / VFX 等标准单行或多行精灵表）
+  // 4. 智能网格推断优先（针对 SoggySocks / Paimon / VFX / 像素动画等标准单行或多行精灵表）
   const inferred = inferSheetGrid(w, h)
-  if (inferred && inferred.cols >= 2) {
-    // 若是标准单行整倍数（如 640x64），直接使用单行等分
-    if (inferred.rows === 1 && w % h === 0) {
-      return manualGridFrames(w, h, inferred)
-    }
+  if (inferred && (inferred.cols * (inferred.rows || 1)) >= 2) {
+    return manualGridFrames(w, h, inferred)
   }
 
-  // 4. Alpha 透明间隙切分
+  // 5. Alpha 透明间隙切分（针对非标准网格图）
   const auto = autoSliceImage(image)
   if (auto.length >= 2) {
-    // 校验切出来的帧宽是否具有基本的一致性（防止把一张长图误切成几块不均匀残片）
     const widths = auto.map(f => f.w)
     const avgW = widths.reduce((a, b) => a + b, 0) / widths.length
     const isReasonable = widths.every(fw => fw >= avgW * 0.35 && fw <= avgW * 2.8)
     if (isReasonable) {
       return auto
     }
-  }
-
-  // 5. 如果 alpha 切分只有 1 帧或不合理，回退到智能网格推断
-  if (inferred) {
-    return manualGridFrames(w, h, inferred)
   }
 
   return auto.length ? auto : [{ x: 0, y: 0, w, h }]
