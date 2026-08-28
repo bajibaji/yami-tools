@@ -71,28 +71,7 @@ export async function dbQueryByIndex (store, indexName, value, limit) {
   })
 }
 
-// 快速模糊搜索路径（限制返回前 limit 条，防止内存溢出）
-export async function dbSearchFiles (keyword, limit = 150) {
-  const t = await tx('files', 'readonly')
-  const q = keyword.toLowerCase()
-  return new Promise((resolve, reject) => {
-    const results = []
-    const req = t.objectStore('files').openCursor()
-    req.onsuccess = e => {
-      const cursor = e.target.result
-      if (cursor && results.length < limit) {
-        const val = cursor.value
-        if (val.name.toLowerCase().includes(q) || val.rel.toLowerCase().includes(q)) {
-          results.push(val)
-        }
-        cursor.continue()
-      } else {
-        resolve(results)
-      }
-    }
-    req.onerror = () => reject(req.error)
-  })
-}
+
 
 export async function dbPut (store, key, value) {
   const t = await tx(store, 'readwrite')

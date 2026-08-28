@@ -55,16 +55,6 @@ export async function loadRootHandle () {
   }
 }
 
-export async function clearRootHandle () {
-  const db = await openDb()
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction(DB_STORE, 'readwrite')
-    tx.objectStore(DB_STORE).delete('root')
-    tx.oncomplete = resolve
-    tx.onerror = () => reject(tx.error)
-  })
-}
-
 function isImageName (name) { return IMG_EXTS.includes(extOf(name)) }
 function isMetaName (name) { return META_EXTS.includes(extOf(name)) }
 
@@ -198,20 +188,38 @@ export async function fileForRel (rootHandle, rel) {
 }
 
 export function cachedEntry (meta, rootHandle) {
+  if (!meta) return null
+  if (meta.file instanceof Blob || meta.file instanceof File) {
+    return {
+      name: meta.name,
+      rel: meta.rel,
+      dir: meta.dir,
+      ext: meta.ext,
+      size: meta.size,
+      file: meta.file,
+      getFile: async () => meta.file
+    }
+  }
   return {
     name: meta.name,
     rel: meta.rel,
     dir: meta.dir,
     ext: meta.ext,
     size: meta.size,
-    getFile: async () => fileForRel(rootHandle, meta.rel)
+    rootHandle,
+    getFile: async () => {
+      if (meta.file instanceof Blob || meta.file instanceof File) return meta.file
+      if (rootHandle) return fileForRel(rootHandle, meta.rel)
+      throw new Error(`缺少文件访问句柄：${meta.rel}`)
+    }
   }
 }
 
 export async function entryBlob (entry) {
   if (!entry) throw new Error('条目为空')
+  if (entry.file instanceof Blob || entry.file instanceof File) return entry.file
   if (typeof entry.getFile === 'function') return entry.getFile()
-  if (entry.file instanceof Blob) return entry.file
   if (entry.handle && typeof entry.handle.getFile === 'function') return entry.handle.getFile()
+  if (entry.rootHandle && entry.rel) return fileForRel(entry.rootHandle, entry.rel)
   throw new Error(`无法读取文件：${entry.rel}`)
 }

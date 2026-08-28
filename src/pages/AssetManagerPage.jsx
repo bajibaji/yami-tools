@@ -30,8 +30,7 @@ import {
   dbDelete,
   dbClear,
   dbGet,
-  dbQueryByIndex,
-  dbSearchFiles
+  dbQueryByIndex
 } from '../asset/lib/idb-store.js'
 import { VirtualList, Thumb, PreviewPane, GalleryCard, GRID_THUMB_SPEC } from '../asset/comps.jsx'
 import { prewarmThumbCache } from '../asset/lib/thumb.js'
@@ -211,6 +210,7 @@ export default function AssetManagerPage () {
   const [dirHandle, setDirHandle] = useState(null)
   const dirHandleRef = useRef(null)
   dirHandleRef.current = dirHandle
+  const fallbackFilesMapRef = useRef(new Map()) // 降级模式下的内存文件映射 rel -> File
   const [phase, setPhase] = useState('idle') // 'idle' | 'scanning' | 'ready' | 'error'
   const [totalFileCount, setTotalFileCount] = useState(0)
 
@@ -356,17 +356,24 @@ export default function AssetManagerPage () {
       if (searchKeyword && searchKeyword.trim()) {
         if (!searchIndexReadyRef.current) await buildSearchIndex()
         const q = searchKeyword.trim().toLowerCase()
-        fileRecords = (searchIndexRef.current || []).filter(r => r.nameL.includes(q) || r.relL.includes(q)).slice(0, 120)
+        fileRecords = (searchIndexRef.current || []).filter(r => r.nameL.includes(q) || r.relL.includes(q)).slice(0, 500)
       } else if (dirPath) {
-        fileRecords = await dbQueryByIndex('files', 'dir', dirPath, 3000)
+        fileRecords = await dbQueryByIndex('files', 'dir', dirPath)
       } else if (packName) {
-        fileRecords = await dbQueryByIndex('files', 'pack', packName, 3000)
+        fileRecords = await dbQueryByIndex('files', 'pack', packName)
       }
 
       if (myReq !== loadReqRef.current) return
-      if (fileRecords.length > 0 && dirHandle) {
-        const images = fileRecords.filter(f => f.isImg).map(m => cachedEntry(m, dirHandle))
-        const metas = fileRecords.filter(f => f.isMeta).map(m => cachedEntry(m, dirHandle))
+      if (fileRecords.length > 0 && (dirHandle || rootInfo?.type === 'fallback')) {
+        const isFallback = rootInfo?.type === 'fallback'
+        const images = fileRecords.filter(f => f.isImg).map(m => {
+          const item = (isFallback && !m.file) ? { ...m, file: fallbackFilesMapRef.current.get(m.rel) } : m
+          return cachedEntry(item, dirHandle)
+        })
+        const metas = fileRecords.filter(f => f.isMeta).map(m => {
+          const item = (isFallback && !m.file) ? { ...m, file: fallbackFilesMapRef.current.get(m.rel) } : m
+          return cachedEntry(item, dirHandle)
+        })
         const animList = await clusterFiles(images, metas, {}, {})
         if (myReq !== loadReqRef.current) return
         animsCacheRef.current.set(cacheKey, animList)
@@ -388,11 +395,11 @@ export default function AssetManagerPage () {
         setActiveAnims([])
       }
     } catch (e) {
-      // ignore
+      console.warn('[AssetManager] 载入目录数据异常:', e)
     } finally {
       if (myReq === loadReqRef.current) setLoadingDir(false)
     }
-  }, [dirHandle]) // 注意：buildSearchIndex 在下方声明，只能在回调运行时引用（闭包绑定已初始化）
+  }, [dirHandle, rootInfo]) // 注意：buildSearchIndex 在下方声明，只能在回调运行时引用（闭包绑定已初始化）
 
   // 搜索防抖 250ms
   useEffect(() => {
@@ -580,18 +587,27 @@ export default function AssetManagerPage () {
   // ---------- 包预聚类热备：后台把每个包的动画列表先算好，切换包 0ms ----------
   const warmupPacks = useCallback(async (packList) => {
     const dh = dirHandleRef.current
-    if (!dh || !packList || !packList.length) return
+    if ((!dh && rootInfo?.type !== 'fallback') || !packList || !packList.length) return
+    const isFallback = rootInfo?.type === 'fallback'
     for (const p of packList.slice(0, 8)) {
       await new Promise(r => setTimeout(r, 0))
       if (animsCacheRef.current.has('pack:' + p.name)) continue
       try {
-        const recs = await dbQueryByIndex('files', 'pack', p.name, 3000)
-        const images = recs.filter(f => f.isImg).map(m => cachedEntry(m, dh))
-        const metas = recs.filter(f => f.isMeta).map(m => cachedEntry(m, dh))
+        const recs = await dbQueryByIndex('files', 'pack', p.name)
+        const images = recs.filter(f => f.isImg).map(m => {
+          const item = (isFallback && !m.file) ? { ...m, file: fallbackFilesMapRef.current.get(m.rel) } : m
+          return cachedEntry(item, dh)
+        })
+        const metas = recs.filter(f => f.isMeta).map(m => {
+          const item = (isFallback && !m.file) ? { ...m, file: fallbackFilesMapRef.current.get(m.rel) } : m
+          return cachedEntry(item, dh)
+        })
         animsCacheRef.current.set('pack:' + p.name, await clusterFiles(images, metas, {}, {}))
-      } catch (e) { /* ignore */ }
+      } catch (e) {
+        console.warn('[AssetManager] 预热包聚类异常:', e)
+      }
     }
-  }, [])
+  }, [rootInfo])
 
   // ---------- 切换到「我的收藏夹」（同步直读，0ms 瞬切无任何卡顿） ----------
   const handleSelectFavorites = () => {
@@ -871,7 +887,10 @@ export default function AssetManagerPage () {
       const records = scanFallbackFiles(fileList, count => setScanInfo(`已读取 ${count.toLocaleString()} 个文件`))
       const rootDirName = fileList[0]?.webkitRelativePath?.split('/')[0] || '本地素材库'
       setRootInfo({ type: 'fallback', name: rootDirName })
-      setTotalFileCount(records.length)
+      fallbackFilesMapRef.current.clear()
+      for (const r of records) {
+        if (r.file) fallbackFilesMapRef.current.set(r.rel, r.file)
+      }
 
       await dbClear('files')
       await dbClear('packs')

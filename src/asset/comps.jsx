@@ -217,25 +217,6 @@ export const Thumb = memo(function Thumb ({ entry, size = 32, className = 'am-th
   )
 })
 
-// ---------- 文件夹 GIF 预览 ----------
-export function FolderPreview ({ entry, size = 28 }) {
-  const [url, setUrl] = useState(null)
-  useEffect(() => {
-    let alive = true
-    if (!entry) return
-    entryBlob(entry).then(blob => { if (alive) setUrl(URL.createObjectURL(blob)) }).catch(() => {})
-    return () => {
-      alive = false
-      if (url) URL.revokeObjectURL(url)
-    }
-  }, [entry?.rel])
-  return (
-    <span className="am-thumb" style={{ width: size, height: size, flex: 'none' }}>
-      {url ? <img src={url} width={size} height={size} alt="" style={{ objectFit: 'cover' }} /> : null}
-    </span>
-  )
-}
-
 // ---------- 画廊网格卡片（轻量高效，0 内存浪费，支持卡片快捷收藏） ----------
 const gifPreviewCache = new Map() // rel -> objectURL, LRU 64
 function gifPreviewUrl (entry) {
