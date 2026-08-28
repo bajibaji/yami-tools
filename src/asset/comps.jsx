@@ -18,11 +18,7 @@ export async function loadAnimData (anim, cfg) {
     return { kind: 'sequence', frames: [bmp], fps: 0 }
   }
   if (anim.type === 'sequence') {
-    const frames = []
-    for (const f of anim.files) {
-      const blob = await entryBlob(f)
-      frames.push(await createImageBitmap(blob))
-    }
+    const frames = await decodeFrames(anim.files)
     return { kind: 'sequence', frames, fps: anim.fps || 15 }
   }
   if (anim.type === 'strip') {
@@ -61,8 +57,53 @@ export async function loadAnimData (anim, cfg) {
   return null
 }
 
+// 并行解码帧（最多 4 并发，避免长序列串行卡顿）
+async function decodeFrames (files) {
+  const out = new Array(files.length)
+  let next = 0
+  const CONCURRENCY = 4
+  async function worker () {
+    while (next < files.length) {
+      const i = next++
+      try {
+        const blob = await entryBlob(files[i])
+        out[i] = await createImageBitmap(blob)
+      } catch (e) { out[i] = null }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, files.length) }, worker))
+  return out.filter(Boolean)
+}
+
+// 预览数据 MRU 缓存：避免来回切换动画重复解码，LRU 上限 8 个动画
+const previewCache = new Map()
+const PREVIEW_CACHE_MAX = 8
+const previewKey = (anim, cfg) => anim.id + '|' + JSON.stringify(cfg || {})
+
+export function loadAnimDataCached (anim, cfg) {
+  const key = previewKey(anim, cfg || {})
+  const hit = previewCache.get(key)
+  if (hit) {
+    hit.last = Date.now()
+    return hit.promise
+  }
+  const promise = loadAnimData(anim, cfg || {})
+  previewCache.set(key, { last: Date.now(), promise })
+  if (previewCache.size > PREVIEW_CACHE_MAX) {
+    const oldest = [...previewCache.entries()].sort((a, b) => a[1].last - b[1].last)[0]
+    if (oldest) {
+      previewCache.delete(oldest[0])
+      oldest[1].promise.then(d => {
+        if (d && d.frames) for (const bmp of d.frames) bmp.close && bmp.close()
+        if (d && d.kind === 'gif' && d.url) URL.revokeObjectURL(d.url)
+      }).catch(() => {})
+    }
+  }
+  return promise
+}
+
 // ---------- 虚拟滚动列表 ----------
-export function VirtualList ({ items, rowHeight, overscan = 8, renderRow, className = 'am-vlist' }) {
+export const VirtualList = React.memo(function VirtualList ({ items, rowHeight, overscan = 8, renderRow, className = 'am-vlist' }) {
   const ref = useRef(null)
   const [range, setRange] = useState({ start: 0, end: 40 })
 
@@ -98,16 +139,19 @@ export function VirtualList ({ items, rowHeight, overscan = 8, renderRow, classN
       </div>
     </div>
   )
-}
+})
 
 // ---------- 视口懒加载缩略图 (Lazy Thumb) ----------
-export const Thumb = memo(function Thumb ({ entry, size = 32, className = 'am-thumb' }) {
-  const [url, setUrl] = useState(() => getMemCachedThumb(entry))
+// 多行网格动画缩略图规格：取每行第 2 帧排成方块（BDragon strip / 多行 sheet 通用）
+export const GRID_THUMB_SPEC = { mode: 'grid2nd' }
+
+export const Thumb = memo(function Thumb ({ entry, size = 32, className = 'am-thumb', thumbSpec = null }) {
+  const [url, setUrl] = useState(() => getMemCachedThumb(entry, thumbSpec))
   const [isVisible, setIsVisible] = useState(false)
   const containerRef = useRef(null)
 
   useEffect(() => {
-    const cached = getMemCachedThumb(entry)
+    const cached = getMemCachedThumb(entry, thumbSpec)
     if (cached) {
       setUrl(cached)
       return
@@ -127,16 +171,16 @@ export const Thumb = memo(function Thumb ({ entry, size = 32, className = 'am-th
     }, { rootMargin: '100px' })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [entry?.rel, entry?.size])
+  }, [entry?.rel, entry?.size, thumbSpec])
 
   useEffect(() => {
     let alive = true
     if (!isVisible || !entry) return
-    getThumbUrl(entry).then(u => {
+    getThumbUrl(entry, thumbSpec).then(u => {
       if (alive && u) setUrl(u)
     }).catch(() => {})
     return () => { alive = false }
-  }, [isVisible, entry?.rel, entry?.size])
+  }, [isVisible, entry?.rel, entry?.size, thumbSpec])
 
   return (
     <span ref={containerRef} className={className} style={{ width: size, height: size }}>
@@ -165,15 +209,35 @@ export function FolderPreview ({ entry, size = 28 }) {
 }
 
 // ---------- 画廊网格卡片（轻量高效，0 内存浪费，支持卡片快捷收藏） ----------
+const gifPreviewCache = new Map() // rel -> objectURL, LRU 64
+function gifPreviewUrl (entry) {
+  if (!entry) return null
+  const cached = gifPreviewCache.get(entry.rel)
+  if (cached) return cached
+  return null
+}
+
 export const GalleryCard = memo(function GalleryCard ({ anim, selected, isFav, onSelect, onToggleFav }) {
   const [hover, setHover] = useState(false)
-  const [previewGifUrl, setPreviewGifUrl] = useState(null)
+  const [previewGifUrl, setPreviewGifUrl] = useState(() => gifPreviewUrl(anim.previewEntry))
 
   useEffect(() => {
     let alive = true
     if (hover && anim.previewEntry && !previewGifUrl) {
       entryBlob(anim.previewEntry).then(blob => {
-        if (alive) setPreviewGifUrl(URL.createObjectURL(blob))
+        if (!alive) return
+        let url = gifPreviewUrl(anim.previewEntry)
+        if (!url) {
+          url = URL.createObjectURL(blob)
+          gifPreviewCache.set(anim.previewEntry.rel, url)
+          if (gifPreviewCache.size > 64) {
+            const first = gifPreviewCache.keys().next().value
+            const old = gifPreviewCache.get(first)
+            gifPreviewCache.delete(first)
+            if (old) URL.revokeObjectURL(old)
+          }
+        }
+        setPreviewGifUrl(url)
       }).catch(() => {})
     }
     return () => { alive = false }
@@ -192,7 +256,7 @@ export const GalleryCard = memo(function GalleryCard ({ anim, selected, isFav, o
         {hover && previewGifUrl ? (
           <img src={previewGifUrl} className="gallery-thumb-img" alt="" />
         ) : (
-          <Thumb entry={anim.entry} size={84} className="gallery-thumb-img" />
+          <Thumb entry={anim.entry} size={84} className="gallery-thumb-img" thumbSpec={(anim.type === 'strip' || anim.type === 'sheet') ? GRID_THUMB_SPEC : null} />
         )}
 
         <div className="gallery-badges">
@@ -282,7 +346,7 @@ const FilmstripFrameCanvas = memo(function FilmstripFrameCanvas ({ data, frame }
 })
 
 // ---------- 专业视口工作台 (Pro Canvas Viewport) ----------
-export function PreviewPane ({ anim, cfg, onFrameData, onToast }) {
+export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange }) {
   const canvasRef = useRef(null)
   const containerRef = useRef(null)
 
@@ -314,6 +378,8 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast }) {
   onFrameDataRef.current = onFrameData
   const onToastRef = useRef(onToast)
   onToastRef.current = onToast
+  const onCfgChangeRef = useRef(onCfgChange)
+  onCfgChangeRef.current = onCfgChange
   const animRef = useRef(anim)
   animRef.current = anim
 
@@ -328,8 +394,9 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast }) {
     setDirection(1)
   }, [animId])
 
+  const loadTokenRef = useRef(0)
+
   useEffect(() => {
-    let cancelled = false
     if (!animId || !animRef.current) {
       setData(null)
       onFrameDataRef.current?.(null)
@@ -337,28 +404,25 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast }) {
       return
     }
 
+    const token = ++loadTokenRef.current
     setLoading(true)
-    loadAnimData(animRef.current, cfg)
+    loadAnimDataCached(animRef.current, cfg)
       .then(d => {
-        if (!cancelled) {
-          setData(d)
-          onFrameDataRef.current?.(d)
-          setIdx(0)
-          idxRef.current = 0
-        } else {
+        if (token !== loadTokenRef.current) {
           if (d?.kind === 'gif' && d.url) URL.revokeObjectURL(d.url)
+          return
         }
+        setData(d)
+        onFrameDataRef.current?.(d)
+        setIdx(0)
+        idxRef.current = 0
       })
       .catch(e => {
-        if (!cancelled) onToastRef.current?.('预览失败：' + e.message)
+        if (token === loadTokenRef.current) onToastRef.current?.('预览失败：' + e.message)
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (token === loadTokenRef.current) setLoading(false)
       })
-
-    return () => {
-      cancelled = true
-    }
   }, [animId, cfgKey])
 
   const frameCount = data && data.kind !== 'gif' ? (data.frames?.length || 0) : 0
@@ -491,6 +555,23 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast }) {
         </div>
 
         <div className="viewport-right-tools">
+          {animRef.current?.type === 'strip' && (
+            <label className="strip-variant-select" title="切换颜色变体（每一行一种颜色，在视口处操作）">
+              <span className="dim-info">变体</span>
+              <select
+                value={cfg?.variant ?? 'all'}
+                onChange={e => {
+                  const v = e.target.value === 'all' ? 'all' : +e.target.value
+                  onCfgChangeRef.current?.({ variant: v })
+                }}
+              >
+                <option value="all">全部颜色</option>
+                {Array.from({ length: Math.max(1, Math.round(((data?.image && data.image.height) || 576) / 64)) }, (_, i) => (
+                  <option key={i} value={i}>{'颜色 ' + (i + 1)}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <div className="bg-switcher" title="切换画布背景">
             <button
               type="button"

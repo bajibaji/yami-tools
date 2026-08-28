@@ -15,7 +15,7 @@ export const STORES = {
 
 let dbPromise = null
 
-function openDb () {
+export function openDb () {
   if (dbPromise) return dbPromise
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1)
@@ -61,7 +61,7 @@ export async function dbGet (store, key) {
 }
 
 // 核心：通过 B-Tree 索引极速按包或按目录检索（11万条数据中只需 1ms）
-export async function dbQueryByIndex (store, indexName, value, limit = 500) {
+export async function dbQueryByIndex (store, indexName, value, limit = 3000) {
   const t = await tx(store, 'readonly')
   return new Promise((resolve, reject) => {
     const idx = t.objectStore(store).index(indexName)

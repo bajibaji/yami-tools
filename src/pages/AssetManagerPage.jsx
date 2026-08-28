@@ -32,7 +32,9 @@ import {
   dbQueryByIndex,
   dbSearchFiles
 } from '../asset/lib/idb-store.js'
-import { VirtualList, Thumb, PreviewPane, GalleryCard } from '../asset/comps.jsx'
+import { VirtualList, Thumb, PreviewPane, GalleryCard, GRID_THUMB_SPEC } from '../asset/comps.jsx'
+import { prewarmThumbCache } from '../asset/lib/thumb.js'
+import { writeManifest, readManifest, MANIFEST_NAME } from '../asset/lib/manifest.js'
 
 const TYPE_ICONS = {
   all: '🌟',
@@ -62,10 +64,13 @@ export default function AssetManagerPage () {
   const fileInputRef = useRef(null)
   const searchInputRef = useRef(null)
   const catalogScrollRef = useRef(null)
+  const explorerScrollRef = useRef(null)
 
   // 基础状态
   const [rootInfo, setRootInfo] = useState(null)
   const [dirHandle, setDirHandle] = useState(null)
+  const dirHandleRef = useRef(null)
+  dirHandleRef.current = dirHandle
   const [phase, setPhase] = useState('idle') // 'idle' | 'scanning' | 'ready' | 'error'
   const [totalFileCount, setTotalFileCount] = useState(0)
 
@@ -96,6 +101,11 @@ export default function AssetManagerPage () {
   const [viewLayout, setViewLayout] = useState('split') // 'split' | 'gallery' | 'table'
   const [typeFilter, setTypeFilter] = useState('all')
   const [query, setQuery] = useState('')
+  const [queryInput, setQueryInput] = useState('')
+  const [subdirVisible, setSubdirVisible] = useState({})
+  const searchIndexRef = useRef(null)
+  const searchIndexReadyRef = useRef(false)
+  const loadReqRef = useRef(0)
   const [visibleCount, setVisibleCount] = useState(GALLERY_PAGE_SIZE)
 
   // 选择与多选
@@ -112,6 +122,7 @@ export default function AssetManagerPage () {
   // 扫描控制
   const [scanning, setScanning] = useState(false)
   const [scanInfo, setScanInfo] = useState('')
+  const [pendingReauth, setPendingReauth] = useState(null)
   const abortRef = useRef(false)
 
   // 当前选中的动画对象
@@ -170,24 +181,39 @@ export default function AssetManagerPage () {
       return
     }
 
+    const myReq = ++loadReqRef.current
     setLoadingDir(true)
     try {
       let fileRecords = []
 
       if (searchKeyword && searchKeyword.trim()) {
-        fileRecords = await dbSearchFiles(searchKeyword.trim(), 120)
+        if (!searchIndexReadyRef.current) await buildSearchIndex()
+        const q = searchKeyword.trim().toLowerCase()
+        fileRecords = (searchIndexRef.current || []).filter(r => r.nameL.includes(q) || r.relL.includes(q)).slice(0, 120)
       } else if (dirPath) {
-        fileRecords = await dbQueryByIndex('files', 'dir', dirPath, 300)
+        fileRecords = await dbQueryByIndex('files', 'dir', dirPath, 3000)
       } else if (packName) {
-        fileRecords = await dbQueryByIndex('files', 'pack', packName, 250)
+        fileRecords = await dbQueryByIndex('files', 'pack', packName, 3000)
       }
 
+      if (myReq !== loadReqRef.current) return
       if (fileRecords.length > 0 && dirHandle) {
         const images = fileRecords.filter(f => f.isImg).map(m => cachedEntry(m, dirHandle))
         const metas = fileRecords.filter(f => f.isMeta).map(m => cachedEntry(m, dirHandle))
         const animList = await clusterFiles(images, metas, {}, {})
+        if (myReq !== loadReqRef.current) return
         animsCacheRef.current.set(cacheKey, animList)
         setActiveAnims(animList)
+        // 批量预读前 36 个动画的缩略图缓存（单事务，避免每张卡一次事务）
+        {
+          const gridEntries = []
+          const otherEntries = []
+          for (const a of animList.slice(0, 36)) {
+            if (a && a.entry) (a.type === 'strip' || a.type === 'sheet' ? gridEntries : otherEntries).push(a.entry)
+          }
+          if (gridEntries.length) prewarmThumbCache(gridEntries, GRID_THUMB_SPEC).catch(() => {})
+          if (otherEntries.length) prewarmThumbCache(otherEntries, null).catch(() => {})
+        }
         if (animList.length > 0) {
           setSelectedId(prev => (animList.some(a => a.id === prev) ? prev : animList[0].id))
         }
@@ -197,9 +223,32 @@ export default function AssetManagerPage () {
     } catch (e) {
       // ignore
     } finally {
-      setLoadingDir(false)
+      if (myReq === loadReqRef.current) setLoadingDir(false)
     }
-  }, [dirHandle])
+  }, [dirHandle]) // 注意：buildSearchIndex 在下方声明，只能在回调运行时引用（闭包绑定已初始化）
+
+  // 搜索防抖 250ms
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(queryInput), 250)
+    return () => clearTimeout(t)
+  }, [queryInput])
+
+  // 一次性构建内存搜索索引（避免每次按键全库 IDB 光标扫描）
+  const buildSearchIndex = useCallback(async () => {
+    if (searchIndexReadyRef.current) return
+    try {
+      const records = await dbAll('files')
+      searchIndexRef.current = records.map(r => ({
+        rel: r.rel, name: r.name,
+        nameL: (r.name || '').toLowerCase(),
+        relL: (r.rel || '').toLowerCase(),
+        dir: r.dir, pack: r.pack || (r.rel && r.rel.includes('/') ? r.rel.split('/')[0] : '(根目录)'),
+        isImg: r.isImg, isMeta: r.isMeta, ext: r.ext, size: r.size
+      }))
+      searchIndexReadyRef.current = true
+      if (searchIndexRef.current.length > 0) toast('搜索索引已就绪（' + searchIndexRef.current.length.toLocaleString() + ' 条）')
+    } catch (e) { /* ignore */ }
+  }, [toast])
 
   // 切换包、子目录或搜索时按需加载
   useEffect(() => {
@@ -271,6 +320,39 @@ export default function AssetManagerPage () {
     })
   }
 
+  // ---------- 打开所在文件夹：树定位 + 目录筛选 ----------
+  const handleLocateFolder = (anim) => {
+    if (!anim) return
+    const packName = anim.pack
+    setSelectedPack(packName)
+    setDirFilter(anim.dir || null)
+    setQueryInput('')
+    setQuery('')
+    setExpandedPacks(prev => new Set(prev).add(packName))
+    requestAnimationFrame(() => {
+      const root = explorerScrollRef.current
+      if (!root) return
+      const node = root.querySelector('[data-pack="' + packName + '"]')
+      if (node) node.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
+  }
+
+  // ---------- 包预聚类热备：后台把每个包的动画列表先算好，切换包 0ms ----------
+  const warmupPacks = useCallback(async (packList) => {
+    const dh = dirHandleRef.current
+    if (!dh || !packList || !packList.length) return
+    for (const p of packList.slice(0, 8)) {
+      await new Promise(r => setTimeout(r, 0))
+      if (animsCacheRef.current.has('pack:' + p.name)) continue
+      try {
+        const recs = await dbQueryByIndex('files', 'pack', p.name, 3000)
+        const images = recs.filter(f => f.isImg).map(m => cachedEntry(m, dh))
+        const metas = recs.filter(f => f.isMeta).map(m => cachedEntry(m, dh))
+        animsCacheRef.current.set('pack:' + p.name, await clusterFiles(images, metas, {}, {}))
+      } catch (e) { /* ignore */ }
+    }
+  }, [])
+
   // ---------- 切换到「我的收藏夹」（同步直读，0ms 瞬切无任何卡顿） ----------
   const handleSelectFavorites = () => {
     const favList = Array.from(favObjectsMapRef.current.values())
@@ -289,14 +371,19 @@ export default function AssetManagerPage () {
   const runStreamScan = useCallback(async (rootHandle) => {
     if (!rootHandle) return
     abortRef.current = false
+    searchIndexRef.current = null
+    searchIndexReadyRef.current = false
     setScanning(true)
-    setScanInfo('正在流式索引超大素材库…')
+    setScanInfo('正在增量同步素材库索引…')
 
     const packSummary = new Map()
     let totalCount = 0
+    const allRecords = []
 
     try {
-      await dbClear('files')
+      // 旧索引快照 → 只写新增/变更，删除已消失文件（不再全量重写 11 万条）
+      const prevMap = new Map((await dbAll('files')).map(f => [f.rel, f.size]))
+      const seen = new Set()
       await dbClear('packs')
 
       const res = await streamScanRootHandle(rootHandle, {
@@ -304,21 +391,31 @@ export default function AssetManagerPage () {
         shouldAbort: () => abortRef.current,
         onProgress: (scanned, current) => {
           totalCount = scanned
-          setScanInfo(`已索引 ${scanned.toLocaleString()} 个文件 · ${current.split('/').pop()}`)
+          setScanInfo(`已索引 ${scanned.toLocaleString()} 个文件 · ${(current || '').split('/').pop()}`)
         },
         onBatch: async (chunk) => {
+          const toPut = []
           for (const f of chunk) {
             const p = f.pack || '(根目录)'
             if (!packSummary.has(p)) packSummary.set(p, { name: p, count: 0, dirs: new Set() })
             const item = packSummary.get(p)
             item.count++
             if (f.dir) item.dirs.add(f.dir)
+            allRecords.push(f)
+            seen.add(f.rel)
+            if (!prevMap.has(f.rel) || prevMap.get(f.rel) !== f.size) toPut.push(f)
           }
-          await dbBulkPut('files', chunk.map(f => [f.rel, f]))
+          if (toPut.length) await dbBulkPut('files', toPut.map(f => [f.rel, f]))
         }
       })
 
       if (!res.aborted) {
+        const staleKeys = [...prevMap.keys()].filter(k => !seen.has(k))
+        for (let i = 0; i < staleKeys.length; i += 300) {
+          await Promise.all(staleKeys.slice(i, i + 300).map(k => dbDelete('files', k)))
+          await new Promise(r => setTimeout(r, 0))
+        }
+
         const packList = Array.from(packSummary.values()).map(p => ({
           name: p.name,
           count: p.count,
@@ -333,7 +430,13 @@ export default function AssetManagerPage () {
           setSelectedPack(packList[0].name)
           setExpandedPacks(new Set([packList[0].name]))
         }
-        toast(`索引完成：共 ${totalCount.toLocaleString()} 个文件已就绪！`)
+        buildSearchIndex()
+        warmupPacks(packList)
+        writeManifest(rootHandle, allRecords, packList).then(ok => {
+          if (ok && !abortRef.current) setTimeout(() => toast('本地清单已更新（' + MANIFEST_NAME + '）'), 800)
+        }).catch(() => {})
+        const delta = staleKeys.length ? ('，清理 ' + staleKeys.length + ' 个已删除文件') : ''
+        toast(`索引完成：共 ${totalCount.toLocaleString()} 个文件已就绪！` + delta)
       } else {
         toast('已暂停扫描')
       }
@@ -343,7 +446,35 @@ export default function AssetManagerPage () {
     }
     setScanning(false)
     setScanInfo('')
-  }, [toast])
+  }, [toast, buildSearchIndex, warmupPacks])
+
+  // 从库根目录清单秒恢复（换电脑/清缓存后），再后台增量校验
+  const restoreFromManifest = useCallback(async (handle) => {
+    const md = await readManifest(handle)
+    if (!md || !md.files || !md.files.length) return false
+    try {
+      await dbClear('files')
+      await dbClear('packs')
+      for (let i = 0; i < md.files.length; i += 5000) {
+        await dbBulkPut('files', md.files.slice(i, i + 5000).map(f => [f.rel, f]))
+        await new Promise(r => setTimeout(r, 0))
+      }
+      const packList = md.packs && md.packs.length ? md.packs : []
+      await dbBulkPut('packs', packList.map(p => [p.name, p]))
+      setPacks(packList)
+      setTotalFileCount(packList.reduce((s, p) => s + p.count, 0))
+      setSelectedPack(packList[0] ? packList[0].name : null)
+      setExpandedPacks(packList[0] ? new Set([packList[0].name]) : new Set())
+      setPhase('ready')
+      buildSearchIndex()
+      warmupPacks(packList)
+      toast('已从本地清单快速恢复索引，正在后台增量校验…')
+      setTimeout(() => { runStreamScan(handle) }, 400)
+      return true
+    } catch (e) {
+      return false
+    }
+  }, [buildSearchIndex, warmupPacks, runStreamScan, toast])
 
   // 初始化：0ms 秒开恢复索引
   useEffect(() => {
@@ -373,6 +504,8 @@ export default function AssetManagerPage () {
         if (perm === 'granted') {
           setRootInfo({ type: 'handle', name: handle.name })
           setDirHandle(handle)
+        } else if (perm === 'prompt') {
+          setPendingReauth(handle)
 
           if (favList && favList.length) {
             for (const f of favList) {
@@ -406,16 +539,50 @@ export default function AssetManagerPage () {
             setSelectedPack(cachedPacks[0].name)
             setExpandedPacks(new Set([cachedPacks[0].name]))
             setPhase('ready')
+            buildSearchIndex()
+            warmupPacks(cachedPacks)
           } else {
-            setPhase('scanning')
-            await runStreamScan(handle)
+            const ok = await restoreFromManifest(handle)
+            if (!ok) {
+              setPhase('scanning')
+              await runStreamScan(handle)
+            }
           }
         }
       } catch (e) {
         // ignore
       }
     })()
-  }, [runStreamScan])
+  }, [runStreamScan, buildSearchIndex])
+
+  // 一键重新授权上次素材库（Chrome 重启后权限会复位，此为浏览器限制）
+  const reauthorize = async () => {
+    const handle = pendingReauth
+    if (!handle) return
+    try {
+      const perm = await handle.requestPermission({ mode: 'read' })
+      if (perm !== 'granted') { toast('授权被拒绝，可点击「选择素材库」重新选择'); return }
+      setPendingReauth(null)
+      setRootInfo({ type: 'handle', name: handle.name })
+      setDirHandle(handle)
+      const cachedPacks = await dbAll('packs')
+      if (cachedPacks.length) {
+        setPacks(cachedPacks)
+        setTotalFileCount(cachedPacks.reduce((s, p) => s + p.count, 0))
+        setSelectedPack(cachedPacks[0].name)
+        setExpandedPacks(new Set([cachedPacks[0].name]))
+        setPhase('ready')
+        buildSearchIndex()
+        warmupPacks(cachedPacks)
+        toast('已恢复上次素材库')
+      } else {
+        setPhase('scanning')
+        await runStreamScan(handle)
+      }
+    } catch (e) {
+      toast('授权失败：' + e.message)
+    }
+  }
 
   // 选择素材库
   const pickLibrary = async () => {
@@ -423,11 +590,26 @@ export default function AssetManagerPage () {
       try {
         const handle = await window.showDirectoryPicker({ id: 'asset-library', mode: 'readwrite' })
         await saveRootHandle(handle)
+        setPendingReauth(null)
         setRootInfo({ type: 'handle', name: handle.name })
         setDirHandle(handle)
-        setPacks([])
         setActiveAnims([])
         setSelectedId(null)
+        const cachedPacks = await dbAll('packs')
+        if (cachedPacks.length) {
+          setPacks(cachedPacks)
+          setTotalFileCount(cachedPacks.reduce((s, p) => s + p.count, 0))
+          setSelectedPack(cachedPacks[0].name)
+          setExpandedPacks(new Set([cachedPacks[0].name]))
+          setPhase('ready')
+          buildSearchIndex()
+          warmupPacks(cachedPacks)
+          toast('已打开本地索引（未重扫）；素材有变动时点「重新索引」')
+          return
+        }
+        const ok = await restoreFromManifest(handle)
+        if (ok) return
+        setPacks([])
         setPhase('scanning')
         await runStreamScan(handle)
       } catch (e) {
@@ -565,8 +747,8 @@ export default function AssetManagerPage () {
     })
   }
 
-  // 渲染表格行
-  const renderTableRow = (anim) => {
+  // 渲染表格行（useCallback 稳定引用，避免 VirtualList 每帧重建）
+  const renderTableRow = useCallback((anim) => {
     const isSelected = anim.id === selectedId
     const isMulti = multiSel.has(anim.id)
     const isFav = favAnims.has(anim.id)
@@ -583,7 +765,7 @@ export default function AssetManagerPage () {
           onClick={e => e.stopPropagation()}
           onChange={() => toggleMulti(anim.id)}
         />
-        <Thumb entry={anim.entry} size={28} />
+        <Thumb entry={anim.entry} size={28} thumbSpec={(anim.type === 'strip' || anim.type === 'sheet') ? GRID_THUMB_SPEC : null} />
         <span className={`type-badge-mini type-${anim.type}`}>{TYPE_ICONS[anim.type]} {anim.type.toUpperCase()}</span>
         <div className="table-col-name" title={anim.name}>
           <strong>{anim.name}</strong>
@@ -595,7 +777,7 @@ export default function AssetManagerPage () {
         <div className="table-col-count">{anim.count || (anim.type === 'strip' ? 'Strip' : 1)} 帧</div>
       </div>
     )
-  }
+  }, [selectedId, multiSel, favAnims])
 
   return (
     <div className={`am-pro-shell ${isDraggingResizer ? 'user-resizing' : ''}`}>
@@ -613,6 +795,13 @@ export default function AssetManagerPage () {
             <span className="btn-icon">📁</span>
             {rootInfo ? rootInfo.name : '选择素材库…'}
           </button>
+
+          {pendingReauth && (
+            <button type="button" className="btn reauth-btn" onClick={reauthorize} title="浏览器重启后需重新授权（Chrome 安全机制）">
+              <span className="btn-icon">🔑</span>
+              一键恢复上次素材库
+            </button>
+          )}
 
           {dirHandle && (
             <button
@@ -644,12 +833,12 @@ export default function AssetManagerPage () {
               ref={searchInputRef}
               type="search"
               placeholder="搜索 11万+ 文件名、相对路径 (按 / 聚焦)..."
-              value={query}
-              onChange={e => setQuery(e.target.value)}
+              value={queryInput}
+              onChange={e => setQueryInput(e.target.value)}
               className="search-input"
             />
             {query ? (
-              <button type="button" className="search-clear" onClick={() => setQuery('')}>✕</button>
+              <button type="button" className="search-clear" onClick={() => { setQueryInput(''); setQuery('') }}>✕</button>
             ) : (
               <kbd className="search-kbd">/</kbd>
             )}
@@ -693,7 +882,7 @@ export default function AssetManagerPage () {
           >
             ⌨
           </button>
-          <input ref={fileInputRef} type="file" webkitdirectory multiple hidden />
+          <input ref={fileInputRef} type="file" webkitdirectory="true" multiple hidden />
         </div>
       </header>
 
@@ -706,7 +895,7 @@ export default function AssetManagerPage () {
             <span className="dim-info">{totalFileCount.toLocaleString()} 文件</span>
           </div>
 
-          <div className="explorer-scroll">
+          <div className="explorer-scroll" ref={explorerScrollRef}>
             <div className="explorer-group" style={{ marginBottom: 6 }}>
               <button
                 type="button"
@@ -734,6 +923,7 @@ export default function AssetManagerPage () {
                   <div key={p.name} className="pack-node">
                     <button
                       type="button"
+                      data-pack={p.name}
                       className={`tree-row pack-row ${isActive ? 'active' : ''}`}
                       onClick={() => handleSelectPack(p.name)}
                       title={`选择查看：${p.name}`}
@@ -753,7 +943,7 @@ export default function AssetManagerPage () {
                     {/* 可收起的子目录列表 */}
                     {isExpanded && hasDirs && (
                       <div className="pack-subdirs">
-                        {p.dirs.map(d => {
+                        {p.dirs.slice(0, subdirVisible[p.name] || 60).map(d => {
                           const dirLabel = d.replace(`${p.name}/`, '')
                           const isDirActive = dirFilter === d && !query
                           return (
@@ -774,6 +964,20 @@ export default function AssetManagerPage () {
                             </button>
                           )
                         })}
+                        {(subdirVisible[p.name] || 60) < p.dirs.length && (
+                          <button
+                            type="button"
+                            className="tree-row sub more-subdirs"
+                            style={{ paddingLeft: 24 }}
+                            onClick={e => {
+                              e.stopPropagation()
+                              setSubdirVisible(s => ({ ...s, [p.name]: (s[p.name] || 60) + 120 }))
+                            }}
+                          >
+                            <span className="tree-ico">＋</span>
+                            <span className="tree-name">显示更多子目录（还有 {p.dirs.length - (subdirVisible[p.name] || 60)} 个）</span>
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -922,6 +1126,7 @@ export default function AssetManagerPage () {
                 cfg={sheetCfg[selectedId]}
                 onFrameData={setFrameData}
                 onToast={toast}
+                onCfgChange={patch => setSheetCfg(s => ({ ...s, [selectedId]: { ...(s[selectedId] || {}), ...patch } }))}
               />
             </section>
           )}
@@ -982,6 +1187,19 @@ export default function AssetManagerPage () {
                       <div className="btn-text">
                         <strong>{gifBusy ? `编码中 ${gifProgress}%` : '导出 GIF'}</strong>
                         <small>256 色调色板</small>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="action-btn"
+                      onClick={() => handleLocateFolder(selected)}
+                      title="在左侧树中定位到该素材所在包/子目录并筛选"
+                    >
+                      <span className="btn-ico">📂</span>
+                      <div className="btn-text">
+                        <strong>打开所在文件夹</strong>
+                        <small>{selected.pack}{selected.dir ? ' / ' + selected.dir.split('/').pop() : ''}</small>
                       </div>
                     </button>
 
@@ -1088,25 +1306,7 @@ export default function AssetManagerPage () {
                   </div>
                 </div>
 
-                {selected.type === 'strip' && (
-                  <div className="inspector-card">
-                    <div className="card-header">🛠 BDragon 变体调参</div>
-                    <div className="config-row">
-                      <label>
-                        <span>颜色变体切换（每一行为一种颜色/动作）</span>
-                        <select
-                          value={sheetCfg[selectedId]?.variant ?? 'all'}
-                          onChange={e => setSheetCfg(s => ({ ...s, [selectedId]: { ...s[selectedId], variant: e.target.value === 'all' ? 'all' : +e.target.value } }))}
-                        >
-                          <option value="all">全部颜色变体 (整列同时播)</option>
-                          {frameData?.image && Array.from({ length: Math.max(1, Math.round(frameData.image.height / 64)) }, (_, i) => (
-                            <option key={i} value={i}>{`颜色变体第 ${i + 1} 行`}</option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-                  </div>
-                )}
+
               </>
             )}
           </div>
@@ -1114,24 +1314,6 @@ export default function AssetManagerPage () {
       </div>
 
       {/* 3. 底部状态栏 */}
-      <footer className="am-pro-statusbar">
-        <div className="status-left">
-          <span className="status-item">
-            <span className="status-dot green" />
-            <span>全库文件索引：<strong>{totalFileCount.toLocaleString()} 个文件</strong></span>
-          </span>
-          <span className="status-divider">|</span>
-          <span className="status-item">
-            <span>当前包：<strong>{selectedPack || '未选择'}</strong> ({filteredAnims.length} 个动画)</span>
-          </span>
-        </div>
-
-        <div className="status-right">
-          <span className="status-item">⚡ 工业级 B-Tree 索引 · 视口高度可拖拽</span>
-          <span className="status-divider">|</span>
-          <span className="status-item">100% 本地运算</span>
-        </div>
-      </footer>
 
       {/* Toast */}
       <AnimatePresence>

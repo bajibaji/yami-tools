@@ -32,6 +32,12 @@ function publicToolsDevPlugin() {
 // 部署后访问路径为 /yami-tools/，base 必须与此保持一致。
 export default defineConfig({
   base: '/yami-tools/',
+  server: {
+    watch: {
+      // 忽略编辑器/工具的原子写临时目录，避免 EBUSY 崩溃
+      ignored: ['**/.*.tmpdir/**', '**/*.tmp', '**/.tmp/**']
+    }
+  },
   plugins: [react(), publicToolsDevPlugin()],
   build: {
     outDir: 'dist',

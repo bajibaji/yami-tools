@@ -201,7 +201,7 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
           metaTexts.find(m => /spritesheet\.txt$/i.test(m.name))
       }
 
-      const matchGif = gifs.find(g => stripExt(g.name).toLowerCase() === base.toLowerCase()) || dirPreviewGif
+      const matchGif = gifs.find(g => stripExt(g.name).toLowerCase() === base.toLowerCase()) || null
       const matchAse = aseMetas.find(a => stripExt(a.name).toLowerCase() === base.toLowerCase()) || dirAseEntry
       const matchHtml = htmlMetas.find(h => stripExt(h.name).toLowerCase() === base.toLowerCase()) || dirHtmlEntry
 
@@ -228,7 +228,7 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
     if (preset.stripSheet) {
       for (const f of frames) {
         const base = stripExt(f.name)
-        const matchGif = gifs.find(g => stripExt(g.name).toLowerCase() === base.toLowerCase()) || dirPreviewGif
+        const matchGif = gifs.find(g => stripExt(g.name).toLowerCase() === base.toLowerCase()) || null
         const matchAse = aseMetas.find(a => stripExt(a.name).toLowerCase() === base.toLowerCase()) || dirAseEntry
         const matchHtml = htmlMetas.find(h => stripExt(h.name).toLowerCase() === base.toLowerCase()) || dirHtmlEntry
 
