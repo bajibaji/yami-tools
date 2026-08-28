@@ -154,6 +154,7 @@ export default function AssetManagerPage () {
   // 弹窗状态
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [folderModalAnim, setFolderModalAnim] = useState(null)
+  const [lightboxAnim, setLightboxAnim] = useState(null)
   const [gifBusy, setGifBusy] = useState(false)
   const [gifProgress, setGifProgress] = useState(0)
 
