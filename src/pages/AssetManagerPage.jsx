@@ -1827,6 +1827,18 @@ export default function AssetManagerPage () {
                         {selected.type === 'strip' ? 'STRIP (合集)' : selected.type.toUpperCase()}
                       </span>
                     </div>
+                    {selected.variants && Object.keys(selected.variants).length > 1 && (
+                      <div className="meta-row">
+                        <span className="meta-k">包含尺寸</span>
+                        <span className="meta-v" style={{ display: 'flex', gap: 4 }}>
+                          {Object.keys(selected.variants).map(k => (
+                            <span key={k} className="badge" style={{ background: 'rgba(122, 162, 247, 0.15)', color: 'var(--am-accent)', textTransform: 'uppercase' }}>
+                              {k}
+                            </span>
+                          ))}
+                        </span>
+                      </div>
+                    )}
                     <div className="meta-row">
                       <span className="meta-k">单帧分辨率</span>
                       <span className="meta-v">

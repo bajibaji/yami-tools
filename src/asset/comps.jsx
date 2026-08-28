@@ -433,18 +433,46 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
   const animId = anim?.id
   const cfgKey = useMemo(() => JSON.stringify(cfg || {}), [cfg])
 
+  const [selectedVariantKey, setSelectedVariantKey] = useState(null)
+
   useEffect(() => {
-    setFps(anim?.fps || 15)
+    setSelectedVariantKey(null)
+  }, [animId])
+
+  // 当前实际用于视口渲染的动画对象（支持 Large / Small 动态切换）
+  const activePreviewAnim = useMemo(() => {
+    if (!anim) return null
+    if (selectedVariantKey && anim.variants && anim.variants[selectedVariantKey]) {
+      const v = anim.variants[selectedVariantKey]
+      return {
+        ...anim,
+        name: v.name || anim.name,
+        type: v.type || anim.type,
+        files: v.files || anim.files,
+        entry: v.entry || anim.entry,
+        count: v.count || anim.count,
+        sheetEntry: v.sheetEntry || anim.sheetEntry,
+        sheetMetaEntry: v.sheetMetaEntry || anim.sheetMetaEntry
+      }
+    }
+    return anim
+  }, [anim, selectedVariantKey])
+
+  const activeAnimRef = useRef(activePreviewAnim)
+  activeAnimRef.current = activePreviewAnim
+
+  useEffect(() => {
+    setFps(activePreviewAnim?.fps || 15)
     setIdx(0)
     idxRef.current = 0
     setPlaying(true)
     setDirection(1)
-  }, [animId])
+  }, [animId, selectedVariantKey])
 
   const loadTokenRef = useRef(0)
 
   useEffect(() => {
-    if (!animId || !animRef.current) {
+    if (!animId || !activeAnimRef.current) {
       setData(null)
       onFrameDataRef.current?.(null)
       setLoading(false)
@@ -453,7 +481,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
 
     const token = ++loadTokenRef.current
     setLoading(true)
-    loadAnimDataCached(animRef.current, cfg)
+    loadAnimDataCached(activeAnimRef.current, cfg)
       .then(d => {
         if (token !== loadTokenRef.current) {
           if (d?.kind === 'gif' && d.url) URL.revokeObjectURL(d.url)
@@ -470,7 +498,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
       .finally(() => {
         if (token === loadTokenRef.current) setLoading(false)
       })
-  }, [animId, cfgKey])
+  }, [animId, cfgKey, activePreviewAnim])
 
   const frameCount = data && data.kind !== 'gif' ? (data.frames?.length || 0) : 0
 
@@ -608,6 +636,27 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
         </div>
 
         <div className="viewport-right-tools">
+          {anim?.variants && Object.keys(anim.variants).length > 1 && (
+            <div className="size-variant-switcher" title="切换特效尺寸变体（高清大图 / 像素小图）">
+              <span className="dim-info">尺寸</span>
+              <div className="size-btn-group">
+                {Object.entries(anim.variants).map(([key, v]) => {
+                  const isCurActive = (selectedVariantKey || (anim.variants.large ? 'large' : Object.keys(anim.variants)[0])) === key
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`size-btn ${isCurActive ? 'active' : ''}`}
+                      onClick={() => setSelectedVariantKey(key)}
+                    >
+                      {key === 'large' ? 'Large (大)' : key === 'small' ? 'Small (小)' : (v.label || key)}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {animRef.current?.type === 'strip' && (
             <label className="strip-variant-select" title="切换颜色变体（每一行一种颜色，在视口处操作）">
               <span className="dim-info">变体</span>

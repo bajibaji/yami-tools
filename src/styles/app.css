@@ -1831,6 +1831,45 @@ body {
   color: #fff;
 }
 
+.size-variant-switcher {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--am-bg);
+  border: 1px solid var(--am-border);
+  border-radius: 5px;
+  padding: 2px 4px;
+}
+
+.size-btn-group {
+  display: flex;
+  gap: 2px;
+}
+
+.size-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--am-text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.size-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.size-btn.active {
+  background: var(--am-accent);
+  color: #fff;
+  border-color: var(--am-accent);
+  box-shadow: 0 0 6px rgba(122, 162, 247, 0.4);
+}
+
 .zoom-controls {
   display: flex;
   align-items: center;

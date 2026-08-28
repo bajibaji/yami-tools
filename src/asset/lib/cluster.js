@@ -476,20 +476,54 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
       finalAnims.push(anim)
     } else {
       const existing = globalEffectMap.get(globalKey)
-      // 优先保留 sequence（连续单帧序列），优先保留 large（高清大尺寸）
+      const isAnimLarge = /large|_2x|_hd/i.test(anim.name)
+      const isExistLarge = /large|_2x|_hd/i.test(existing.name)
       const isAnimBetter = (anim.type === 'sequence' && existing.type !== 'sequence') ||
-        (/large|_2x|_hd/i.test(anim.name) && !/large|_2x|_hd/i.test(existing.name)) ||
+        (isAnimLarge && !isExistLarge) ||
         (anim.count > existing.count)
 
+      const master = isAnimBetter ? anim : existing
+      const slave = isAnimBetter ? existing : anim
+
+      // 建立完整的 variants 结构供视口与检查器切换尺寸
+      const vars = { ...(master.variants || {}) }
+      const masterKey = /small|_1x/i.test(master.name) ? 'small' : 'large'
+      const slaveKey = /small|_1x/i.test(slave.name) ? 'small' : 'large'
+
+      if (!vars[masterKey]) {
+        vars[masterKey] = {
+          key: masterKey,
+          name: master.name,
+          label: masterKey === 'large' ? 'Large (大)' : 'Small (小)',
+          files: master.files,
+          count: master.count,
+          entry: master.entry,
+          type: master.type,
+          sheetEntry: master.sheetEntry,
+          sheetMetaEntry: master.sheetMetaEntry
+        }
+      }
+
+      vars[slaveKey] = {
+        key: slaveKey,
+        name: slave.name,
+        label: slaveKey === 'large' ? 'Large (大)' : 'Small (小)',
+        files: slave.files,
+        count: slave.count,
+        entry: slave.entry,
+        type: slave.type,
+        sheetEntry: slave.sheetEntry || (slave.type === 'sheet' ? slave.entry : null),
+        sheetMetaEntry: slave.sheetMetaEntry || slave.metaEntry
+      }
+
+      master.variants = vars
+      master.sheetEntry = master.sheetEntry || slave.sheetEntry || (slave.type === 'sheet' ? slave.entry : null)
+      master.sheetMetaEntry = master.sheetMetaEntry || slave.sheetMetaEntry || slave.metaEntry
+
       if (isAnimBetter) {
-        anim.sheetEntry = anim.sheetEntry || existing.sheetEntry || (existing.type === 'sheet' ? existing.entry : null)
-        anim.sheetMetaEntry = anim.sheetMetaEntry || existing.sheetMetaEntry || existing.metaEntry
         const idx = finalAnims.indexOf(existing)
         if (idx !== -1) finalAnims[idx] = anim
         globalEffectMap.set(globalKey, anim)
-      } else {
-        existing.sheetEntry = existing.sheetEntry || anim.sheetEntry || (anim.type === 'sheet' ? anim.entry : null)
-        existing.sheetMetaEntry = existing.sheetMetaEntry || anim.sheetMetaEntry || anim.metaEntry
       }
     }
   }
