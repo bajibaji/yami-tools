@@ -71,6 +71,22 @@ export async function dbQueryByIndex (store, indexName, value, limit) {
   })
 }
 
+// 核心：按目录前缀范围检索（获取当前目录及其所有子孙目录中的全部文件）
+export async function dbQueryByPrefix (store, indexName, prefix, limit) {
+  const t = await tx(store, 'readonly')
+  return new Promise((resolve, reject) => {
+    const idx = t.objectStore(store).index(indexName)
+    const range = IDBKeyRange.bound(prefix, prefix + '\uffff')
+    const req = limit ? idx.getAll(range, limit) : idx.getAll(range)
+    req.onsuccess = () => {
+      const list = req.result || []
+      const res = list.filter(r => r[indexName] === prefix || (r[indexName] && r[indexName].startsWith(prefix + '/')))
+      resolve(res)
+    }
+    req.onerror = () => reject(req.error)
+  })
+}
+
 
 
 export async function dbPut (store, key, value) {

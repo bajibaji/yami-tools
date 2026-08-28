@@ -31,7 +31,8 @@ import {
   dbDelete,
   dbClear,
   dbGet,
-  dbQueryByIndex
+  dbQueryByIndex,
+  dbQueryByPrefix
 } from '../asset/lib/idb-store.js'
 import { VirtualList, Thumb, PreviewPane, GalleryCard, GRID_THUMB_SPEC } from '../asset/comps.jsx'
 import { prewarmThumbCache } from '../asset/lib/thumb.js'
@@ -367,7 +368,7 @@ export default function AssetManagerPage () {
         const q = searchKeyword.trim().toLowerCase()
         fileRecords = (searchIndexRef.current || []).filter(r => r.nameL.includes(q) || r.relL.includes(q)).slice(0, 500)
       } else if (dirPath) {
-        fileRecords = await dbQueryByIndex('files', 'dir', dirPath)
+        fileRecords = await dbQueryByPrefix('files', 'dir', dirPath)
       } else if (packName) {
         fileRecords = await dbQueryByIndex('files', 'pack', packName)
       }
