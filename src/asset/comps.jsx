@@ -16,7 +16,10 @@ import {
   IconPause,
   IconCrosshair,
   IconStepBack,
-  IconStepForward
+  IconStepForward,
+  IconEye,
+  IconX,
+  IconDownload
 } from './icons.jsx'
 
 // 加载单个动画的帧位图（只为当前选中的单个动画服务，避免内存暴涨）
@@ -427,6 +430,171 @@ const FilmstripFrameCanvas = memo(function FilmstripFrameCanvas ({ data, frame }
   return <canvas ref={canvasRef} className="filmstrip-canvas" />
 })
 
+// ---------- 原始图片大图查看弹窗 (Raw Image Modal) ----------
+export const RawImageModal = memo(function RawImageModal ({ anim, onClose }) {
+  const [blobUrl, setBlobUrl] = useState(null)
+  const [blobFile, setBlobFile] = useState(null)
+  const [selectedFileIdx, setSelectedFileIdx] = useState(0)
+  const [rawDim, setRawDim] = useState(null)
+  const [zoom, setZoom] = useState(1)
+  const [bgStyle, setBgStyle] = useState('checker-dark')
+
+  const files = anim?.files || (anim?.entry ? [anim.entry] : [])
+  const currentFile = files[selectedFileIdx] || anim?.sheetEntry || anim?.entry
+
+  useEffect(() => {
+    let alive = true
+    if (!currentFile) return
+    let currentUrl = null
+    entryBlob(currentFile).then(async (blob) => {
+      if (!alive) return
+      currentUrl = URL.createObjectURL(blob)
+      setBlobUrl(currentUrl)
+      setBlobFile(blob)
+      try {
+        const bmp = await createImageBitmap(blob)
+        if (alive) {
+          setRawDim({ w: bmp.width, h: bmp.height })
+          bmp.close()
+        }
+      } catch (e) {}
+    }).catch(() => {})
+
+    return () => {
+      alive = false
+      if (currentUrl) URL.revokeObjectURL(currentUrl)
+    }
+  }, [currentFile])
+
+  // ESC 键关闭
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') onClose?.()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  const handleDownload = () => {
+    if (!blobFile || !currentFile) return
+    const a = document.createElement('a')
+    a.href = blobUrl
+    a.download = currentFile.name || 'original_image.png'
+    a.click()
+  }
+
+  return (
+    <div className="pro-modal-backdrop" onClick={onClose}>
+      <div className="raw-image-modal" onClick={e => e.stopPropagation()}>
+        <div className="raw-modal-header">
+          <div className="raw-modal-title-wrap">
+            <IconImage size={18} className="modal-logo" />
+            <div className="raw-modal-titles">
+              <h3>原始完整图像：{currentFile?.name || anim?.name}</h3>
+              <div className="raw-modal-meta">
+                {rawDim && <span className="raw-badge highlight">{rawDim.w} × {rawDim.h} px</span>}
+                <span className="raw-badge">{anim?.type?.toUpperCase() || 'PNG'}</span>
+                {files.length > 1 && <span className="raw-badge">{files.length} 帧序列</span>}
+                <span className="raw-path" title={currentFile?.rel}>{currentFile?.rel || anim?.rel}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="raw-modal-tools">
+            {files.length > 1 && (
+              <div className="raw-frame-selector">
+                <span className="dim-info">帧</span>
+                <select
+                  value={selectedFileIdx}
+                  onChange={e => setSelectedFileIdx(+e.target.value)}
+                >
+                  {files.map((f, i) => (
+                    <option key={i} value={i}>
+                      第 {i + 1} 帧 ({f.name})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="bg-switcher" title="切换画布背景">
+              <button
+                type="button"
+                className={`bg-btn bg-dark ${bgStyle === 'checker-dark' ? 'active' : ''}`}
+                onClick={() => setBgStyle('checker-dark')}
+                title="深色棋盘格"
+              />
+              <button
+                type="button"
+                className={`bg-btn bg-light ${bgStyle === 'checker-light' ? 'active' : ''}`}
+                onClick={() => setBgStyle('checker-light')}
+                title="浅色棋盘格"
+              />
+              <button
+                type="button"
+                className={`bg-btn bg-black ${bgStyle === 'black' ? 'active' : ''}`}
+                onClick={() => setBgStyle('black')}
+                title="纯黑背景"
+              />
+              <button
+                type="button"
+                className={`bg-btn bg-white ${bgStyle === 'white' ? 'active' : ''}`}
+                onClick={() => setBgStyle('white')}
+                title="纯白背景"
+              />
+            </div>
+
+            <div className="zoom-controls">
+              <button type="button" className="zoom-btn" onClick={() => setZoom(z => Math.max(0.25, z <= 1 ? z - 0.25 : z - 1))}>−</button>
+              <span className="zoom-value">{Math.round(zoom * 100)}%</span>
+              <button type="button" className="zoom-btn" onClick={() => setZoom(z => Math.min(16, z < 1 ? z + 0.25 : z + 1))}>＋</button>
+              <button type="button" className="zoom-fit-btn" onClick={() => setZoom(1)} title="恢复 100% 原始比例">1:1</button>
+            </div>
+
+            <button type="button" className="modal-close-btn" onClick={onClose} title="关闭 (Esc)">
+              <IconX size={18} />
+            </button>
+          </div>
+        </div>
+
+        <div className={`raw-modal-body stage-${bgStyle}`}>
+          {blobUrl ? (
+            <div className="raw-image-scroll-pane">
+              <img
+                src={blobUrl}
+                alt=""
+                style={{
+                  transform: `scale(${zoom})`,
+                  transformOrigin: 'center center',
+                  imageRendering: 'pixelated'
+                }}
+                className="raw-full-image"
+              />
+            </div>
+          ) : (
+            <div className="raw-modal-loading">正在载入原始图像…</div>
+          )}
+        </div>
+
+        <div className="raw-modal-footer">
+          <div className="footer-file-info">
+            <span>文件：<code>{currentFile?.name}</code></span>
+            {currentFile?.size ? <span>大小：{(currentFile.size / 1024).toFixed(1)} KB</span> : null}
+          </div>
+          <div className="footer-buttons">
+            <button type="button" className="btn secondary" onClick={handleDownload} title="下载保存原始完整图片文件">
+              <IconDownload size={14} style={{ marginRight: 6 }} /> 下载原始图片
+            </button>
+            <button type="button" className="btn primary" onClick={onClose}>
+              完成并返回
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+})
+
 // ---------- 专业视口工作台 (Pro Canvas Viewport) ----------
 export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onOpenFolder }) {
   const canvasRef = useRef(null)
@@ -444,6 +612,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
   const [direction, setDirection] = useState(1)
   const [bgStyle, setBgStyle] = useState('checker-dark') // 'checker-dark' | 'checker-light' | 'black' | 'white' | 'green'
   const [showCrosshair, setShowCrosshair] = useState(false)
+  const [showRawModal, setShowRawModal] = useState(false)
 
   const idxRef = useRef(0)
   idxRef.current = idx
@@ -787,6 +956,16 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
 
           <button
             type="button"
+            className="tool-toggle-btn raw-view-btn"
+            onClick={() => setShowRawModal(true)}
+            disabled={!anim}
+            title="查看当前素材未切片的原始完整图片 (Spritesheet / 原图)"
+          >
+            <IconEye size={12} style={{ marginRight: 4 }} /> 查看原始图片
+          </button>
+
+          <button
+            type="button"
             className={`tool-toggle-btn ${showCrosshair ? 'active' : ''}`}
             onClick={() => setShowCrosshair(!showCrosshair)}
             title="中心十字对齐辅助线"
@@ -958,6 +1137,13 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
             </label>
           </div>
         </div>
+      )}
+
+      {showRawModal && (
+        <RawImageModal
+          anim={activePreviewAnim || anim}
+          onClose={() => setShowRawModal(false)}
+        />
       )}
     </div>
   )
