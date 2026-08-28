@@ -1397,11 +1397,79 @@ body {
   transform: translateY(-2px);
 }
 
-/* 画廊网格 */
+/* 画廊网格与卡片尺寸档位 */
 .pro-gallery-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
   gap: 12px;
+  transition: all 0.15s ease;
+}
+
+.pro-gallery-grid.grid-size-s {
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+}
+.pro-gallery-grid.grid-size-s .gallery-thumb-wrap {
+  height: 72px;
+}
+
+.pro-gallery-grid.grid-size-m {
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 12px;
+}
+.pro-gallery-grid.grid-size-m .gallery-thumb-wrap {
+  height: 96px;
+}
+
+.pro-gallery-grid.grid-size-l {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 14px;
+}
+.pro-gallery-grid.grid-size-l .gallery-thumb-wrap {
+  height: 136px;
+}
+
+.pro-gallery-grid.grid-size-xl {
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 16px;
+}
+.pro-gallery-grid.grid-size-xl .gallery-thumb-wrap {
+  height: 176px;
+}
+
+/* 缩略图档位选择器组件 */
+.card-size-switcher {
+  display: inline-flex;
+  align-items: center;
+  background: var(--am-bg);
+  border: 1px solid var(--am-border);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.size-pill-btn {
+  background: none;
+  border: none;
+  color: var(--am-text-dim);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.size-pill-btn:hover {
+  color: #fff;
+  background: var(--am-bg-subtle);
+}
+
+.size-pill-btn.active {
+  background: var(--am-accent);
+  color: #0b0f19;
+  font-weight: 800;
+  box-shadow: 0 0 8px var(--am-accent-glow);
 }
 
 .gallery-card {

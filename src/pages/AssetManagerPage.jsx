@@ -129,6 +129,13 @@ export default function AssetManagerPage () {
   // 视图状态
   const [viewLayout, setViewLayout] = useState('split') // 'split' | 'gallery' | 'table'
   const [typeFilter, setTypeFilter] = useState('all')
+  const [cardSize, setCardSize] = useState(() => {
+    return localStorage.getItem('am_card_size') || 'M'
+  })
+  const handleCardSizeChange = (sz) => {
+    setCardSize(sz)
+    localStorage.setItem('am_card_size', sz)
+  }
   const [query, setQuery] = useState('')
   const [queryInput, setQueryInput] = useState('')
   const [subdirVisible, setSubdirVisible] = useState({})
@@ -1035,8 +1042,24 @@ export default function AssetManagerPage () {
                 ))}
               </div>
 
-              <div className="catalog-stats-meta">
-                <span>当前目录：<strong>{filteredAnims.length}</strong> 个动画 {loadingDir ? ' (检索中…)' : ''}</span>
+              <div className="catalog-right-controls" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div className="card-size-switcher" title="缩略图尺寸档位">
+                  {['S', 'M', 'L', 'XL'].map(sz => (
+                    <button
+                      key={sz}
+                      type="button"
+                      className={`size-pill-btn ${cardSize === sz ? 'active' : ''}`}
+                      onClick={() => handleCardSizeChange(sz)}
+                      title={`缩略图尺寸：${sz}`}
+                    >
+                      {sz}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="catalog-stats-meta">
+                  <span>当前目录：<strong>{filteredAnims.length}</strong> 个动画 {loadingDir ? ' (检索中…)' : ''}</span>
+                </div>
               </div>
             </div>
 
@@ -1071,11 +1094,12 @@ export default function AssetManagerPage () {
               {/* 画廊网格 */}
               {phase === 'ready' && viewLayout !== 'table' && filteredAnims.length > 0 && (
                 <>
-                  <div className="pro-gallery-grid">
+                  <div className={`pro-gallery-grid grid-size-${cardSize.toLowerCase()}`}>
                     {visibleAnims.map(anim => (
                       <GalleryCard
                         key={anim.id}
                         anim={anim}
+                        thumbSize={cardSize === 'S' ? 64 : cardSize === 'L' ? 128 : cardSize === 'XL' ? 170 : 84}
                         selected={anim.id === selectedId}
                         isFav={favAnims.has(anim.id)}
                         onSelect={setSelectedId}

@@ -231,7 +231,7 @@ function gifPreviewUrl (entry) {
   return null
 }
 
-export const GalleryCard = memo(function GalleryCard ({ anim, selected, isFav, onSelect, onToggleFav }) {
+export const GalleryCard = memo(function GalleryCard ({ anim, selected, isFav, thumbSize = 84, onSelect, onToggleFav }) {
   const [hover, setHover] = useState(false)
   const [previewGifUrl, setPreviewGifUrl] = useState(() => gifPreviewUrl(anim.previewEntry))
 
@@ -280,7 +280,7 @@ export const GalleryCard = memo(function GalleryCard ({ anim, selected, isFav, o
         {hover && previewGifUrl ? (
           <img src={previewGifUrl} className="gallery-thumb-img" alt="" />
         ) : (
-          <Thumb entry={anim.entry} size={84} className="gallery-thumb-img" thumbSpec={(anim.type === 'strip' || anim.type === 'sheet') ? GRID_THUMB_SPEC : null} />
+          <Thumb entry={anim.entry} size={thumbSize} className="gallery-thumb-img" thumbSpec={(anim.type === 'strip' || anim.type === 'sheet') ? GRID_THUMB_SPEC : null} />
         )}
 
         <div className="gallery-badges">
