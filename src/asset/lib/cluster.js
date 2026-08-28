@@ -254,6 +254,7 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
     const dirHtmlEntry = htmlMetas[0] || null
 
     // 1. Spritesheet 动画（纯同步引用关联，不阻塞读取磁盘）
+    const dirSheetAnims = []
     for (const s of sheets) {
       const base = stripExt(s.name)
       const metaName = /spritesheet/i.test(base) ? 'spritesheet.txt' : `${base}.txt`
@@ -270,7 +271,7 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
 
       const dim = parseDimensionFromName(s.name)
 
-      anims.push({
+      const sheetAnim = {
         id: `${dir}|sheet|${s.name}`,
         type: 'sheet',
         name: uniqueName(base, dir),
@@ -286,8 +287,12 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
         presetCfg: dim || null,
         previewEntry: matchGif || null,
         asepriteEntry: matchAse || null,
-        htmlEntry: matchHtml || null
-      })
+        htmlEntry: matchHtml || null,
+        // 清理后的前缀名，用于与序列帧关联去重（如 unTied Games 中的 Explosion 1_sheet -> explosion 1）
+        cleanKey: base.toLowerCase().replace(/(_sheet|spritesheet|-sheet|\s+sheet)$/i, '').trim()
+      }
+      dirSheetAnims.push(sheetAnim)
+      anims.push(sheetAnim)
     }
 
     // 2. BDragon / Strip 格式
@@ -315,7 +320,7 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
         })
       }
     } else {
-      // 3. 单帧 PNG 序列
+      // 3. 单帧 PNG 序列（自动检测同名 Sheet 并去重合并）
       const groups = new Map()
       for (const f of frames) {
         const { prefix, index } = parseFrameName(f.name)
@@ -323,6 +328,18 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
         groups.get(prefix).push({ ...f, prefix, frameIndex: index })
       }
       for (const [prefix, list] of groups) {
+        const cleanPrefix = prefix.toLowerCase().replace(/(_sheet|spritesheet|-sheet|\s+sheet)$/i, '').trim()
+
+        // 智能去重：检查当前目录下是否已有对应的 Sheet 动画（如 unTied Games 同时提供了 xxx_sheet.png 和 xxx_01.png...）
+        const matchedSheet = dirSheetAnims.find(sa => sa.cleanKey === cleanPrefix || sa.cleanKey.startsWith(cleanPrefix) || cleanPrefix.startsWith(sa.cleanKey))
+
+        if (matchedSheet) {
+          // 将序列帧关联到已有的 Sheet 动画上（供导出与属性查看），不再在画廊中生成重复卡片！
+          matchedSheet.sequenceFiles = list
+          if (!matchedSheet.count) matchedSheet.count = list.length
+          continue
+        }
+
         const matchGif = gifs.find(g => stripExt(g.name).toLowerCase() === prefix.toLowerCase()) || dirPreviewGif
         const matchAse = aseMetas.find(a => stripExt(a.name).toLowerCase() === prefix.toLowerCase()) || dirAseEntry
         const matchHtml = htmlMetas.find(h => stripExt(h.name).toLowerCase() === prefix.toLowerCase()) || dirHtmlEntry

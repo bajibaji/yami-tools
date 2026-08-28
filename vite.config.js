@@ -13,24 +13,42 @@ function localDevToolsPlugin() {
       server.middlewares.use((req, res, next) => {
         if (!req.url) return next()
 
-        // 1. 本地直接唤起 Windows explorer.exe 系统文件管理器
+        // 1. 本地直接跨平台唤起系统文件管理器（Windows: explorer.exe / macOS: open / Linux: xdg-open）
         if (req.url.startsWith('/api/open-in-explorer') || req.url.startsWith('/yami-tools/api/open-in-explorer')) {
           const urlObj = new URL(req.url, 'http://localhost')
           let targetPath = urlObj.searchParams.get('path') || ''
           if (targetPath) {
             targetPath = path.normalize(targetPath.trim().replace(/^["']|["']$/g, ''))
-            const isFile = fs.existsSync(targetPath) ? fs.statSync(targetPath).isFile() : /\.[a-zA-Z0-9]+$/.test(targetPath)
-            const cmd = isFile
-              ? `explorer.exe /select,"${targetPath}"`
-              : `explorer.exe "${targetPath}"`
+            const platform = process.platform // 'win32' | 'darwin' | 'linux'
+            let cmd = ''
+
+            if (platform === 'win32') {
+              const isFile = fs.existsSync(targetPath) ? fs.statSync(targetPath).isFile() : /\.[a-zA-Z0-9]+$/.test(targetPath)
+              cmd = isFile ? `explorer.exe /select,"${targetPath}"` : `explorer.exe "${targetPath}"`
+            } else if (platform === 'darwin') {
+              // macOS: open -R 打开并定位高亮文件，或 open 打开文件夹
+              const isFile = fs.existsSync(targetPath) ? fs.statSync(targetPath).isFile() : /\.[a-zA-Z0-9]+$/.test(targetPath)
+              cmd = isFile ? `open -R "${targetPath}"` : `open "${targetPath}"`
+            } else {
+              // Linux: xdg-open 打开所在目录
+              const isFile = fs.existsSync(targetPath) ? fs.statSync(targetPath).isFile() : /\.[a-zA-Z0-9]+$/.test(targetPath)
+              const dir = isFile ? path.dirname(targetPath) : targetPath
+              cmd = `xdg-open "${dir}"`
+            }
 
             exec(cmd, (err) => {
               res.setHeader('Content-Type', 'application/json')
               if (err) {
+                // macOS open -R 失败回退到 open 目录
+                if (platform === 'darwin') {
+                  const dir = path.dirname(targetPath)
+                  exec(`open "${dir}"`, () => res.end(JSON.stringify({ ok: true, path: targetPath, platform })))
+                  return
+                }
                 res.statusCode = 500
-                res.end(JSON.stringify({ ok: false, error: err.message }))
+                res.end(JSON.stringify({ ok: false, error: err.message, platform }))
               } else {
-                res.end(JSON.stringify({ ok: true, path: targetPath }))
+                res.end(JSON.stringify({ ok: true, path: targetPath, platform }))
               }
             })
             return
