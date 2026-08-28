@@ -50,8 +50,18 @@ npm run build    # 构建到 dist/
 npm run preview  # 本地预览构建产物
 ```
 
-部署是自动的：push 到 `main` 分支即触发 `.github/workflows/deploy.yml` 构建并发布 Pages。
-**首次需手动配置一次**：仓库 Settings → Pages → Source 选择「GitHub Actions」。
+## 发布（GitHub Pages）
+
+**只有打 `v*.*.*` 版本标签才会触发部署**，push 到 `main` 不部署：
+
+```bash
+git tag v0.0.0        # 打版本标签（v 开头 + 版本号）
+git push origin v0.0.0  # 推送标签即触发 .github/workflows/deploy.yml 构建并发布
+```
+
+- 部署时 `VITE_APP_VERSION=${github.ref_name}` 自动注入构建，首页版本号显示为标签（如 `v0.0.0`）。
+- 也可以到仓库 Actions 页手动 **Run workflow** 触发部署。
+- **首次需手动配置一次**：仓库 Settings → Pages → Source 选择「GitHub Actions」。
 
 ---
 
