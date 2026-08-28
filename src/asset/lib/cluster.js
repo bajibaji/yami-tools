@@ -340,7 +340,7 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
         })
       }
     } else if (frames.length > 0) {
-      // 3. 核心：单帧 PNG 序列优先展示（100% 逐帧清晰流畅播放，附带 Spritesheet 原图供导出）
+      // 3. 核心：单帧 PNG 序列优先展示（自动合并 large / small 尺寸变体与同名 Sheet）
       const groups = new Map()
       for (const f of frames) {
         const { prefix, index } = parseFrameName(f.name)
@@ -348,10 +348,33 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
         groups.get(prefix).push({ ...f, prefix, frameIndex: index })
       }
 
+      // 按基础特效标识合并尺寸变体（如 burst_splatter_001_large 与 burst_splatter_001_small 合并为一个唯一卡片）
+      const effectGroups = new Map()
       for (const [prefix, list] of groups) {
-        const matchGif = gifs.find(g => stripExt(g.name).toLowerCase() === prefix.toLowerCase()) || dirPreviewGif
-        const matchAse = aseMetas.find(a => stripExt(a.name).toLowerCase() === prefix.toLowerCase()) || dirAseEntry
-        const matchHtml = htmlMetas.find(h => stripExt(h.name).toLowerCase() === prefix.toLowerCase()) || dirHtmlEntry
+        const baseKey = prefix.toLowerCase()
+          .replace(/(_large|_small|_medium|_xl|_hd|_2x|_1x|\d+x\d+)$/i, '')
+          .replace(/[_\-\s]+$/, '')
+          .trim() || prefix.toLowerCase()
+
+        if (!effectGroups.has(baseKey)) {
+          effectGroups.set(baseKey, { prefix, list, variants: new Map() })
+        } else {
+          const eg = effectGroups.get(baseKey)
+          // 优先保留 large / 高清大尺寸作为主要展示卡片
+          if (/large|_2x|_hd/i.test(prefix) || (!/large/i.test(eg.prefix) && list.length >= eg.list.length)) {
+            eg.variants.set(eg.prefix, eg.list)
+            eg.prefix = prefix
+            eg.list = list
+          } else {
+            eg.variants.set(prefix, list)
+          }
+        }
+      }
+
+      for (const [baseKey, { prefix, list, variants }] of effectGroups) {
+        const matchGif = gifs.find(g => stripExt(g.name).toLowerCase().startsWith(baseKey)) || dirPreviewGif
+        const matchAse = aseMetas.find(a => stripExt(a.name).toLowerCase().startsWith(baseKey)) || dirAseEntry
+        const matchHtml = htmlMetas.find(h => stripExt(h.name).toLowerCase().startsWith(baseKey)) || dirHtmlEntry
 
         const displayName = (/^(png|pngs|frames|images)$/i.test(prefix) || !prefix) && dirBaseName ? dirBaseName : prefix
         const sortedList = [...list].sort((a, b) => (a.frameIndex ?? 0) - (b.frameIndex ?? 0))
@@ -371,7 +394,8 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
           asepriteEntry: matchAse || null,
           htmlEntry: matchHtml || null,
           sheetEntry: companionSheetEntry,
-          sheetMetaEntry: companionSheetMeta
+          sheetMetaEntry: companionSheetMeta,
+          variants: variants.size ? Object.fromEntries(variants) : null
         })
       }
     } else if (sheets.length > 0) {
