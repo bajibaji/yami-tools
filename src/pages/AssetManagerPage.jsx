@@ -50,7 +50,6 @@ import {
   IconPalette,
   IconExternalLink,
   IconGrid,
-  IconSplit,
   IconTable,
   IconKeyboard,
   IconLayers,
@@ -191,6 +190,11 @@ function useToast () {
     setMsg(text)
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => setMsg(null), 3600)
+  }, [])
+  useEffect(() => {
+    return () => {
+      if (timer.current) clearTimeout(timer.current)
+    }
   }, [])
   return { msg, toast }
 }
@@ -499,7 +503,29 @@ export default function AssetManagerPage () {
     setQuery('')
   }
 
-  // ---------- 打开所在文件夹：纯网页=应用内定位+复制相对路径 ----------
+  // ---------- 复制绝对路径（首次提示用户粘贴一次素材库根路径，之后自动拼接） ----------
+  const handleCopyAbs = useCallback(async (target) => {
+    if (!target || !target.rel) return ''
+    const makeAbs = (root, rel) => root.replace(/[\\/]+$/, '') + '\\' + rel.replace(/\//g, '\\')
+    let root = null
+    try { root = localStorage.getItem('yami_root_abs') } catch (e) { /* ignore */ }
+    if (!root) {
+      const typed = window.prompt('为方便复制绝对路径，请粘贴素材库根目录（只存本机浏览器，仅用一次）\r\n例如：D:\\YAHZJ\\技能素材', rootInfo?.name || '')
+      if (typed && typed.trim()) {
+        root = typed.trim()
+        try { localStorage.setItem('yami_root_abs', root) } catch (e) { /* ignore */ }
+      }
+    }
+    const abs = root ? makeAbs(root, target.rel) : null
+    if (abs) {
+      await copyText(abs)
+      return abs
+    }
+    await copyText(target.rel)
+    return ''
+  }, [rootInfo])
+
+  // ---------- 打开所在文件夹：弹出同目录素材浏览器弹窗 + 复制绝对路径 ----------
   const handleOpenFolder = useCallback(async (anim) => {
     const target = anim || selected
     if (!target) return
@@ -516,17 +542,11 @@ export default function AssetManagerPage () {
       }
     }
 
-    const opened = false // 纯网页：不唤起本地资源管理器
-    if (opened) {
-      toast(`已在 Windows 资源管理器中打开文件夹：${fullPath}`)
-      return
-    }
-
-    // 2. 线上或纯静态环境：写入剪贴板并弹出「所在文件夹素材浏览器」弹窗
-    await copyText(target.rel || fullPath)
-
-    toast(`GitHub Pages 纯网页无法打开系统资源管理器，已改为应用内定位并复制相对路径：${fullPath}`)
-  }, [selected, rootInfo, toast])
+    // 弹出「所在文件夹素材浏览器」弹窗，展示同目录全部关联素材与工程源文件
+    setFolderModalAnim(target)
+    await handleCopyAbs(target)
+    toast(`已打开同目录素材浏览器：${fullPath}`)
+  }, [selected, rootInfo, toast, handleCopyAbs])
 
   // ---------- 打开所在文件夹：树定位 + 目录筛选 ----------
   const handleLocateFolder = (anim) => {
@@ -840,14 +860,53 @@ export default function AssetManagerPage () {
     }
   }
 
+  // ---------- 降级文件夹选取处理（Firefox / Safari 等无 showDirectoryPicker 环境） ----------
+  const handleFallbackFilesPicked = async (e) => {
+    const fileList = e.target.files
+    if (!fileList || !fileList.length) return
+    try {
+      setPacks([])
+      setPhase('scanning')
+      setScanInfo('正在遍历文件…')
+      const records = scanFallbackFiles(fileList, count => setScanInfo(`已读取 ${count.toLocaleString()} 个文件`))
+      const rootDirName = fileList[0]?.webkitRelativePath?.split('/')[0] || '本地素材库'
+      setRootInfo({ type: 'fallback', name: rootDirName })
+      setTotalFileCount(records.length)
+
+      await dbClear('files')
+      await dbClear('packs')
+      for (let i = 0; i < records.length; i += 5000) {
+        await dbBulkPut('files', records.slice(i, i + 5000).map(f => [f.rel, f]))
+        await new Promise(r => setTimeout(r, 0))
+      }
+
+      const packMap = new Map()
+      for (const r of records) {
+        const pName = r.pack || '(根目录)'
+        if (!packMap.has(pName)) packMap.set(pName, { name: pName, count: 0, dirs: [] })
+        const p = packMap.get(pName)
+        p.count++
+        if (r.dir && !p.dirs.includes(r.dir)) p.dirs.push(r.dir)
+      }
+      const packList = Array.from(packMap.values())
+      await dbBulkPut('packs', packList.map(p => [p.name, p]))
+      setPacks(packList)
+      setSelectedPack(packList[0] ? packList[0].name : null)
+      setExpandedPacks(packList[0] ? new Set([packList[0].name]) : new Set())
+      setPhase('ready')
+      buildSearchIndex()
+      toast(`已成功载入 ${records.length.toLocaleString()} 个文件`)
+    } catch (err) {
+      console.warn('[AssetManager] 降级文件载入异常:', err)
+      toast(`加载文件夹失败：${err.message}`)
+      setPhase('ready')
+    }
+  }
+
   // ---------- 快捷键 ----------
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        if (lightboxAnim) {
-          setLightboxAnim(null)
-          return
-        }
         if (folderModalAnim) {
           setFolderModalAnim(null)
           return
@@ -861,18 +920,6 @@ export default function AssetManagerPage () {
         if (e.key === 'Escape') {
           setQuery('')
           searchInputRef.current?.blur()
-        }
-        return
-      }
-      if (lightboxAnim) {
-        if (e.key === 'ArrowLeft' || e.key === 'a') {
-          e.preventDefault()
-          const curIdx = visibleAnims.findIndex(a => a.id === lightboxAnim.id)
-          if (curIdx > 0) setLightboxAnim(visibleAnims[curIdx - 1])
-        } else if (e.key === 'ArrowRight' || e.key === 'd') {
-          e.preventDefault()
-          const curIdx = visibleAnims.findIndex(a => a.id === lightboxAnim.id)
-          if (curIdx >= 0 && curIdx < visibleAnims.length - 1) setLightboxAnim(visibleAnims[curIdx + 1])
         }
         return
       }
@@ -1054,9 +1101,10 @@ export default function AssetManagerPage () {
   const handleBatchCopyPaths = async () => {
     const list = activeAnims.filter(a => multiSel.has(a.id))
     if (!list.length) return
-    const text = list.map(a => a.rel).join('\n')
+    const rootAbs = (() => { try { return localStorage.getItem('yami_root_abs') || '' } catch (e) { return '' } })()
+    const text = list.map(a => rootAbs ? rootAbs.replace(/[\\/]+$/, '') + '\\' + a.rel.replace(/\//g, '\\') : a.rel).join('\n')
     const ok = await copyText(text)
-    toast(ok ? `已批量复制 ${list.length} 个相对路径` : '复制失败')
+    toast(ok ? `已批量复制 ${list.length} 个绝对路径` : '复制失败')
   }
 
   // 渲染表格行（useCallback 稳定引用，避免 VirtualList 每帧重建）
@@ -1207,7 +1255,7 @@ export default function AssetManagerPage () {
           >
             <IconKeyboard size={15} />
           </button>
-          <input ref={fileInputRef} type="file" webkitdirectory="true" multiple hidden />
+          <input ref={fileInputRef} type="file" webkitdirectory="true" multiple onChange={handleFallbackFilesPicked} hidden />
         </div>
       </header>
 
@@ -1506,12 +1554,12 @@ export default function AssetManagerPage () {
                       type="button"
                       className="action-btn"
                       onClick={() => handleOpenFolder(selected)}
-                      title="直接在 Windows 资源管理器中定位打开该文件夹（纯静态模式下复制路径并弹出素材浏览器）"
+                      title="应用内定位到该素材所在文件夹并复制绝对路径"
                     >
                       <IconFolderOpen size={16} className="btn-ico" />
                       <div className="btn-text">
                         <strong>打开所在文件夹</strong>
-                        <small>唤起 Explorer / 弹窗</small>
+                        <small>应用内定位 + 复制绝对路径</small>
                       </div>
                     </button>
 

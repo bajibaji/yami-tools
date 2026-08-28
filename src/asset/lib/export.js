@@ -114,22 +114,21 @@ export async function buildExportItems (anim, frameData, template = DEFAULT_TEMP
 // 绘制一帧到 canvas 并取 RGBA
 function frameRgba (frameData, i) {
   const cv = document.createElement('canvas')
+  const ctx = cv.getContext('2d', { willReadFrequently: true })
   if (frameData.kind === 'sheet') {
     const rf = frameData.frames[i]
     cv.width = rf.w
     cv.height = rf.h
-    const ctx = cv.getContext('2d')
     ctx.imageSmoothingEnabled = false
     ctx.drawImage(frameData.image, rf.x, rf.y, rf.w, rf.h, 0, 0, rf.w, rf.h)
   } else {
     const bmp = frameData.frames[i]
     cv.width = bmp.width
     cv.height = bmp.height
-    const ctx = cv.getContext('2d')
     ctx.imageSmoothingEnabled = false
     ctx.drawImage(bmp, 0, 0)
   }
-  return cv.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, cv.width, cv.height)
+  return ctx.getImageData(0, 0, cv.width, cv.height)
 }
 
 // 浏览器端 GIF 编码（gifenc，256 色调色板），进度回调
@@ -155,7 +154,8 @@ export async function exportAnimsToZip (anims, onProgress) {
   const zip = new JSZip()
   let count = 0
   for (const anim of anims) {
-    const folderPath = `${sanitize(anim.pack || 'assets')}/${sanitize(anim.dir ? anim.dir.split('/').pop() : '')}`
+    const subDir = anim.dir ? anim.dir.split('/').pop() : ''
+    const folderPath = subDir ? `${sanitize(anim.pack || 'assets')}/${sanitize(subDir)}` : sanitize(anim.pack || 'assets')
     if (anim.entry) {
       const blob = await entryBlob(anim.entry)
       zip.file(`${folderPath}/${anim.entry.name}`, blob)

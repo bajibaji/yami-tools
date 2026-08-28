@@ -31,7 +31,7 @@ export async function readManifest (rootHandle) {
   try {
     const fh = await rootHandle.getFileHandle(MANIFEST_NAME)
     const file = await fh.getFile()
-    if (file.size > 4 * 1024 * 1024 && file.size < 200 * 1024 * 1024) {
+    if (file.size > 0 && file.size < 200 * 1024 * 1024) {
       const data = JSON.parse(await file.text())
       if (data && data.v === 1 && Array.isArray(data.files)) return data
     }

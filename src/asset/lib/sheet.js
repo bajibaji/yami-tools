@@ -5,7 +5,7 @@ export { parseSheetTxt }
 
 // 用 alpha 检测把图切成连续帧矩形（水平/垂直/网格通用）
 // 返回 [{x,y,w,h}] 源图坐标
-export function autoSliceImage (image, maxDim = 1536) {
+export function autoSliceImage (image) {
   const w = image.width
   const h = image.height
   if (w < 4 || h < 4) return []

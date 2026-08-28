@@ -60,12 +60,12 @@ export async function dbGet (store, key) {
   })
 }
 
-// 核心：通过 B-Tree 索引极速按包或按目录检索（11万条数据中只需 1ms）
-export async function dbQueryByIndex (store, indexName, value, limit = 3000) {
+// 核心：通过 B-Tree 索引极速按包或按目录检索（11万条数据中只需 1ms，支持大目录完整加载）
+export async function dbQueryByIndex (store, indexName, value, limit) {
   const t = await tx(store, 'readonly')
   return new Promise((resolve, reject) => {
     const idx = t.objectStore(store).index(indexName)
-    const req = idx.getAll(IDBKeyRange.only(value), limit)
+    const req = limit ? idx.getAll(IDBKeyRange.only(value), limit) : idx.getAll(IDBKeyRange.only(value))
     req.onsuccess = () => resolve(req.result || [])
     req.onerror = () => reject(req.error)
   })

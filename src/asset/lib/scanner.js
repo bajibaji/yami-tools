@@ -70,19 +70,21 @@ function isMetaName (name) { return META_EXTS.includes(extOf(name)) }
 
 // 工业级流式扫描：支持 10万+ 文件的平稳迭代，分块回调，极速响应
 export async function streamScanRootHandle (root, { onBatch, onProgress, shouldAbort, chunkSize = 2000 } = {}) {
+  clearDirHandleCache()
   let scanned = 0
   let chunk = []
   const abort = () => shouldAbort && shouldAbort()
 
   async function walkDir (dir, rel) {
-    if (abort()) return
+    if (abort()) return true
     for await (const [name, h] of dir.entries()) {
-      if (abort()) return
+      if (abort()) return true
       if (name.startsWith('.') || name === 'node_modules') continue
       const full = rel ? `${rel}/${name}` : name
 
       if (h.kind === 'directory') {
-        await walkDir(h, full)
+        const stopped = await walkDir(h, full)
+        if (stopped) return true
       } else {
         scanned++
         const ext = extOf(name)
@@ -112,6 +114,7 @@ export async function streamScanRootHandle (root, { onBatch, onProgress, shouldA
         }
       }
     }
+    return false
   }
 
   await walkDir(root, '')
@@ -155,28 +158,35 @@ export function scanFallbackFiles (fileList, onProgress) {
   return items
 }
 
-// 目录句柄多级高速缓存池，防止频繁递归遍历目录
+// 目录句柄多级高速缓存池（绑定 rootHandle 名称隔离）
 const dirHandleCache = new Map()
+
+export function clearDirHandleCache () {
+  dirHandleCache.clear()
+}
 
 export async function fileForRel (rootHandle, rel) {
   const parts = rel.split('/')
   const fileName = parts.pop()
   const dirPath = parts.join('/')
+  const rootKey = rootHandle.name || 'root'
 
   let dir = rootHandle
   if (dirPath) {
-    if (dirHandleCache.has(dirPath)) {
-      dir = dirHandleCache.get(dirPath)
+    const cacheKey = `${rootKey}:${dirPath}`
+    if (dirHandleCache.has(cacheKey)) {
+      dir = dirHandleCache.get(cacheKey)
     } else {
       let cur = rootHandle
       let accum = ''
       for (const seg of parts) {
         accum = accum ? `${accum}/${seg}` : seg
-        if (dirHandleCache.has(accum)) {
-          cur = dirHandleCache.get(accum)
+        const segKey = `${rootKey}:${accum}`
+        if (dirHandleCache.has(segKey)) {
+          cur = dirHandleCache.get(segKey)
         } else {
           cur = await cur.getDirectoryHandle(seg)
-          dirHandleCache.set(accum, cur)
+          dirHandleCache.set(segKey, cur)
         }
       }
       dir = cur
