@@ -35,14 +35,39 @@ import {
 import { VirtualList, Thumb, PreviewPane, GalleryCard, GRID_THUMB_SPEC } from '../asset/comps.jsx'
 import { prewarmThumbCache } from '../asset/lib/thumb.js'
 import { writeManifest, readManifest, MANIFEST_NAME } from '../asset/lib/manifest.js'
+import {
+  IconFolder,
+  IconFolderOpen,
+  IconPackage,
+  IconStar,
+  IconSearch,
+  IconRefresh,
+  IconKey,
+  IconPlay,
+  IconPause,
+  IconDownload,
+  IconPalette,
+  IconExternalLink,
+  IconGrid,
+  IconSplit,
+  IconTable,
+  IconKeyboard,
+  IconLayers,
+  IconFilm,
+  IconSparkles,
+  IconImage,
+  IconChevronRight,
+  IconChevronDown,
+  IconActivity
+} from '../asset/icons.jsx'
 
 const TYPE_ICONS = {
-  all: '🌟',
-  sequence: '▶',
-  sheet: '▦',
-  strip: '▦',
-  gif: '🖼',
-  single: '▢'
+  all: <IconSparkles size={12} />,
+  sequence: <IconSparkles size={12} />,
+  sheet: <IconLayers size={12} />,
+  strip: <IconFilm size={12} />,
+  gif: <IconImage size={12} />,
+  single: <IconImage size={12} />
 }
 
 const GALLERY_PAGE_SIZE = 48
@@ -784,21 +809,21 @@ export default function AssetManagerPage () {
       {/* 1. 顶部工具栏 */}
       <header className="am-pro-header">
         <div className="header-left">
-          <Link className="hub-back-btn" to="/" title="返回工具箱主页">← 妙妙工具箱</Link>
+          <Link className="hub-back-btn" to="/" title="返回工具箱主页"><IconArrowLeft size={14} /> 妙妙工具箱</Link>
           <div className="header-brand">
-            <span className="brand-logo">🖼</span>
+            <IconPackage size={18} className="brand-logo" />
             <span className="brand-title">ASSET WORKBENCH</span>
             <span className="pro-pill">100K+ ENGINE</span>
           </div>
 
           <button type="button" className="btn select-lib-btn" onClick={pickLibrary}>
-            <span className="btn-icon">📁</span>
+            <IconFolder size={14} className="btn-icon" />
             {rootInfo ? rootInfo.name : '选择素材库…'}
           </button>
 
           {pendingReauth && (
             <button type="button" className="btn reauth-btn" onClick={reauthorize} title="浏览器重启后需重新授权（Chrome 安全机制）">
-              <span className="btn-icon">🔑</span>
+              <IconKey size={14} className="btn-icon" />
               一键恢复上次素材库
             </button>
           )}
@@ -811,7 +836,7 @@ export default function AssetManagerPage () {
               disabled={scanning}
               title="重新流式索引"
             >
-              <span className={`btn-icon ${scanning ? 'spin-icon' : ''}`}>🔄</span>
+              <IconRefresh size={14} className={`btn-icon ${scanning ? 'spin-icon' : ''}`} />
               <span>{scanning ? '索引中…' : '重新索引'}</span>
             </button>
           )}
@@ -820,7 +845,7 @@ export default function AssetManagerPage () {
             <div className="scan-indicator" title={scanInfo}>
               <span className="pulse-dot" />
               <span className="scan-text">{scanInfo || '正在流式扫描…'}</span>
-              <button type="button" className="scan-cancel-btn" onClick={() => { abortRef.current = true }} title="停止">✕ 停止</button>
+              <button type="button" className="scan-cancel-btn" onClick={() => { abortRef.current = true }} title="停止"><IconX size={12} /> 停止</button>
             </div>
           )}
         </div>
@@ -828,7 +853,7 @@ export default function AssetManagerPage () {
         {/* 全局搜索框 */}
         <div className="header-center">
           <div className="global-search-box">
-            <span className="search-ico">⌕</span>
+            <IconSearch size={14} className="search-ico" />
             <input
               ref={searchInputRef}
               type="search"
@@ -838,7 +863,7 @@ export default function AssetManagerPage () {
               className="search-input"
             />
             {query ? (
-              <button type="button" className="search-clear" onClick={() => { setQueryInput(''); setQuery('') }}>✕</button>
+              <button type="button" className="search-clear" onClick={() => { setQueryInput(''); setQuery('') }}><IconX size={12} /></button>
             ) : (
               <kbd className="search-kbd">/</kbd>
             )}
@@ -854,7 +879,7 @@ export default function AssetManagerPage () {
               onClick={() => setViewLayout('split')}
               title="双分栏工作台"
             >
-              ◫ 工作台
+              <IconLayoutColumns size={12} style={{ verticalAlign: -1, marginRight: 4 }} />工作台
             </button>
             <button
               type="button"
@@ -862,7 +887,7 @@ export default function AssetManagerPage () {
               onClick={() => setViewLayout('gallery')}
               title="画廊网格"
             >
-              ▦ 画廊
+              <IconLayoutGrid size={12} style={{ verticalAlign: -1, marginRight: 4 }} />画廊
             </button>
             <button
               type="button"
@@ -870,7 +895,7 @@ export default function AssetManagerPage () {
               onClick={() => setViewLayout('table')}
               title="数据表"
             >
-              ☰ 数据表
+              <IconTable size={12} style={{ verticalAlign: -1, marginRight: 4 }} />数据表
             </button>
           </div>
 
@@ -880,7 +905,7 @@ export default function AssetManagerPage () {
             onClick={() => setShortcutsOpen(!shortcutsOpen)}
             title="快捷键 (?)"
           >
-            ⌨
+            <IconKeyboard size={15} />
           </button>
           <input ref={fileInputRef} type="file" webkitdirectory="true" multiple hidden />
         </div>
@@ -902,7 +927,7 @@ export default function AssetManagerPage () {
                 className={`tree-row ${selectedPack === '__fav__' ? 'active' : ''}`}
                 onClick={handleSelectFavorites}
               >
-                <span className="tree-ico">⭐</span>
+                <IconStar size={13} filled className="tree-ico" style={{ color: '#ffd166' }} />
                 <span className="tree-name">我的收藏夹</span>
                 <span className="tree-count">{favAnims.size}</span>
               </button>
@@ -933,9 +958,9 @@ export default function AssetManagerPage () {
                         onClick={e => handleToggleExpand(e, p.name)}
                         title={hasDirs ? (isExpanded ? '折叠子目录' : '展开子目录') : ''}
                       >
-                        {hasDirs ? (isExpanded ? '▾' : '▸') : '•'}
+                        {hasDirs ? (isExpanded ? <IconChevronDown size={11} /> : <IconChevronRight size={11} />) : <span style={{ opacity: 0.25 }}>•</span>}
                       </span>
-                      <span className="tree-ico">{p.name === '(根目录)' ? '▢' : '📦'}</span>
+                      <span className="tree-ico">{p.name === '(根目录)' ? <IconFolder size={13} /> : <IconPackage size={13} />}</span>
                       <span className="tree-name">{p.name}</span>
                       <span className="tree-count">{p.count.toLocaleString()}</span>
                     </button>
@@ -1150,45 +1175,19 @@ export default function AssetManagerPage () {
 
             {selected && (
               <>
-                <div className="inspector-card action-card">
-                  <div className="card-header">⚡ 快捷操作中心</div>
+                <div className="inspector-card">
+                  <div className="card-header"><IconSparkles size={13} style={{ marginRight: 6 }} /> 快捷操作</div>
                   <div className="action-buttons-grid">
                     <button
                       type="button"
                       className="action-btn primary"
-                      onClick={() => handleExport('download')}
-                      disabled={!(frameData?.frames?.length)}
-                    >
-                      <span className="btn-ico">⬇</span>
-                      <div className="btn-text">
-                        <strong>导出全部帧</strong>
-                        <small>PNG 序列 ({frameData?.frames?.length || 1} 帧)</small>
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      className="action-btn"
                       onClick={() => handleExport('folder')}
-                      disabled={!(frameData?.frames?.length)}
+                      disabled={!frameData || !frameData.frames.length}
                     >
-                      <span className="btn-ico">📁</span>
+                      <IconDownload size={16} className="btn-ico" />
                       <div className="btn-text">
-                        <strong>导出到文件夹</strong>
-                        <small>一键存入工程</small>
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      className="action-btn"
-                      onClick={handleExportGif}
-                      disabled={gifBusy || !(frameData?.frames?.length > 1)}
-                    >
-                      <span className="btn-ico">🎞</span>
-                      <div className="btn-text">
-                        <strong>{gifBusy ? `编码中 ${gifProgress}%` : '导出 GIF'}</strong>
-                        <small>256 色调色板</small>
+                        <strong>导出为序列帧</strong>
+                        <small>按命名规则导出全部帧</small>
                       </div>
                     </button>
 
@@ -1198,7 +1197,7 @@ export default function AssetManagerPage () {
                       onClick={() => handleLocateFolder(selected)}
                       title="在左侧树中定位到该素材所在包/子目录并筛选"
                     >
-                      <span className="btn-ico">📂</span>
+                      <IconFolderOpen size={16} className="btn-ico" />
                       <div className="btn-text">
                         <strong>打开所在文件夹</strong>
                         <small>{selected.pack}{selected.dir ? ' / ' + selected.dir.split('/').pop() : ''}</small>
@@ -1213,7 +1212,7 @@ export default function AssetManagerPage () {
                         toast(ok ? `已复制：${selected.rel}` : '复制失败')
                       }}
                     >
-                      <span className="btn-ico">📋</span>
+                      <IconTable size={16} className="btn-ico" />
                       <div className="btn-text">
                         <strong>复制相对路径</strong>
                         <small>{selected.rel.split('/').pop()}</small>
@@ -1225,7 +1224,7 @@ export default function AssetManagerPage () {
                       className={`action-btn ${favAnims.has(selected.id) ? 'fav-active' : ''}`}
                       onClick={toggleFav}
                     >
-                      <span className="btn-ico">{favAnims.has(selected.id) ? '⭐' : '☆'}</span>
+                      <IconStar size={16} filled={favAnims.has(selected.id)} className="btn-ico" />
                       <div className="btn-text">
                         <strong>{favAnims.has(selected.id) ? '已收藏' : '加入收藏'}</strong>
                         <small>快捷键 F</small>
@@ -1246,7 +1245,7 @@ export default function AssetManagerPage () {
                           }
                         }}
                       >
-                        <span className="btn-ico">🎨</span>
+                        <IconPalette size={16} className="btn-ico" />
                         <div className="btn-text">
                           <strong>下载 .aseprite 原文件</strong>
                           <small>{selected.asepriteEntry.name}</small>
@@ -1268,7 +1267,7 @@ export default function AssetManagerPage () {
                           }
                         }}
                       >
-                        <span className="btn-ico">🌐</span>
+                        <IconExternalLink size={16} className="btn-ico" />
                         <div className="btn-text">
                           <strong>打开原作者预览页</strong>
                           <small>{selected.htmlEntry.name}</small>

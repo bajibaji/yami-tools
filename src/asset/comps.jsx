@@ -1,9 +1,22 @@
 // 素材管理器 Pro 核心复用组件：专业视口工作台 / 胶片时间轴 / 画廊卡片 / 虚拟列表 / 缩略图懒加载
 import React, { useCallback, useEffect, useRef, useState, useMemo, memo } from 'react'
+import { motion } from 'framer-motion'
 import { entryBlob } from '../asset/lib/scanner.js'
 import { resolveSheetFrames, resolveStripFrames } from '../asset/lib/sheet.js'
 import { parseSheetTxt, parseSheetJson } from '../asset/lib/cluster.js'
-import { getThumbUrl, getMemCachedThumb } from '../asset/lib/thumb.js'
+import {
+  IconStar,
+  IconLayers,
+  IconFilm,
+  IconImage,
+  IconSparkles,
+  IconPalette,
+  IconPlay,
+  IconPause,
+  IconCrosshair,
+  IconStepBack,
+  IconStepForward
+} from './icons.jsx'
 
 // 加载单个动画的帧位图（只为当前选中的单个动画服务，避免内存暴涨）
 export async function loadAnimData (anim, cfg) {
@@ -243,14 +256,24 @@ export const GalleryCard = memo(function GalleryCard ({ anim, selected, isFav, o
     return () => { alive = false }
   }, [hover, anim.previewEntry, previewGifUrl])
 
-  const typeIcon = anim.type === 'sheet' ? '▦' : anim.type === 'strip' ? '▦' : anim.type === 'gif' ? '🖼' : anim.type === 'sequence' ? '▶' : '▢'
+  const renderTypeIcon = () => {
+    if (anim.type === 'sheet') return <IconLayers size={10} />
+    if (anim.type === 'strip') return <IconFilm size={10} />
+    if (anim.type === 'sequence') return <IconSparkles size={10} />
+    return <IconImage size={10} />
+  }
 
   return (
-    <div
+    <motion.div
       className={`gallery-card ${selected ? 'selected' : ''}`}
       onClick={() => onSelect(anim.id)}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      initial={{ opacity: 0, y: 3 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.1, ease: 'easeOut' }}
+      whileHover={{ y: -2 }}
     >
       <div className="gallery-thumb-wrap">
         {hover && previewGifUrl ? (
@@ -260,7 +283,10 @@ export const GalleryCard = memo(function GalleryCard ({ anim, selected, isFav, o
         )}
 
         <div className="gallery-badges">
-          <span className={`type-badge type-${anim.type}`}>{typeIcon} {anim.type === 'strip' ? 'STRIP' : anim.type.toUpperCase()}</span>
+          <span className={`type-badge type-${anim.type}`}>
+            {renderTypeIcon()}
+            <span>{anim.type === 'strip' ? 'STRIP' : anim.type.toUpperCase()}</span>
+          </span>
           {anim.count > 1 && <span className="count-badge">{anim.count} 帧</span>}
           {anim.asepriteEntry && <span className="count-badge ase-badge" title="含 Aseprite 原工程源文件">.ASE</span>}
         </div>
@@ -275,7 +301,7 @@ export const GalleryCard = memo(function GalleryCard ({ anim, selected, isFav, o
           }}
           title={isFav ? '取消收藏' : '加入收藏'}
         >
-          {isFav ? '★' : '☆'}
+          <IconStar size={13} filled={isFav} />
         </button>
       </div>
 
@@ -285,7 +311,7 @@ export const GalleryCard = memo(function GalleryCard ({ anim, selected, isFav, o
           {anim.pack}{anim.dir ? ` / ${anim.dir}` : ''}
         </div>
       </div>
-    </div>
+    </motion.div>
   )
 })
 
@@ -611,7 +637,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange }) {
             onClick={() => setShowCrosshair(!showCrosshair)}
             title="中心十字对齐辅助线"
           >
-            ＋ 十字线
+            <IconCrosshair size={12} style={{ marginRight: 4 }} /> 十字线
           </button>
 
           <div className="zoom-controls">
@@ -624,11 +650,11 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange }) {
       </div>
 
       <div className={`pro-canvas-stage stage-${bgStyle}`}>
-        {loading && <div className="canvas-loading"><span>⏳ 正在加载像素帧数据…</span></div>}
+        {loading && <div className="canvas-loading"><span>正在加载像素帧数据…</span></div>}
 
         {!anim && !loading && (
           <div className="canvas-empty">
-            <div className="empty-icon">🎨</div>
+            <IconPalette size={40} className="empty-icon" style={{ opacity: 0.5, marginBottom: 8 }} />
             <h3>欢迎使用素材管理器 Pro</h3>
             <p>从左侧目录中选择任意素材，即可在此处进行专业像素预览、逐帧微调与一键导出</p>
           </div>
@@ -676,7 +702,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange }) {
               disabled={frameCount <= 1}
               title="上一帧 (←)"
             >
-              ⏮
+              <IconStepBack size={14} />
             </button>
             <button
               type="button"
@@ -685,7 +711,15 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange }) {
               disabled={frameCount <= 1}
               title="播放 / 暂停 (Space)"
             >
-              {playing ? '⏸ 暂停' : '▶ 播放'}
+              {playing ? (
+                <>
+                  <IconPause size={12} style={{ verticalAlign: -1, marginRight: 4 }} />暂停
+                </>
+              ) : (
+                <>
+                  <IconPlay size={12} style={{ verticalAlign: -1, marginRight: 4 }} />播放
+                </>
+              )}
             </button>
             <button
               type="button"
@@ -694,7 +728,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange }) {
               disabled={frameCount <= 1}
               title="下一帧 (→)"
             >
-              ⏭
+              <IconStepForward size={14} />
             </button>
 
             <div className="playmode-group">
