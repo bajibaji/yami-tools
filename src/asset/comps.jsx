@@ -540,13 +540,19 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange }) {
   const frameW = data && data.kind !== 'gif' && data.frames[0] ? (data.kind === 'sheet' ? data.frames[0].w : data.frames[0].width) : 0
   const frameH = data && data.kind !== 'gif' && data.frames[0] ? (data.kind === 'sheet' ? data.frames[0].h : data.frames[0].height) : 0
 
-  const handleWheel = (e) => {
-    if (e.ctrlKey || e.metaKey) {
+  // 视口工作台原生滚轮直接放大/缩小（无需按住 Ctrl，直接滑轮 1x~32x）
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const onWheel = (e) => {
       e.preventDefault()
+      e.stopPropagation()
       const delta = e.deltaY > 0 ? -1 : 1
-      setZoom(z => Math.max(1, Math.min(16, z + delta)))
+      setZoom(z => Math.max(1, Math.min(32, z + delta)))
     }
-  }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
 
   const stepFrame = (step) => {
     if (frameCount <= 1) return
@@ -562,11 +568,11 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange }) {
     const cw = containerRef.current.clientWidth - 80
     const ch = containerRef.current.clientHeight - 80
     const scale = Math.max(1, Math.floor(Math.min(cw / frameW, ch / frameH)))
-    setZoom(Math.min(12, scale))
+    setZoom(Math.min(16, scale))
   }
 
   return (
-    <div className="pro-viewport-panel" ref={containerRef} onWheel={handleWheel}>
+    <div className="pro-viewport-panel" ref={containerRef}>
       <div className="viewport-header">
         <div className="viewport-left-tools">
           <span className="viewport-title">
