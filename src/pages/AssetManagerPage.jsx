@@ -78,6 +78,112 @@ const TYPE_ICONS = {
 const GALLERY_PAGE_SIZE = 48
 const DEFAULT_VIEWPORT_HEIGHT = 380
 
+// 将平铺路径列表构建为嵌套目录树
+function buildDirectoryTree (dirs, packName) {
+  if (!dirs || !dirs.length) return []
+  const root = { children: {} }
+
+  for (const d of dirs) {
+    const rel = d.startsWith(packName + '/') ? d.slice(packName.length + 1) : d
+    const parts = rel.split('/').filter(Boolean)
+
+    let cur = root
+    let curPath = packName
+    for (const part of parts) {
+      curPath += '/' + part
+      if (!cur.children[part]) {
+        cur.children[part] = {
+          name: part,
+          path: curPath,
+          children: {}
+        }
+      }
+      cur = cur.children[part]
+    }
+  }
+
+  function toArray (node, depth = 1) {
+    const list = []
+    const keys = Object.keys(node.children).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+    for (const k of keys) {
+      const child = node.children[k]
+      const subList = toArray(child, depth + 1)
+      list.push({
+        name: child.name,
+        path: child.path,
+        depth,
+        hasChildren: subList.length > 0,
+        children: subList
+      })
+    }
+    return list
+  }
+
+  return toArray(root, 1)
+}
+
+const DirectoryTreeNode = memo(function DirectoryTreeNode ({
+  node,
+  packName,
+  selectedPack,
+  dirFilter,
+  expandedDirs,
+  onToggleExpand,
+  onSelectDir
+}) {
+  const isExpanded = expandedDirs.has(node.path)
+  const isActive = selectedPack === packName && dirFilter === node.path
+  const hasChildren = node.hasChildren
+
+  return (
+    <div className="dir-tree-node">
+      <button
+        type="button"
+        className={`tree-row sub ${isActive ? 'active' : ''}`}
+        style={{ paddingLeft: 14 + node.depth * 14 }}
+        onClick={() => onSelectDir(packName, node.path)}
+        title={node.path}
+      >
+        <span
+          className={`tree-toggle-arrow ${hasChildren ? 'clickable' : ''}`}
+          onClick={e => {
+            if (hasChildren) {
+              e.stopPropagation()
+              onToggleExpand(node.path)
+            }
+          }}
+          title={hasChildren ? (isExpanded ? '折叠子目录' : '展开子目录') : ''}
+        >
+          {hasChildren ? (
+            isExpanded ? <IconChevronDown size={10} /> : <IconChevronRight size={10} />
+          ) : (
+            <span style={{ opacity: 0.25 }}>•</span>
+          )}
+        </span>
+        <IconFolder size={12} className="tree-ico" style={{ opacity: isActive ? 1 : 0.7 }} />
+        <span className="tree-name">{node.name}</span>
+      </button>
+
+      {hasChildren && isExpanded && (
+        <div className="dir-tree-children">
+          {node.children.map(child => (
+            <DirectoryTreeNode
+              key={child.path}
+              node={child}
+              packName={packName}
+              selectedPack={selectedPack}
+              dirFilter={dirFilter}
+              expandedDirs={expandedDirs}
+              onToggleExpand={onToggleExpand}
+              onSelectDir={onSelectDir}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+})
+
 function useToast () {
   const [msg, setMsg] = useState(null)
   const timer = useRef(null)
@@ -108,7 +214,19 @@ export default function AssetManagerPage () {
   const [packs, setPacks] = useState([]) // [{ name, count, dirs: [] }]
   const [selectedPack, setSelectedPack] = useState(null)
   const [dirFilter, setDirFilter] = useState(null)
-  const [expandedPacks, setExpandedPacks] = useState(new Set()) // 折叠状态集合
+  const [expandedPacks, setExpandedPacks] = useState(new Set()) // 包折叠状态集合
+  const [expandedDirs, setExpandedDirs] = useState(new Set()) // 子目录多层嵌套折叠状态集合
+
+  // 缓存各包的多层级树结构
+  const packTrees = useMemo(() => {
+    const map = new Map()
+    for (const p of packs) {
+      if (p.dirs && p.dirs.length) {
+        map.set(p.name, buildDirectoryTree(p.dirs, p.name))
+      }
+    }
+    return map
+  }, [packs])
 
   // 视口工作台动态高度调节（支持鼠标上下拖拽 + 本地持久化）
   const [viewportHeight, setViewportHeight] = useState(() => {
@@ -356,7 +474,7 @@ export default function AssetManagerPage () {
     setQuery('')
   }
 
-  // ---------- 专门点击箭头折叠/展开 ----------
+  // ---------- 专门点击箭头折叠/展开包 ----------
   const handleToggleExpand = (e, packName) => {
     e.stopPropagation()
     setExpandedPacks(prev => {
@@ -364,6 +482,22 @@ export default function AssetManagerPage () {
       if (next.has(packName)) next.delete(packName); else next.add(packName)
       return next
     })
+  }
+
+  // ---------- 专门点击箭头折叠/展开子目录 ----------
+  const handleToggleExpandDir = (dirPath) => {
+    setExpandedDirs(prev => {
+      const next = new Set(prev)
+      if (next.has(dirPath)) next.delete(dirPath); else next.add(dirPath)
+      return next
+    })
+  }
+
+  // ---------- 选择子目录 ----------
+  const handleSelectDir = (packName, dirPath) => {
+    setSelectedPack(packName)
+    setDirFilter(dirPath)
+    setQuery('')
   }
 
   // ---------- 打开所在文件夹：树定位 + 目录筛选 ----------
@@ -375,6 +509,18 @@ export default function AssetManagerPage () {
     setQueryInput('')
     setQuery('')
     setExpandedPacks(prev => new Set(prev).add(packName))
+    if (anim.dir) {
+      const parts = anim.dir.replace(packName + '/', '').split('/')
+      let cur = packName
+      setExpandedDirs(prev => {
+        const next = new Set(prev)
+        for (const pt of parts) {
+          cur += '/' + pt
+          next.add(cur)
+        }
+        return next
+      })
+    }
     requestAnimationFrame(() => {
       const root = explorerScrollRef.current
       if (!root) return
@@ -707,17 +853,44 @@ export default function AssetManagerPage () {
         searchInputRef.current?.focus()
         return
       }
-      if (e.key === 'ArrowDown' || e.key === 'j') {
+
+      // ---------- 方向键全能切换选中的动画素材 (2D 智能网格感知) ----------
+      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'w', 'a', 's', 'd', 'h', 'j', 'k', 'l'].includes(e.key)) {
+        if (!filteredAnims.length) return
         e.preventDefault()
+
         const curIdx = filteredAnims.findIndex(a => a.id === selectedId)
-        if (curIdx >= 0 && curIdx < filteredAnims.length - 1) {
-          setSelectedId(filteredAnims[curIdx + 1].id)
+        let targetIdx = curIdx >= 0 ? curIdx : 0
+
+        // 计算当前画廊网格每行有多少列
+        let cols = 1
+        if (viewLayout !== 'table' && catalogScrollRef.current) {
+          const containerWidth = catalogScrollRef.current.clientWidth - 32
+          const minColWidth = cardSize === 'S' ? 104 : cardSize === 'L' ? 180 : cardSize === 'XL' ? 230 : 132
+          cols = Math.max(1, Math.floor(containerWidth / (minColWidth + 12)))
         }
-      } else if (e.key === 'ArrowUp' || e.key === 'k') {
-        e.preventDefault()
-        const curIdx = filteredAnims.findIndex(a => a.id === selectedId)
-        if (curIdx > 0) {
-          setSelectedId(filteredAnims[curIdx - 1].id)
+
+        if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'h') {
+          targetIdx = Math.max(0, curIdx - 1)
+        } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'l') {
+          targetIdx = Math.min(filteredAnims.length - 1, curIdx + 1)
+        } else if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'k') {
+          if (viewLayout === 'table') {
+            targetIdx = Math.max(0, curIdx - 1)
+          } else {
+            targetIdx = Math.max(0, curIdx - cols)
+          }
+        } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'j') {
+          if (viewLayout === 'table') {
+            targetIdx = Math.min(filteredAnims.length - 1, curIdx + 1)
+          } else {
+            targetIdx = Math.min(filteredAnims.length - 1, curIdx + cols)
+          }
+        }
+
+        const nextAnim = filteredAnims[targetIdx]
+        if (nextAnim && nextAnim.id !== selectedId) {
+          setSelectedId(nextAnim.id)
         }
       } else if (e.key === '?') {
         setShortcutsOpen(s => !s)
@@ -725,7 +898,7 @@ export default function AssetManagerPage () {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [filteredAnims, visibleAnims, selectedId, lightboxAnim, folderModalAnim, shortcutsOpen])
+  }, [filteredAnims, visibleAnims, selectedId, lightboxAnim, folderModalAnim, shortcutsOpen, viewLayout, cardSize])
 
   // ---------- 导出与收藏（0ms 响应，不刷新目录，静默写入 IndexedDB） ----------
   const toggleFav = useCallback((targetId) => {
@@ -866,6 +1039,7 @@ export default function AssetManagerPage () {
 
     return (
       <div
+        data-anim-id={anim.id}
         className={`am-table-row ${isSelected ? 'selected' : ''} ${isMulti ? 'multi' : ''}`}
         onClick={() => setSelectedId(anim.id)}
       >
@@ -889,6 +1063,18 @@ export default function AssetManagerPage () {
       </div>
     )
   }, [selectedId, multiSel, favAnims])
+  // 当 selectedId 改变时，确保画廊卡片/表格行平滑自动滚动到可视区域
+  useEffect(() => {
+    if (!selectedId) return
+    const container = catalogScrollRef.current
+    if (!container) return
+    requestAnimationFrame(() => {
+      const el = container.querySelector(`[data-anim-id="${CSS.escape(selectedId)}"]`)
+      if (el) {
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      }
+    })
+  }, [selectedId])
 
   return (
     <div className={`am-pro-shell ${isDraggingResizer ? 'user-resizing' : ''}`}>
@@ -1051,44 +1237,21 @@ export default function AssetManagerPage () {
                       <span className="tree-count">{p.count.toLocaleString()}</span>
                     </button>
 
-                    {/* 可收起的子目录列表 */}
+                    {/* 逐级嵌套多层级子目录树 */}
                     {isExpanded && hasDirs && (
                       <div className="pack-subdirs">
-                        {p.dirs.slice(0, subdirVisible[p.name] || 60).map(d => {
-                          const dirLabel = d.replace(`${p.name}/`, '')
-                          const isDirActive = dirFilter === d && !query
-                          return (
-                            <button
-                              key={d}
-                              type="button"
-                              className={`tree-row sub ${isDirActive ? 'active' : ''}`}
-                              style={{ paddingLeft: 24 }}
-                              onClick={() => {
-                                setSelectedPack(p.name)
-                                setDirFilter(d)
-                                setQuery('')
-                              }}
-                              title={d}
-                            >
-                              <IconFolder size={12} className="tree-ico" style={{ opacity: 0.7 }} />
-                              <span className="tree-name">{dirLabel}</span>
-                            </button>
-                          )
-                        })}
-                        {(subdirVisible[p.name] || 60) < p.dirs.length && (
-                          <button
-                            type="button"
-                            className="tree-row sub more-subdirs"
-                            style={{ paddingLeft: 24 }}
-                            onClick={e => {
-                              e.stopPropagation()
-                              setSubdirVisible(s => ({ ...s, [p.name]: (s[p.name] || 60) + 120 }))
-                            }}
-                          >
-                            <span className="tree-ico">＋</span>
-                            <span className="tree-name">显示更多子目录（还有 {p.dirs.length - (subdirVisible[p.name] || 60)} 个）</span>
-                          </button>
-                        )}
+                        {(packTrees.get(p.name) || []).map(node => (
+                          <DirectoryTreeNode
+                            key={node.path}
+                            node={node}
+                            packName={p.name}
+                            selectedPack={selectedPack}
+                            dirFilter={dirFilter}
+                            expandedDirs={expandedDirs}
+                            onToggleExpand={handleToggleExpandDir}
+                            onSelectDir={handleSelectDir}
+                          />
+                        ))}
                       </div>
                     )}
                   </div>

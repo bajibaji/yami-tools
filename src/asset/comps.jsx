@@ -277,6 +277,7 @@ export const GalleryCard = memo(function GalleryCard ({
 
   return (
     <motion.div
+      data-anim-id={anim.id}
       className={`gallery-card ${selected ? 'selected' : ''} ${isMultiSelected ? 'multi-selected' : ''}`}
       onClick={() => onSelect(anim.id)}
       onDoubleClick={() => onDoubleClick?.(anim)}
