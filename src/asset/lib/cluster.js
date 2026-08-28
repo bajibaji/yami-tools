@@ -124,13 +124,43 @@ export function parseSheetJson (text) {
   return frames.length ? frames : null
 }
 
-// 序列帧分组辅助函数
+// 序列帧与独立 Sheet 分组辅助函数
 function pushSequence (anims, dir, pack, list, preset, previewGif, aseEntry, htmlEntry) {
   if (!list.length) return
 
-  // 1. 如果带有数字后缀（如 walk_01.png, walk_02.png），按数字升序排序
+  // 特殊判定：如果只有 2~3 张图片，且名称包含 VFX / Effect / 技能名，或者包名匹配 Paimon 等特效包，
+  // 这类素材（如 "Acid VFX 01.png", "Acid VFX 02.png"）每一张都是独立的一行 Sprite Sheet 特效，不应错误合并为 2 帧的畸形序列
+  const isVfxPack = /paimon|vfx|effect|acid|fire|ice|thunder|water|wind|holy|dark|earth|skill/i.test(pack) ||
+    /vfx|effect|acid|fire|ice|thunder|water|wind|projectile|slash|hit/i.test(dir) ||
+    list.some(f => /vfx|effect|acid|fire|ice|thunder|water|wind|projectile|slash|hit/i.test(f.name))
+
+  if (isVfxPack && list.length <= 3) {
+    for (const f of list) {
+      const base = stripExt(f.name)
+      const dim = parseDimensionFromName(f.name)
+      anims.push({
+        id: `${dir}|sheet|${f.name}`,
+        type: 'sheet',
+        name: uniqueName(base, dir),
+        pack,
+        dir,
+        rel: f.rel,
+        entry: f,
+        files: [f],
+        count: 0,
+        fps: (preset && preset.fps) || 15,
+        presetCfg: dim || null,
+        previewEntry: previewGif || null,
+        asepriteEntry: aseEntry || null,
+        htmlEntry: htmlEntry || null
+      })
+    }
+    return
+  }
+
+  // 1. 连续编号序列帧（数量 >= 3 或非独立特效命名），按帧序号排序
   const withIdx = list.filter(x => x.frameIndex != null)
-  if (withIdx.length >= 2) {
+  if (withIdx.length >= 2 && (!isVfxPack || withIdx.length >= 4)) {
     list.sort((a, b) => (a.frameIndex || 0) - (b.frameIndex || 0))
     const prefix = list[0].prefix || stripExt(list[0].name)
     anims.push({
@@ -152,7 +182,7 @@ function pushSequence (anims, dir, pack, list, preset, previewGif, aseEntry, htm
   }
 
   // 2. 如果无明显序号但同目录下有多张图片，若超过 1 张也聚合为 sequence
-  if (list.length > 1) {
+  if (list.length > 1 && (!isVfxPack || list.length >= 4)) {
     list.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }))
     const prefix = list[0].prefix || stripExt(list[0].name)
     anims.push({
@@ -173,24 +203,27 @@ function pushSequence (anims, dir, pack, list, preset, previewGif, aseEntry, htm
     return
   }
 
-  // 3. 只有 1 张独立单图
-  const f = list[0]
-  const base = stripExt(f.name)
-  anims.push({
-    id: `${dir}|single|${f.name}`,
-    type: 'single',
-    name: uniqueName(base, dir),
-    pack,
-    dir,
-    rel: f.rel,
-    entry: f,
-    files: [f],
-    count: 1,
-    fps: 0,
-    previewEntry: previewGif || null,
-    asepriteEntry: aseEntry || null,
-    htmlEntry: htmlEntry || null
-  })
+  // 3. 独立图片（作为 sheet 或 single）
+  for (const f of list) {
+    const base = stripExt(f.name)
+    const dim = parseDimensionFromName(f.name)
+    anims.push({
+      id: `${dir}|sheet|${f.name}`,
+      type: 'sheet',
+      name: uniqueName(base, dir),
+      pack,
+      dir,
+      rel: f.rel,
+      entry: f,
+      files: [f],
+      count: 0,
+      fps: (preset && preset.fps) || 15,
+      presetCfg: dim || null,
+      previewEntry: previewGif || null,
+      asepriteEntry: aseEntry || null,
+      htmlEntry: htmlEntry || null
+    })
+  }
 }
 
 // 核心聚类函数：100% 同步纯内存计算，0 毫秒完成！

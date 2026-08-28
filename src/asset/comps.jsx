@@ -26,10 +26,23 @@ export async function loadAnimData (anim, cfg) {
     const blob = await entryBlob(anim.entry)
     return { kind: 'gif', url: URL.createObjectURL(blob), frames: [], file: blob }
   }
-  if (anim.type === 'single') {
+  if (anim.type === 'single' || (anim.type === 'sequence' && anim.files?.length === 1)) {
     const blob = await entryBlob(anim.entry)
-    const bmp = await createImageBitmap(blob)
-    return { kind: 'sequence', frames: [bmp], fps: 0 }
+    const image = await createImageBitmap(blob)
+    // 智能检测：如果单图尺寸是横向连帧（宽 >= 1.8 * 高，如 Paimon Acid VFX 01.png）或大网格图，自动切片为精灵表动画
+    if (image.width >= 1.8 * image.height || (image.width % 64 === 0 && image.height % 64 === 0 && image.width >= 128)) {
+      const combinedCfg = { ...(anim.presetCfg || {}), ...(cfg || {}) }
+      const frames = resolveSheetFrames(image, null, combinedCfg, anim.entry?.name || anim.name)
+      if (frames.length > 1) {
+        return {
+          kind: 'sheet',
+          image,
+          frames,
+          fps: anim.fps || 15
+        }
+      }
+    }
+    return { kind: 'sequence', frames: [image], fps: 0 }
   }
   if (anim.type === 'sequence') {
     const frames = await decodeFrames(anim.files)
