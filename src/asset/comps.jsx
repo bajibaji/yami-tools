@@ -502,6 +502,24 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
 
   const frameCount = data && data.kind !== 'gif' ? (data.frames?.length || 0) : 0
 
+  const stripRowCount = useMemo(() => {
+    if (!data?.image) return 1
+    const h = data.image.height
+    const w = data.image.width
+    let cellH = cfg?.cellH
+    if (!cellH) {
+      const candidates = [64, 32, 48, 80, 96, 128, 160]
+      for (const c of candidates) {
+        if (w % c === 0 && h % c === 0) {
+          cellH = c
+          break
+        }
+      }
+    }
+    cellH = cellH || 64
+    return Math.max(1, Math.round(h / cellH))
+  }, [data, cfg])
+
   const renderFrameToCanvas = useCallback((frameIndex) => {
     const cv = canvasRef.current
     const currentData = dataRef.current
@@ -657,7 +675,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
             </div>
           )}
 
-          {animRef.current?.type === 'strip' && (
+          {(activePreviewAnim?.type === 'strip' || anim?.type === 'strip') && (
             <label className="strip-variant-select" title="切换颜色变体（每一行一种颜色，在视口处操作）">
               <span className="dim-info">变体</span>
               <select
@@ -668,7 +686,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
                 }}
               >
                 <option value="all">全部颜色</option>
-                {Array.from({ length: Math.max(1, Math.round(((data?.image && data.image.height) || 576) / 64)) }, (_, i) => (
+                {Array.from({ length: stripRowCount }, (_, i) => (
                   <option key={i} value={i}>{'颜色 ' + (i + 1)}</option>
                 ))}
               </select>
