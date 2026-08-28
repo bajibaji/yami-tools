@@ -1,5 +1,5 @@
 // 素材管理器 Pro：工业级 100K+ 引擎（支持目录折叠 + 视口工作台自由拖拽调高）
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
