@@ -210,6 +210,12 @@ export default function AssetManagerPage () {
   const [rootInfo, setRootInfo] = useState(null)
   const rootInfoRef = useRef(null)
   rootInfoRef.current = rootInfo // 镜像 ref：供 useCallback 读取最新值而不随引用重建（否则挂载 effect 会循环刷新）
+  // 素材库本地完整根路径（如 D:\YAHZJ\技能素材），选库时一次性询问并持久化，用于拼接绝对路径
+  const [rootAbs, setRootAbs] = useState(() => {
+    try { return localStorage.getItem('yami_root_abs') || '' } catch (e) { return '' }
+  })
+  const rootAbsRef = useRef(rootAbs)
+  rootAbsRef.current = rootAbs
   const [dirHandle, setDirHandle] = useState(null)
   const dirHandleRef = useRef(null)
   dirHandleRef.current = dirHandle
@@ -513,27 +519,55 @@ export default function AssetManagerPage () {
     setQuery('')
   }
 
-  // ---------- 复制绝对路径（首次提示用户粘贴一次素材库根路径，之后自动拼接） ----------
+  // ---------- 素材库完整根路径：一次询问，之后统一拼接绝对路径 ----------
+  const saveRootAbs = useCallback((v) => {
+    const val = (v || '').trim()
+    setRootAbs(val)
+    rootAbsRef.current = val
+    try { localStorage.setItem('yami_root_abs', val) } catch (e) { /* ignore */ }
+  }, [])
+
+  const askRootAbs = useCallback(async () => {
+    const typed = window.prompt(
+      '请粘贴素材库根目录完整本地路径（仅首次，之后自动记忆）\r\n例如：D:\\YAHZJ\\技能素材',
+      rootAbsRef.current || rootInfoRef.current?.name || ''
+    )
+    if (typed && typed.trim()) {
+      saveRootAbs(typed)
+      return typed.trim()
+    }
+    return null
+  }, [saveRootAbs])
+
+  // 选库成功后自动记录根路径（若尚未记录）
+  const ensureRootAbs = useCallback(async () => {
+    if (rootAbsRef.current) return rootAbsRef.current
+    return askRootAbs()
+  }, [askRootAbs])
+
+  // 相对路径 → 完整本地路径（无根路径时返回 null）
+  const absPathOf = useCallback((rel) => {
+    const root = rootAbsRef.current
+    if (!root || !rel) return null
+    return root.replace(/[\\/]+$/, '') + '\\' + rel.replace(/\//g, '\\')
+  }, [])
+
+  // ---------- 复制绝对路径（有根路径直接拼接；无则先询问一次并记忆） ----------
   const handleCopyAbs = useCallback(async (target) => {
     if (!target || !target.rel) return ''
-    const makeAbs = (root, rel) => root.replace(/[\\/]+$/, '') + '\\' + rel.replace(/\//g, '\\')
-    let root = null
-    try { root = localStorage.getItem('yami_root_abs') } catch (e) { /* ignore */ }
+    let root = rootAbsRef.current
     if (!root) {
-      const typed = window.prompt('为方便复制绝对路径，请粘贴素材库根目录（只存本机浏览器，仅用一次）\r\n例如：D:\\YAHZJ\\技能素材', rootInfoRef.current?.name || '')
-      if (typed && typed.trim()) {
-        root = typed.trim()
-        try { localStorage.setItem('yami_root_abs', root) } catch (e) { /* ignore */ }
-      }
+      const typed = await askRootAbs()
+      if (typed) root = typed
     }
-    const abs = root ? makeAbs(root, target.rel) : null
+    const abs = root ? absPathOf(target.rel) : null
     if (abs) {
       await copyText(abs)
       return abs
     }
     await copyText(target.rel)
     return ''
-  }, []) // rootInfo 经 rootInfoRef 读取，不入依赖防循环刷新
+  }, [askRootAbs, absPathOf]) // rootInfo/rootAbs 经 ref 读取，不入依赖防循环刷新
 
   // ---------- 打开所在文件夹：弹出同目录素材浏览器弹窗 + 复制绝对路径 ----------
   const handleOpenFolder = useCallback(async (anim) => {
@@ -543,21 +577,20 @@ export default function AssetManagerPage () {
     const relPath = target.rel || target.dir || ''
     const folderDir = target.dir || (relPath.includes('/') ? relPath.replace(/\/[^/]+$/, '') : '')
 
-    let fullPath = folderDir.replace(/\//g, '\\')
-    const ri = rootInfoRef.current
-    if (ri?.name) {
-      if (ri.name.includes(':') || ri.name.startsWith('/') || ri.name.startsWith('\\')) {
-        fullPath = `${ri.name.replace(/[\\/]+$/, '')}\\${folderDir.replace(/\//g, '\\')}`
-      } else {
-        fullPath = `${ri.name}\\${folderDir.replace(/\//g, '\\')}`
-      }
+    // 完整本地路径：有根路径直接复制；无根路径时静默降级为相对路径，不再弹窗打断（不阻塞双击）
+    const abs = absPathOf(target.rel)
+    let shown = abs
+    if (abs) {
+      await copyText(abs)
+    } else {
+      await copyText(target.rel).catch(() => {})
+      shown = target.rel
     }
 
     // 弹出「所在文件夹素材浏览器」弹窗，展示同目录全部关联素材与工程源文件
     setFolderModalAnim(target)
-    await handleCopyAbs(target)
-    toast(`已打开同目录素材浏览器：${fullPath}`)
-  }, [selected, toast, handleCopyAbs])
+    toast(shown ? `已复制路径：${shown}` : '已打开同目录素材浏览器')
+  }, [selected, toast, absPathOf])
 
   // ---------- 导出 PNG 序列帧 (ZIP) ----------
   const handleExportFrames = async () => {
@@ -878,6 +911,7 @@ export default function AssetManagerPage () {
       setPendingReauth(null)
       setRootInfo({ type: 'handle', name: handle.name })
       setDirHandle(handle)
+      ensureRootAbs()
       const cachedPacks = await dbAll('packs')
       if (cachedPacks.length) {
         setPacks(cachedPacks)
@@ -906,6 +940,7 @@ export default function AssetManagerPage () {
         setPendingReauth(null)
         setRootInfo({ type: 'handle', name: handle.name })
         setDirHandle(handle)
+        ensureRootAbs()
         setActiveAnims([])
         setSelectedId(null)
         const cachedPacks = await dbAll('packs')
@@ -944,6 +979,7 @@ export default function AssetManagerPage () {
       const records = scanFallbackFiles(fileList, count => setScanInfo(`已读取 ${count.toLocaleString()} 个文件`))
       const rootDirName = fileList[0]?.webkitRelativePath?.split('/')[0] || '本地素材库'
       setRootInfo({ type: 'fallback', name: rootDirName })
+      ensureRootAbs()
       fallbackFilesMapRef.current.clear()
       for (const r of records) {
         if (r.file) fallbackFilesMapRef.current.set(r.rel, r.file)
@@ -1664,12 +1700,12 @@ export default function AssetManagerPage () {
                       type="button"
                       className="action-btn"
                       onClick={() => handleOpenFolder(selected)}
-                      title="应用内定位到该素材所在文件夹并复制绝对路径"
+                      title="弹出同目录素材浏览器并复制该素材的完整本地路径"
                     >
                       <IconFolderOpen size={16} className="btn-ico" />
                       <div className="btn-text">
                         <strong>打开所在文件夹</strong>
-                        <small>应用内定位 + 复制绝对路径</small>
+                        <small>同目录预览 + 复制完整路径</small>
                       </div>
                     </button>
 
@@ -1677,10 +1713,8 @@ export default function AssetManagerPage () {
                       type="button"
                       className="action-btn"
                       onClick={async () => {
-                        const winRel = selected.rel.replace(/\//g, '\\')
-                        const fullPath = rootInfo?.name ? `${rootInfo.name}\\${winRel}` : winRel
-                        const ok = await copyText(fullPath)
-                        toast(ok ? `已复制系统路径！在文件管理器地址栏按 Ctrl+L 粘贴即可直达` : '复制失败')
+                        const abs = await handleCopyAbs(selected)
+                        toast(abs ? `已复制系统路径：${abs}（文件管理器地址栏 Ctrl+L 粘贴即达）` : '复制失败（未记录素材库根路径）')
                       }}
                       title="复制本地绝对路径，在 Windows 文件管理器地址栏粘贴回车即可打开"
                     >
@@ -1891,31 +1925,22 @@ export default function AssetManagerPage () {
                   <IconFolderOpen size={18} style={{ color: 'var(--am-accent)' }} />
                   <h3>所在文件夹素材浏览器</h3>
                   <div className="folder-modal-path" title={folderModalAnim.rel}>
-                    {rootInfo?.name ? `${rootInfo.name}\\` : ''}{folderModalAnim.rel.replace(/\//g, '\\')}
+                    {absPathOf(folderModalAnim.rel) || `${folderModalAnim.rel.replace(/\//g, '\\')}`}
                   </div>
                 </div>
                 <div className="folder-modal-actions">
                   <button
                     type="button"
                     className="btn primary"
-                    onClick={() => handleOpenFolder(folderModalAnim)}
-                    title="在电脑本地 Windows 资源管理器中打开此文件夹"
-                  >
-                    <IconFolderOpen size={13} style={{ marginRight: 4 }} /> 打开系统文件夹
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
                     onClick={async () => {
-                      const winRel = folderModalAnim.rel.replace(/\//g, '\\')
-                      const fullPath = rootInfo?.name ? `${rootInfo.name}\\${winRel}` : winRel
-                      const dirOnly = fullPath.substring(0, fullPath.lastIndexOf('\\'))
-                      const ok = await copyText(dirOnly)
-                      toast(ok ? `已复制系统路径！在文件管理器地址栏按 Ctrl+L 粘贴即达` : '复制失败')
+                      const fileAbs = absPathOf(folderModalAnim.rel)
+                      const dirOnly = fileAbs ? fileAbs.substring(0, fileAbs.lastIndexOf('\\')) : ''
+                      const ok = await copyText(dirOnly || folderModalAnim.dir || folderModalAnim.rel)
+                      toast(ok ? `已复制文件夹完整路径：${dirOnly || folderModalAnim.dir || folderModalAnim.rel}` : '复制失败')
                     }}
-                    title="复制所在本地文件夹路径"
+                    title="复制该文件夹的完整本地路径（浏览器无法直接唤起资源管理器，复制后到文件管理器 Ctrl+L 粘贴即达）"
                   >
-                    <IconTable size={13} style={{ marginRight: 4 }} /> 复制路径
+                    <IconFolderOpen size={13} style={{ marginRight: 4 }} /> 复制系统文件夹路径
                   </button>
                   <button
                     type="button"
