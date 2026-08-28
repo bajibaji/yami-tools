@@ -180,13 +180,13 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 22px;
 }
 
 /* Banner 英雄区 */
 .hub-hero {
   position: relative;
-  padding: 26px 32px;
+  padding: 15px 28px;
   background: linear-gradient(135deg, rgba(27, 32, 43, 0.8), rgba(23, 27, 36, 0.95));
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -207,19 +207,19 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.15em;
   color: var(--blue);
-  margin-bottom: 12px;
+  margin-bottom: 6px;
 }
 
 .hub-hero h1 {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 800;
-  line-height: 1.3;
+  line-height: 1.25;
   letter-spacing: -0.01em;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .hub-hero h1 em {
@@ -228,10 +228,131 @@ body {
 }
 
 .hub-hero p {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--muted);
-  max-width: 600px;
-  line-height: 1.6;
+  max-width: 680px;
+  line-height: 1.5;
+}
+
+.hub-hero p kbd {
+  font-family: inherit;
+  font-size: 10px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--blue);
+}
+
+/* 控制工具条：分类筛选与实时搜索 */
+.hub-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 4px 2px;
+}
+
+.category-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.category-tab {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.category-tab:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+  border-color: rgba(141, 185, 255, 0.3);
+}
+
+.category-tab.active {
+  background: rgba(141, 185, 255, 0.12);
+  border-color: var(--blue);
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.cat-count {
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.hub-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 5px 14px;
+  min-width: 260px;
+  transition: all 0.2s;
+}
+
+.hub-search-box:focus-within {
+  border-color: var(--border-active);
+  background: var(--panel-hover);
+  box-shadow: 0 0 16px rgba(141, 185, 255, 0.15);
+}
+
+.search-icon {
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.hub-search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+
+.hub-search-input::placeholder {
+  color: var(--text-faint);
+}
+
+.search-shortcut {
+  font-family: inherit;
+  font-size: 10px;
+  color: var(--text-faint);
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.search-clear-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px;
+}
+
+.search-clear-btn:hover {
+  color: var(--text);
 }
 
 /* 卡片网格 */
@@ -253,7 +374,89 @@ body {
   text-decoration: none;
   color: var(--text);
   overflow: hidden;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.tool-card.launching {
+  border-color: var(--blue);
+  background: var(--panel-hover);
+  box-shadow: 0 0 36px rgba(141, 185, 255, 0.4), 0 16px 40px rgba(0, 0, 0, 0.6);
+  transform: scale(1.025) translateY(-3px) !important;
+}
+
+.tool-card.launching .card-arrow {
+  color: var(--lime);
+  transform: translateX(8px);
+}
+
+.tool-card.launching .tool-action {
+  color: var(--lime);
+}
+
+.card-link-wrapper {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 100%;
+  height: 100%;
+  text-decoration: none;
+  color: inherit;
+}
+
+.tool-icon-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tool-shortcut-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-faint);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.tool-version-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.recent-badge {
+  font-size: 10px;
+  color: var(--lime);
+  background: rgba(198, 243, 107, 0.08);
+  border: 1px solid rgba(198, 243, 107, 0.25);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.hub-empty-state {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 48px 24px;
+  background: var(--panel);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+
+.hub-empty-state .empty-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+}
+
+.hub-empty-state p {
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.hub-empty-state strong {
+  color: var(--text);
 }
 
 .card-glow {

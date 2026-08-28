@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
 import { extOf, supportsDirectoryPicker, scanRootHandle, scanFallbackFiles, saveRootHandle, loadRootHandle, entryBlob } from '../asset/lib/scanner.js'
 import { clusterFiles, naturalCompare } from '../asset/lib/cluster.js'
 import { resolveSheetFrames } from '../asset/lib/sheet.js'
@@ -298,7 +299,6 @@ export default function AssetManagerPage () {
     if (!anim) return
     setSelectedId(anim.id)
     toast('拖拽导出：' + anim.name)
-    // 等待预览稍后再导出会依赖 frameData；这里直接下载原始帧或 sheet 源图
     try {
       const items = await buildExportItems(anim, null)
       await downloadFrames(items)
@@ -311,7 +311,13 @@ export default function AssetManagerPage () {
   const onDragOver = e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }
 
   return (
-    <div className="am-shell">
+    <motion.div
+      className="am-shell"
+      initial={{ opacity: 0, scale: 0.98, y: 16 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.98, y: -16, filter: 'blur(4px)' }}
+      transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+    >
       <header className="am-header">
         <Link className="hub-back" to="/">← 工具合集</Link>
         <div className="am-title">🖼 素材管理器 <em className="version-tag">v0.1.0 · beta</em></div>
@@ -359,23 +365,38 @@ export default function AssetManagerPage () {
         </aside>
 
         <main className="am-main">
-          <PreviewPane anim={selected} cfg={sheetCfg[selectedId]} onFrameData={setFrameData} onToast={toast} />
+          {selected && (
+            <PreviewPane
+              anim={selected}
+              cfg={sheetCfg[selected.id]}
+              onFrameData={setFrameData}
+              onToast={toast}
+            />
+          )}
+          {!selected && (
+            <div className="am-preview">
+              <div className="empty">请从左侧列表选择一个动画或图片</div>
+            </div>
+          )}
         </main>
 
         <aside className="am-info">
-          {!selected && <div className="empty">选择一个素材查看详情</div>}
+          <h2>素材属性</h2>
+          {!selected && <div className="empty">未选中任何素材</div>}
           {selected && (
             <>
-              <h2>{TYPE_ICON[selected.type]} {selected.name}</h2>
               <div className="info-grid">
-                <span className="k">类型</span>
-                <span className="v">{selected.type === 'sheet' ? 'Spritesheet' : selected.type === 'sequence' ? (selected.loose ? '帧序列(池)' : '单帧连播') : selected.type === 'gif' ? 'GIF' : '单帧'}</span>
-                <span className="k">帧数</span>
-                <span className="v">{selected.count || (frameData && frameData.frames ? frameData.frames.length : '…')}</span>
-                <span className="k">fps</span>
-                <span className="v">{selected.fps || (selected.type === 'gif' ? '浏览器原生' : '—')}</span>
-                <span className="k">来源</span>
-                <span className="v">{selected.dir || '(根目录)'}</span>
+                <span className="k">类型</span><span className="v">{selected.type.toUpperCase()}</span>
+                <span className="k">名称</span><span className="v">{selected.name}</span>
+                <span className="k">帧数</span><span className="v">{selected.count || (frameData?.frames?.length || 1)}</span>
+                {frameData && (
+                  <>
+                    <span className="k">尺寸</span>
+                    <span className="v">
+                      {frameData.frames?.[0] ? `${frameData.frames[0].w || frameData.frames[0].width} × ${frameData.frames[0].h || frameData.frames[0].height}` : '--'}
+                    </span>
+                  </>
+                )}
               </div>
 
               <div className="path-box">
@@ -435,8 +456,20 @@ export default function AssetManagerPage () {
         <span style={{ marginLeft: 'auto' }}>本地处理 · 不上传服务器</span>
       </footer>
 
-      {toastMsg && <div className="toast">{toastMsg}</div>}
-    </div>
+      <AnimatePresence>
+        {toastMsg && (
+          <motion.div
+            className="toast"
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 15, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+          >
+            {toastMsg}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   )
 }
 
