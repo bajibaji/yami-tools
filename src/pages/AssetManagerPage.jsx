@@ -1199,11 +1199,11 @@ export default function AssetManagerPage () {
                       type="button"
                       className="action-btn"
                       onClick={() => handleLocateFolder(selected)}
-                      title="在左侧树中定位到该素材所在包/子目录并筛选"
+                      title="在左侧素材树中自动定位并展开该素材所在目录"
                     >
                       <IconFolderOpen size={16} className="btn-ico" />
                       <div className="btn-text">
-                        <strong>打开所在文件夹</strong>
+                        <strong>在素材树中定位</strong>
                         <small>{selected.pack}{selected.dir ? ' / ' + selected.dir.split('/').pop() : ''}</small>
                       </div>
                     </button>
@@ -1212,14 +1212,17 @@ export default function AssetManagerPage () {
                       type="button"
                       className="action-btn"
                       onClick={async () => {
-                        const ok = await copyText(selected.rel)
-                        toast(ok ? `已复制：${selected.rel}` : '复制失败')
+                        const winRel = selected.rel.replace(/\//g, '\\')
+                        const fullPath = rootInfo?.name ? `${rootInfo.name}\\${winRel}` : winRel
+                        const ok = await copyText(fullPath)
+                        toast(ok ? `已复制系统路径！在文件管理器地址栏按 Ctrl+L 粘贴即可直达` : '复制失败')
                       }}
+                      title="复制本地路径，在 Windows 文件管理器地址栏粘贴回车即可打开"
                     >
                       <IconTable size={16} className="btn-ico" />
                       <div className="btn-text">
-                        <strong>复制相对路径</strong>
-                        <small>{selected.rel.split('/').pop()}</small>
+                        <strong>复制系统文件路径</strong>
+                        <small>在文件管理器粘贴即达</small>
                       </div>
                     </button>
 
