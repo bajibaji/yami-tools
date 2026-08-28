@@ -686,7 +686,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
         {!anim && !loading && (
           <div className="canvas-empty">
             <IconPalette size={40} className="empty-icon" style={{ opacity: 0.5, marginBottom: 8 }} />
-            <h3>欢迎使用素材管理器 Pro</h3>
+            <h3>欢迎使用素材管理器</h3>
             <p>从左侧目录中选择任意素材，即可在此处进行专业像素预览、逐帧微调与一键导出</p>
           </div>
         )}

@@ -105,13 +105,13 @@ export const TOOLS = [
   },
   {
     id: 'asset-manager',
-    title: '素材管理器 Pro',
+    title: '素材管理器',
     category: 'asset',
     icon: '🖼',
     iconClass: 'icon-asset',
     desc: '十万级本地像素素材库：支持 100K+ 流式索引、Spritesheet 智能切片、胶片时间轴、多层级折叠树与批量 ZIP 打包。',
-    tags: ['Pro 100K+', 'PNG / GIF / Aseprite / ZIP'],
-    version: 'v1.1.0',
+    tags: ['100K+ 流式索引', 'PNG / GIF / Aseprite / ZIP'],
+    version: 'v1.1.1',
     shortcut: '8',
     beta: false,
     route: '/asset-manager'
@@ -119,4 +119,4 @@ export const TOOLS = [
 ].map(t => ({ ...t, fullHref: t.route ? undefined : BASE + t.href }))
 
 // 构建时由 GitHub Actions 注入 VITE_APP_VERSION（如 v0.0.0）；本地开发回退到默认值
-export const HUB_VERSION = import.meta.env.VITE_APP_VERSION || 'v1.1.0'
+export const HUB_VERSION = import.meta.env.VITE_APP_VERSION || 'v1.1.1'
