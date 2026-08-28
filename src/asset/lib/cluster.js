@@ -246,12 +246,27 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
     const htmlMetas = curMetas.filter(m => m.ext === 'html' || m.ext === 'htm')
 
     const gifs = files.filter(f => f.ext === 'gif')
-    const sheets = files.filter(f => f.ext === 'png' && (isSheetName(f.name) || (preset.sheetByDir && sheetNameByDir(dir))))
+
+    // 智能识别当前目录的 Spritesheet：
+    // (1) 文件名显式包含 sheet / grid / strip / 尺寸标注；
+    // (2) 目录名包含 sheet；
+    // (3) 同目录下有同名 .txt/.json 元数据（如 Explosion 1.txt 与 Explosion 1.png）；
+    // (4) 同目录下有 spritesheet.txt 且 PNG 图片少于 2 张。
+    const sheets = files.filter(f => f.ext === 'png' && (
+      isSheetName(f.name) ||
+      (preset.sheetByDir && sheetNameByDir(dir)) ||
+      metaTexts.some(m => stripExt(m.name).toLowerCase() === stripExt(f.name).toLowerCase()) ||
+      (metaTexts.some(m => /spritesheet/i.test(m.name)) && files.filter(x => x.ext === 'png').length <= 2)
+    ))
+
     const frames = files.filter(f => !gifs.includes(f) && !sheets.includes(f))
 
     const dirPreviewGif = gifs.find(g => isPreviewGifName(g.name)) || gifs[0] || null
     const dirAseEntry = aseMetas[0] || null
     const dirHtmlEntry = htmlMetas[0] || null
+
+    const dirBaseName = (dir.split('/').pop() || '').trim()
+    const cleanDir = dirBaseName.toLowerCase().replace(/(_sheet|spritesheet|-sheet|\s+sheet)$/i, '').trim()
 
     // 1. Spritesheet 动画（纯同步引用关联，不阻塞读取磁盘）
     const dirSheetAnims = []
@@ -262,7 +277,8 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
       if (preset.sheetMeta !== 'none') {
         metaEntry = metaTexts.find(m => m.name.toLowerCase() === metaName.toLowerCase()) ||
           (preset.sheetMeta === 'auto' ? metaTexts.find(m => m.name.toLowerCase().startsWith(base.toLowerCase())) : null) ||
-          metaTexts.find(m => /spritesheet\.txt$/i.test(m.name))
+          metaTexts.find(m => /spritesheet\.txt$/i.test(m.name)) ||
+          metaTexts[0] || null
       }
 
       const matchGif = gifs.find(g => stripExt(g.name).toLowerCase() === base.toLowerCase()) || null
@@ -271,10 +287,15 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
 
       const dim = parseDimensionFromName(s.name)
 
+      // 如果文件名就是 "spritesheet" 或 "sheet"，使用父目录名作为展示名称
+      const displayName = /^(spritesheet|sheet|_sheet)$/i.test(base) && dirBaseName ? dirBaseName : base
+      let cleanKey = base.toLowerCase().replace(/(_sheet|spritesheet|-sheet|\s+sheet)$/i, '').trim()
+      if (!cleanKey) cleanKey = cleanDir
+
       const sheetAnim = {
         id: `${dir}|sheet|${s.name}`,
         type: 'sheet',
-        name: uniqueName(base, dir),
+        name: uniqueName(displayName, dir),
         pack,
         dir,
         rel: s.rel,
@@ -288,8 +309,7 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
         previewEntry: matchGif || null,
         asepriteEntry: matchAse || null,
         htmlEntry: matchHtml || null,
-        // 清理后的前缀名，用于与序列帧关联去重（如 unTied Games 中的 Explosion 1_sheet -> explosion 1）
-        cleanKey: base.toLowerCase().replace(/(_sheet|spritesheet|-sheet|\s+sheet)$/i, '').trim()
+        cleanKey
       }
       dirSheetAnims.push(sheetAnim)
       anims.push(sheetAnim)
@@ -320,21 +340,34 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
         })
       }
     } else {
-      // 3. 单帧 PNG 序列（自动检测同名 Sheet 并去重合并）
+      // 3. 单帧 PNG 序列（自动与同目录/同名 Sheet 彻底去重合并）
       const groups = new Map()
       for (const f of frames) {
         const { prefix, index } = parseFrameName(f.name)
         if (!groups.has(prefix)) groups.set(prefix, [])
         groups.get(prefix).push({ ...f, prefix, frameIndex: index })
       }
-      for (const [prefix, list] of groups) {
-        const cleanPrefix = prefix.toLowerCase().replace(/(_sheet|spritesheet|-sheet|\s+sheet)$/i, '').trim()
 
-        // 智能去重：检查当前目录下是否已有对应的 Sheet 动画（如 unTied Games 同时提供了 xxx_sheet.png 和 xxx_01.png...）
-        const matchedSheet = dirSheetAnims.find(sa => sa.cleanKey === cleanPrefix || sa.cleanKey.startsWith(cleanPrefix) || cleanPrefix.startsWith(sa.cleanKey))
+      for (const [prefix, list] of groups) {
+        let cleanPrefix = prefix.toLowerCase().replace(/(_sheet|spritesheet|-sheet|\s+sheet)$/i, '').trim()
+        if (!cleanPrefix) cleanPrefix = cleanDir
+
+        // 核心智能去重判断：
+        // (1) 如果当前目录下只有 1 个 Sheet 动画（如 unTied Games 常见的独立技能目录），直接将序列帧合并到该 Sheet 动画上！
+        // (2) 如果有多个 Sheet 动画，按 cleanKey / cleanPrefix / cleanDir 精准匹配合并！
+        let matchedSheet = null
+        if (dirSheetAnims.length === 1) {
+          matchedSheet = dirSheetAnims[0]
+        } else if (dirSheetAnims.length > 1) {
+          matchedSheet = dirSheetAnims.find(sa =>
+            sa.cleanKey === cleanPrefix ||
+            (sa.cleanKey && cleanPrefix && (sa.cleanKey.startsWith(cleanPrefix) || cleanPrefix.startsWith(sa.cleanKey))) ||
+            sa.cleanKey === cleanDir
+          )
+        }
 
         if (matchedSheet) {
-          // 将序列帧关联到已有的 Sheet 动画上（供导出与属性查看），不再在画廊中生成重复卡片！
+          // 将序列帧关联到已有的 Sheet 动画上（供导出与检查器使用），绝不在画廊中生成重复卡片！
           matchedSheet.sequenceFiles = list
           if (!matchedSheet.count) matchedSheet.count = list.length
           continue

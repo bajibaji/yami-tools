@@ -444,6 +444,8 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
   onToastRef.current = onToast
   const onCfgChangeRef = useRef(onCfgChange)
   onCfgChangeRef.current = onCfgChange
+  const onOpenFolderRef = useRef(onOpenFolder)
+  onOpenFolderRef.current = onOpenFolder
   const animRef = useRef(anim)
   animRef.current = anim
 
@@ -715,7 +717,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
         )}
 
         {anim && !loading && data && data.kind !== 'gif' && (
-          <div className="canvas-wrapper" style={{ width: frameW * zoom, height: frameH * zoom }}>
+          <div className="canvas-wrapper" style={{ width: frameW * zoom, height: frameH * zoom }} onDoubleClick={() => onOpenFolderRef.current && onOpenFolderRef.current(animRef.current)} title="双击：在应用内定位到所在文件夹">
             <canvas ref={canvasRef} style={{ width: frameW * zoom, height: frameH * zoom }} className="pro-canvas" />
             {showCrosshair && (
               <div className="canvas-crosshair">

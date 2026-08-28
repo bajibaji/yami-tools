@@ -21,7 +21,6 @@ import {
   exportAnimToGif,
   exportAnimsToZip,
   copyText,
-  openInSystemExplorer,
   sanitize
 } from '../asset/lib/export.js'
 import {
@@ -500,10 +499,11 @@ export default function AssetManagerPage () {
     setQuery('')
   }
 
-  // ---------- 打开所在文件夹：优先唤起本地 Windows explorer.exe，降级弹窗素材浏览器 ----------
+  // ---------- 打开所在文件夹：纯网页=应用内定位+复制相对路径 ----------
   const handleOpenFolder = useCallback(async (anim) => {
     const target = anim || selected
     if (!target) return
+    if (typeof handleLocateFolder === 'function') handleLocateFolder(target)
     const relPath = target.rel || target.dir || ''
     const folderDir = target.dir || (relPath.includes('/') ? relPath.replace(/\/[^/]+$/, '') : '')
 
@@ -516,17 +516,16 @@ export default function AssetManagerPage () {
       }
     }
 
-    // 1. 尝试直接唤起本地 Node.js -> explorer.exe 进程
-    const opened = await openInSystemExplorer(fullPath)
+    const opened = false // 纯网页：不唤起本地资源管理器
     if (opened) {
       toast(`已在 Windows 资源管理器中打开文件夹：${fullPath}`)
       return
     }
 
     // 2. 线上或纯静态环境：写入剪贴板并弹出「所在文件夹素材浏览器」弹窗
-    await copyText(fullPath)
-    setFolderModalAnim(target)
-    toast(`已复制系统路径并在弹窗中打开：${fullPath}`)
+    await copyText(target.rel || fullPath)
+
+    toast(`GitHub Pages 纯网页无法打开系统资源管理器，已改为应用内定位并复制相对路径：${fullPath}`)
   }, [selected, rootInfo, toast])
 
   // ---------- 打开所在文件夹：树定位 + 目录筛选 ----------
