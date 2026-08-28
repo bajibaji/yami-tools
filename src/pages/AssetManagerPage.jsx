@@ -988,7 +988,7 @@ export default function AssetManagerPage () {
                               }}
                               title={d}
                             >
-                              <span className="tree-ico">📁</span>
+                              <IconFolder size={12} className="tree-ico" style={{ opacity: 0.7 }} />
                               <span className="tree-name">{dirLabel}</span>
                             </button>
                           )
@@ -1043,18 +1043,18 @@ export default function AssetManagerPage () {
             <div className="catalog-content-area" ref={catalogScrollRef} onScroll={handleCatalogScroll}>
               {phase === 'idle' && (
                 <div className="pro-empty-panel">
-                  <div className="empty-logo">📂</div>
+                  <div className="empty-logo"><IconFolderOpen size={48} /></div>
                   <h3>尚未选择素材库</h3>
                   <p>点击上方或下方按钮授权本地素材文件夹（如 <code>D:\YAHZJ\技能素材</code>，支持 11万+ 文件秒级流式载入）</p>
                   <button type="button" className="btn primary" onClick={pickLibrary}>
-                    📂 立即选择素材库文件夹
+                    <IconFolder size={14} style={{ marginRight: 6 }} /> 立即选择素材库文件夹
                   </button>
                 </div>
               )}
 
               {phase === 'scanning' && !packs.length && (
                 <div className="pro-empty-panel">
-                  <div className="pulse-icon spin-icon">🔄</div>
+                  <div className="pulse-icon spin-icon"><IconRefresh size={48} /></div>
                   <h3>正在流式建立 B-Tree 索引…</h3>
                   <p>{scanInfo || '正在极速索引十万级文件，内存安全无溢出…'}</p>
                 </div>
@@ -1062,7 +1062,7 @@ export default function AssetManagerPage () {
 
               {phase === 'ready' && !filteredAnims.length && !loadingDir && (
                 <div className="pro-empty-panel">
-                  <div className="empty-logo">🔍</div>
+                  <div className="empty-logo"><IconSearch size={48} /></div>
                   <h3>当前目录下未发现动画素材</h3>
                   <p>请点击左侧素材包或具体子文件夹查看</p>
                 </div>
@@ -1172,7 +1172,7 @@ export default function AssetManagerPage () {
           <div className="inspector-scroll">
             {!selected && (
               <div className="inspector-empty">
-                <div className="icon">👆</div>
+                <div className="icon"><IconImage size={38} style={{ opacity: 0.35 }} /></div>
                 <p>在左侧选择目录并在画廊中选中素材查看属性与导出</p>
               </div>
             )}
@@ -1285,7 +1285,7 @@ export default function AssetManagerPage () {
                 </div>
 
                 <div className="inspector-card">
-                  <div className="card-header">📊 规格与元数据</div>
+                  <div className="card-header"><IconActivity size={13} style={{ marginRight: 6 }} /> 规格与元数据</div>
                   <div className="meta-grid">
                     <div className="meta-row">
                       <span className="meta-k">动画名称</span>

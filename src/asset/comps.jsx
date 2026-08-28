@@ -745,7 +745,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange }) {
                 onClick={() => setPlayMode('loop')}
                 title="循环播放"
               >
-                🔁 循环
+                循环
               </button>
               <button
                 type="button"
@@ -753,7 +753,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange }) {
                 onClick={() => setPlayMode('pingpong')}
                 title="往返播放"
               >
-                🔀 往返
+                往返
               </button>
               <button
                 type="button"
@@ -761,7 +761,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange }) {
                 onClick={() => setPlayMode('once')}
                 title="单次播放"
               >
-                ⏹ 单次
+                单次
               </button>
             </div>
           </div>
