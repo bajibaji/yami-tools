@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { entryBlob } from '../asset/lib/scanner.js'
 import { resolveSheetFrames, resolveStripFrames } from '../asset/lib/sheet.js'
 import { parseSheetTxt, parseSheetJson } from '../asset/lib/cluster.js'
+import { getThumbUrl, getMemCachedThumb } from '../asset/lib/thumb.js'
 import {
   IconStar,
   IconLayers,
