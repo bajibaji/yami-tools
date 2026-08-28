@@ -148,3 +148,33 @@ export async function exportAnimToGif (frameData, name, fps = 15, onProgress) {
   gif.finish()
   return new Blob([gif.bytes()], { type: 'image/gif' })
 }
+
+// 批量打包动画源文件为 ZIP
+export async function exportAnimsToZip (anims, onProgress) {
+  const JSZip = (await import('jszip')).default
+  const zip = new JSZip()
+  let count = 0
+  for (const anim of anims) {
+    const folderPath = `${sanitize(anim.pack || 'assets')}/${sanitize(anim.dir ? anim.dir.split('/').pop() : '')}`
+    if (anim.entry) {
+      const blob = await entryBlob(anim.entry)
+      zip.file(`${folderPath}/${anim.entry.name}`, blob)
+    }
+    if (anim.metaEntry) {
+      const blob = await entryBlob(anim.metaEntry)
+      zip.file(`${folderPath}/${anim.metaEntry.name}`, blob)
+    }
+    if (anim.previewEntry) {
+      const blob = await entryBlob(anim.previewEntry)
+      zip.file(`${folderPath}/${anim.previewEntry.name}`, blob)
+    }
+    if (anim.asepriteEntry) {
+      const blob = await entryBlob(anim.asepriteEntry)
+      zip.file(`${folderPath}/${anim.asepriteEntry.name}`, blob)
+    }
+    count++
+    onProgress && onProgress(Math.round((count / anims.length) * 100))
+  }
+  const zipBlob = await zip.generateAsync({ type: 'blob' })
+  return zipBlob
+}

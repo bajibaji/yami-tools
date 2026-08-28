@@ -2468,3 +2468,96 @@ body {
   font-size: 12px;
   color: var(--am-text-dim);
 }
+
+/* ---------- 画廊多选批量悬浮条 (Batch Action Floating Bar) ---------- */
+.batch-floating-bar {
+  position: fixed;
+  bottom: 38px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(19, 23, 34, 0.96);
+  border: 1px solid var(--am-accent);
+  border-radius: 30px;
+  padding: 6px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85), 0 0 20px var(--am-accent-glow);
+  z-index: 900;
+  backdrop-filter: blur(12px);
+}
+
+.batch-count-badge {
+  background: var(--am-accent);
+  color: #080c14;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 12px;
+}
+
+.batch-btn {
+  background: var(--am-bg);
+  border: 1px solid var(--am-border);
+  color: var(--am-text);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 20px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+
+.batch-btn:hover {
+  background: var(--am-bg-subtle);
+  border-color: var(--am-accent);
+  color: #fff;
+}
+
+.batch-btn.primary {
+  background: linear-gradient(135deg, rgba(122, 162, 247, 0.35), rgba(115, 218, 202, 0.35));
+  border-color: var(--am-accent);
+  color: #fff;
+  font-weight: 700;
+}
+
+.batch-btn.primary:hover {
+  background: linear-gradient(135deg, rgba(122, 162, 247, 0.5), rgba(115, 218, 202, 0.5));
+  box-shadow: 0 0 16px var(--am-accent-glow);
+}
+
+/* 画廊模式下卡片的多选勾选框 */
+.gallery-select-checkbox {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--am-accent);
+  cursor: pointer;
+  z-index: 5;
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+}
+
+.gallery-card:hover .gallery-select-checkbox,
+.gallery-card.multi-selected .gallery-select-checkbox {
+  opacity: 1;
+}
+
+.gallery-card.multi-selected {
+  border-color: var(--am-accent);
+  background: rgba(122, 162, 247, 0.15);
+  box-shadow: 0 0 0 1px var(--am-accent);
+}
+
+/* 画廊布局下隐藏右侧检查器，扩展全宽 */
+.am-pro-body.layout-gallery {
+  grid-template-columns: 240px 1fr 0px;
+}
+.am-pro-body.layout-gallery .am-pro-inspector {
+  display: none;
+}

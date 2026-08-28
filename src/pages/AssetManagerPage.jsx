@@ -19,6 +19,7 @@ import {
   exportFramesToFolder,
   buildExportItems,
   exportAnimToGif,
+  exportAnimsToZip,
   copyText,
   sanitize
 } from '../asset/lib/export.js'
@@ -667,10 +668,36 @@ export default function AssetManagerPage () {
   // ---------- 快捷键 ----------
   useEffect(() => {
     const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (lightboxAnim) {
+          setLightboxAnim(null)
+          return
+        }
+        if (folderModalAnim) {
+          setFolderModalAnim(null)
+          return
+        }
+        if (shortcutsOpen) {
+          setShortcutsOpen(false)
+          return
+        }
+      }
       if (document.activeElement === searchInputRef.current) {
         if (e.key === 'Escape') {
           setQuery('')
           searchInputRef.current?.blur()
+        }
+        return
+      }
+      if (lightboxAnim) {
+        if (e.key === 'ArrowLeft' || e.key === 'a') {
+          e.preventDefault()
+          const curIdx = visibleAnims.findIndex(a => a.id === lightboxAnim.id)
+          if (curIdx > 0) setLightboxAnim(visibleAnims[curIdx - 1])
+        } else if (e.key === 'ArrowRight' || e.key === 'd') {
+          e.preventDefault()
+          const curIdx = visibleAnims.findIndex(a => a.id === lightboxAnim.id)
+          if (curIdx >= 0 && curIdx < visibleAnims.length - 1) setLightboxAnim(visibleAnims[curIdx + 1])
         }
         return
       }
@@ -697,7 +724,7 @@ export default function AssetManagerPage () {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [filteredAnims, selectedId])
+  }, [filteredAnims, visibleAnims, selectedId, lightboxAnim, folderModalAnim, shortcutsOpen])
 
   // ---------- 导出与收藏（0ms 响应，不刷新目录，静默写入 IndexedDB） ----------
   const toggleFav = useCallback((targetId) => {
@@ -789,6 +816,45 @@ export default function AssetManagerPage () {
       if (n.has(id)) n.delete(id); else n.add(id)
       return n
     })
+  }
+
+  const handleSelectAllCurrent = () => {
+    setMultiSel(new Set(visibleAnims.map(a => a.id)))
+    toast(`已全选当前 ${visibleAnims.length} 个素材`)
+  }
+
+  const handleClearMulti = () => {
+    setMultiSel(new Set())
+  }
+
+  const handleBatchExportZip = async () => {
+    const list = activeAnims.filter(a => multiSel.has(a.id))
+    if (!list.length) return
+    try {
+      toast(`正在将 ${list.length} 个素材打包为 ZIP...`)
+      const zipBlob = await exportAnimsToZip(list)
+      downloadBlob(zipBlob, `${sanitize(selectedPack || 'gallery')}_batch_${list.length}.zip`)
+      toast(`已成功导出 ${list.length} 个素材的 ZIP 压缩包！`)
+    } catch (e) {
+      toast(`批量打包失败：${e.message}`)
+    }
+  }
+
+  const handleBatchFav = () => {
+    const list = activeAnims.filter(a => multiSel.has(a.id))
+    if (!list.length) return
+    list.forEach(a => {
+      if (!favAnims.has(a.id)) toggleFav(a.id)
+    })
+    toast(`已将 ${list.length} 个素材批量加入收藏`)
+  }
+
+  const handleBatchCopyPaths = async () => {
+    const list = activeAnims.filter(a => multiSel.has(a.id))
+    if (!list.length) return
+    const text = list.map(a => a.rel).join('\n')
+    const ok = await copyText(text)
+    toast(ok ? `已批量复制 ${list.length} 个相对路径` : '复制失败')
   }
 
   // 渲染表格行（useCallback 稳定引用，避免 VirtualList 每帧重建）
@@ -1050,7 +1116,19 @@ export default function AssetManagerPage () {
                 ))}
               </div>
 
-              <div className="catalog-right-controls" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div className="catalog-right-controls" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {viewLayout === 'gallery' && (
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{ fontSize: 11, padding: '3px 8px' }}
+                    onClick={multiSel.size === visibleAnims.length && visibleAnims.length > 0 ? handleClearMulti : handleSelectAllCurrent}
+                    title="在画廊模式下全选或取消全选当前目录全部素材"
+                  >
+                    {multiSel.size === visibleAnims.length && visibleAnims.length > 0 ? '取消全选' : '全选当前'}
+                  </button>
+                )}
+
                 <div className="card-size-switcher" title="缩略图尺寸档位">
                   {['S', 'M', 'L', 'XL'].map(sz => (
                     <button
@@ -1110,8 +1188,12 @@ export default function AssetManagerPage () {
                         thumbSize={cardSize === 'S' ? 64 : cardSize === 'L' ? 128 : cardSize === 'XL' ? 170 : 84}
                         selected={anim.id === selectedId}
                         isFav={favAnims.has(anim.id)}
+                        showCheckbox={viewLayout === 'gallery'}
+                        isMultiSelected={multiSel.has(anim.id)}
                         onSelect={setSelectedId}
                         onToggleFav={toggleFav}
+                        onToggleMulti={toggleMulti}
+                        onDoubleClick={a => setLightboxAnim(a)}
                       />
                     ))}
                   </div>
@@ -1534,7 +1616,106 @@ export default function AssetManagerPage () {
         )}
       </AnimatePresence>
 
-      {/* 5. Toast 提示 */}
+      {/* 5. 画廊多选批量操作悬浮条 (Batch Floating Bar) */}
+      <AnimatePresence>
+        {viewLayout === 'gallery' && multiSel.size > 0 && (
+          <motion.div
+            className="batch-floating-bar"
+            initial={{ opacity: 0, y: 30, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 30, scale: 0.95 }}
+            transition={{ duration: 0.15 }}
+          >
+            <span className="batch-count-badge">已选 {multiSel.size} 项</span>
+            <button type="button" className="batch-btn primary" onClick={handleBatchExportZip} title="将选中的全部素材源文件打包下载为 ZIP 压缩包">
+              <IconDownload size={13} /> 批量打包 ZIP
+            </button>
+            <button type="button" className="batch-btn" onClick={handleBatchFav} title="批量加入收藏夹">
+              <IconStar size={13} filled style={{ color: '#ffd166' }} /> 批量收藏
+            </button>
+            <button type="button" className="batch-btn" onClick={handleBatchCopyPaths} title="批量复制相对路径">
+              <IconTable size={13} /> 复制路径
+            </button>
+            <button type="button" className="batch-btn" onClick={handleClearMulti} title="取消多选">
+              <IconX size={12} /> 清空选择
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 6. 画廊全屏大图/动画灯箱预览 (Lightbox Modal) */}
+      <AnimatePresence>
+        {lightboxAnim && (
+          <div
+            className="pro-modal-backdrop"
+            onClick={() => setLightboxAnim(null)}
+          >
+            <motion.div
+              className="folder-explorer-modal"
+              style={{ maxWidth: 640 }}
+              onClick={e => e.stopPropagation()}
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ duration: 0.12 }}
+            >
+              <div className="folder-modal-header">
+                <div className="folder-modal-title-wrap">
+                  <IconSparkles size={16} style={{ color: 'var(--am-accent)' }} />
+                  <h3>{lightboxAnim.name}</h3>
+                  <div className="folder-modal-path">{lightboxAnim.type.toUpperCase()} · {lightboxAnim.count || 1} 帧</div>
+                </div>
+                <div className="folder-modal-actions">
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => toggleFav(lightboxAnim.id)}
+                    title={favAnims.has(lightboxAnim.id) ? '取消收藏' : '加入收藏'}
+                  >
+                    <IconStar size={15} filled={favAnims.has(lightboxAnim.id)} style={{ color: favAnims.has(lightboxAnim.id) ? '#ffd166' : 'inherit' }} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => setLightboxAnim(null)}
+                    title="关闭 (Esc)"
+                  >
+                    <IconX size={15} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="folder-modal-body" style={{ alignItems: 'center', justifyContent: 'center', minHeight: 320, padding: 24 }}>
+                <div style={{ width: '100%', height: 280, display: 'grid', placeItems: 'center', background: '#05070c', borderRadius: 8, border: '1px solid var(--am-border)' }}>
+                  <PreviewPane
+                    anim={lightboxAnim}
+                    cfg={sheetCfg[lightboxAnim.id]}
+                    onToast={toast}
+                  />
+                </div>
+              </div>
+
+              <div className="folder-modal-footer">
+                <span style={{ fontSize: 11, color: 'var(--am-text-faint)' }}>提示：按键盘 ← / → 方向键可切换上一个/下一个动画</span>
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={() => {
+                    setSelectedId(lightboxAnim.id)
+                    setLightboxAnim(null)
+                    setViewLayout('split')
+                    toast(`已在工作台载入：${lightboxAnim.name}`)
+                  }}
+                >
+                  在工作台中打开
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 7. Toast 提示 */}
       <AnimatePresence>
         {toastMsg && (
           <motion.div

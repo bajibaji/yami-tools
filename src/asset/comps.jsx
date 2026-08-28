@@ -231,7 +231,18 @@ function gifPreviewUrl (entry) {
   return null
 }
 
-export const GalleryCard = memo(function GalleryCard ({ anim, selected, isFav, thumbSize = 84, onSelect, onToggleFav }) {
+export const GalleryCard = memo(function GalleryCard ({
+  anim,
+  selected,
+  isFav,
+  isMultiSelected = false,
+  showCheckbox = false,
+  thumbSize = 84,
+  onSelect,
+  onToggleFav,
+  onToggleMulti,
+  onDoubleClick
+}) {
   const [hover, setHover] = useState(false)
   const [previewGifUrl, setPreviewGifUrl] = useState(() => gifPreviewUrl(anim.previewEntry))
 
@@ -266,8 +277,9 @@ export const GalleryCard = memo(function GalleryCard ({ anim, selected, isFav, t
 
   return (
     <motion.div
-      className={`gallery-card ${selected ? 'selected' : ''}`}
+      className={`gallery-card ${selected ? 'selected' : ''} ${isMultiSelected ? 'multi-selected' : ''}`}
       onClick={() => onSelect(anim.id)}
+      onDoubleClick={() => onDoubleClick?.(anim)}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       initial={{ opacity: 0, y: 3 }}
@@ -277,6 +289,16 @@ export const GalleryCard = memo(function GalleryCard ({ anim, selected, isFav, t
       whileHover={{ y: -2 }}
     >
       <div className="gallery-thumb-wrap">
+        {showCheckbox && (
+          <input
+            type="checkbox"
+            className="gallery-select-checkbox"
+            checked={isMultiSelected}
+            onClick={e => e.stopPropagation()}
+            onChange={() => onToggleMulti?.(anim.id)}
+            title="勾选加入批量操作"
+          />
+        )}
         {hover && previewGifUrl ? (
           <img src={previewGifUrl} className="gallery-thumb-img" alt="" />
         ) : (
