@@ -83,12 +83,81 @@ export function manualGridFrames (w, h, cfg) {
   return frames
 }
 
-// 解析优先级：手动配置 > txt 元数据 > alpha 自动切分
+// 智能推断 SpriteSheet 网格参数（支持 SoggySocks / Paimon 等无元数据单行或多行精灵表）
+export function inferSheetGrid (w, h) {
+  if (w <= 0 || h <= 0) return null
+
+  // 1. 最常见的单行横向精灵表：宽是高的整倍数 (w > h 且 w % h === 0)
+  // 例如 640x64 -> 10 帧 64x64; 384x48 -> 8 帧 48x48; 1536x96 -> 16 帧 96x96
+  if (w > h && w % h === 0 && w / h >= 2) {
+    const cols = Math.round(w / h)
+    return { cols, rows: 1, cellW: h, cellH: h, count: cols, mode: 'ratio_square' }
+  }
+
+  // 2. 常见正方形网格像素尺寸探测
+  const candidates = [64, 32, 48, 80, 96, 112, 128, 160, 192, 256, 16, 24]
+  for (const sz of candidates) {
+    if (w % sz === 0 && h % sz === 0) {
+      const cols = Math.round(w / sz)
+      const rows = Math.round(h / sz)
+      if (cols * rows >= 2) {
+        return { cols, rows, cellW: sz, cellH: sz, count: cols * rows, mode: 'grid_candidate' }
+      }
+    }
+  }
+
+  // 3. 单行近似等分（如果宽 > 1.8 * 高，按高度作为单元格尺寸等分）
+  if (w > 1.8 * h) {
+    const cols = Math.max(2, Math.round(w / h))
+    const cellW = Math.floor(w / cols)
+    return { cols, rows: 1, cellW, cellH: h, count: cols, mode: 'approx_height' }
+  }
+
+  return null
+}
+
+// 解析优先级：手动配置 > txt/json 元数据 > 智能正方形网格推断 > alpha 自动切分
 export function resolveSheetFrames (image, metaFrames, cfg) {
-  if (cfg && ((cfg.cellW && cfg.cellH) || (cfg.cols && cfg.rows))) return manualGridFrames(image.width, image.height, cfg)
-  if (metaFrames && metaFrames.length) return metaFrames
+  const w = image.width
+  const h = image.height
+
+  // 1. 手动配置最高优先级
+  if (cfg && ((cfg.cellW && cfg.cellH) || (cfg.cols && cfg.rows))) {
+    return manualGridFrames(w, h, cfg)
+  }
+
+  // 2. 带有元数据文本/JSON 配置文件
+  if (metaFrames && metaFrames.length) {
+    return metaFrames
+  }
+
+  // 3. 智能网格推断优先（针对 SoggySocks / VFX 等标准单行或多行精灵表）
+  const inferred = inferSheetGrid(w, h)
+  if (inferred && inferred.cols >= 2) {
+    // 若是标准单行整倍数（如 640x64），直接使用单行等分
+    if (inferred.rows === 1 && w % h === 0) {
+      return manualGridFrames(w, h, inferred)
+    }
+  }
+
+  // 4. Alpha 透明间隙切分
   const auto = autoSliceImage(image)
-  return auto.length ? auto : []
+  if (auto.length >= 2) {
+    // 校验切出来的帧宽是否具有基本的一致性（防止把一张长图误切成几块不均匀残片）
+    const widths = auto.map(f => f.w)
+    const avgW = widths.reduce((a, b) => a + b, 0) / widths.length
+    const isReasonable = widths.every(fw => fw >= avgW * 0.35 && fw <= avgW * 2.8)
+    if (isReasonable) {
+      return auto
+    }
+  }
+
+  // 5. 如果 alpha 切分只有 1 帧或不合理，回退到智能网格推断
+  if (inferred) {
+    return manualGridFrames(w, h, inferred)
+  }
+
+  return auto.length ? auto : [{ x: 0, y: 0, w, h }]
 }
 
 // BDragon 竖条/多行多列动画合集：每一行是一种颜色变体或动作，每一列是单帧

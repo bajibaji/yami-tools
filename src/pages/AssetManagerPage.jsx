@@ -1592,7 +1592,59 @@ export default function AssetManagerPage () {
                   </div>
                 </div>
 
+                {(selected.type === 'sheet' || selected.type === 'strip') && (
+                  <div className="inspector-card">
+                    <div className="card-header"><IconLayers size={13} style={{ marginRight: 6 }} /> 精灵表切片微调</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, color: 'var(--am-text-dim)' }}>
+                        <span>当前切片:</span>
+                        <strong style={{ color: 'var(--am-accent)' }}>
+                          {frameData?.frames?.length || 0} 帧 ({frameData?.frames?.[0]?.w || frameData?.frames?.[0]?.width || 0} × {frameData?.frames?.[0]?.h || frameData?.frames?.[0]?.height || 0} px)
+                        </strong>
+                      </div>
 
+                      {/* 快速切片预设 */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                        <button
+                          type="button"
+                          className="btn"
+                          style={{ fontSize: 10, padding: '2px 8px' }}
+                          onClick={() => setSheetCfg(s => ({ ...s, [selectedId]: {} }))}
+                          title="恢复系统智能自动等宽与间隙切分"
+                        >
+                          智能自动
+                        </button>
+                        {['4', '6', '8', '10', '12', '16'].map(col => (
+                          <button
+                            key={col}
+                            type="button"
+                            className={`btn ${sheetCfg[selectedId]?.cols === +col ? 'primary' : ''}`}
+                            style={{ fontSize: 10, padding: '2px 6px' }}
+                            onClick={() => setSheetCfg(s => ({ ...s, [selectedId]: { cols: +col, rows: 1 } }))}
+                            title={`强制单行等分 ${col} 帧`}
+                          >
+                            {col} 帧
+                          </button>
+                        ))}
+                      </div>
+
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                        {['32', '48', '64', '80', '96', '128'].map(sz => (
+                          <button
+                            key={sz}
+                            type="button"
+                            className={`btn ${sheetCfg[selectedId]?.cellW === +sz ? 'primary' : ''}`}
+                            style={{ fontSize: 10, padding: '2px 6px' }}
+                            onClick={() => setSheetCfg(s => ({ ...s, [selectedId]: { cellW: +sz, cellH: +sz } }))}
+                            title={`按 ${sz}×${sz} px 正方形单元格切分`}
+                          >
+                            {sz}px
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>

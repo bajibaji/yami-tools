@@ -67,25 +67,37 @@ export async function prewarmThumbCache (entries, spec = null) {
   } catch (e) { /* ignore */ }
 }
 
-// 画缩略图：grid2nd = 多行网格取每行第2帧排成方块（适合 BDragon strip / 多行 sheet）
+// 画缩略图：grid2nd = 多行网格取每行第2帧排成方块（适合 BDragon strip / 多行 sheet / SoggySocks 横条）
 function drawThumb (ctx, bmp, spec) {
   ctx.imageSmoothingEnabled = false
-  if (spec && spec.mode === 'grid2nd' && bmp.width % 64 === 0 && bmp.height % 64 === 0) {
-    const cols = Math.round(bmp.width / 64)
-    const rows = Math.round(bmp.height / 64)
-    if (cols >= 2 && rows >= 2) {
-      const cellW = bmp.width / cols
-      const cellH = bmp.height / rows
-      const grid = Math.ceil(Math.sqrt(rows))
-      const cell = Math.floor(SIZE / grid)
-      for (let r = 0; r < rows; r++) {
-        const gx = (r % grid) * cell
-        const gy = Math.floor(r / grid) * cell
-        const scale = Math.min(cell / cellW, cell / cellH)
-        const dw = Math.max(1, Math.round(cellW * scale))
-        const dh = Math.max(1, Math.round(cellH * scale))
-        ctx.drawImage(bmp, cellW, r * cellH, cellW, cellH, gx + (cell - dw) / 2, gy + (cell - dh) / 2, dw, dh)
+  if (spec && spec.mode === 'grid2nd') {
+    if (bmp.width % 64 === 0 && bmp.height % 64 === 0) {
+      const cols = Math.round(bmp.width / 64)
+      const rows = Math.round(bmp.height / 64)
+      if (cols >= 2 && rows >= 2) {
+        const cellW = bmp.width / cols
+        const cellH = bmp.height / rows
+        const grid = Math.ceil(Math.sqrt(rows))
+        const cell = Math.floor(SIZE / grid)
+        for (let r = 0; r < rows; r++) {
+          const gx = (r % grid) * cell
+          const gy = Math.floor(r / grid) * cell
+          const scale = Math.min(cell / cellW, cell / cellH)
+          const dw = Math.max(1, Math.round(cellW * scale))
+          const dh = Math.max(1, Math.round(cellH * scale))
+          ctx.drawImage(bmp, cellW, r * cellH, cellW, cellH, gx + (cell - dw) / 2, gy + (cell - dh) / 2, dw, dh)
+        }
+        return
       }
+    }
+    // 单行横向连帧（如 SoggySocks 的 sheet：宽是高的数倍）：取中间关键帧清晰展示
+    if (bmp.width > 1.5 * bmp.height) {
+      const cellW = bmp.height
+      const cellH = bmp.height
+      const cols = Math.max(1, Math.round(bmp.width / cellW))
+      const targetCol = cols >= 3 ? Math.floor(cols / 3) : 0
+      const sx = Math.min(bmp.width - cellW, targetCol * cellW)
+      ctx.drawImage(bmp, sx, 0, cellW, cellH, 0, 0, SIZE, SIZE)
       return
     }
   }
