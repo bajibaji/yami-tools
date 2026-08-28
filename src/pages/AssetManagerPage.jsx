@@ -1314,6 +1314,37 @@ export default function AssetManagerPage () {
       </div>
 
       {/* 3. 底部状态栏 */}
+      <footer className="am-pro-statusbar">
+        <div className="status-left">
+          <span className="status-item">
+            <span className="status-dot green" />
+            引擎状态：<strong>100K+ 流式就绪</strong>
+          </span>
+          <span className="status-divider">|</span>
+          <span className="status-item">
+            当前包：<strong>{selectedPack === '__fav__' ? '⭐ 我的收藏夹' : (selectedPack || '全部素材')}</strong>
+          </span>
+          {dirFilter && (
+            <>
+              <span className="status-divider">/</span>
+              <span className="status-item"><strong>{dirFilter}</strong></span>
+            </>
+          )}
+        </div>
+        <div className="status-right">
+          <span className="status-item">
+            总文件数：<strong>{totalFileCount.toLocaleString()}</strong>
+          </span>
+          <span className="status-divider">|</span>
+          <span className="status-item">
+            当前动画数：<strong>{filteredAnims.length}</strong>
+          </span>
+          <span className="status-divider">|</span>
+          <span className="status-item">
+            已收藏：<strong>{favAnims.size}</strong>
+          </span>
+        </div>
+      </footer>
 
       {/* Toast */}
       <AnimatePresence>
