@@ -1974,7 +1974,7 @@ export default function AssetManagerPage () {
                 <div className="folder-modal-actions">
                   <button
                     type="button"
-                    className="btn primary"
+                    className="folder-copy-btn"
                     onClick={async () => {
                       const fileAbs = absPathOf(folderModalAnim.rel)
                       const dirOnly = fileAbs ? fileAbs.substring(0, fileAbs.lastIndexOf('\\')) : ''
@@ -1983,11 +1983,12 @@ export default function AssetManagerPage () {
                     }}
                     title="复制该文件夹的完整本地路径（浏览器无法直接唤起资源管理器，复制后到文件管理器 Ctrl+L 粘贴即达）"
                   >
-                    <IconFolderOpen size={13} style={{ marginRight: 4 }} /> 复制系统文件夹路径
+                    <IconFolderOpen size={14} />
+                    <span>复制系统文件夹路径</span>
                   </button>
                   <button
                     type="button"
-                    className="icon-btn"
+                    className="folder-close-btn"
                     onClick={() => setFolderModalAnim(null)}
                     title="关闭 (Esc)"
                   >
@@ -2084,7 +2085,7 @@ export default function AssetManagerPage () {
                 <span>当前文件夹：<strong>{folderModalAnim.dir || folderModalAnim.pack || '(根目录)'}</strong></span>
                 <button
                   type="button"
-                  className="btn primary"
+                  className="folder-done-btn"
                   onClick={() => setFolderModalAnim(null)}
                 >
                   完成并返回
