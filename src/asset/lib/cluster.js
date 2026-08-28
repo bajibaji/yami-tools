@@ -235,23 +235,65 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
     if (!metaByDir.has(m.dir)) metaByDir.set(m.dir, [])
     metaByDir.get(m.dir).push(m)
   }
+
+  // 1. 预处理：识别兄弟子目录（例如 .../Explosion 1/PNG 与 .../Explosion 1/spritesheet）
+  const dirMap = new Map()
+  for (const [dir, files] of dirGroups) {
+    dirMap.set(dir, files)
+  }
+
+  const parentPairs = new Map() // parentDir -> { pngDirs: [], sheetDirs: [] }
+  for (const dir of dirGroups.keys()) {
+    const lastSeg = (dir.split('/').pop() || '').toLowerCase().trim()
+    const parentDir = dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : ''
+    const isPngFolder = /^(png|pngs|frames|single frames|images|frames_png)$/i.test(lastSeg)
+    const isSheetFolder = /^(spritesheet|sprite sheet|sheet|sheets|spritesheets)$/i.test(lastSeg)
+
+    if (parentDir && (isPngFolder || isSheetFolder)) {
+      if (!parentPairs.has(parentDir)) parentPairs.set(parentDir, { pngDirs: [], sheetDirs: [] })
+      const p = parentPairs.get(parentDir)
+      if (isPngFolder) p.pngDirs.push(dir)
+      if (isSheetFolder) p.sheetDirs.push(dir)
+    }
+  }
+
+  // 被配对为附属于 PNG 目录的独立 sheet 目录集合（不在画廊中重复生成卡片）
+  const pairedSheetDirs = new Set()
+  const sheetSourcesForPngDir = new Map() // pngDir -> { sheetFiles, metaFiles, parentName }
+
+  for (const [parentDir, pair] of parentPairs) {
+    if (pair.pngDirs.length > 0 && pair.sheetDirs.length > 0) {
+      for (const sd of pair.sheetDirs) pairedSheetDirs.add(sd)
+      const allSheetFiles = pair.sheetDirs.flatMap(sd => dirMap.get(sd) || [])
+      const allMetaFiles = pair.sheetDirs.flatMap(sd => metaByDir.get(sd) || [])
+      const parentName = parentDir.split('/').pop() || parentDir
+      for (const pd of pair.pngDirs) {
+        sheetSourcesForPngDir.set(pd, { sheetFiles: allSheetFiles, metaFiles: allMetaFiles, parentName })
+      }
+    }
+  }
+
   const anims = []
 
   for (const [dir, files] of dirGroups) {
+    // 如果该目录是已经被配对到 PNG 目录的 Spritesheet 目录，跳过单独生成重复卡片！
+    if (pairedSheetDirs.has(dir)) {
+      continue
+    }
+
     const pack = packNameOf(files[0].rel)
     const preset = presetFor(pack, profiles)
+    const pairedSource = sheetSourcesForPngDir.get(dir) || null
+
     const curMetas = metaByDir.get(dir) || []
-    const metaTexts = curMetas.filter(m => m.ext === 'txt' || m.ext === 'json')
-    const aseMetas = curMetas.filter(m => m.ext === 'ase' || m.ext === 'aseprite')
-    const htmlMetas = curMetas.filter(m => m.ext === 'html' || m.ext === 'htm')
+    const combinedMetas = pairedSource ? [...curMetas, ...pairedSource.metaFiles] : curMetas
+    const metaTexts = combinedMetas.filter(m => m.ext === 'txt' || m.ext === 'json')
+    const aseMetas = combinedMetas.filter(m => m.ext === 'ase' || m.ext === 'aseprite')
+    const htmlMetas = combinedMetas.filter(m => m.ext === 'html' || m.ext === 'htm')
 
     const gifs = files.filter(f => f.ext === 'gif')
 
-    // 智能识别当前目录的 Spritesheet：
-    // (1) 文件名显式包含 sheet / grid / strip / 尺寸标注；
-    // (2) 目录名包含 sheet；
-    // (3) 同目录下有同名 .txt/.json 元数据（如 Explosion 1.txt 与 Explosion 1.png）；
-    // (4) 同目录下有 spritesheet.txt 且 PNG 图片少于 2 张。
+    // 智能识别当前目录内的 Spritesheet
     const sheets = files.filter(f => f.ext === 'png' && (
       isSheetName(f.name) ||
       (preset.sheetByDir && sheetNameByDir(dir)) ||
@@ -265,55 +307,11 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
     const dirAseEntry = aseMetas[0] || null
     const dirHtmlEntry = htmlMetas[0] || null
 
-    const dirBaseName = (dir.split('/').pop() || '').trim()
-    const cleanDir = dirBaseName.toLowerCase().replace(/(_sheet|spritesheet|-sheet|\s+sheet)$/i, '').trim()
+    const dirBaseName = pairedSource?.parentName || (dir.split('/').pop() || '').trim()
 
-    // 1. Spritesheet 动画（纯同步引用关联，不阻塞读取磁盘）
-    const dirSheetAnims = []
-    for (const s of sheets) {
-      const base = stripExt(s.name)
-      const metaName = /spritesheet/i.test(base) ? 'spritesheet.txt' : `${base}.txt`
-      let metaEntry = null
-      if (preset.sheetMeta !== 'none') {
-        metaEntry = metaTexts.find(m => m.name.toLowerCase() === metaName.toLowerCase()) ||
-          (preset.sheetMeta === 'auto' ? metaTexts.find(m => m.name.toLowerCase().startsWith(base.toLowerCase())) : null) ||
-          metaTexts.find(m => /spritesheet\.txt$/i.test(m.name)) ||
-          metaTexts[0] || null
-      }
-
-      const matchGif = gifs.find(g => stripExt(g.name).toLowerCase() === base.toLowerCase()) || null
-      const matchAse = aseMetas.find(a => stripExt(a.name).toLowerCase() === base.toLowerCase()) || dirAseEntry
-      const matchHtml = htmlMetas.find(h => stripExt(h.name).toLowerCase() === base.toLowerCase()) || dirHtmlEntry
-
-      const dim = parseDimensionFromName(s.name)
-
-      // 如果文件名就是 "spritesheet" 或 "sheet"，使用父目录名作为展示名称
-      const displayName = /^(spritesheet|sheet|_sheet)$/i.test(base) && dirBaseName ? dirBaseName : base
-      let cleanKey = base.toLowerCase().replace(/(_sheet|spritesheet|-sheet|\s+sheet)$/i, '').trim()
-      if (!cleanKey) cleanKey = cleanDir
-
-      const sheetAnim = {
-        id: `${dir}|sheet|${s.name}`,
-        type: 'sheet',
-        name: uniqueName(displayName, dir),
-        pack,
-        dir,
-        rel: s.rel,
-        entry: s,
-        files: [s],
-        count: 0,
-        fps: (preset && preset.fps) || 15,
-        metaEntry,
-        metaFrames: null,
-        presetCfg: dim || null,
-        previewEntry: matchGif || null,
-        asepriteEntry: matchAse || null,
-        htmlEntry: matchHtml || null,
-        cleanKey
-      }
-      dirSheetAnims.push(sheetAnim)
-      anims.push(sheetAnim)
-    }
+    // 关联的 Spritesheet 大图与 TXT 元数据（用于导出 Spritesheet 格式）
+    const companionSheetEntry = (pairedSource && pairedSource.sheetFiles.find(f => f.ext === 'png')) || sheets[0] || null
+    const companionSheetMeta = (pairedSource && pairedSource.metaFiles.find(m => m.ext === 'txt' || m.ext === 'json')) || metaTexts[0] || null
 
     // 2. BDragon / Strip 格式
     if (preset.stripSheet) {
@@ -336,11 +334,13 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
           fps: (preset && preset.fps) || 15,
           previewEntry: matchGif || null,
           asepriteEntry: matchAse || null,
-          htmlEntry: matchHtml || null
+          htmlEntry: matchHtml || null,
+          sheetEntry: companionSheetEntry,
+          sheetMetaEntry: companionSheetMeta
         })
       }
-    } else {
-      // 3. 单帧 PNG 序列（自动与同目录/同名 Sheet 彻底去重合并）
+    } else if (frames.length > 0) {
+      // 3. 核心：单帧 PNG 序列优先展示（100% 逐帧清晰流畅播放，附带 Spritesheet 原图供导出）
       const groups = new Map()
       for (const f of frames) {
         const { prefix, index } = parseFrameName(f.name)
@@ -349,34 +349,71 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
       }
 
       for (const [prefix, list] of groups) {
-        let cleanPrefix = prefix.toLowerCase().replace(/(_sheet|spritesheet|-sheet|\s+sheet)$/i, '').trim()
-        if (!cleanPrefix) cleanPrefix = cleanDir
-
-        // 核心智能去重判断：
-        // (1) 如果当前目录下只有 1 个 Sheet 动画（如 unTied Games 常见的独立技能目录），直接将序列帧合并到该 Sheet 动画上！
-        // (2) 如果有多个 Sheet 动画，按 cleanKey / cleanPrefix / cleanDir 精准匹配合并！
-        let matchedSheet = null
-        if (dirSheetAnims.length === 1) {
-          matchedSheet = dirSheetAnims[0]
-        } else if (dirSheetAnims.length > 1) {
-          matchedSheet = dirSheetAnims.find(sa =>
-            sa.cleanKey === cleanPrefix ||
-            (sa.cleanKey && cleanPrefix && (sa.cleanKey.startsWith(cleanPrefix) || cleanPrefix.startsWith(sa.cleanKey))) ||
-            sa.cleanKey === cleanDir
-          )
-        }
-
-        if (matchedSheet) {
-          // 将序列帧关联到已有的 Sheet 动画上（供导出与检查器使用），绝不在画廊中生成重复卡片！
-          matchedSheet.sequenceFiles = list
-          if (!matchedSheet.count) matchedSheet.count = list.length
-          continue
-        }
-
         const matchGif = gifs.find(g => stripExt(g.name).toLowerCase() === prefix.toLowerCase()) || dirPreviewGif
         const matchAse = aseMetas.find(a => stripExt(a.name).toLowerCase() === prefix.toLowerCase()) || dirAseEntry
         const matchHtml = htmlMetas.find(h => stripExt(h.name).toLowerCase() === prefix.toLowerCase()) || dirHtmlEntry
-        pushSequence(anims, dir, pack, list, preset, matchGif, matchAse, matchHtml)
+
+        const displayName = (/^(png|pngs|frames|images)$/i.test(prefix) || !prefix) && dirBaseName ? dirBaseName : prefix
+        const sortedList = [...list].sort((a, b) => (a.frameIndex ?? 0) - (b.frameIndex ?? 0))
+
+        anims.push({
+          id: `${dir}|seq|${prefix || 'seq'}`,
+          type: 'sequence',
+          name: uniqueName(displayName, dir),
+          pack,
+          dir,
+          rel: sortedList[0]?.rel || '',
+          entry: sortedList[0],
+          files: sortedList,
+          count: sortedList.length,
+          fps: (preset && preset.fps) || 15,
+          previewEntry: matchGif || null,
+          asepriteEntry: matchAse || null,
+          htmlEntry: matchHtml || null,
+          sheetEntry: companionSheetEntry,
+          sheetMetaEntry: companionSheetMeta
+        })
+      }
+    } else if (sheets.length > 0) {
+      // 4. 纯 Spritesheet 动画（当无单帧序列时才作为 Sheet 独立展示）
+      for (const s of sheets) {
+        const base = stripExt(s.name)
+        const metaName = /spritesheet/i.test(base) ? 'spritesheet.txt' : `${base}.txt`
+        let metaEntry = null
+        if (preset.sheetMeta !== 'none') {
+          metaEntry = metaTexts.find(m => m.name.toLowerCase() === metaName.toLowerCase()) ||
+            (preset.sheetMeta === 'auto' ? metaTexts.find(m => m.name.toLowerCase().startsWith(base.toLowerCase())) : null) ||
+            metaTexts.find(m => /spritesheet\.txt$/i.test(m.name)) ||
+            metaTexts[0] || null
+        }
+
+        const matchGif = gifs.find(g => stripExt(g.name).toLowerCase() === base.toLowerCase()) || null
+        const matchAse = aseMetas.find(a => stripExt(a.name).toLowerCase() === base.toLowerCase()) || dirAseEntry
+        const matchHtml = htmlMetas.find(h => stripExt(h.name).toLowerCase() === base.toLowerCase()) || dirHtmlEntry
+
+        const dim = parseDimensionFromName(s.name)
+        const displayName = /^(spritesheet|sheet|_sheet)$/i.test(base) && dirBaseName ? dirBaseName : base
+
+        anims.push({
+          id: `${dir}|sheet|${s.name}`,
+          type: 'sheet',
+          name: uniqueName(displayName, dir),
+          pack,
+          dir,
+          rel: s.rel,
+          entry: s,
+          files: [s],
+          count: 0,
+          fps: (preset && preset.fps) || 15,
+          metaEntry,
+          metaFrames: null,
+          presetCfg: dim || null,
+          previewEntry: matchGif || null,
+          asepriteEntry: matchAse || null,
+          htmlEntry: matchHtml || null,
+          sheetEntry: s,
+          sheetMetaEntry: metaEntry
+        })
       }
     }
 

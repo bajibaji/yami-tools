@@ -148,6 +148,76 @@ export async function exportAnimToGif (frameData, name, fps = 15, onProgress) {
   return new Blob([gif.bytes()], { type: 'image/gif' })
 }
 
+// 导出为 Spritesheet 精灵表格式（PNG 大图 + 坐标文本）
+export async function exportAnimAsSpritesheet (anim, frameData) {
+  const JSZip = (await import('jszip')).default
+  const zip = new JSZip()
+  const animName = sanitize(anim?.name || 'spritesheet')
+
+  // 1. 如果自带了原装 Spritesheet 大图（如 unTied Games 配对绑定的 sheetEntry）
+  if (anim && anim.sheetEntry) {
+    const sheetBlob = await entryBlob(anim.sheetEntry)
+    zip.file(`${animName}_sheet.png`, sheetBlob)
+    if (anim.sheetMetaEntry) {
+      const metaBlob = await entryBlob(anim.sheetMetaEntry)
+      zip.file(anim.sheetMetaEntry.name || `${animName}.txt`, metaBlob)
+    }
+    return await zip.generateAsync({ type: 'blob' })
+  }
+
+  // 2. 如果本身就是 Sheet 类型
+  if (anim && anim.type === 'sheet' && anim.entry) {
+    const sheetBlob = await entryBlob(anim.entry)
+    zip.file(anim.entry.name, sheetBlob)
+    if (anim.metaEntry) {
+      const metaBlob = await entryBlob(anim.metaEntry)
+      zip.file(anim.metaEntry.name, metaBlob)
+    }
+    return await zip.generateAsync({ type: 'blob' })
+  }
+
+  // 3. 如果是单帧序列，自动合成 Spritesheet 图集与坐标
+  if (frameData && frameData.frames && frameData.frames.length) {
+    const frames = frameData.frames
+    const count = frames.length
+    let fw = 0
+    let fh = 0
+    if (frameData.kind === 'sheet') {
+      fw = frames[0].w
+      fh = frames[0].h
+    } else {
+      fw = frames[0].width
+      fh = frames[0].height
+    }
+
+    const cv = document.createElement('canvas')
+    cv.width = fw * count
+    cv.height = fh
+    const ctx = cv.getContext('2d')
+    ctx.imageSmoothingEnabled = false
+
+    const txtLines = []
+    for (let i = 0; i < count; i++) {
+      const x = i * fw
+      const y = 0
+      if (frameData.kind === 'sheet') {
+        const rf = frames[i]
+        ctx.drawImage(frameData.image, rf.x, rf.y, rf.w, rf.h, x, y, fw, fh)
+      } else {
+        ctx.drawImage(frames[i], x, y)
+      }
+      txtLines.push(`${animName}_${pad(i + 1)} = ${x} ${y} ${fw} ${fh}`)
+    }
+
+    const sheetBlob = await new Promise(res => cv.toBlob(res, 'image/png'))
+    zip.file(`${animName}_sheet.png`, sheetBlob)
+    zip.file(`${animName}_coordinates.txt`, txtLines.join('\r\n'))
+    return await zip.generateAsync({ type: 'blob' })
+  }
+
+  return null
+}
+
 // 批量打包动画源文件为 ZIP
 export async function exportAnimsToZip (anims, onProgress) {
   const JSZip = (await import('jszip')).default

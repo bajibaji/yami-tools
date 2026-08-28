@@ -19,6 +19,7 @@ import {
   exportFramesToFolder,
   buildExportItems,
   exportAnimToGif,
+  exportAnimAsSpritesheet,
   exportAnimsToZip,
   copyText,
   sanitize
@@ -557,6 +558,59 @@ export default function AssetManagerPage () {
     await handleCopyAbs(target)
     toast(`已打开同目录素材浏览器：${fullPath}`)
   }, [selected, toast, handleCopyAbs])
+
+  // ---------- 导出 PNG 序列帧 (ZIP) ----------
+  const handleExportFrames = async () => {
+    if (!selected) return
+    try {
+      toast('正在打包单帧序列…')
+      const JSZip = (await import('jszip')).default
+      const zip = new JSZip()
+      const animName = sanitize(selected.name || 'animation')
+
+      if (selected.type === 'sequence' && selected.files && selected.files.length) {
+        for (let i = 0; i < selected.files.length; i++) {
+          const f = selected.files[i]
+          const blob = await entryBlob(f)
+          const ext = f.ext || 'png'
+          zip.file(`${animName}_${String(i + 1).padStart(3, '0')}.${ext}`, blob)
+        }
+      } else if (frameData && frameData.frames && frameData.frames.length) {
+        const items = await buildExportItems(selected, frameData)
+        for (const it of items) {
+          const b = typeof it.blob === 'function' ? await it.blob() : it.blob
+          zip.file(it.name, b)
+        }
+      } else if (selected.entry) {
+        const b = await entryBlob(selected.entry)
+        zip.file(selected.entry.name, b)
+      }
+
+      const zipBlob = await zip.generateAsync({ type: 'blob' })
+      downloadBlob(zipBlob, `${animName}_frames.zip`)
+      toast(`已成功导出 PNG 序列帧：${animName}_frames.zip`)
+    } catch (e) {
+      toast(`导出序列帧失败：${e.message}`)
+    }
+  }
+
+  // ---------- 导出 Spritesheet 精灵表 (PNG + TXT/JSON) ----------
+  const handleExportSpritesheet = async () => {
+    if (!selected) return
+    try {
+      toast('正在导出 Spritesheet 精灵表…')
+      const zipBlob = await exportAnimAsSpritesheet(selected, frameData)
+      if (zipBlob) {
+        const animName = sanitize(selected.name || 'spritesheet')
+        downloadBlob(zipBlob, `${animName}_spritesheet.zip`)
+        toast(`已导出 Spritesheet 精灵表：${animName}_spritesheet.zip`)
+      } else {
+        toast('暂无可用帧数据生成 Spritesheet')
+      }
+    } catch (e) {
+      toast(`导出 Spritesheet 失败：${e.message}`)
+    }
+  }
 
   // ---------- 打开所在文件夹：树定位 + 目录筛选 ----------
   const handleLocateFolder = (anim) => {
@@ -1188,7 +1242,7 @@ export default function AssetManagerPage () {
           <div className="header-brand">
             <IconPackage size={18} className="brand-logo" />
             <span className="brand-title">ASSET WORKBENCH</span>
-            <span className="pro-pill">v1.0.0 PRO</span>
+            <span className="pro-pill">v1.1.0 PRO</span>
           </div>
 
           <button type="button" className="btn select-lib-btn" onClick={pickLibrary}>
@@ -1567,13 +1621,42 @@ export default function AssetManagerPage () {
                     <button
                       type="button"
                       className="action-btn primary"
-                      onClick={() => handleExport('folder')}
-                      disabled={!frameData || !frameData.frames.length}
+                      onClick={handleExportFrames}
+                      disabled={!frameData || !frameData.frames || !frameData.frames.length}
+                      title="将当前动画全部单帧导出为 PNG 序列图（ZIP 打包）"
                     >
                       <IconDownload size={16} className="btn-ico" />
                       <div className="btn-text">
-                        <strong>导出为序列帧</strong>
-                        <small>按命名规则导出全部帧</small>
+                        <strong>导出 PNG 序列帧</strong>
+                        <small>连续编号单帧图包 (ZIP)</small>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="action-btn"
+                      onClick={handleExportSpritesheet}
+                      disabled={!frameData || !frameData.frames || !frameData.frames.length}
+                      title="导出整张 Spritesheet 大图及 TXT/JSON 坐标数据"
+                    >
+                      <IconLayers size={16} className="btn-ico" />
+                      <div className="btn-text">
+                        <strong>导出 Spritesheet</strong>
+                        <small>PNG 大图 + TXT 坐标</small>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="action-btn"
+                      onClick={handleExportGif}
+                      disabled={!frameData || !frameData.frames || frameData.frames.length < 2}
+                      title="一键将该动画合成为 GIF 动图并下载"
+                    >
+                      <IconFilm size={16} className="btn-ico" />
+                      <div className="btn-text">
+                        <strong>导出 GIF 动图</strong>
+                        <small>动态预览图 (256色)</small>
                       </div>
                     </button>
 
