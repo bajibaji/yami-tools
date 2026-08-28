@@ -1,5 +1,5 @@
 // Spritesheet 帧解析：spritesheet.txt → 网格自动切分（透明间隙）→ 手动参数
-import { parseSheetTxt } from './cluster.js'
+import { parseSheetTxt, parseDimensionFromName } from './cluster.js'
 
 export { parseSheetTxt }
 
@@ -116,8 +116,8 @@ export function inferSheetGrid (w, h) {
   return null
 }
 
-// 解析优先级：手动配置 > txt/json 元数据 > 智能正方形网格推断 > alpha 自动切分
-export function resolveSheetFrames (image, metaFrames, cfg) {
+// 解析优先级：手动配置 > 文件名尺寸标注 > txt/json 元数据 > 智能正方形网格推断 > alpha 自动切分
+export function resolveSheetFrames (image, metaFrames, cfg, animName = '') {
   const w = image.width
   const h = image.height
 
@@ -126,12 +126,20 @@ export function resolveSheetFrames (image, metaFrames, cfg) {
     return manualGridFrames(w, h, cfg)
   }
 
-  // 2. 带有元数据文本/JSON 配置文件
+  // 2. 从文件名提取的尺寸 (如 projectile_48x16.png, fireball_32x32.png)
+  const nameDim = parseDimensionFromName(animName)
+  if (nameDim && nameDim.cellW && nameDim.cellH) {
+    if (w % nameDim.cellW === 0 && h % nameDim.cellH === 0) {
+      return manualGridFrames(w, h, nameDim)
+    }
+  }
+
+  // 3. 带有元数据文本/JSON 配置文件
   if (metaFrames && metaFrames.length) {
     return metaFrames
   }
 
-  // 3. 智能网格推断优先（针对 SoggySocks / VFX 等标准单行或多行精灵表）
+  // 4. 智能网格推断优先（针对 SoggySocks / Paimon / VFX 等标准单行或多行精灵表）
   const inferred = inferSheetGrid(w, h)
   if (inferred && inferred.cols >= 2) {
     // 若是标准单行整倍数（如 640x64），直接使用单行等分

@@ -2,16 +2,46 @@
 import { stripExt } from './scanner.js'
 import { presetFor, packNameOf } from './presets.js'
 
-// 文件名 → { prefix, index }：把「末尾数字」识别为帧序号
+// 从文件名解析网格尺寸标注：如 projectile_48x16.png -> { cellW: 48, cellH: 16 }
+export function parseDimensionFromName (name) {
+  if (!name) return null
+  const base = stripExt(name)
+  const m = /[_\-\s](\d{1,4})[xX*](\d{1,4})(?:[_\-\s]|$)/.exec(base)
+  if (m) {
+    const w = parseInt(m[1], 10)
+    const h = parseInt(m[2], 10)
+    if (w > 0 && h > 0 && w <= 2048 && h <= 2048) {
+      return { cellW: w, cellH: h }
+    }
+  }
+  return null
+}
+
+// 文件名 → { prefix, index }：把末尾数字/前缀识别为帧序号（智能规避 01/10 拆分问题）
 export function parseFrameName (name) {
   const base = stripExt(name)
-  const m = /^(.*?)(\d+)$/.exec(base)
-  if (m) return { prefix: m[1], index: parseInt(m[2], 10) }
+
+  // 1. 括号数字：foo (1) -> prefix: foo, index: 1
+  const mParen = /^(.*?)\s*\((\d+)\)$/.exec(base)
+  if (mParen) return { prefix: mParen[1].trim(), index: parseInt(mParen[2], 10) }
+
+  // 2. 分隔符 + 数字：foo_01, foo-002, foo 03, foo_frame_01
+  const mSep = /^(.*?)(?:[_\-\s]|frame|f)+0*(\d+)$/i.exec(base)
+  if (mSep) {
+    const cleanPrefix = mSep[1].replace(/[_\-\s]+$/, '') || mSep[1]
+    return { prefix: cleanPrefix, index: parseInt(mSep[2], 10) }
+  }
+
+  // 3. 纯末尾数字：foo01 -> prefix: foo, index: 1
+  const mEnd = /^(.*?[^\d])0*(\d+)$/.exec(base)
+  if (mEnd) return { prefix: mEnd[1], index: parseInt(mEnd[2], 10) }
+
   return { prefix: base, index: null }
 }
 
 export function isSheetName (name) {
-  return /(_sheet|spritesheet|-sheet| sheet|sheet)\.png$/i.test(name)
+  // 匹配 spritesheet, sheet, grid, strip, 以及带尺寸标注如 _64x64.png, _32x32.png
+  return /(_sheet|spritesheet|-sheet| sheet|sheet|_grid|_strip|[_\-\s]\d{1,4}[xX*]\d{1,4})\.png$/i.test(name)
 }
 
 function isPreviewGifName (name) {
@@ -205,6 +235,8 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
       const matchAse = aseMetas.find(a => stripExt(a.name).toLowerCase() === base.toLowerCase()) || dirAseEntry
       const matchHtml = htmlMetas.find(h => stripExt(h.name).toLowerCase() === base.toLowerCase()) || dirHtmlEntry
 
+      const dim = parseDimensionFromName(s.name)
+
       anims.push({
         id: `${dir}|sheet|${s.name}`,
         type: 'sheet',
@@ -218,6 +250,7 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
         fps: (preset && preset.fps) || 15,
         metaEntry,
         metaFrames: null,
+        presetCfg: dim || null,
         previewEntry: matchGif || null,
         asepriteEntry: matchAse || null,
         htmlEntry: matchHtml || null

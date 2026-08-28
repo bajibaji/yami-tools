@@ -60,7 +60,8 @@ export async function loadAnimData (anim, cfg) {
         // ignore
       }
     }
-    const frames = resolveSheetFrames(image, metaFrames, cfg)
+    const combinedCfg = { ...(anim.presetCfg || {}), ...(cfg || {}) }
+    const frames = resolveSheetFrames(image, metaFrames, combinedCfg, anim.entry?.name || anim.name)
     return {
       kind: frames.length ? 'sheet' : 'sequence',
       image,
