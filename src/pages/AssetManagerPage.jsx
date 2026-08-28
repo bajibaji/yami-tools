@@ -152,6 +152,7 @@ export default function AssetManagerPage () {
 
   // 弹窗状态
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [folderModalAnim, setFolderModalAnim] = useState(null)
   const [gifBusy, setGifBusy] = useState(false)
   const [gifProgress, setGifProgress] = useState(0)
 
@@ -163,8 +164,15 @@ export default function AssetManagerPage () {
 
   // 当前选中的动画对象
   const selected = useMemo(() => {
-    return activeAnims.find(a => a.id === selectedId) || activeAnims[0] || null
+    if (!selectedId) return null
+    return activeAnims.find(a => a.id === selectedId) || null
   }, [activeAnims, selectedId])
+
+  // 所在文件夹弹窗关联的所有动画素材
+  const folderAnims = useMemo(() => {
+    if (!folderModalAnim) return []
+    return activeAnims.filter(a => a.pack === folderModalAnim.pack && a.dir === folderModalAnim.dir)
+  }, [folderModalAnim, activeAnims])
 
   const animsCacheRef = useRef(new Map())
   const favObjectsMapRef = useRef(new Map())
@@ -1222,13 +1230,13 @@ export default function AssetManagerPage () {
                     <button
                       type="button"
                       className="action-btn"
-                      onClick={() => handleLocateFolder(selected)}
-                      title="在左侧素材树中自动定位并展开该素材所在目录"
+                      onClick={() => setFolderModalAnim(selected)}
+                      title="打开所在文件夹弹窗浏览器，查看并浏览同目录下的所有关联素材与源文件"
                     >
                       <IconFolderOpen size={16} className="btn-ico" />
                       <div className="btn-text">
-                        <strong>在素材树中定位</strong>
-                        <small>{selected.pack}{selected.dir ? ' / ' + selected.dir.split('/').pop() : ''}</small>
+                        <strong>打开所在文件夹</strong>
+                        <small>弹窗浏览同目录素材</small>
                       </div>
                     </button>
 
@@ -1241,7 +1249,7 @@ export default function AssetManagerPage () {
                         const ok = await copyText(fullPath)
                         toast(ok ? `已复制系统路径！在文件管理器地址栏按 Ctrl+L 粘贴即可直达` : '复制失败')
                       }}
-                      title="复制本地路径，在 Windows 文件管理器地址栏粘贴回车即可打开"
+                      title="复制本地绝对路径，在 Windows 文件管理器地址栏粘贴回车即可打开"
                     >
                       <IconTable size={16} className="btn-ico" />
                       <div className="btn-text">
@@ -1378,7 +1386,155 @@ export default function AssetManagerPage () {
         </div>
       </footer>
 
-      {/* Toast */}
+      {/* 4. 所在文件夹素材浏览器弹窗 (Folder Asset Explorer Modal) */}
+      <AnimatePresence>
+        {folderModalAnim && (
+          <div
+            className="pro-modal-backdrop"
+            onClick={() => setFolderModalAnim(null)}
+          >
+            <motion.div
+              className="folder-explorer-modal"
+              onClick={e => e.stopPropagation()}
+              initial={{ opacity: 0, scale: 0.96, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              transition={{ duration: 0.1, ease: 'easeOut' }}
+            >
+              <div className="folder-modal-header">
+                <div className="folder-modal-title-wrap">
+                  <IconFolderOpen size={18} style={{ color: 'var(--am-accent)' }} />
+                  <h3>所在文件夹素材浏览器</h3>
+                  <div className="folder-modal-path" title={folderModalAnim.rel}>
+                    {rootInfo?.name ? `${rootInfo.name}\\` : ''}{folderModalAnim.rel.replace(/\//g, '\\')}
+                  </div>
+                </div>
+                <div className="folder-modal-actions">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={async () => {
+                      const winRel = folderModalAnim.rel.replace(/\//g, '\\')
+                      const fullPath = rootInfo?.name ? `${rootInfo.name}\\${winRel}` : winRel
+                      const dirOnly = fullPath.substring(0, fullPath.lastIndexOf('\\'))
+                      const ok = await copyText(dirOnly)
+                      toast(ok ? `已复制所在系统目录！在文件管理器按 Ctrl+L 粘贴即达` : '复制失败')
+                    }}
+                    title="复制所在本地文件夹路径"
+                  >
+                    <IconTable size={13} style={{ marginRight: 4 }} /> 复制系统路径
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => setFolderModalAnim(null)}
+                    title="关闭 (Esc)"
+                  >
+                    <IconX size={15} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="folder-modal-body">
+                {/* 同目录下的动画素材网格 */}
+                <div className="folder-section">
+                  <div className="folder-section-title">
+                    <IconLayers size={13} />
+                    <span>同目录动画素材 ({folderAnims.length} 个)</span>
+                  </div>
+                  <div className="folder-anims-grid">
+                    {folderAnims.map(a => (
+                      <div
+                        key={a.id}
+                        className={`gallery-card ${a.id === selectedId ? 'selected' : ''}`}
+                        onClick={() => {
+                          setSelectedId(a.id)
+                          toast(`已在主工作台切换至：${a.name}`)
+                        }}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <div className="gallery-thumb-wrap" style={{ height: 84 }}>
+                          <Thumb entry={a.entry} size={72} className="gallery-thumb-img" thumbSpec={(a.type === 'strip' || a.type === 'sheet') ? GRID_THUMB_SPEC : null} />
+                        </div>
+                        <div className="gallery-info">
+                          <div className="gallery-title" title={a.name}>{a.name}</div>
+                          <div className="gallery-dir">{a.count || 1} 帧 · {a.type.toUpperCase()}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 同目录关联源文件列表 */}
+                {(folderModalAnim.asepriteEntry || folderModalAnim.htmlEntry || folderModalAnim.metaEntry) && (
+                  <div className="folder-section">
+                    <div className="folder-section-title">
+                      <IconSparkles size={13} />
+                      <span>工程与配套源文件</span>
+                    </div>
+                    <div className="folder-files-list">
+                      {folderModalAnim.asepriteEntry && (
+                        <div className="folder-file-item">
+                          <div className="folder-file-name" title={folderModalAnim.asepriteEntry.name}>
+                            <IconPalette size={13} style={{ verticalAlign: -2, marginRight: 6, color: '#bb9af7' }} />
+                            {folderModalAnim.asepriteEntry.name}
+                          </div>
+                          <button
+                            type="button"
+                            className="btn"
+                            style={{ fontSize: 11, padding: '2px 8px' }}
+                            onClick={async () => {
+                              const blob = await entryBlob(folderModalAnim.asepriteEntry)
+                              downloadBlob(blob, folderModalAnim.asepriteEntry.name)
+                              toast(`已导出工程源文件：${folderModalAnim.asepriteEntry.name}`)
+                            }}
+                          >
+                            下载
+                          </button>
+                        </div>
+                      )}
+
+                      {folderModalAnim.htmlEntry && (
+                        <div className="folder-file-item">
+                          <div className="folder-file-name" title={folderModalAnim.htmlEntry.name}>
+                            <IconExternalLink size={13} style={{ verticalAlign: -2, marginRight: 6, color: '#73daca' }} />
+                            {folderModalAnim.htmlEntry.name}
+                          </div>
+                          <button
+                            type="button"
+                            className="btn"
+                            style={{ fontSize: 11, padding: '2px 8px' }}
+                            onClick={async () => {
+                              const blob = await entryBlob(folderModalAnim.htmlEntry)
+                              const url = URL.createObjectURL(blob)
+                              window.open(url, '_blank')
+                            }}
+                          >
+                            预览
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="folder-modal-footer">
+                <span>当前文件夹：<strong>{folderModalAnim.dir || folderModalAnim.pack || '(根目录)'}</strong></span>
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={() => setFolderModalAnim(null)}
+                >
+                  完成并返回
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 5. Toast 提示 */}
       <AnimatePresence>
         {toastMsg && (
           <motion.div
