@@ -1,13 +1,26 @@
-// 缩略图极速生成器：并发3 + 内存LRU(300) + IndexedDB批量写（合并事务，减少频闪）
-// spec 支持两种：{x,y,w,h} 单格裁剪；{mode:'grid2nd'} 多行网格 → 取每行第2帧排成方块
+// 缩略图极速生成器：LIFO 视口优先队列 + 单例 Offscreen Canvas + 内存池(5000) + 请求去重 + IDB批量写
 import { entryBlob } from './scanner.js'
 import { dbGet, dbBulkPut, openDb } from './idb-store.js'
 
 const SIZE = 64
 const memCache = new Map()
 const queue = []
+const pendingRequests = new Map() // key -> Promise
 let running = 0
-const MAX_CONCURRENT = 3
+const MAX_CONCURRENT = 4
+
+// 单例离屏 Canvas：避免频繁 createElement 和销毁 2D 上下文
+let sharedCanvas = null
+let sharedCtx = null
+function getSharedCanvas () {
+  if (!sharedCanvas) {
+    sharedCanvas = document.createElement('canvas')
+    sharedCanvas.width = SIZE
+    sharedCanvas.height = SIZE
+    sharedCtx = sharedCanvas.getContext('2d', { willReadFrequently: true })
+  }
+  return { cv: sharedCanvas, ctx: sharedCtx }
+}
 
 const pendingWrites = new Map()
 let flushTimer = null
@@ -20,14 +33,12 @@ function queueStoreWrite (key, blob) {
     const pairs = [...pendingWrites.entries()]
     pendingWrites.clear()
     try { await dbBulkPut('thumb', pairs) } catch (e) { /* ignore */ }
-  }, 300)
+  }, 200)
 }
 
 function setMemCache (key, url) {
-  if (memCache.size >= 300) {
+  if (memCache.size >= 5000) {
     const firstKey = memCache.keys().next().value
-    const oldUrl = memCache.get(firstKey)
-    if (oldUrl) URL.revokeObjectURL(oldUrl)
     memCache.delete(firstKey)
   }
   memCache.set(key, url)
@@ -70,6 +81,8 @@ export async function prewarmThumbCache (entries, spec = null) {
 // 画缩略图：grid2nd = 多行网格取每行第2帧排成方块（适合 BDragon strip / 多行 sheet / SoggySocks 横条）
 function drawThumb (ctx, bmp, spec) {
   ctx.imageSmoothingEnabled = false
+  ctx.clearRect(0, 0, SIZE, SIZE)
+
   if (spec && spec.mode === 'grid2nd') {
     if (bmp.width % 64 === 0 && bmp.height % 64 === 0) {
       const cols = Math.round(bmp.width / 64)
@@ -116,18 +129,23 @@ function drawThumb (ctx, bmp, spec) {
 
 async function processQueue () {
   if (running >= MAX_CONCURRENT || queue.length === 0) return
-  const item = queue.shift()
+
+  // LIFO 优先级：优先解码最后进入队列的当前屏幕元素
+  const item = queue.pop()
   running++
+
   try {
     const file = await entryBlob(item.entry)
-    if (file.size > 25 * 1024 * 1024) { item.resolve(null); return }
+    if (file.size > 25 * 1024 * 1024) {
+      item.resolve(null)
+      pendingRequests.delete(item.key)
+      return
+    }
     const bmp = await createImageBitmap(file)
-    const cv = document.createElement('canvas')
-    cv.width = SIZE
-    cv.height = SIZE
-    const ctx = cv.getContext('2d')
+    const { cv, ctx } = getSharedCanvas()
     drawThumb(ctx, bmp, item.spec)
     bmp.close && bmp.close()
+
     const blob = await new Promise(res => cv.toBlob(res, 'image/webp', 0.8))
     if (blob) {
       const url = URL.createObjectURL(blob)
@@ -140,25 +158,47 @@ async function processQueue () {
   } catch (e) {
     item.resolve(null)
   } finally {
+    pendingRequests.delete(item.key)
     running--
-    setTimeout(processQueue, 0)
+    if (queue.length > 0) {
+      // 队列溢出保护：只保留最近 60 个待处理缩略图，废弃过时滑动积压
+      if (queue.length > 60) {
+        const discarded = queue.splice(0, queue.length - 60)
+        for (const d of discarded) {
+          d.resolve(null)
+          pendingRequests.delete(d.key)
+        }
+      }
+      setTimeout(processQueue, 0)
+    }
   }
 }
 
-export async function getThumbUrl (entry, spec) {
-  if (!entry) return null
+export function getThumbUrl (entry, spec) {
+  if (!entry) return Promise.resolve(null)
   const key = thumbKey(entry, spec)
-  if (memCache.has(key)) return memCache.get(key)
-  try {
-    const cached = await dbGet('thumb', key)
-    if (cached) {
-      const url = URL.createObjectURL(cached)
-      setMemCache(key, url)
-      return url
-    }
-  } catch (e) { /* ignore */ }
-  return new Promise((resolve, reject) => {
-    queue.push({ entry, key, spec, resolve, reject })
-    processQueue()
-  })
+  if (memCache.has(key)) return Promise.resolve(memCache.get(key))
+
+  if (pendingRequests.has(key)) {
+    return pendingRequests.get(key)
+  }
+
+  const p = (async () => {
+    try {
+      const cached = await dbGet('thumb', key)
+      if (cached) {
+        const url = URL.createObjectURL(cached)
+        setMemCache(key, url)
+        return url
+      }
+    } catch (e) { /* ignore */ }
+
+    return new Promise((resolve, reject) => {
+      queue.push({ entry, key, spec, resolve, reject })
+      processQueue()
+    })
+  })()
+
+  pendingRequests.set(key, p)
+  return p
 }

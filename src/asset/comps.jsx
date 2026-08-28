@@ -328,10 +328,14 @@ export const GalleryCard = memo(function GalleryCard ({
             title="勾选加入批量操作"
           />
         )}
-        {hover && previewGifUrl ? (
+        <Thumb
+          entry={anim.entry}
+          size={thumbSize}
+          className={`gallery-thumb-img ${hover && previewGifUrl ? 'thumb-hidden' : ''}`}
+          thumbSpec={(anim.type === 'strip' || anim.type === 'sheet') ? GRID_THUMB_SPEC : null}
+        />
+        {hover && previewGifUrl && (
           <img src={previewGifUrl} className="gallery-thumb-img" alt="" />
-        ) : (
-          <Thumb entry={anim.entry} size={thumbSize} className="gallery-thumb-img" thumbSpec={(anim.type === 'strip' || anim.type === 'sheet') ? GRID_THUMB_SPEC : null} />
         )}
 
         <div className="gallery-badges">
@@ -427,6 +431,8 @@ const FilmstripFrameCanvas = memo(function FilmstripFrameCanvas ({ data, frame }
 export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onOpenFolder }) {
   const canvasRef = useRef(null)
   const containerRef = useRef(null)
+  const sliderRef = useRef(null)
+  const counterRef = useRef(null)
 
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -499,6 +505,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
     setIdx(0)
     idxRef.current = 0
     setPlaying(true)
+    playingRef.current = true
     setDirection(1)
   }, [animId, selectedVariantKey])
 
@@ -601,6 +608,9 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
           if (mode === 'once') {
             if (nextIdx >= frameCount - 1) {
               setPlaying(false)
+              playingRef.current = false
+              setIdx(frameCount - 1)
+              return
             } else {
               nextIdx++
             }
@@ -621,8 +631,9 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
           }
 
           idxRef.current = nextIdx
-          setIdx(nextIdx)
           renderFrameToCanvas(nextIdx)
+          if (sliderRef.current) sliderRef.current.value = nextIdx
+          if (counterRef.current) counterRef.current.innerHTML = `<strong>${nextIdx + 1}</strong> / ${frameCount} 帧`
         }
       }
       reqId = requestAnimationFrame(animate)
@@ -633,7 +644,9 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
   }, [data, frameCount, renderFrameToCanvas])
 
   useEffect(() => {
-    renderFrameToCanvas(idx)
+    if (!playingRef.current) {
+      renderFrameToCanvas(idx)
+    }
   }, [idx, renderFrameToCanvas])
 
   const frameW = data && data.kind !== 'gif' && data.frames[0] ? (data.kind === 'sheet' ? data.frames[0].w : data.frames[0].width) : 0
@@ -656,10 +669,24 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
   const stepFrame = (step) => {
     if (frameCount <= 1) return
     setPlaying(false)
-    const next = (idx + step + frameCount) % frameCount
+    playingRef.current = false
+    const next = (idxRef.current + step + frameCount) % frameCount
     idxRef.current = next
     setIdx(next)
     renderFrameToCanvas(next)
+    if (sliderRef.current) sliderRef.current.value = next
+    if (counterRef.current) counterRef.current.innerHTML = `<strong>${next + 1}</strong> / ${frameCount} 帧`
+  }
+
+  const handleTogglePlay = () => {
+    const nextPlay = !playing
+    setPlaying(nextPlay)
+    playingRef.current = nextPlay
+    if (!nextPlay) {
+      setIdx(idxRef.current)
+      if (sliderRef.current) sliderRef.current.value = idxRef.current
+      if (counterRef.current) counterRef.current.innerHTML = `<strong>${idxRef.current + 1}</strong> / ${frameCount} 帧`
+    }
   }
 
   const handleFit = () => {
@@ -816,9 +843,12 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
           currentIdx={idx}
           onSelectFrame={step => {
             setPlaying(false)
+            playingRef.current = false
             idxRef.current = step
             setIdx(step)
             renderFrameToCanvas(step)
+            if (sliderRef.current) sliderRef.current.value = step
+            if (counterRef.current) counterRef.current.innerHTML = `<strong>${step + 1}</strong> / ${frameCount} 帧`
           }}
         />
       )}
@@ -838,7 +868,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
             <button
               type="button"
               className={`transport-btn play-btn ${playing ? 'playing' : ''}`}
-              onClick={() => setPlaying(!playing)}
+              onClick={handleTogglePlay}
               disabled={frameCount <= 1}
               title="播放 / 暂停 (Space)"
             >
@@ -892,21 +922,24 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
 
           <div className="transport-center">
             <input
+              ref={sliderRef}
               type="range"
               min={0}
               max={Math.max(frameCount - 1, 0)}
-              value={idx}
+              defaultValue={idx}
               disabled={frameCount <= 1}
               onChange={e => {
                 const next = +e.target.value
                 setPlaying(false)
+                playingRef.current = false
                 idxRef.current = next
                 setIdx(next)
                 renderFrameToCanvas(next)
+                if (counterRef.current) counterRef.current.innerHTML = `<strong>${next + 1}</strong> / ${frameCount} 帧`
               }}
               className="timeline-slider"
             />
-            <span className="frame-counter">
+            <span ref={counterRef} className="frame-counter">
               <strong>{idx + 1}</strong> / {frameCount} 帧
             </span>
           </div>

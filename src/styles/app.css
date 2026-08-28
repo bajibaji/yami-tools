@@ -1517,6 +1517,10 @@ body {
   image-rendering: pixelated;
 }
 
+.thumb-hidden {
+  display: none !important;
+}
+
 .gallery-badges {
   position: absolute;
   left: 4px;
