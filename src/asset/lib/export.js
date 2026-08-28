@@ -62,6 +62,21 @@ export async function copyText (text) {
   }
 }
 
+// 唤起本地操作系统 Windows explorer.exe 系统文件管理器（支持直接高亮文件或打开目录）
+export async function openInSystemExplorer (fullPath) {
+  if (!fullPath) return false
+  try {
+    const res = await fetch(`/api/open-in-explorer?path=${encodeURIComponent(fullPath)}`)
+    if (res.ok) {
+      const data = await res.json()
+      if (data.ok) return true
+    }
+  } catch (e) {
+    // 纯静态线上环境
+  }
+  return false
+}
+
 // 动画 → 导出条目（name + blob 提供器），命名模板默认 {anim}_{frame}.png
 export async function buildExportItems (anim, frameData, template = DEFAULT_TEMPLATE) {
   const items = []

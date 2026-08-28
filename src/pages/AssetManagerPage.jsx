@@ -21,6 +21,7 @@ import {
   exportAnimToGif,
   exportAnimsToZip,
   copyText,
+  openInSystemExplorer,
   sanitize
 } from '../asset/lib/export.js'
 import {
@@ -272,7 +273,6 @@ export default function AssetManagerPage () {
   // 弹窗状态
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [folderModalAnim, setFolderModalAnim] = useState(null)
-  const [lightboxAnim, setLightboxAnim] = useState(null)
   const [gifBusy, setGifBusy] = useState(false)
   const [gifProgress, setGifProgress] = useState(0)
 
@@ -499,6 +499,35 @@ export default function AssetManagerPage () {
     setDirFilter(dirPath)
     setQuery('')
   }
+
+  // ---------- 打开所在文件夹：优先唤起本地 Windows explorer.exe，降级弹窗素材浏览器 ----------
+  const handleOpenFolder = useCallback(async (anim) => {
+    const target = anim || selected
+    if (!target) return
+    const relPath = target.rel || target.dir || ''
+    const folderDir = target.dir || (relPath.includes('/') ? relPath.replace(/\/[^/]+$/, '') : '')
+
+    let fullPath = folderDir.replace(/\//g, '\\')
+    if (rootInfo?.name) {
+      if (rootInfo.name.includes(':') || rootInfo.name.startsWith('/') || rootInfo.name.startsWith('\\')) {
+        fullPath = `${rootInfo.name.replace(/[\\/]+$/, '')}\\${folderDir.replace(/\//g, '\\')}`
+      } else {
+        fullPath = `${rootInfo.name}\\${folderDir.replace(/\//g, '\\')}`
+      }
+    }
+
+    // 1. 尝试直接唤起本地 Node.js -> explorer.exe 进程
+    const opened = await openInSystemExplorer(fullPath)
+    if (opened) {
+      toast(`已在 Windows 资源管理器中打开文件夹：${fullPath}`)
+      return
+    }
+
+    // 2. 线上或纯静态环境：写入剪贴板并弹出「所在文件夹素材浏览器」弹窗
+    await copyText(fullPath)
+    setFolderModalAnim(target)
+    toast(`已复制系统路径并在弹窗中打开：${fullPath}`)
+  }, [selected, rootInfo, toast])
 
   // ---------- 打开所在文件夹：树定位 + 目录筛选 ----------
   const handleLocateFolder = (anim) => {
@@ -898,7 +927,7 @@ export default function AssetManagerPage () {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [filteredAnims, visibleAnims, selectedId, lightboxAnim, folderModalAnim, shortcutsOpen, viewLayout, cardSize])
+  }, [filteredAnims, visibleAnims, selectedId, folderModalAnim, shortcutsOpen, viewLayout, cardSize])
 
   // ---------- 导出与收藏（0ms 响应，不刷新目录，静默写入 IndexedDB） ----------
   const toggleFav = useCallback((targetId) => {
@@ -1357,7 +1386,7 @@ export default function AssetManagerPage () {
                         onSelect={setSelectedId}
                         onToggleFav={toggleFav}
                         onToggleMulti={toggleMulti}
-                        onDoubleClick={a => setLightboxAnim(a)}
+                        onDoubleClick={handleOpenFolder}
                       />
                     ))}
                   </div>
@@ -1476,13 +1505,13 @@ export default function AssetManagerPage () {
                     <button
                       type="button"
                       className="action-btn"
-                      onClick={() => setFolderModalAnim(selected)}
-                      title="打开所在文件夹弹窗浏览器，查看并浏览同目录下的所有关联素材与源文件"
+                      onClick={() => handleOpenFolder(selected)}
+                      title="直接在 Windows 资源管理器中定位打开该文件夹（纯静态模式下复制路径并弹出素材浏览器）"
                     >
                       <IconFolderOpen size={16} className="btn-ico" />
                       <div className="btn-text">
                         <strong>打开所在文件夹</strong>
-                        <small>弹窗浏览同目录素材</small>
+                        <small>唤起 Explorer / 弹窗</small>
                       </div>
                     </button>
 
@@ -1710,17 +1739,25 @@ export default function AssetManagerPage () {
                 <div className="folder-modal-actions">
                   <button
                     type="button"
+                    className="btn primary"
+                    onClick={() => handleOpenFolder(folderModalAnim)}
+                    title="在电脑本地 Windows 资源管理器中打开此文件夹"
+                  >
+                    <IconFolderOpen size={13} style={{ marginRight: 4 }} /> 打开系统文件夹
+                  </button>
+                  <button
+                    type="button"
                     className="btn"
                     onClick={async () => {
                       const winRel = folderModalAnim.rel.replace(/\//g, '\\')
                       const fullPath = rootInfo?.name ? `${rootInfo.name}\\${winRel}` : winRel
                       const dirOnly = fullPath.substring(0, fullPath.lastIndexOf('\\'))
                       const ok = await copyText(dirOnly)
-                      toast(ok ? `已复制所在系统目录！在文件管理器按 Ctrl+L 粘贴即达` : '复制失败')
+                      toast(ok ? `已复制系统路径！在文件管理器地址栏按 Ctrl+L 粘贴即达` : '复制失败')
                     }}
                     title="复制所在本地文件夹路径"
                   >
-                    <IconTable size={13} style={{ marginRight: 4 }} /> 复制系统路径
+                    <IconTable size={13} style={{ marginRight: 4 }} /> 复制路径
                   </button>
                   <button
                     type="button"
@@ -1859,77 +1896,7 @@ export default function AssetManagerPage () {
         )}
       </AnimatePresence>
 
-      {/* 6. 画廊全屏大图/动画灯箱预览 (Lightbox Modal) */}
-      <AnimatePresence>
-        {lightboxAnim && (
-          <div
-            className="pro-modal-backdrop"
-            onClick={() => setLightboxAnim(null)}
-          >
-            <motion.div
-              className="folder-explorer-modal"
-              style={{ maxWidth: 640 }}
-              onClick={e => e.stopPropagation()}
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              transition={{ duration: 0.12 }}
-            >
-              <div className="folder-modal-header">
-                <div className="folder-modal-title-wrap">
-                  <IconSparkles size={16} style={{ color: 'var(--am-accent)' }} />
-                  <h3>{lightboxAnim.name}</h3>
-                  <div className="folder-modal-path">{lightboxAnim.type.toUpperCase()} · {lightboxAnim.count || 1} 帧</div>
-                </div>
-                <div className="folder-modal-actions">
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={() => toggleFav(lightboxAnim.id)}
-                    title={favAnims.has(lightboxAnim.id) ? '取消收藏' : '加入收藏'}
-                  >
-                    <IconStar size={15} filled={favAnims.has(lightboxAnim.id)} style={{ color: favAnims.has(lightboxAnim.id) ? '#ffd166' : 'inherit' }} />
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={() => setLightboxAnim(null)}
-                    title="关闭 (Esc)"
-                  >
-                    <IconX size={15} />
-                  </button>
-                </div>
-              </div>
 
-              <div className="folder-modal-body" style={{ alignItems: 'center', justifyContent: 'center', minHeight: 320, padding: 24 }}>
-                <div style={{ width: '100%', height: 280, display: 'grid', placeItems: 'center', background: '#05070c', borderRadius: 8, border: '1px solid var(--am-border)' }}>
-                  <PreviewPane
-                    anim={lightboxAnim}
-                    cfg={sheetCfg[lightboxAnim.id]}
-                    onToast={toast}
-                  />
-                </div>
-              </div>
-
-              <div className="folder-modal-footer">
-                <span style={{ fontSize: 11, color: 'var(--am-text-faint)' }}>提示：按键盘 ← / → 方向键可切换上一个/下一个动画</span>
-                <button
-                  type="button"
-                  className="btn primary"
-                  onClick={() => {
-                    setSelectedId(lightboxAnim.id)
-                    setLightboxAnim(null)
-                    setViewLayout('split')
-                    toast(`已在工作台载入：${lightboxAnim.name}`)
-                  }}
-                >
-                  在工作台中打开
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* 7. Toast 提示 */}
       <AnimatePresence>
