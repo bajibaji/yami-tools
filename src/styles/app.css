@@ -2954,8 +2954,8 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--am-bg-input);
-  border: 1px solid var(--am-border);
+  background: #1a1f30;
+  border: 1px solid #282f45;
   padding: 3px 8px;
   border-radius: 6px;
 }
@@ -2963,41 +2963,44 @@ body {
 .raw-frame-selector select {
   background: transparent;
   border: none;
-  color: var(--am-text);
+  color: #c0caf5;
   font-size: 11px;
+  font-weight: 600;
   outline: none;
   cursor: pointer;
 }
 
 .raw-frame-selector select option {
-  background: var(--am-bg-panel);
-  color: var(--am-text);
+  background: #141724;
+  color: #c0caf5;
 }
 
 .raw-modal-body {
   flex: 1;
   min-height: 0;
   position: relative;
-  overflow: auto;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 0;
+  user-select: none;
 }
 
 .raw-image-scroll-pane {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 100%;
-  min-height: 100%;
+  will-change: transform;
+  transition: transform 0.05s ease-out;
 }
 
 .raw-full-image {
   max-width: none;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  transition: transform 0.12s ease-out;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  image-rendering: pixelated;
+  pointer-events: none;
 }
 
 .raw-modal-loading {
@@ -3006,9 +3009,9 @@ body {
 }
 
 .raw-modal-footer {
-  padding: 10px 18px;
-  background: rgba(0, 0, 0, 0.3);
-  border-top: 1px solid var(--am-border);
+  padding: 12px 20px;
+  background: #1a1f30;
+  border-top: 1px solid #282f45;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3024,26 +3027,84 @@ body {
 }
 
 .footer-file-info code {
-  color: var(--am-accent);
+  color: #7aa2f7;
   background: rgba(122, 162, 247, 0.1);
-  padding: 1px 6px;
+  border: 1px solid rgba(122, 162, 247, 0.25);
+  padding: 2px 8px;
   border-radius: 4px;
+  font-family: var(--am-mono);
+  font-size: 11px;
+}
+
+.raw-tip-text {
+  font-size: 11px;
+  color: #565f89;
+  margin-left: 6px;
 }
 
 .footer-buttons {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+}
+
+.raw-download-btn {
+  background: linear-gradient(135deg, #262e44 0%, #1e2436 100%) !important;
+  border: 1px solid #3d4a6e !important;
+  color: #c0caf5 !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  padding: 6px 14px !important;
+  border-radius: 6px !important;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.raw-download-btn:hover {
+  background: linear-gradient(135deg, #323d5a 0%, #262e44 100%) !important;
+  border-color: #7aa2f7 !important;
+  color: #fff !important;
+  box-shadow: 0 2px 10px rgba(122, 162, 247, 0.25);
+}
+
+.raw-done-btn {
+  background: linear-gradient(135deg, #7aa2f7 0%, #5a85e5 100%) !important;
+  border: 1px solid #7aa2f7 !important;
+  color: #fff !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  padding: 6px 20px !important;
+  border-radius: 6px !important;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 2px 10px rgba(122, 162, 247, 0.35);
+}
+
+.raw-done-btn:hover {
+  background: linear-gradient(135deg, #89b4fa 0%, #6892ee 100%) !important;
+  box-shadow: 0 4px 14px rgba(122, 162, 247, 0.5);
+  transform: translateY(-1px);
 }
 
 .tool-toggle-btn.raw-view-btn {
-  background: rgba(122, 162, 247, 0.1);
-  border-color: rgba(122, 162, 247, 0.3);
-  color: var(--am-accent);
+  background: rgba(122, 162, 247, 0.12) !important;
+  border-color: rgba(122, 162, 247, 0.35) !important;
+  color: #7aa2f7 !important;
+  font-weight: 600;
 }
 
-.tool-toggle-btn.raw-view-btn:hover {
-  background: rgba(122, 162, 247, 0.2);
-  border-color: var(--am-accent);
-  box-shadow: 0 0 10px var(--am-accent-glow);
+.tool-toggle-btn.raw-view-btn:hover:not(:disabled) {
+  background: rgba(122, 162, 247, 0.25) !important;
+  border-color: #7aa2f7 !important;
+  color: #fff !important;
+  box-shadow: 0 0 12px rgba(122, 162, 247, 0.4);
+}
+
+.tool-toggle-btn.raw-view-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }

@@ -437,7 +437,12 @@ export const RawImageModal = memo(function RawImageModal ({ anim, onClose }) {
   const [selectedFileIdx, setSelectedFileIdx] = useState(0)
   const [rawDim, setRawDim] = useState(null)
   const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [isDragging, setIsDragging] = useState(false)
   const [bgStyle, setBgStyle] = useState('checker-dark')
+
+  const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 })
+  const stageRef = useRef(null)
 
   const files = anim?.files || (anim?.entry ? [anim.entry] : [])
   const currentFile = files[selectedFileIdx] || anim?.sheetEntry || anim?.entry
@@ -475,6 +480,58 @@ export const RawImageModal = memo(function RawImageModal ({ anim, onClose }) {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [onClose])
 
+  // 鼠标滚轮缩放 (Wheel Zoom)
+  useEffect(() => {
+    const el = stageRef.current
+    if (!el) return
+    const onWheel = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const delta = e.deltaY > 0 ? -1 : 1
+      setZoom(prev => {
+        let step = 0.25
+        if (prev < 1) step = 0.1
+        else if (prev >= 4) step = 1
+        else step = 0.5
+        const next = Math.max(0.1, Math.min(32, +(prev + delta * step).toFixed(2)))
+        return next
+      })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  // 鼠标按住拖拽平移 (Drag Pan)
+  const handleMouseDown = (e) => {
+    if (e.button !== 0) return
+    setIsDragging(true)
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: pan.x,
+      panY: pan.y
+    }
+  }
+
+  const handleMouseMove = (e) => {
+    if (!isDragging) return
+    const dx = e.clientX - dragStartRef.current.x
+    const dy = e.clientY - dragStartRef.current.y
+    setPan({
+      x: dragStartRef.current.panX + dx,
+      y: dragStartRef.current.panY + dy
+    })
+  }
+
+  const handleMouseUp = () => {
+    setIsDragging(false)
+  }
+
+  const resetView = () => {
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+  }
+
   const handleDownload = () => {
     if (!blobFile || !currentFile) return
     const a = document.createElement('a')
@@ -502,11 +559,14 @@ export const RawImageModal = memo(function RawImageModal ({ anim, onClose }) {
 
           <div className="raw-modal-tools">
             {files.length > 1 && (
-              <div className="raw-frame-selector">
+              <div className="raw-frame-selector" title="切换查看该序列的不同帧原图">
                 <span className="dim-info">帧</span>
                 <select
                   value={selectedFileIdx}
-                  onChange={e => setSelectedFileIdx(+e.target.value)}
+                  onChange={e => {
+                    setSelectedFileIdx(+e.target.value)
+                    resetView()
+                  }}
                 >
                   {files.map((f, i) => (
                     <option key={i} value={i}>
@@ -545,29 +605,39 @@ export const RawImageModal = memo(function RawImageModal ({ anim, onClose }) {
             </div>
 
             <div className="zoom-controls">
-              <button type="button" className="zoom-btn" onClick={() => setZoom(z => Math.max(0.25, z <= 1 ? z - 0.25 : z - 1))}>−</button>
+              <button type="button" className="zoom-btn" onClick={() => setZoom(z => Math.max(0.1, +(z <= 1 ? z - 0.25 : z - 1).toFixed(2)))}>−</button>
               <span className="zoom-value">{Math.round(zoom * 100)}%</span>
-              <button type="button" className="zoom-btn" onClick={() => setZoom(z => Math.min(16, z < 1 ? z + 0.25 : z + 1))}>＋</button>
-              <button type="button" className="zoom-fit-btn" onClick={() => setZoom(1)} title="恢复 100% 原始比例">1:1</button>
+              <button type="button" className="zoom-btn" onClick={() => setZoom(z => Math.min(32, +(z < 1 ? z + 0.25 : z + 1).toFixed(2)))}>＋</button>
+              <button type="button" className="zoom-fit-btn" onClick={resetView} title="恢复 100% 原始比例并居中">1:1</button>
             </div>
 
-            <button type="button" className="modal-close-btn" onClick={onClose} title="关闭 (Esc)">
-              <IconX size={18} />
+            <button type="button" className="folder-close-btn" onClick={onClose} title="关闭 (Esc)">
+              <IconX size={15} />
             </button>
           </div>
         </div>
 
-        <div className={`raw-modal-body stage-${bgStyle}`}>
+        <div
+          ref={stageRef}
+          className={`raw-modal-body stage-${bgStyle}`}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+        >
           {blobUrl ? (
-            <div className="raw-image-scroll-pane">
+            <div
+              className="raw-image-scroll-pane"
+              style={{
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                transformOrigin: 'center center',
+                cursor: isDragging ? 'grabbing' : 'grab'
+              }}
+            >
               <img
                 src={blobUrl}
                 alt=""
-                style={{
-                  transform: `scale(${zoom})`,
-                  transformOrigin: 'center center',
-                  imageRendering: 'pixelated'
-                }}
+                draggable={false}
                 className="raw-full-image"
               />
             </div>
@@ -580,12 +650,13 @@ export const RawImageModal = memo(function RawImageModal ({ anim, onClose }) {
           <div className="footer-file-info">
             <span>文件：<code>{currentFile?.name}</code></span>
             {currentFile?.size ? <span>大小：{(currentFile.size / 1024).toFixed(1)} KB</span> : null}
+            <span className="raw-tip-text">提示：支持鼠标滚轮缩放、按住鼠标左键任意拖拽平移</span>
           </div>
           <div className="footer-buttons">
-            <button type="button" className="btn secondary" onClick={handleDownload} title="下载保存原始完整图片文件">
-              <IconDownload size={14} style={{ marginRight: 6 }} /> 下载原始图片
+            <button type="button" className="raw-download-btn" onClick={handleDownload} title="下载保存原始完整图片文件">
+              <IconDownload size={14} style={{ marginRight: 4 }} /> 下载原始图片
             </button>
-            <button type="button" className="btn primary" onClick={onClose}>
+            <button type="button" className="raw-done-btn" onClick={onClose}>
               完成并返回
             </button>
           </div>
