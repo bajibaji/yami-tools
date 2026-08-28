@@ -207,6 +207,8 @@ export default function AssetManagerPage () {
 
   // 基础状态
   const [rootInfo, setRootInfo] = useState(null)
+  const rootInfoRef = useRef(null)
+  rootInfoRef.current = rootInfo // 镜像 ref：供 useCallback 读取最新值而不随引用重建（否则挂载 effect 会循环刷新）
   const [dirHandle, setDirHandle] = useState(null)
   const dirHandleRef = useRef(null)
   dirHandleRef.current = dirHandle
@@ -364,8 +366,8 @@ export default function AssetManagerPage () {
       }
 
       if (myReq !== loadReqRef.current) return
-      if (fileRecords.length > 0 && (dirHandle || rootInfo?.type === 'fallback')) {
-        const isFallback = rootInfo?.type === 'fallback'
+      const isFallback = rootInfoRef.current?.type === 'fallback'
+      if (fileRecords.length > 0 && (dirHandle || isFallback)) {
         const images = fileRecords.filter(f => f.isImg).map(m => {
           const item = (isFallback && !m.file) ? { ...m, file: fallbackFilesMapRef.current.get(m.rel) } : m
           return cachedEntry(item, dirHandle)
@@ -399,7 +401,7 @@ export default function AssetManagerPage () {
     } finally {
       if (myReq === loadReqRef.current) setLoadingDir(false)
     }
-  }, [dirHandle, rootInfo]) // 注意：buildSearchIndex 在下方声明，只能在回调运行时引用（闭包绑定已初始化）
+  }, [dirHandle]) // 注意：buildSearchIndex 在下方声明，只能在回调运行时引用（闭包绑定已初始化）；降级分支经 rootInfoRef 读取，不入依赖防循环刷新
 
   // 搜索防抖 250ms
   useEffect(() => {
@@ -517,7 +519,7 @@ export default function AssetManagerPage () {
     let root = null
     try { root = localStorage.getItem('yami_root_abs') } catch (e) { /* ignore */ }
     if (!root) {
-      const typed = window.prompt('为方便复制绝对路径，请粘贴素材库根目录（只存本机浏览器，仅用一次）\r\n例如：D:\\YAHZJ\\技能素材', rootInfo?.name || '')
+      const typed = window.prompt('为方便复制绝对路径，请粘贴素材库根目录（只存本机浏览器，仅用一次）\r\n例如：D:\\YAHZJ\\技能素材', rootInfoRef.current?.name || '')
       if (typed && typed.trim()) {
         root = typed.trim()
         try { localStorage.setItem('yami_root_abs', root) } catch (e) { /* ignore */ }
@@ -530,7 +532,7 @@ export default function AssetManagerPage () {
     }
     await copyText(target.rel)
     return ''
-  }, [rootInfo])
+  }, []) // rootInfo 经 rootInfoRef 读取，不入依赖防循环刷新
 
   // ---------- 打开所在文件夹：弹出同目录素材浏览器弹窗 + 复制绝对路径 ----------
   const handleOpenFolder = useCallback(async (anim) => {
@@ -541,11 +543,12 @@ export default function AssetManagerPage () {
     const folderDir = target.dir || (relPath.includes('/') ? relPath.replace(/\/[^/]+$/, '') : '')
 
     let fullPath = folderDir.replace(/\//g, '\\')
-    if (rootInfo?.name) {
-      if (rootInfo.name.includes(':') || rootInfo.name.startsWith('/') || rootInfo.name.startsWith('\\')) {
-        fullPath = `${rootInfo.name.replace(/[\\/]+$/, '')}\\${folderDir.replace(/\//g, '\\')}`
+    const ri = rootInfoRef.current
+    if (ri?.name) {
+      if (ri.name.includes(':') || ri.name.startsWith('/') || ri.name.startsWith('\\')) {
+        fullPath = `${ri.name.replace(/[\\/]+$/, '')}\\${folderDir.replace(/\//g, '\\')}`
       } else {
-        fullPath = `${rootInfo.name}\\${folderDir.replace(/\//g, '\\')}`
+        fullPath = `${ri.name}\\${folderDir.replace(/\//g, '\\')}`
       }
     }
 
@@ -553,7 +556,7 @@ export default function AssetManagerPage () {
     setFolderModalAnim(target)
     await handleCopyAbs(target)
     toast(`已打开同目录素材浏览器：${fullPath}`)
-  }, [selected, rootInfo, toast, handleCopyAbs])
+  }, [selected, toast, handleCopyAbs])
 
   // ---------- 打开所在文件夹：树定位 + 目录筛选 ----------
   const handleLocateFolder = (anim) => {
@@ -587,8 +590,8 @@ export default function AssetManagerPage () {
   // ---------- 包预聚类热备：后台把每个包的动画列表先算好，切换包 0ms ----------
   const warmupPacks = useCallback(async (packList) => {
     const dh = dirHandleRef.current
-    if ((!dh && rootInfo?.type !== 'fallback') || !packList || !packList.length) return
-    const isFallback = rootInfo?.type === 'fallback'
+    const isFallback = rootInfoRef.current?.type === 'fallback'
+    if ((!dh && !isFallback) || !packList || !packList.length) return
     for (const p of packList.slice(0, 8)) {
       await new Promise(r => setTimeout(r, 0))
       if (animsCacheRef.current.has('pack:' + p.name)) continue
@@ -607,7 +610,7 @@ export default function AssetManagerPage () {
         console.warn('[AssetManager] 预热包聚类异常:', e)
       }
     }
-  }, [rootInfo])
+  }, []) // rootInfo/dirHandle 经 ref 读取，不入依赖防循环刷新
 
   // ---------- 切换到「我的收藏夹」（同步直读，0ms 瞬切无任何卡顿） ----------
   const handleSelectFavorites = () => {
