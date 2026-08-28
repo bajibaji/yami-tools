@@ -1,11 +1,12 @@
 # YA的YAMI妙妙小工具
 
-纯静态 Web 工具合集，所有游戏工程文件都在**浏览器本地**读取和处理，不上传任何数据。专为 Open Yami RPG Editor（Yami RPG Maker）工程设计。
+**React + Vite** Web 工具合集，通过 GitHub Actions 自动部署到 **GitHub Pages**。所有游戏工程文件都在**浏览器本地**读取和处理，不上传任何数据。专为 Open Yami RPG Editor（Yami RPG Maker）工程设计。
 
 工具列表：
 
 | 工具 | 一句话说明 |
 |---|---|
+| **素材管理器** (beta) | 本地像素素材库：单帧连播 / spritesheet / GIF 预览，搜索定位与快速导出 |
 | **存档台** | 查看/编辑游戏存档（Save 目录），GUID 自动翻译成中文与图片 |
 | **角色编辑器** | 可视化编排角色掉落表、掉落事件与人物属性 |
 | **地图编辑器** | 10×10 地图格、通行关系、等级和刷怪池的 Excel/JSON 编辑 |
@@ -15,18 +16,55 @@
 
 ---
 
+## 技术栈与迁移说明
+
+- **前端**：Vite 5 + React 18 + React Router（Hash 路由），零后端、零上传。
+- **GitHub Pages 部署**：`.github/workflows/deploy.yml` 在 push 到 `main` 时自动 `vite build`（base 为 `/yami-tools/`）并发布 `dist/`。
+- **旧 7 个工具**：原本的原生 HTML/JS 工具已整体移入 `public/tools/`，构建时由 Vite 原样复制进 `dist/tools/`，功能零改动；后续再逐个移植为 React 组件。
+- **素材管理器（新，React）**：文件系统授权（File System Access API，记住 D:\YAHZJ\技能素材 授权句柄）→ 全量扫描 → 按「目录+文件名前缀」自动聚类动画组 → 预览/搜索/导出；不支持的浏览器降级 webkitdirectory 临时读取。
+
+---
+
 ## 快速开始（第一次用，3 步）
 
-**① 打开工具**：两种方式任选
+**① 打开工具**（任选）
 
 - 线上版：GitHub Pages <https://bajibaji.github.io/yami-tools/>（推荐，无需安装）
-- 本地版：仓库根目录执行 `python -m http.server 4173`，浏览器打开 <http://127.0.0.1:4173/>
+- 本地开发：`npm install && npm run dev`，浏览器打开 <http://localhost:5173/yami-tools/>
+- 本地预览构建产物：`npm run build && npm run preview`
 
 **② 用 Chrome / Edge 打开**（或 Yami 编辑器内置 Chromium）。这些浏览器支持「File System Access API」，可以直接读写工程目录；其他浏览器会自动降级为只读导入模式（能看、能下载修改副本，不能写回）。
 
 **③ 选择游戏工程**：点「选择工程」，选中游戏工程的**根目录**（包含 `Assets`、`Data`、`Save` 的那个文件夹，例如 `D:\new-game`）。
 
-> **工程位置是五个工具共用的**：任何工具选择过的工程都会被记住（浏览器本地保存），其他工具打开时自动加载上次工程，点「加载上次工程」重新授权即可，不需要每个工具都选一遍。
+> **工程位置是多个工具共用的**：任何工具选择过的工程都会被记住（浏览器本地保存），其他工具打开时自动加载上次工程，点「加载上次工程」重新授权即可，不需要每个工具都选一遍。
+
+---
+
+## 构建与部署（开发用）
+
+```bash
+npm install      # 安装依赖
+npm run dev      # 本地开发（http://localhost:5173/yami-tools/）
+npm run build    # 构建到 dist/
+npm run preview  # 本地预览构建产物
+```
+
+部署是自动的：push 到 `main` 分支即触发 `.github/workflows/deploy.yml` 构建并发布 Pages。
+**首次需手动配置一次**：仓库 Settings → Pages → Source 选择「GitHub Actions」。
+
+---
+
+## 素材管理器（v0.1.0 · beta）
+
+面向本地像素素材库（如 `D:\YAHZJ\技能素材`，约 10 万张 PNG）：
+
+- **选择素材库**：一次授权目录，IndexedDB 记住句柄，下次自动重连（浏览器偶尔要求重新授权）。
+- **动画自动聚类**：按「目录 + 文件名前缀数字」识别单帧序列（如 `frame0000.png`、`Effect (1)1.png`）；`spritesheet.png + spritesheet.txt` 直接读取元数据；`*_sheet.png` 走 alpha 间隙自动切分或手动列/行/帧尺寸；GIF 原生播放。
+- **预览**：canvas 像素风放大、fps/缩放/循环可调、左右拖动帧条；信息面板显示相对路径与帧数。
+- **定位**：显示相对路径 + 一键复制（浏览器安全限制，无法读取绝对路径，也不能打开资源管理器——这是纯网页方案的硬边界）。
+- **导出**：导出全部帧（逐一下载）或选目标文件夹写回；左侧素材可拖到导出区直接下载。
+- 已知限制：P0 不含 .aseprite 源文件预览；浏览器无法做「拖拽文件进资源管理器」与「定位到资源管理器显示」。
 
 ---
 
@@ -147,7 +185,7 @@
 - 回归：保存当前摘要为本机基线，后续报告自动显示差值；
 - 安全：报告全程在浏览器本地解析，不上传、不运行游戏、不读写工程。
 
-Spector.js 使用上游原版扩展（MIT），本仓库不维护自研采集插件。详细采集步骤见 `tools/perf-lab/README.md`。
+Spector.js 使用上游原版扩展（MIT），本仓库不维护自研采集插件。详细采集步骤见 `public/tools/perf-lab/README.md`。
 
 ---
 
