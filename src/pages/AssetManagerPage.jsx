@@ -911,7 +911,7 @@ export default function AssetManagerPage () {
             <div className="explorer-group">
               <div className="group-label">
                 <span>卖家素材包 ({packs.length})</span>
-                <span className="sub-hint">点击包名可折叠/展开</span>
+                <span className="sub-hint">点击 ▸ 展开目录</span>
               </div>
 
               {packs.map(p => {
@@ -1014,16 +1014,18 @@ export default function AssetManagerPage () {
             <div className="catalog-content-area" ref={catalogScrollRef} onScroll={handleCatalogScroll}>
               {phase === 'idle' && (
                 <div className="pro-empty-panel">
-                  <div className="empty-logo">🖼</div>
+                  <div className="empty-logo">📂</div>
                   <h3>尚未选择素材库</h3>
-                  <p>点击上方「选择素材库」按钮授权本地文件夹（如 <code>D:\YAHZJ\技能素材</code>，支持 11万+ 文件秒级载入）</p>
-                  <button type="button" className="btn primary" onClick={pickLibrary}>立即选择素材库</button>
+                  <p>点击上方或下方按钮授权本地素材文件夹（如 <code>D:\YAHZJ\技能素材</code>，支持 11万+ 文件秒级流式载入）</p>
+                  <button type="button" className="btn primary" onClick={pickLibrary}>
+                    📂 立即选择素材库文件夹
+                  </button>
                 </div>
               )}
 
               {phase === 'scanning' && !packs.length && (
                 <div className="pro-empty-panel">
-                  <div className="pulse-icon">⏳</div>
+                  <div className="pulse-icon spin-icon">🔄</div>
                   <h3>正在流式建立 B-Tree 索引…</h3>
                   <p>{scanInfo || '正在极速索引十万级文件，内存安全无溢出…'}</p>
                 </div>
