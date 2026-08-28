@@ -58,7 +58,11 @@ import {
   IconImage,
   IconChevronRight,
   IconChevronDown,
-  IconActivity
+  IconActivity,
+  IconArrowLeft,
+  IconX,
+  IconLayoutGrid,
+  IconLayoutColumns
 } from '../asset/icons.jsx'
 
 const TYPE_ICONS = {
