@@ -685,9 +685,9 @@ export default function AssetManagerPage () {
   }, [filteredAnims, selectedId])
 
   // ---------- 导出与收藏（0ms 响应，不刷新目录，静默写入 IndexedDB） ----------
-  const toggleFav = useCallback(async (targetId) => {
-    const id = targetId || selected?.id
-    if (!id) return
+  const toggleFav = useCallback((targetId) => {
+    const id = (typeof targetId === 'string' ? targetId : null) || selected?.id
+    if (!id || typeof id !== 'string') return
     const anim = activeAnims.find(a => a.id === id) || (selected?.id === id ? selected : null)
 
     setFavAnims(prev => {
@@ -718,9 +718,9 @@ export default function AssetManagerPage () {
           }
           dbPut('favorites', `anim:${id}`, record).catch(() => {})
         } else {
-          dbPut('favorites', `anim:${id}`, { id, name: id.split('|').pop() }).catch(() => {})
+          dbPut('favorites', `anim:${id}`, { id, name: String(id).split('|').pop() }).catch(() => {})
         }
-        toast('已加入收藏 ⭐')
+        toast('已加入收藏')
       }
       return next
     })
