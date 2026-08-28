@@ -462,7 +462,47 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
     }
   }
 
-  return anims
+  // 5. 全局特效归一化终极合并（跨 Large / Small 目录，跨 PNG / Spritesheet 目录，彻底合并尺寸变体）
+  const finalAnims = []
+  const globalEffectMap = new Map()
+
+  for (const anim of anims) {
+    const parentDir = anim.dir ? anim.dir.replace(/\/(png|pngs|frames|spritesheets?|sprite[_\-\s]*sheets?|sheets?)$/i, '') : ''
+    const normKey = normalizeEffectKey(anim.name) || normalizeEffectKey(stripExt(anim.entry?.name || '')) || anim.name
+    const globalKey = `${anim.pack}|${parentDir}|${normKey}`
+
+    if (!globalEffectMap.has(globalKey)) {
+      globalEffectMap.set(globalKey, anim)
+      finalAnims.push(anim)
+    } else {
+      const existing = globalEffectMap.get(globalKey)
+      // 优先保留 sequence（连续单帧序列），优先保留 large（高清大尺寸）
+      const isAnimBetter = (anim.type === 'sequence' && existing.type !== 'sequence') ||
+        (/large|_2x|_hd/i.test(anim.name) && !/large|_2x|_hd/i.test(existing.name)) ||
+        (anim.count > existing.count)
+
+      if (isAnimBetter) {
+        anim.sheetEntry = anim.sheetEntry || existing.sheetEntry || (existing.type === 'sheet' ? existing.entry : null)
+        anim.sheetMetaEntry = anim.sheetMetaEntry || existing.sheetMetaEntry || existing.metaEntry
+        const idx = finalAnims.indexOf(existing)
+        if (idx !== -1) finalAnims[idx] = anim
+        globalEffectMap.set(globalKey, anim)
+      } else {
+        existing.sheetEntry = existing.sheetEntry || anim.sheetEntry || (anim.type === 'sheet' ? anim.entry : null)
+        existing.sheetMetaEntry = existing.sheetMetaEntry || anim.sheetMetaEntry || anim.metaEntry
+      }
+    }
+  }
+
+  return finalAnims
+}
+export function normalizeEffectKey (name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[_\-\s]*(large|small|medium|big|huge|tiny|mini|xl|hd|2x|1x|\d{2,4}x\d{2,4})[_\-\s]*/gi, '_')
+    .replace(/^[_\-\s]+|[_\-\s]+$/g, '')
+    .replace(/_+/g, '_')
+    .trim()
 }
 
 // 异步兼容封装
