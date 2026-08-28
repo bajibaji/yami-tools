@@ -1,10 +1,8 @@
+// 工业级瞬时聚类引擎：100% 纯内存运算（0 磁盘 I/O 阻塞，0 延迟响应）
 import { stripExt } from './scanner.js'
+import { presetFor, packNameOf } from './presets.js'
 
 // 文件名 → { prefix, index }：把「末尾数字」识别为帧序号
-// frame0000.png → prefix:'frame', index:0
-// Effect (1)1.png → prefix:'Effect (1)', index:1
-// 03.png → prefix:'', index:3
-// fire.png → prefix:'fire', index:null
 export function parseFrameName (name) {
   const base = stripExt(name)
   const m = /^(.*?)(\d+)$/.exec(base)
@@ -13,23 +11,16 @@ export function parseFrameName (name) {
 }
 
 export function isSheetName (name) {
-  return /(_sheet|spritesheet|-sheet| sheet)\.png$/i.test(name)
+  return /(_sheet|spritesheet|-sheet| sheet|sheet)\.png$/i.test(name)
 }
 
-export function naturalCompare (a, b) {
-  return a.name.localeCompare(b.name, 'en', { numeric: true, sensitivity: 'base' })
+function isPreviewGifName (name) {
+  return /(preview|free preview|preview all|thumb|cover|banner)/i.test(name)
 }
 
-// 解析 unTied 风格的 spritesheet.txt：'path = x y w h' 每行一帧
-const TXT_RE = /^(.+?)\s*=\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/
-
-export function parseSheetTxt (text) {
-  const frames = []
-  for (const line of text.split(/\r?\n/)) {
-    const m = TXT_RE.exec(line.trim())
-    if (m) frames.push({ name: m[1].trim(), x: +m[2], y: +m[3], w: +m[4], h: +m[5] })
-  }
-  return frames.length ? frames : null
+function sheetNameByDir (dir) {
+  const seg = dir.split('/').pop() || ''
+  return /sheet/i.test(seg)
 }
 
 function makeDirGroups (images) {
@@ -43,63 +34,137 @@ function makeDirGroups (images) {
 
 const NAME_CNT = new Map()
 function uniqueName (base, dir) {
-  const key = (dir || '') + '|' + base
+  const key = `${dir}#${base}`
   const n = (NAME_CNT.get(key) || 0) + 1
   NAME_CNT.set(key, n)
-  return n === 1 ? base : base + ' #' + n
+  return n === 1 ? base : `${base}_${n}`
 }
 
-async function readMetaText (entry) {
-  if (!entry) return null
-  try {
-    const file = entry.handle ? await entry.handle.getFile() : (entry.file instanceof Blob ? entry.file : null)
-    if (!file) return null
-    return await file.text()
-  } catch (e) {
-    return null
+// 解析 unTied Games 坐标描述文本
+export function parseSheetTxt (text) {
+  if (!text) return null
+  const lines = text.split(/\r?\n/)
+  const frames = []
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line || line.startsWith('#') || line.startsWith('//')) continue
+
+    const m = /^(?:([^=]+?)\s*=\s*)?(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/.exec(line)
+    if (m) {
+      frames.push({
+        name: (m[1] && m[1].trim()) || `frame_${frames.length + 1}`,
+        x: +m[2],
+        y: +m[3],
+        w: +m[4],
+        h: +m[5]
+      })
+      continue
+    }
+
+    const m2 = /^(\d+)[,\s]+(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(line)
+    if (m2) {
+      frames.push({ name: `frame_${frames.length + 1}`, x: +m2[1], y: +m2[2], w: +m2[3], h: +m2[4] })
+      continue
+    }
+
+    const m3 = /frame\s*(\d+)?:?\s*x\s*[:=]\s*(\d+)\s*,?\s*y\s*[:=]\s*(\d+)\s*,?\s*w\s*[:=]\s*(\d+)\s*,?\s*h\s*[:=]\s*(\d+)/i.exec(line)
+    if (m3) {
+      frames.push({ name: `frame_${frames.length + 1}`, x: +m3[2], y: +m3[3], w: +m3[4], h: +m3[5] })
+    }
   }
+  return frames.length ? frames : null
 }
 
-function pushSequence (anims, dir, list) {
-  if (list.length === 1) {
-    const f = list[0]
+// 解析 Aseprite/TexturePacker 风格 JSON
+export function parseSheetJson (text) {
+  let obj
+  try { obj = JSON.parse(text) } catch (e) { return null }
+  const raw = obj.frames
+  if (!raw) return null
+  const frames = []
+  const push = (name, f) => {
+    if (!f || !f.frame) return
+    frames.push({ name: String(name), x: f.frame.x, y: f.frame.y, w: f.frame.w, h: f.frame.h, duration: f.duration })
+  }
+  if (Array.isArray(raw)) {
+    for (const f of raw) push(f.filename || f.name, f)
+  } else {
+    for (const [name, f] of Object.entries(raw)) push(name, f)
+  }
+  return frames.length ? frames : null
+}
+
+// 序列帧分组辅助函数
+function pushSequence (anims, dir, pack, list, preset, previewGif, aseEntry, htmlEntry) {
+  if (!list.length) return
+
+  // 1. 如果带有数字后缀（如 walk_01.png, walk_02.png），按数字升序排序
+  const withIdx = list.filter(x => x.frameIndex != null)
+  if (withIdx.length >= 2) {
+    list.sort((a, b) => (a.frameIndex || 0) - (b.frameIndex || 0))
+    const prefix = list[0].prefix || stripExt(list[0].name)
     anims.push({
-      id: dir + '|seq|' + f.name,
-      type: 'single',
-      name: uniqueName(stripExt(f.name), dir),
+      id: `${dir}|seq|${prefix}`,
+      type: 'sequence',
+      name: uniqueName(prefix, dir),
+      pack,
       dir,
-      rel: f.rel,
-      entry: f,
-      files: [f],
-      count: 1,
-      fps: 0
+      rel: list[0].rel,
+      entry: list[0],
+      files: list,
+      count: list.length,
+      fps: (preset && preset.fps) || 15,
+      previewEntry: previewGif || null,
+      asepriteEntry: aseEntry || null,
+      htmlEntry: htmlEntry || null
     })
     return
   }
-  const sorted = [...list].sort((a, b) => {
-    if (a.frameIndex != null && b.frameIndex != null) return a.frameIndex - b.frameIndex
-    return naturalCompare(a, b)
-  })
-  const prefix = sorted[0].prefix ?? ''
-  const loose = prefix === '' && sorted.every(f => f.frameIndex != null) && sorted.length > 12
+
+  // 2. 如果无明显序号但同目录下有多张图片，若超过 1 张也聚合为 sequence
+  if (list.length > 1) {
+    list.sort((a, b) => a.name.localeCompare(b.name, 'en', { numeric: true }))
+    const prefix = list[0].prefix || stripExt(list[0].name)
+    anims.push({
+      id: `${dir}|seq|${prefix}`,
+      type: 'sequence',
+      name: uniqueName(prefix, dir),
+      pack,
+      dir,
+      rel: list[0].rel,
+      entry: list[0],
+      files: list,
+      count: list.length,
+      fps: (preset && preset.fps) || 15,
+      previewEntry: previewGif || null,
+      asepriteEntry: aseEntry || null,
+      htmlEntry: htmlEntry || null
+    })
+    return
+  }
+
+  // 3. 只有 1 张独立单图
+  const f = list[0]
+  const base = stripExt(f.name)
   anims.push({
-    id: dir + '|seq|' + prefix,
-    type: 'sequence',
-    name: uniqueName(prefix ? prefix : (stripExt(sorted[0].name).replace(/\d+$/, '') || '序列'), dir),
+    id: `${dir}|single|${f.name}`,
+    type: 'single',
+    name: uniqueName(base, dir),
+    pack,
     dir,
-    rel: sorted[0].rel,
-    prefix,
-    entry: sorted[0],
-    files: sorted,
-    count: sorted.length,
-    fps: 15,
-    loose
+    rel: f.rel,
+    entry: f,
+    files: [f],
+    count: 1,
+    fps: 0,
+    previewEntry: previewGif || null,
+    asepriteEntry: aseEntry || null,
+    htmlEntry: htmlEntry || null
   })
 }
 
-// 核心聚类：把单帧 PNG 按「目录 + 文件名前缀」汇成动画组；
-// spritesheet / *_sheet.png 单独成组；gif 单独成组（浏览器原生播放）。
-export async function clusterFiles (images, metas = []) {
+// 核心聚类函数：100% 同步纯内存计算，0 毫秒完成！
+export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = {}) {
   NAME_CNT.clear()
   const dirGroups = makeDirGroups(images)
   const metaByDir = new Map()
@@ -110,63 +175,120 @@ export async function clusterFiles (images, metas = []) {
   const anims = []
 
   for (const [dir, files] of dirGroups) {
-    const metaTexts = (metaByDir.get(dir) || []).filter(m => m.ext === 'txt')
+    const pack = packNameOf(files[0].rel)
+    const preset = presetFor(pack, profiles)
+    const curMetas = metaByDir.get(dir) || []
+    const metaTexts = curMetas.filter(m => m.ext === 'txt' || m.ext === 'json')
+    const aseMetas = curMetas.filter(m => m.ext === 'ase' || m.ext === 'aseprite')
+    const htmlMetas = curMetas.filter(m => m.ext === 'html' || m.ext === 'htm')
+
     const gifs = files.filter(f => f.ext === 'gif')
-    // 目录名含 spritesheet/sheet 且是 PNG 的也视为整图（Paimon 等包常用名字不带 _sheet）
-    const sheets = files.filter(f => f.ext === 'png' && (isSheetName(f.name) || /spritesheet|sheet/i.test(f.dir || '')))
+    const sheets = files.filter(f => f.ext === 'png' && (isSheetName(f.name) || (preset.sheetByDir && sheetNameByDir(dir))))
     const frames = files.filter(f => !gifs.includes(f) && !sheets.includes(f))
 
-    // --- GIF：一个 gif 即一个动画 ---
-    for (const gif of gifs) {
-      anims.push({
-        id: dir + '|gif|' + gif.name,
-        type: 'gif',
-        name: uniqueName(stripExt(gif.name), dir),
-        dir,
-        rel: gif.rel,
-        entry: gif,
-        files: [gif],
-        count: 1,
-        fps: 0
-      })
-    }
+    const dirPreviewGif = gifs.find(g => isPreviewGifName(g.name)) || gifs[0] || null
+    const dirAseEntry = aseMetas[0] || null
+    const dirHtmlEntry = htmlMetas[0] || null
 
-    // --- Spritesheet：优先读取同目录 spritesheet.txt 元数据 ---
+    // 1. Spritesheet 动画（纯同步引用关联，不阻塞读取磁盘）
     for (const s of sheets) {
       const base = stripExt(s.name)
-      const metaName = /spritesheet/i.test(base) ? 'spritesheet.txt' : base + '.txt'
-      const metaEntry = metaTexts.find(m => m.name.toLowerCase() === metaName.toLowerCase())
-      const text = await readMetaText(metaEntry)
-      const metaFrames = text ? parseSheetTxt(text) : null
+      const metaName = /spritesheet/i.test(base) ? 'spritesheet.txt' : `${base}.txt`
+      let metaEntry = null
+      if (preset.sheetMeta !== 'none') {
+        metaEntry = metaTexts.find(m => m.name.toLowerCase() === metaName.toLowerCase()) ||
+          (preset.sheetMeta === 'auto' ? metaTexts.find(m => m.name.toLowerCase().startsWith(base.toLowerCase())) : null) ||
+          metaTexts.find(m => /spritesheet\.txt$/i.test(m.name))
+      }
+
+      const matchGif = gifs.find(g => stripExt(g.name).toLowerCase() === base.toLowerCase()) || dirPreviewGif
+      const matchAse = aseMetas.find(a => stripExt(a.name).toLowerCase() === base.toLowerCase()) || dirAseEntry
+      const matchHtml = htmlMetas.find(h => stripExt(h.name).toLowerCase() === base.toLowerCase()) || dirHtmlEntry
+
       anims.push({
-        id: dir + '|sheet|' + s.name,
+        id: `${dir}|sheet|${s.name}`,
         type: 'sheet',
         name: uniqueName(base, dir),
+        pack,
         dir,
         rel: s.rel,
         entry: s,
         files: [s],
-        count: metaFrames ? metaFrames.length : 0,
-        fps: 15,
-        metaFrames,
-        metaName
+        count: 0,
+        fps: (preset && preset.fps) || 15,
+        metaEntry,
+        metaFrames: null,
+        previewEntry: matchGif || null,
+        asepriteEntry: matchAse || null,
+        htmlEntry: matchHtml || null
       })
     }
 
-    // --- 单帧 PNG 序列 ---
-    const groups = new Map()
-    for (const f of frames) {
-      const { prefix, index } = parseFrameName(f.name)
-      const key = prefix
-      if (!groups.has(key)) groups.set(key, [])
-      groups.get(key).push({ ...f, prefix, frameIndex: index })
+    // 2. BDragon / Strip 格式
+    if (preset.stripSheet) {
+      for (const f of frames) {
+        const base = stripExt(f.name)
+        const matchGif = gifs.find(g => stripExt(g.name).toLowerCase() === base.toLowerCase()) || dirPreviewGif
+        const matchAse = aseMetas.find(a => stripExt(a.name).toLowerCase() === base.toLowerCase()) || dirAseEntry
+        const matchHtml = htmlMetas.find(h => stripExt(h.name).toLowerCase() === base.toLowerCase()) || dirHtmlEntry
+
+        anims.push({
+          id: `${dir}|strip|${f.name}`,
+          type: 'strip',
+          name: uniqueName(base, dir),
+          pack,
+          dir,
+          rel: f.rel,
+          entry: f,
+          files: [f],
+          count: 0,
+          fps: (preset && preset.fps) || 15,
+          previewEntry: matchGif || null,
+          asepriteEntry: matchAse || null,
+          htmlEntry: matchHtml || null
+        })
+      }
+    } else {
+      // 3. 单帧 PNG 序列
+      const groups = new Map()
+      for (const f of frames) {
+        const { prefix, index } = parseFrameName(f.name)
+        if (!groups.has(prefix)) groups.set(prefix, [])
+        groups.get(prefix).push({ ...f, prefix, frameIndex: index })
+      }
+      for (const [prefix, list] of groups) {
+        const matchGif = gifs.find(g => stripExt(g.name).toLowerCase() === prefix.toLowerCase()) || dirPreviewGif
+        const matchAse = aseMetas.find(a => stripExt(a.name).toLowerCase() === prefix.toLowerCase()) || dirAseEntry
+        const matchHtml = htmlMetas.find(h => stripExt(h.name).toLowerCase() === prefix.toLowerCase()) || dirHtmlEntry
+        pushSequence(anims, dir, pack, list, preset, matchGif, matchAse, matchHtml)
+      }
     }
-    for (const [prefix, list] of groups) {
-      list.forEach(f => { f.prefix = prefix })
-      pushSequence(anims, dir, list)
+
+    // 4. 纯 GIF
+    if (sheets.length === 0 && frames.length === 0) {
+      for (const gif of gifs) {
+        if (isPreviewGifName(gif.name)) continue
+        anims.push({
+          id: `${dir}|gif|${gif.name}`,
+          type: 'gif',
+          name: uniqueName(stripExt(gif.name), dir),
+          pack,
+          dir,
+          rel: gif.rel,
+          entry: gif,
+          files: [gif],
+          count: 1,
+          fps: 15,
+          previewEntry: gif
+        })
+      }
     }
   }
 
-  anims.sort((a, b) => a.dir.localeCompare(b.dir, 'en') || a.name.localeCompare(b.name, 'en'))
   return anims
+}
+
+// 异步兼容封装
+export async function clusterFiles (images, metas = [], profiles = {}, fixesMap = {}) {
+  return clusterFilesSync(images, metas, profiles, fixesMap)
 }

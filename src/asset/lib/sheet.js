@@ -90,3 +90,47 @@ export function resolveSheetFrames (image, metaFrames, cfg) {
   const auto = autoSliceImage(image)
   return auto.length ? auto : []
 }
+
+// BDragon 竖条/多行多列动画合集：每一行是一种颜色变体或动作，每一列是单帧
+export function resolveStripFrames (image, cfg = {}) {
+  const w = image.width
+  const h = image.height
+
+  // 智能网格尺寸测算（优先 64px，若不可整除则尝试 32/48/80/96/128，或由 cfg 指定）
+  let cellW = cfg.cellW
+  let cellH = cfg.cellH
+
+  if (!cellW || !cellH) {
+    const candidates = [64, 32, 48, 80, 96, 128, 160]
+    for (const c of candidates) {
+      if (w % c === 0 && h % c === 0) {
+        cellW = c
+        cellH = c
+        break
+      }
+    }
+    if (!cellW || !cellH) {
+      cellW = 64
+      cellH = 64
+    }
+  }
+
+  const rows = Math.max(1, Math.round(h / cellH))
+  const cols = Math.max(1, Math.round(w / cellW))
+  const frames = []
+  const variant = cfg.variant
+
+  if (variant == null || variant === 'all') {
+    // 整列同时播（单帧高度为整张图或所有行）
+    for (let t = 0; t < cols; t++) {
+      frames.push({ x: t * cellW, y: 0, w: cellW, h: h })
+    }
+  } else {
+    // 提取指定的某一单行颜色变体
+    const r = Math.min(rows - 1, Math.max(0, +variant || 0))
+    for (let t = 0; t < cols; t++) {
+      frames.push({ x: t * cellW, y: r * cellH, w: cellW, h: cellH })
+    }
+  }
+  return frames
+}

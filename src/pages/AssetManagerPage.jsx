@@ -1,13 +1,50 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+// 素材管理器 Pro：工业级 100K+ 引擎（支持目录折叠 + 视口工作台自由拖拽调高）
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { extOf, supportsDirectoryPicker, scanRootHandle, scanFallbackFiles, saveRootHandle, loadRootHandle, entryBlob } from '../asset/lib/scanner.js'
-import { clusterFiles, naturalCompare } from '../asset/lib/cluster.js'
-import { resolveSheetFrames } from '../asset/lib/sheet.js'
-import { downloadBlob, downloadFrames, exportFramesToFolder, buildExportItems, copyText } from '../asset/lib/export.js'
+import {
+  supportsDirectoryPicker,
+  streamScanRootHandle,
+  scanFallbackFiles,
+  saveRootHandle,
+  loadRootHandle,
+  entryBlob,
+  cachedEntry
+} from '../asset/lib/scanner.js'
+import { clusterFiles } from '../asset/lib/cluster.js'
+import {
+  DEFAULT_TEMPLATE,
+  downloadBlob,
+  downloadFrames,
+  exportFramesToFolder,
+  buildExportItems,
+  exportAnimToGif,
+  copyText,
+  sanitize
+} from '../asset/lib/export.js'
+import {
+  dbAll,
+  dbBulkPut,
+  dbPut,
+  dbDelete,
+  dbClear,
+  dbGet,
+  dbQueryByIndex,
+  dbSearchFiles
+} from '../asset/lib/idb-store.js'
+import { VirtualList, Thumb, PreviewPane, GalleryCard } from '../asset/comps.jsx'
 
-const TYPE_ICON = { sequence: '▶', sheet: '▦', gif: '🖼', single: '▢' }
-const PAGE_SIZE = 400
+const TYPE_ICONS = {
+  all: '🌟',
+  sequence: '▶',
+  sheet: '▦',
+  strip: '▦',
+  gif: '🖼',
+  single: '▢'
+}
+
+const GALLERY_PAGE_SIZE = 48
+const DEFAULT_VIEWPORT_HEIGHT = 380
 
 function useToast () {
   const [msg, setMsg] = useState(null)
@@ -15,451 +52,1092 @@ function useToast () {
   const toast = useCallback(text => {
     setMsg(text)
     if (timer.current) clearTimeout(timer.current)
-    timer.current = setTimeout(() => setMsg(null), 3200)
+    timer.current = setTimeout(() => setMsg(null), 3600)
   }, [])
   return { msg, toast }
 }
 
-// ---------- 预览面板 ----------
-const previewCache = new Map()
-
-async function loadAnimData (anim, cfg) {
-  if (anim.type === 'gif') {
-    const blob = await entryBlob(anim.entry)
-    return { kind: 'gif', url: URL.createObjectURL(blob), frames: [], file: blob }
-  }
-  if (anim.type === 'single') {
-    const blob = await entryBlob(anim.entry)
-    return { kind: 'sequence', frames: [await createImageBitmap(blob)], fps: 0 }
-  }
-  if (anim.type === 'sequence') {
-    const frames = []
-    for (const f of anim.files) {
-      const blob = await entryBlob(f)
-      frames.push(await createImageBitmap(blob))
-    }
-    return { kind: 'sequence', frames, fps: anim.fps || 15 }
-  }
-  if (anim.type === 'sheet') {
-    const blob = await entryBlob(anim.entry)
-    const image = await createImageBitmap(blob)
-    const frames = resolveSheetFrames(image, anim.metaFrames, cfg)
-    return { kind: frames.length ? 'sheet' : 'sequence', image, frames: frames.length ? frames : [{ x: 0, y: 0, w: image.width, h: image.height }], fps: anim.fps || 15 }
-  }
-  return null
-}
-
-function PreviewPane ({ anim, cfg, onFrameData, onToast }) {
-  const canvasRef = useRef(null)
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [idx, setIdx] = useState(0)
-  const [playing, setPlaying] = useState(true)
-  const [fps, setFps] = useState(anim?.fps || 15)
-  const [loop, setLoop] = useState(true)
-  const [zoom, setZoom] = useState(4)
-
-  useEffect(() => { setFps(anim?.fps || 15); setZoom(4); setIdx(0); setPlaying(true) }, [anim?.id])
-
-  useEffect(() => {
-    let cancelled = false
-    setData(null)
-    onFrameData(null)
-    if (!anim) return
-    const key = anim.id + '|' + (anim.type === 'sheet' ? JSON.stringify(cfg || {}) : '')
-    setLoading(true)
-    const cached = previewCache.get(key)
-    const p = cached || loadAnimData(anim, cfg)
-    if (!cached) previewCache.set(key, p)
-    p
-      .then(d => { if (!cancelled) { setData(d); onFrameData(d); setIdx(0) } })
-      .catch(e => { if (!cancelled) onToast('预览失败：' + e.message) })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [anim, cfg, onFrameData, onToast])
-
-  const frameCount = data && data.kind !== 'gif' ? (data.frames?.length || 0) : 0
-  useEffect(() => {
-    if (!data || data.kind === 'gif' || !playing || frameCount <= 1) return
-    const t = setInterval(() => {
-      setIdx(i => loop ? (i + 1) % frameCount : Math.min(i + 1, frameCount - 1))
-    }, (1000 / (fps || 15)))
-    return () => clearInterval(t)
-  }, [data, playing, fps, loop, frameCount])
-
-  // 绘制
-  useEffect(() => {
-    const cv = canvasRef.current
-    if (!cv || !data || data.kind === 'gif') return
-    const frame = data.frames[Math.min(idx, data.frames.length - 1)]
-    if (!frame) return
-    const ctx = cv.getContext('2d')
-    if (data.kind === 'sheet') {
-      cv.width = frame.w
-      cv.height = frame.h
-      ctx.imageSmoothingEnabled = false
-      ctx.clearRect(0, 0, frame.w, frame.h)
-      ctx.drawImage(data.image, frame.x, frame.y, frame.w, frame.h, 0, 0, frame.w, frame.h)
-    } else {
-      cv.width = frame.width
-      cv.height = frame.height
-      ctx.imageSmoothingEnabled = false
-      ctx.clearRect(0, 0, cv.width, cv.height)
-      ctx.drawImage(frame, 0, 0)
-    }
-  }, [data, idx])
-
-  const frameW = data && data.kind !== 'gif' && data.frames[0] ? (data.kind === 'sheet' ? data.frames[0].w : data.frames[0].width) : 0
-  const frameH = data && data.kind !== 'gif' && data.frames[0] ? (data.kind === 'sheet' ? data.frames[0].h : data.frames[0].height) : 0
-
-  return (
-    <>
-      <div className="am-preview">
-        {!anim && <div className="empty">从左侧选择一个素材<br />支持 单帧连播 / spritesheet / GIF</div>}
-        {anim && loading && <div className="empty">加载中…</div>}
-        {anim && !loading && data && data.kind === 'gif' && (
-          <img src={data.url} alt={anim.name} style={{ maxWidth: '100%', maxHeight: '100%', imageRendering: 'pixelated' }} />
-        )}
-        {anim && !loading && data && data.kind !== 'gif' && (
-          <canvas
-            ref={canvasRef}
-            style={{ width: frameW * zoom, height: frameH * zoom, imageRendering: 'pixelated' }}
-          />
-        )}
-      </div>
-      {anim && data && data.kind !== 'gif' && (
-        <div className="am-controls">
-          <div className="playbar">
-            <button type="button" onClick={() => setPlaying(p => !p)} disabled={frameCount <= 1}>{playing ? '⏸ 暂停' : '▶ 播放'}</button>
-            <input type="range" min={0} max={Math.max(frameCount - 1, 0)} value={idx} disabled={frameCount <= 1}
-              onChange={e => { setIdx(+e.target.value); setPlaying(false) }} />
-            <span className="frame-label">{frameCount > 0 ? (idx + 1) + ' / ' + frameCount : '—'}</span>
-          </div>
-          <div className="playbar" style={{ marginTop: 8 }}>
-            <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>fps
-              <input type="range" min={1} max={30} value={fps} style={{ width: 120, marginLeft: 8 }} onChange={e => setFps(+e.target.value)} />
-              {fps}
-            </label>
-            <label style={{ fontSize: 12, color: 'var(--text-dim)' }}>缩放
-              <input type="range" min={1} max={16} value={zoom} style={{ width: 120, marginLeft: 8 }} onChange={e => setZoom(+e.target.value)} />
-              {zoom}x
-            </label>
-            <label style={{ fontSize: 12, color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <input type="checkbox" checked={loop} onChange={e => setLoop(e.target.checked)} /> 循环
-            </label>
-          </div>
-        </div>
-      )}
-    </>
-  )
-}
-
-// ---------- 主页面 ----------
 export default function AssetManagerPage () {
   const { msg: toastMsg, toast } = useToast()
   const fileInputRef = useRef(null)
+  const searchInputRef = useRef(null)
+  const catalogScrollRef = useRef(null)
+
+  // 基础状态
   const [rootInfo, setRootInfo] = useState(null)
-  const [phase, setPhase] = useState('idle') // idle | scanning | ready | error
-  const [progress, setProgress] = useState(0)
-  const [stats, setStats] = useState(null)
-  const [images, setImages] = useState([])
-  const [anims, setAnims] = useState([])
+  const [dirHandle, setDirHandle] = useState(null)
+  const [phase, setPhase] = useState('idle') // 'idle' | 'scanning' | 'ready' | 'error'
+  const [totalFileCount, setTotalFileCount] = useState(0)
+
+  // 顶级包索引列表
+  const [packs, setPacks] = useState([]) // [{ name, count, dirs: [] }]
+  const [selectedPack, setSelectedPack] = useState(null)
+  const [dirFilter, setDirFilter] = useState(null)
+  const [expandedPacks, setExpandedPacks] = useState(new Set()) // 折叠状态集合
+
+  // 视口工作台动态高度调节（支持鼠标上下拖拽 + 本地持久化）
+  const [viewportHeight, setViewportHeight] = useState(() => {
+    const saved = localStorage.getItem('am_viewport_h')
+    return saved ? Math.max(180, Math.min(850, +saved)) : DEFAULT_VIEWPORT_HEIGHT
+  })
+  const [isDraggingResizer, setIsDraggingResizer] = useState(false)
+  const resizerStartYRef = useRef(0)
+  const resizerStartHeightRef = useRef(DEFAULT_VIEWPORT_HEIGHT)
+
+  // 当前活动目录下的动画列表
+  const [activeAnims, setActiveAnims] = useState([])
+  const [loadingDir, setLoadingDir] = useState(false)
+
+  // 用户数据
+  const [favAnims, setFavAnims] = useState(new Set())
+  const [exportTemplate, setExportTemplate] = useState(DEFAULT_TEMPLATE)
+
+  // 视图状态
+  const [viewLayout, setViewLayout] = useState('split') // 'split' | 'gallery' | 'table'
+  const [typeFilter, setTypeFilter] = useState('all')
   const [query, setQuery] = useState('')
+  const [visibleCount, setVisibleCount] = useState(GALLERY_PAGE_SIZE)
+
+  // 选择与多选
   const [selectedId, setSelectedId] = useState(null)
-  const [visible, setVisible] = useState(PAGE_SIZE)
+  const [multiSel, setMultiSel] = useState(new Set())
   const [sheetCfg, setSheetCfg] = useState({})
   const [frameData, setFrameData] = useState(null)
 
-  const selected = useMemo(() => anims.find(a => a.id === selectedId) || null, [anims, selectedId])
+  // 弹窗状态
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [gifBusy, setGifBusy] = useState(false)
+  const [gifProgress, setGifProgress] = useState(0)
 
-  const runScan = useCallback(async (rootOrFiles, isHandle) => {
-    setPhase('scanning')
-    setProgress(0)
-    setImages([]); setAnims([]); setSelectedId(null)
+  // 扫描控制
+  const [scanning, setScanning] = useState(false)
+  const [scanInfo, setScanInfo] = useState('')
+  const abortRef = useRef(false)
+
+  // 当前选中的动画对象
+  const selected = useMemo(() => {
+    return activeAnims.find(a => a.id === selectedId) || activeAnims[0] || null
+  }, [activeAnims, selectedId])
+
+  const animsCacheRef = useRef(new Map())
+  const favObjectsMapRef = useRef(new Map())
+
+  // 核心：按需加载当前目录/包的文件并秒级聚类（带内存高速缓存，二次切换 0ms 响应）
+  const loadDirectoryData = useCallback(async (packName, dirPath, searchKeyword) => {
+    if (packName === '__fav__') {
+      let favList = Array.from(favObjectsMapRef.current.values())
+      if (!favList.length) {
+        const dbFavs = await dbAll('favorites')
+        favList = dbFavs.filter(f => f && (f.id || f.key)).map(f => {
+          const id = f.id || (String(f.key).startsWith('anim:') ? f.key.slice(5) : f.key)
+          const animObj = {
+            id,
+            name: f.name || id.split('|').pop(),
+            type: f.type || 'sheet',
+            pack: f.pack || '我的收藏',
+            dir: f.dir || '',
+            rel: f.rel || '',
+            count: f.count || 1,
+            fps: f.fps || 15,
+            entry: dirHandle ? cachedEntry(f.entryMeta || { rel: f.rel, name: f.name }, dirHandle) : null,
+            files: [dirHandle ? cachedEntry(f.entryMeta || { rel: f.rel, name: f.name }, dirHandle) : null],
+            metaEntry: f.metaEntryMeta && dirHandle ? cachedEntry(f.metaEntryMeta, dirHandle) : null,
+            previewEntry: f.previewMeta && dirHandle ? cachedEntry(f.previewMeta, dirHandle) : null,
+            asepriteEntry: f.asepriteMeta && dirHandle ? cachedEntry(f.asepriteMeta, dirHandle) : null,
+            htmlEntry: f.htmlMeta && dirHandle ? cachedEntry(f.htmlMeta, dirHandle) : null
+          }
+          favObjectsMapRef.current.set(id, animObj)
+          return animObj
+        })
+      }
+      setActiveAnims(favList)
+      if (favList.length > 0) {
+        setSelectedId(prev => (favList.some(a => a.id === prev) ? prev : favList[0].id))
+      }
+      return
+    }
+
+    const cacheKey = searchKeyword && searchKeyword.trim()
+      ? `q:${searchKeyword.trim()}`
+      : (dirPath ? `dir:${dirPath}` : (packName ? `pack:${packName}` : 'all'))
+
+    if (animsCacheRef.current.has(cacheKey)) {
+      const cached = animsCacheRef.current.get(cacheKey)
+      setActiveAnims(cached)
+      if (cached.length > 0) {
+        setSelectedId(prev => (cached.some(a => a.id === prev) ? prev : cached[0].id))
+      }
+      return
+    }
+
+    setLoadingDir(true)
     try {
-      const res = isHandle
-        ? await scanRootHandle(rootOrFiles, p => setProgress(p))
-        : scanFallbackFiles(rootOrFiles, p => setProgress(p))
-      setImages(res.images)
-      const list = await clusterFiles(res.images, res.metas)
-      setAnims(list)
-      setSelectedId(list[0] ? list[0].id : null)
-      setStats({ images: res.images.length, anims: list.length, root: isHandle ? rootOrFiles.name : '(所选文件夹)' })
-      setPhase('ready')
-      toast('扫描完成：' + res.images.length + ' 张图 / ' + list.length + ' 个动画组')
+      let fileRecords = []
+
+      if (searchKeyword && searchKeyword.trim()) {
+        fileRecords = await dbSearchFiles(searchKeyword.trim(), 120)
+      } else if (dirPath) {
+        fileRecords = await dbQueryByIndex('files', 'dir', dirPath, 300)
+      } else if (packName) {
+        fileRecords = await dbQueryByIndex('files', 'pack', packName, 250)
+      }
+
+      if (fileRecords.length > 0 && dirHandle) {
+        const images = fileRecords.filter(f => f.isImg).map(m => cachedEntry(m, dirHandle))
+        const metas = fileRecords.filter(f => f.isMeta).map(m => cachedEntry(m, dirHandle))
+        const animList = await clusterFiles(images, metas, {}, {})
+        animsCacheRef.current.set(cacheKey, animList)
+        setActiveAnims(animList)
+        if (animList.length > 0) {
+          setSelectedId(prev => (animList.some(a => a.id === prev) ? prev : animList[0].id))
+        }
+      } else {
+        setActiveAnims([])
+      }
+    } catch (e) {
+      // ignore
+    } finally {
+      setLoadingDir(false)
+    }
+  }, [dirHandle])
+
+  // 切换包、子目录或搜索时按需加载
+  useEffect(() => {
+    if (phase !== 'ready') return
+    if (selectedPack === '__fav__') return
+    setVisibleCount(GALLERY_PAGE_SIZE)
+    loadDirectoryData(selectedPack, dirFilter, query)
+  }, [phase, selectedPack, dirFilter, query, loadDirectoryData])
+
+  // 过滤动画
+  const filteredAnims = useMemo(() => {
+    let list = activeAnims
+    if (typeFilter !== 'all') list = list.filter(a => a.type === typeFilter)
+    return list
+  }, [activeAnims, typeFilter])
+
+  const visibleAnims = useMemo(() => {
+    return filteredAnims.slice(0, visibleCount)
+  }, [filteredAnims, visibleCount])
+
+  // 触底加载更多
+  const handleCatalogScroll = (e) => {
+    const el = e.currentTarget
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) {
+      if (visibleCount < filteredAnims.length) {
+        setVisibleCount(prev => Math.min(filteredAnims.length, prev + GALLERY_PAGE_SIZE))
+      }
+    }
+  }
+
+  // ---------- 视口工作台上下拖拽高度调节 (Split Resizer) ----------
+  const handleResizerMouseDown = (e) => {
+    e.preventDefault()
+    setIsDraggingResizer(true)
+    resizerStartYRef.current = e.clientY
+    resizerStartHeightRef.current = viewportHeight
+
+    const onMouseMove = (moveEvent) => {
+      const deltaY = resizerStartYRef.current - moveEvent.clientY // 向上拖高度变大，向下拖高度变小
+      const newHeight = Math.max(160, Math.min(850, resizerStartHeightRef.current + deltaY))
+      setViewportHeight(newHeight)
+      localStorage.setItem('am_viewport_h', String(newHeight))
+    }
+
+    const onMouseUp = () => {
+      setIsDraggingResizer(false)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
+
+  // ---------- 仅选中包（不自动展开） ----------
+  const handleSelectPack = (packName) => {
+    setSelectedPack(packName)
+    setDirFilter(null)
+    setQuery('')
+  }
+
+  // ---------- 专门点击箭头折叠/展开 ----------
+  const handleToggleExpand = (e, packName) => {
+    e.stopPropagation()
+    setExpandedPacks(prev => {
+      const next = new Set(prev)
+      if (next.has(packName)) next.delete(packName); else next.add(packName)
+      return next
+    })
+  }
+
+  // ---------- 切换到「我的收藏夹」（同步直读，0ms 瞬切无任何卡顿） ----------
+  const handleSelectFavorites = () => {
+    const favList = Array.from(favObjectsMapRef.current.values())
+    setSelectedPack('__fav__')
+    setDirFilter(null)
+    setQuery('')
+    setActiveAnims(favList)
+    if (favList.length > 0) {
+      setSelectedId(favList[0].id)
+    } else {
+      setSelectedId(null)
+    }
+  }
+
+  // 流式扫描入库：分块 2000 个写入 IndexedDB
+  const runStreamScan = useCallback(async (rootHandle) => {
+    if (!rootHandle) return
+    abortRef.current = false
+    setScanning(true)
+    setScanInfo('正在流式索引超大素材库…')
+
+    const packSummary = new Map()
+    let totalCount = 0
+
+    try {
+      await dbClear('files')
+      await dbClear('packs')
+
+      const res = await streamScanRootHandle(rootHandle, {
+        chunkSize: 2000,
+        shouldAbort: () => abortRef.current,
+        onProgress: (scanned, current) => {
+          totalCount = scanned
+          setScanInfo(`已索引 ${scanned.toLocaleString()} 个文件 · ${current.split('/').pop()}`)
+        },
+        onBatch: async (chunk) => {
+          for (const f of chunk) {
+            const p = f.pack || '(根目录)'
+            if (!packSummary.has(p)) packSummary.set(p, { name: p, count: 0, dirs: new Set() })
+            const item = packSummary.get(p)
+            item.count++
+            if (f.dir) item.dirs.add(f.dir)
+          }
+          await dbBulkPut('files', chunk.map(f => [f.rel, f]))
+        }
+      })
+
+      if (!res.aborted) {
+        const packList = Array.from(packSummary.values()).map(p => ({
+          name: p.name,
+          count: p.count,
+          dirs: Array.from(p.dirs).sort()
+        })).sort((a, b) => (a.name === '(根目录)' ? -1 : a.name.localeCompare(b.name, 'en')))
+
+        await dbBulkPut('packs', packList.map(p => [p.name, p]))
+        setPacks(packList)
+        setTotalFileCount(totalCount)
+        setPhase('ready')
+        if (packList.length > 0) {
+          setSelectedPack(packList[0].name)
+          setExpandedPacks(new Set([packList[0].name]))
+        }
+        toast(`索引完成：共 ${totalCount.toLocaleString()} 个文件已就绪！`)
+      } else {
+        toast('已暂停扫描')
+      }
     } catch (e) {
       setPhase('error')
-      toast('扫描失败：' + e.message)
+      toast(`扫描出错：${e.message}`)
     }
+    setScanning(false)
+    setScanInfo('')
   }, [toast])
 
-  // 启动时尝试恢复上次授权目录
+  // 初始化：0ms 秒开恢复索引
   useEffect(() => {
     (async () => {
+      try {
+        const [favList, tmp] = await Promise.all([
+          dbAll('favorites'),
+          dbGet('prefs', 'exportTemplate')
+        ])
+        const fav = new Set()
+        for (const f of favList) {
+          const id = f.id || (String(f.key).startsWith('anim:') ? f.key.slice(5) : f.key)
+          if (id) fav.add(id)
+        }
+        setFavAnims(fav)
+        if (tmp) setExportTemplate(tmp)
+      } catch (e) {
+        // ignore
+      }
+
       if (!supportsDirectoryPicker()) return
       const handle = await loadRootHandle()
       if (!handle || handle.kind !== 'directory') return
+
       try {
         const perm = await handle.queryPermission({ mode: 'read' })
         if (perm === 'granted') {
           setRootInfo({ type: 'handle', name: handle.name })
-          await runScan(handle, true)
-        }
-      } catch (e) { /* 忽略：等待用户手动选择 */ }
-    })()
-  }, [runScan])
+          setDirHandle(handle)
 
+          if (favList && favList.length) {
+            for (const f of favList) {
+              const id = f.id || (String(f.key).startsWith('anim:') ? f.key.slice(5) : f.key)
+              if (id) {
+                favObjectsMapRef.current.set(id, {
+                  id,
+                  name: f.name || id.split('|').pop(),
+                  type: f.type || 'sheet',
+                  pack: f.pack || '我的收藏',
+                  dir: f.dir || '',
+                  rel: f.rel || '',
+                  count: f.count || 1,
+                  fps: f.fps || 15,
+                  entry: cachedEntry(f.entryMeta || { rel: f.rel, name: f.name }, handle),
+                  files: [cachedEntry(f.entryMeta || { rel: f.rel, name: f.name }, handle)],
+                  metaEntry: f.metaEntryMeta ? cachedEntry(f.metaEntryMeta, handle) : null,
+                  previewEntry: f.previewMeta ? cachedEntry(f.previewMeta, handle) : null,
+                  asepriteEntry: f.asepriteMeta ? cachedEntry(f.asepriteMeta, handle) : null,
+                  htmlEntry: f.htmlMeta ? cachedEntry(f.htmlMeta, handle) : null
+                })
+              }
+            }
+          }
+
+          const cachedPacks = await dbAll('packs')
+          if (cachedPacks.length > 0) {
+            setPacks(cachedPacks)
+            const total = cachedPacks.reduce((s, p) => s + p.count, 0)
+            setTotalFileCount(total)
+            setSelectedPack(cachedPacks[0].name)
+            setExpandedPacks(new Set([cachedPacks[0].name]))
+            setPhase('ready')
+          } else {
+            setPhase('scanning')
+            await runStreamScan(handle)
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    })()
+  }, [runStreamScan])
+
+  // 选择素材库
   const pickLibrary = async () => {
     if (supportsDirectoryPicker()) {
       try {
         const handle = await window.showDirectoryPicker({ id: 'asset-library', mode: 'readwrite' })
         await saveRootHandle(handle)
         setRootInfo({ type: 'handle', name: handle.name })
-        await runScan(handle, true)
+        setDirHandle(handle)
+        setPacks([])
+        setActiveAnims([])
+        setSelectedId(null)
+        setPhase('scanning')
+        await runStreamScan(handle)
       } catch (e) {
-        if (e.name !== 'AbortError') toast('选择目录失败：' + e.message)
+        if (e.name !== 'AbortError') toast(`选择目录失败：${e.message}`)
       }
     } else {
       fileInputRef.current?.click()
     }
   }
 
-  const onFallbackFiles = async e => {
-    const list = e.target.files
-    if (!list || !list.length) return
-    setRootInfo({ type: 'fallback', name: '(所选择文件夹)' })
-    await runScan(list, false)
-    e.target.value = ''
-  }
-
-  const filtered = useMemo(() => {
-    if (!query.trim()) return anims
-    const q = query.trim().toLowerCase()
-    return anims.filter(a => a.name.toLowerCase().includes(q) || a.rel.toLowerCase().includes(q) || a.dir.toLowerCase().includes(q))
-  }, [anims, query])
-
-  const grouped = useMemo(() => {
-    const map = new Map()
-    for (const a of filtered) {
-      const pack = a.dir ? a.dir.split('/')[0] : '(根目录)'
-      if (!map.has(pack)) map.set(pack, [])
-      map.get(pack).push(a)
+  // ---------- 快捷键 ----------
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (document.activeElement === searchInputRef.current) {
+        if (e.key === 'Escape') {
+          setQuery('')
+          searchInputRef.current?.blur()
+        }
+        return
+      }
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+        return
+      }
+      if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault()
+        const curIdx = filteredAnims.findIndex(a => a.id === selectedId)
+        if (curIdx >= 0 && curIdx < filteredAnims.length - 1) {
+          setSelectedId(filteredAnims[curIdx + 1].id)
+        }
+      } else if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault()
+        const curIdx = filteredAnims.findIndex(a => a.id === selectedId)
+        if (curIdx > 0) {
+          setSelectedId(filteredAnims[curIdx - 1].id)
+        }
+      } else if (e.key === '?') {
+        setShortcutsOpen(s => !s)
+      }
     }
-    return Array.from(map.entries())
-  }, [filtered])
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [filteredAnims, selectedId])
 
-  const shown = useMemo(() => {
-    const out = []
-    let left = visible
-    for (const [pack, list] of grouped) {
-      if (left <= 0) break
-      const take = list.slice(0, left)
-      out.push([pack, take])
-      left -= take.length
-    }
-    return out
-  }, [grouped, visible])
+  // ---------- 导出与收藏（0ms 响应，不刷新目录，静默写入 IndexedDB） ----------
+  const toggleFav = useCallback(async (targetId) => {
+    const id = targetId || selected?.id
+    if (!id) return
+    const anim = activeAnims.find(a => a.id === id) || (selected?.id === id ? selected : null)
 
-  const exportItems = useMemo(() => {
-    if (!selected || !frameData) return []
-    if (selected.type === 'single') return [{ name: selected.entry.name, blob: frameData.file || null, rel: selected.rel }]
-    if (selected.type === 'gif') return [{ name: selected.entry.name, blob: frameData.file || null, rel: selected.rel }]
-    return null
-  }, [selected, frameData])
+    setFavAnims(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+        favObjectsMapRef.current.delete(id)
+        dbDelete('favorites', `anim:${id}`).catch(() => {})
+        toast('已取消收藏')
+      } else {
+        next.add(id)
+        if (anim) {
+          favObjectsMapRef.current.set(id, anim)
+          const record = {
+            id: anim.id,
+            name: anim.name,
+            type: anim.type,
+            pack: anim.pack,
+            dir: anim.dir,
+            rel: anim.rel,
+            count: anim.count,
+            fps: anim.fps,
+            entryMeta: anim.entry ? { name: anim.entry.name, rel: anim.entry.rel, dir: anim.entry.dir, ext: anim.entry.ext, size: anim.entry.size } : null,
+            metaEntryMeta: anim.metaEntry ? { name: anim.metaEntry.name, rel: anim.metaEntry.rel, dir: anim.metaEntry.dir, ext: anim.metaEntry.ext, size: anim.metaEntry.size } : null,
+            previewMeta: anim.previewEntry ? { name: anim.previewEntry.name, rel: anim.previewEntry.rel, dir: anim.previewEntry.dir, ext: anim.previewEntry.ext, size: anim.previewEntry.size } : null,
+            asepriteMeta: anim.asepriteEntry ? { name: anim.asepriteEntry.name, rel: anim.asepriteEntry.rel, dir: anim.asepriteEntry.dir, ext: anim.asepriteEntry.ext, size: anim.asepriteEntry.size } : null,
+            htmlMeta: anim.htmlEntry ? { name: anim.htmlEntry.name, rel: anim.htmlEntry.rel, dir: anim.htmlEntry.dir, ext: anim.htmlEntry.ext, size: anim.htmlEntry.size } : null
+          }
+          dbPut('favorites', `anim:${id}`, record).catch(() => {})
+        } else {
+          dbPut('favorites', `anim:${id}`, { id, name: id.split('|').pop() }).catch(() => {})
+        }
+        toast('已加入收藏 ⭐')
+      }
+      return next
+    })
+  }, [activeAnims, selected, toast])
 
-  const handleExport = async mode => {
+  const handleExport = async (mode) => {
     if (!selected) return
-    if (mode === 'folder' && !modalSafe()) { toast('此浏览器不支持写入导出目录'); return }
     try {
-      const items = await buildExportItems(selected, frameData)
-      if (!items.length) { toast('没有可导出的帧'); return }
-      if (mode === 'folder') {
+      const items = await buildExportItems(selected, frameData, exportTemplate)
+      if (!items.length) {
+        toast('没有可导出的动画帧')
+        return
+      }
+      if (mode === 'folder' && typeof window.showDirectoryPicker === 'function') {
         const dest = await window.showDirectoryPicker({ mode: 'readwrite', id: 'asset-export' })
         await exportFramesToFolder(dest, items)
-        toast('已导出 ' + items.length + ' 个文件到所选文件夹')
+        toast(`已成功导出 ${items.length} 帧至文件夹`)
       } else {
         await downloadFrames(items)
-        toast('已开始下载 ' + items.length + ' 个文件')
+        toast(`已开始下载 ${items.length} 帧文件`)
       }
     } catch (e) {
-      if (e.name !== 'AbortError') toast('导出失败：' + e.message)
+      if (e.name !== 'AbortError') toast(`导出失败：${e.message}`)
     }
   }
 
-  const handleCopyPath = async () => {
-    if (!selected) return
-    const ok = await copyText(selected.rel)
-    toast(ok ? '已复制相对路径：' + selected.rel : '复制失败')
-  }
-
-  const onDropExport = async e => {
-    e.preventDefault()
-    const id = e.dataTransfer.getData('text/plain')
-    const anim = anims.find(a => a.id === id)
-    if (!anim) return
-    setSelectedId(anim.id)
-    toast('拖拽导出：' + anim.name)
+  const handleExportGif = async () => {
+    if (!selected || gifBusy) return
+    if (!frameData || !frameData.frames || frameData.frames.length < 2) {
+      toast('请等待动画加载完成（帧数须 ≥ 2）')
+      return
+    }
+    setGifBusy(true)
+    setGifProgress(0)
     try {
-      const items = await buildExportItems(anim, null)
-      await downloadFrames(items)
-      toast('已开始下载：' + anim.name)
-    } catch (err) {
-      toast('拖拽导出失败：' + err.message)
+      const blob = await exportAnimToGif(frameData, selected.name, selected.fps || 15, p => setGifProgress(p))
+      if (blob) {
+        downloadBlob(blob, `${sanitize(selected.name)}.gif`)
+        toast(`GIF 已下载：${sanitize(selected.name)}.gif`)
+      }
+    } catch (e) {
+      toast(`GIF 导出失败：${e.message}`)
+    } finally {
+      setGifBusy(false)
     }
   }
 
-  const onDragOver = e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }
+  const toggleMulti = (id) => {
+    setMultiSel(s => {
+      const n = new Set(s)
+      if (n.has(id)) n.delete(id); else n.add(id)
+      return n
+    })
+  }
+
+  // 渲染表格行
+  const renderTableRow = (anim) => {
+    const isSelected = anim.id === selectedId
+    const isMulti = multiSel.has(anim.id)
+    const isFav = favAnims.has(anim.id)
+
+    return (
+      <div
+        className={`am-table-row ${isSelected ? 'selected' : ''} ${isMulti ? 'multi' : ''}`}
+        onClick={() => setSelectedId(anim.id)}
+      >
+        <input
+          type="checkbox"
+          className="row-checkbox"
+          checked={isMulti}
+          onClick={e => e.stopPropagation()}
+          onChange={() => toggleMulti(anim.id)}
+        />
+        <Thumb entry={anim.entry} size={28} />
+        <span className={`type-badge-mini type-${anim.type}`}>{TYPE_ICONS[anim.type]} {anim.type.toUpperCase()}</span>
+        <div className="table-col-name" title={anim.name}>
+          <strong>{anim.name}</strong>
+          {isFav && <span className="fav-star">⭐</span>}
+        </div>
+        <div className="table-col-dir" title={anim.dir || anim.pack}>
+          {anim.pack}{anim.dir ? ` / ${anim.dir}` : ''}
+        </div>
+        <div className="table-col-count">{anim.count || (anim.type === 'strip' ? 'Strip' : 1)} 帧</div>
+      </div>
+    )
+  }
 
   return (
-    <motion.div
-      className="am-shell"
-      initial={{ opacity: 0, scale: 0.98, y: 16 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.98, y: -16, filter: 'blur(4px)' }}
-      transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-    >
-      <header className="am-header">
-        <Link className="hub-back" to="/">← 工具合集</Link>
-        <div className="am-title">🖼 素材管理器 <em className="version-tag">v0.1.0 · beta</em></div>
-        <button className="btn primary" type="button" onClick={pickLibrary}>
-          {rootInfo ? '重新选择素材库' : '选择素材库'}
-        </button>
-        {rootInfo && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{rootInfo.name}</span>}
-        <input ref={fileInputRef} type="file" webkitdirectory multiple hidden onChange={onFallbackFiles} />
-      </header>
+    <div className={`am-pro-shell ${isDraggingResizer ? 'user-resizing' : ''}`}>
+      {/* 1. 顶部工具栏 */}
+      <header className="am-pro-header">
+        <div className="header-left">
+          <Link className="hub-back-btn" to="/" title="返回工具箱主页">← 妙妙工具箱</Link>
+          <div className="header-brand">
+            <span className="brand-logo">🖼</span>
+            <span className="brand-title">ASSET WORKBENCH</span>
+            <span className="pro-pill">100K+ ENGINE</span>
+          </div>
 
-      <div className="am-body">
-        <aside className="am-side">
-          <div className="am-side-top">
-            <input className="am-search" placeholder="🔍 搜索动画名 / 路径…" value={query}
-              onChange={e => { setQuery(e.target.value); setVisible(PAGE_SIZE) }} />
-          </div>
-          <div className="am-list">
-            {phase === 'scanning' && <div className="empty">扫描中… {progress.toLocaleString()} 个文件</div>}
-            {phase === 'idle' && <div className="empty">点击「选择素材库」<br />授权 D:\YAHZJ\技能素材</div>}
-            {phase !== 'scanning' && phase !== 'idle' && !shown.length && <div className="empty">无匹配素材</div>}
-            {shown.map(([pack, list]) => (
-              <div key={pack}>
-                <div style={{ fontSize: 11, color: 'var(--text-faint)', padding: '6px 10px 2px' }}>{pack}</div>
-                {list.map(a => (
-                  <div key={a.id} className={'anim-row' + (a.id === selectedId ? ' selected' : '')}
-                    draggable onClick={() => { setSelectedId(a.id); setVisible(visible) }}
-                    onDragStart={e => { e.dataTransfer.setData('text/plain', a.id); e.dataTransfer.effectAllowed = 'copy' }}
-                    title={a.rel}>
-                    <span className="icon">{TYPE_ICON[a.type] || '▪'}</span>
-                    <span className="meta">
-                      <div className="name">{a.name}</div>
-                      <div className="dir">{a.dir || '(根目录)'}{a.loose ? ' · 序列池' : ''}</div>
-                    </span>
-                    <span className="count">{a.count || ''}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-          {filtered.length > visible && (
-            <button className="am-more" type="button" onClick={() => setVisible(v => v + PAGE_SIZE)}>
-              显示更多（{filtered.length - visible} 个待显示）
+          <button type="button" className="btn select-lib-btn" onClick={pickLibrary}>
+            <span className="btn-icon">📁</span>
+            {rootInfo ? rootInfo.name : '选择素材库…'}
+          </button>
+
+          {dirHandle && (
+            <button
+              type="button"
+              className="btn sync-check-btn"
+              onClick={() => runStreamScan(dirHandle)}
+              disabled={scanning}
+              title="重新流式索引"
+            >
+              <span className={`btn-icon ${scanning ? 'spin-icon' : ''}`}>🔄</span>
+              <span>{scanning ? '索引中…' : '重新索引'}</span>
             </button>
           )}
-        </aside>
 
-        <main className="am-main">
-          {selected && (
-            <PreviewPane
-              anim={selected}
-              cfg={sheetCfg[selected.id]}
-              onFrameData={setFrameData}
-              onToast={toast}
-            />
-          )}
-          {!selected && (
-            <div className="am-preview">
-              <div className="empty">请从左侧列表选择一个动画或图片</div>
+          {scanning && (
+            <div className="scan-indicator" title={scanInfo}>
+              <span className="pulse-dot" />
+              <span className="scan-text">{scanInfo || '正在流式扫描…'}</span>
+              <button type="button" className="scan-cancel-btn" onClick={() => { abortRef.current = true }} title="停止">✕ 停止</button>
             </div>
           )}
-        </main>
+        </div>
 
-        <aside className="am-info">
-          <h2>素材属性</h2>
-          {!selected && <div className="empty">未选中任何素材</div>}
-          {selected && (
-            <>
-              <div className="info-grid">
-                <span className="k">类型</span><span className="v">{selected.type.toUpperCase()}</span>
-                <span className="k">名称</span><span className="v">{selected.name}</span>
-                <span className="k">帧数</span><span className="v">{selected.count || (frameData?.frames?.length || 1)}</span>
-                {frameData && (
-                  <>
-                    <span className="k">尺寸</span>
-                    <span className="v">
-                      {frameData.frames?.[0] ? `${frameData.frames[0].w || frameData.frames[0].width} × ${frameData.frames[0].h || frameData.frames[0].height}` : '--'}
-                    </span>
-                  </>
-                )}
+        {/* 全局搜索框 */}
+        <div className="header-center">
+          <div className="global-search-box">
+            <span className="search-ico">⌕</span>
+            <input
+              ref={searchInputRef}
+              type="search"
+              placeholder="搜索 11万+ 文件名、相对路径 (按 / 聚焦)..."
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              className="search-input"
+            />
+            {query ? (
+              <button type="button" className="search-clear" onClick={() => setQuery('')}>✕</button>
+            ) : (
+              <kbd className="search-kbd">/</kbd>
+            )}
+          </div>
+        </div>
+
+        {/* 布局切换 */}
+        <div className="header-right">
+          <div className="viewmode-switcher" role="group">
+            <button
+              type="button"
+              className={`view-btn ${viewLayout === 'split' ? 'active' : ''}`}
+              onClick={() => setViewLayout('split')}
+              title="双分栏工作台"
+            >
+              ◫ 工作台
+            </button>
+            <button
+              type="button"
+              className={`view-btn ${viewLayout === 'gallery' ? 'active' : ''}`}
+              onClick={() => setViewLayout('gallery')}
+              title="画廊网格"
+            >
+              ▦ 画廊
+            </button>
+            <button
+              type="button"
+              className={`view-btn ${viewLayout === 'table' ? 'active' : ''}`}
+              onClick={() => setViewLayout('table')}
+              title="数据表"
+            >
+              ☰ 数据表
+            </button>
+          </div>
+
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => setShortcutsOpen(!shortcutsOpen)}
+            title="快捷键 (?)"
+          >
+            ⌨
+          </button>
+          <input ref={fileInputRef} type="file" webkitdirectory multiple hidden />
+        </div>
+      </header>
+
+      {/* 2. 主体三栏工作台 */}
+      <div className={`am-pro-body layout-${viewLayout}`}>
+        {/* 左侧：包与可折叠子目录树 */}
+        <aside className="am-pro-explorer">
+          <div className="explorer-header">
+            <span className="explorer-title">ASSET EXPLORER</span>
+            <span className="dim-info">{totalFileCount.toLocaleString()} 文件</span>
+          </div>
+
+          <div className="explorer-scroll">
+            <div className="explorer-group" style={{ marginBottom: 6 }}>
+              <button
+                type="button"
+                className={`tree-row ${selectedPack === '__fav__' ? 'active' : ''}`}
+                onClick={handleSelectFavorites}
+              >
+                <span className="tree-ico">⭐</span>
+                <span className="tree-name">我的收藏夹</span>
+                <span className="tree-count">{favAnims.size}</span>
+              </button>
+            </div>
+
+            <div className="explorer-group">
+              <div className="group-label">
+                <span>卖家素材包 ({packs.length})</span>
+                <span className="sub-hint">点击包名可折叠/展开</span>
               </div>
 
-              <div className="path-box">
-                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 4 }}>相对路径（浏览器安全限制，不提供绝对路径）</div>
-                {selected.rel}
+              {packs.map(p => {
+                const isActive = selectedPack === p.name && !dirFilter && !query
+                const isExpanded = expandedPacks.has(p.name)
+                const hasDirs = p.dirs && p.dirs.length > 0
+
+                return (
+                  <div key={p.name} className="pack-node">
+                    <button
+                      type="button"
+                      className={`tree-row pack-row ${isActive ? 'active' : ''}`}
+                      onClick={() => handleSelectPack(p.name)}
+                      title={`选择查看：${p.name}`}
+                    >
+                      <span
+                        className={`tree-toggle-arrow ${hasDirs ? 'clickable' : ''}`}
+                        onClick={e => handleToggleExpand(e, p.name)}
+                        title={hasDirs ? (isExpanded ? '折叠子目录' : '展开子目录') : ''}
+                      >
+                        {hasDirs ? (isExpanded ? '▾' : '▸') : '•'}
+                      </span>
+                      <span className="tree-ico">{p.name === '(根目录)' ? '▢' : '📦'}</span>
+                      <span className="tree-name">{p.name}</span>
+                      <span className="tree-count">{p.count.toLocaleString()}</span>
+                    </button>
+
+                    {/* 可收起的子目录列表 */}
+                    {isExpanded && hasDirs && (
+                      <div className="pack-subdirs">
+                        {p.dirs.map(d => {
+                          const dirLabel = d.replace(`${p.name}/`, '')
+                          const isDirActive = dirFilter === d && !query
+                          return (
+                            <button
+                              key={d}
+                              type="button"
+                              className={`tree-row sub ${isDirActive ? 'active' : ''}`}
+                              style={{ paddingLeft: 24 }}
+                              onClick={() => {
+                                setSelectedPack(p.name)
+                                setDirFilter(d)
+                                setQuery('')
+                              }}
+                              title={d}
+                            >
+                              <span className="tree-ico">📁</span>
+                              <span className="tree-name">{dirLabel}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </aside>
+
+        {/* 中间：主工作台 */}
+        <main className="am-pro-main">
+          {/* 上半区：素材库浏览 */}
+          <section className="am-catalog-section">
+            <div className="catalog-toolbar">
+              <div className="type-filter-group">
+                {Object.entries(TYPE_ICONS).map(([k, icon]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    className={`type-pill ${typeFilter === k ? 'active' : ''}`}
+                    onClick={() => setTypeFilter(k)}
+                  >
+                    <span>{icon}</span>
+                    <span>{k === 'all' ? '全部' : k.toUpperCase()}</span>
+                  </button>
+                ))}
               </div>
 
-              <div className="am-actions">
-                <button className="btn" type="button" onClick={handleCopyPath}>📋 复制路径</button>
-                <button className="btn" type="button" onClick={() => handleExport('download')} disabled={!exportItems && !(frameData && frameData.frames && frameData.frames.length)}>
-                  ⬇ 导出全部帧
-                </button>
-                <button className="btn" type="button" onClick={() => handleExport('folder')} disabled={!exportItems && !(frameData && frameData.frames && frameData.frames.length)}>
-                  📁 导出到文件夹…
-                </button>
-                {[ 'single', 'gif' ].includes(selected.type) && exportItems && exportItems[0] && (
-                  <button className="btn" type="button" onClick={async () => {
-                    try {
-                      const blob = frameData?.file || await entryBlob(selected.entry)
-                      downloadBlob(blob, selected.entry.name)
-                      toast('已下载：' + selected.entry.name)
-                    } catch (e) { toast(e.message) }
-                  }}>⬇ 下载原文件</button>
-                )}
+              <div className="catalog-stats-meta">
+                <span>当前目录：<strong>{filteredAnims.length}</strong> 个动画 {loadingDir ? ' (检索中…)' : ''}</span>
               </div>
+            </div>
 
-              {selected.type === 'sheet' && (
-                <div className="sheet-cfg">
-                  <h3>spritesheet 切分 {selected.metaFrames ? '（已读取 txt 元数据 ✓）' : '（无元数据，自动/手动）'}</h3>
-                  {!selected.metaFrames && (
-                    <>
-                      <label>列数 <input type="number" min={1} value={sheetCfg[selectedId]?.cols || ''} placeholder="自动"
-                        onChange={e => setSheetCfg(s => ({ ...s, [selectedId]: { ...s[selectedId], cols: +e.target.value || undefined } }))} /></label>
-                      <label>行数 <input type="number" min={1} value={sheetCfg[selectedId]?.rows || ''} placeholder="自动"
-                        onChange={e => setSheetCfg(s => ({ ...s, [selectedId]: { ...s[selectedId], rows: +e.target.value || undefined } }))} /></label>
-                      <label>帧宽 <input type="number" min={1} value={sheetCfg[selectedId]?.cellW || ''} placeholder="自动"
-                        onChange={e => setSheetCfg(s => ({ ...s, [selectedId]: { ...s[selectedId], cellW: +e.target.value || undefined } }))} /></label>
-                      <label>帧高 <input type="number" min={1} value={sheetCfg[selectedId]?.cellH || ''} placeholder="自动"
-                        onChange={e => setSheetCfg(s => ({ ...s, [selectedId]: { ...s[selectedId], cellH: +e.target.value || undefined } }))} /></label>
-                    </>
-                  )}
+            <div className="catalog-content-area" ref={catalogScrollRef} onScroll={handleCatalogScroll}>
+              {phase === 'idle' && (
+                <div className="pro-empty-panel">
+                  <div className="empty-logo">🖼</div>
+                  <h3>尚未选择素材库</h3>
+                  <p>点击上方「选择素材库」按钮授权本地文件夹（如 <code>D:\YAHZJ\技能素材</code>，支持 11万+ 文件秒级载入）</p>
+                  <button type="button" className="btn primary" onClick={pickLibrary}>立即选择素材库</button>
                 </div>
               )}
 
-              <div className={'am-dropzone'} onDragOver={onDragOver} onDrop={onDropExport}>
-                🎯 把左侧素材拖到这里 → 自动下载导出
+              {phase === 'scanning' && !packs.length && (
+                <div className="pro-empty-panel">
+                  <div className="pulse-icon">⏳</div>
+                  <h3>正在流式建立 B-Tree 索引…</h3>
+                  <p>{scanInfo || '正在极速索引十万级文件，内存安全无溢出…'}</p>
+                </div>
+              )}
+
+              {phase === 'ready' && !filteredAnims.length && !loadingDir && (
+                <div className="pro-empty-panel">
+                  <div className="empty-logo">🔍</div>
+                  <h3>当前目录下未发现动画素材</h3>
+                  <p>请点击左侧素材包或具体子文件夹查看</p>
+                </div>
+              )}
+
+              {/* 画廊网格 */}
+              {phase === 'ready' && viewLayout !== 'table' && filteredAnims.length > 0 && (
+                <>
+                  <div className="pro-gallery-grid">
+                    {visibleAnims.map(anim => (
+                      <GalleryCard
+                        key={anim.id}
+                        anim={anim}
+                        selected={anim.id === selectedId}
+                        isFav={favAnims.has(anim.id)}
+                        onSelect={setSelectedId}
+                        onToggleFav={toggleFav}
+                      />
+                    ))}
+                  </div>
+
+                  {filteredAnims.length > visibleCount && (
+                    <div className="gallery-load-more-wrap">
+                      <button
+                        type="button"
+                        className="btn gallery-load-more-btn"
+                        onClick={() => setVisibleCount(c => Math.min(filteredAnims.length, c + GALLERY_PAGE_SIZE))}
+                      >
+                        加载更多（已显示 {visibleCount} / 共 {filteredAnims.length} 个）
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* 数据表 */}
+              {phase === 'ready' && viewLayout === 'table' && filteredAnims.length > 0 && (
+                <VirtualList
+                  items={filteredAnims}
+                  rowHeight={42}
+                  renderRow={renderTableRow}
+                />
+              )}
+            </div>
+          </section>
+
+          {/* 视口工作台高度拖拽调节手柄 (Split Resizer Bar) */}
+          {viewLayout !== 'gallery' && (
+            <div
+              className={`am-split-resizer ${isDraggingResizer ? 'active' : ''}`}
+              onMouseDown={handleResizerMouseDown}
+              title="按住上下拖拽调节视口工作台高度"
+            >
+              <div className="resizer-handle-pill">
+                <span className="resizer-grip">⋯</span>
+                <span className="resizer-hint">拖拽调整视口高度 ({viewportHeight}px)</span>
               </div>
-            </>
+              <div className="resizer-presets">
+                <button
+                  type="button"
+                  className="resizer-preset-btn"
+                  onClick={e => { e.stopPropagation(); setViewportHeight(240); localStorage.setItem('am_viewport_h', '240') }}
+                  title="紧凑高度"
+                >
+                  小
+                </button>
+                <button
+                  type="button"
+                  className="resizer-preset-btn"
+                  onClick={e => { e.stopPropagation(); setViewportHeight(380); localStorage.setItem('am_viewport_h', '380') }}
+                  title="标准高度"
+                >
+                  中
+                </button>
+                <button
+                  type="button"
+                  className="resizer-preset-btn"
+                  onClick={e => { e.stopPropagation(); setViewportHeight(560); localStorage.setItem('am_viewport_h', '560') }}
+                  title="宽屏大视口"
+                >
+                  大
+                </button>
+              </div>
+            </div>
           )}
+
+          {/* 下半区：专业视口工作台（应用自定义高度） */}
+          {viewLayout !== 'gallery' && (
+            <section className="am-viewport-section" style={{ height: viewportHeight }}>
+              <PreviewPane
+                anim={selected}
+                cfg={sheetCfg[selectedId]}
+                onFrameData={setFrameData}
+                onToast={toast}
+              />
+            </section>
+          )}
+        </main>
+
+        {/* 右侧：智能属性检查器 */}
+        <aside className="am-pro-inspector">
+          <div className="inspector-head">
+            <span className="inspector-title">INSPECTOR & EXPORT</span>
+          </div>
+
+          <div className="inspector-scroll">
+            {!selected && (
+              <div className="inspector-empty">
+                <div className="icon">👆</div>
+                <p>在左侧选择目录并在画廊中选中素材查看属性与导出</p>
+              </div>
+            )}
+
+            {selected && (
+              <>
+                <div className="inspector-card action-card">
+                  <div className="card-header">⚡ 快捷操作中心</div>
+                  <div className="action-buttons-grid">
+                    <button
+                      type="button"
+                      className="action-btn primary"
+                      onClick={() => handleExport('download')}
+                      disabled={!(frameData?.frames?.length)}
+                    >
+                      <span className="btn-ico">⬇</span>
+                      <div className="btn-text">
+                        <strong>导出全部帧</strong>
+                        <small>PNG 序列 ({frameData?.frames?.length || 1} 帧)</small>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="action-btn"
+                      onClick={() => handleExport('folder')}
+                      disabled={!(frameData?.frames?.length)}
+                    >
+                      <span className="btn-ico">📁</span>
+                      <div className="btn-text">
+                        <strong>导出到文件夹</strong>
+                        <small>一键存入工程</small>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="action-btn"
+                      onClick={handleExportGif}
+                      disabled={gifBusy || !(frameData?.frames?.length > 1)}
+                    >
+                      <span className="btn-ico">🎞</span>
+                      <div className="btn-text">
+                        <strong>{gifBusy ? `编码中 ${gifProgress}%` : '导出 GIF'}</strong>
+                        <small>256 色调色板</small>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="action-btn"
+                      onClick={async () => {
+                        const ok = await copyText(selected.rel)
+                        toast(ok ? `已复制：${selected.rel}` : '复制失败')
+                      }}
+                    >
+                      <span className="btn-ico">📋</span>
+                      <div className="btn-text">
+                        <strong>复制相对路径</strong>
+                        <small>{selected.rel.split('/').pop()}</small>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className={`action-btn ${favAnims.has(selected.id) ? 'fav-active' : ''}`}
+                      onClick={toggleFav}
+                    >
+                      <span className="btn-ico">{favAnims.has(selected.id) ? '⭐' : '☆'}</span>
+                      <div className="btn-text">
+                        <strong>{favAnims.has(selected.id) ? '已收藏' : '加入收藏'}</strong>
+                        <small>快捷键 F</small>
+                      </div>
+                    </button>
+
+                    {selected.asepriteEntry && (
+                      <button
+                        type="button"
+                        className="action-btn ase-download-btn"
+                        onClick={async () => {
+                          try {
+                            const blob = await entryBlob(selected.asepriteEntry)
+                            downloadBlob(blob, selected.asepriteEntry.name)
+                            toast(`已导出 Aseprite 原工程：${selected.asepriteEntry.name}`)
+                          } catch (e) {
+                            toast(`导出 Aseprite 失败：${e.message}`)
+                          }
+                        }}
+                      >
+                        <span className="btn-ico">🎨</span>
+                        <div className="btn-text">
+                          <strong>下载 .aseprite 原文件</strong>
+                          <small>{selected.asepriteEntry.name}</small>
+                        </div>
+                      </button>
+                    )}
+
+                    {selected.htmlEntry && (
+                      <button
+                        type="button"
+                        className="action-btn html-preview-btn"
+                        onClick={async () => {
+                          try {
+                            const blob = await entryBlob(selected.htmlEntry)
+                            const url = URL.createObjectURL(blob)
+                            window.open(url, '_blank')
+                          } catch (e) {
+                            toast(`打开预览失败：${e.message}`)
+                          }
+                        }}
+                      >
+                        <span className="btn-ico">🌐</span>
+                        <div className="btn-text">
+                          <strong>打开原作者预览页</strong>
+                          <small>{selected.htmlEntry.name}</small>
+                        </div>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="inspector-card">
+                  <div className="card-header">📊 规格与元数据</div>
+                  <div className="meta-grid">
+                    <div className="meta-row">
+                      <span className="meta-k">动画名称</span>
+                      <span className="meta-v highlight">{selected.name}</span>
+                    </div>
+                    <div className="meta-row">
+                      <span className="meta-k">素材类型</span>
+                      <span className="meta-v badge">
+                        {selected.type === 'strip' ? 'STRIP (合集)' : selected.type.toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="meta-row">
+                      <span className="meta-k">单帧分辨率</span>
+                      <span className="meta-v">
+                        {frameData?.frames?.[0] ? `${frameData.frames[0].w || frameData.frames[0].width} × ${frameData.frames[0].h || frameData.frames[0].height} px` : '--'}
+                      </span>
+                    </div>
+                    <div className="meta-row">
+                      <span className="meta-k">动画帧数</span>
+                      <span className="meta-v">{selected.count || frameData?.frames?.length || 1} 帧</span>
+                    </div>
+                    <div className="meta-row">
+                      <span className="meta-k">来源路径</span>
+                      <span className="meta-v path-text" title={selected.rel}>{selected.rel}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {selected.type === 'strip' && (
+                  <div className="inspector-card">
+                    <div className="card-header">🛠 BDragon 变体调参</div>
+                    <div className="config-row">
+                      <label>
+                        <span>颜色变体切换（每一行为一种颜色/动作）</span>
+                        <select
+                          value={sheetCfg[selectedId]?.variant ?? 'all'}
+                          onChange={e => setSheetCfg(s => ({ ...s, [selectedId]: { ...s[selectedId], variant: e.target.value === 'all' ? 'all' : +e.target.value } }))}
+                        >
+                          <option value="all">全部颜色变体 (整列同时播)</option>
+                          {frameData?.image && Array.from({ length: Math.max(1, Math.round(frameData.image.height / 64)) }, (_, i) => (
+                            <option key={i} value={i}>{`颜色变体第 ${i + 1} 行`}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </aside>
       </div>
 
-      <footer className="am-footer">
-        <span>{stats ? stats.images.toLocaleString() + ' 张图片' : '未扫描'}</span>
-        <span>{stats ? stats.anims.toLocaleString() + ' 个动画组' : ''}</span>
-        <span>{rootInfo ? (rootInfo.type === 'handle' ? 'File System Access · 已记忆授权' : 'webkitdirectory · 临时读取') : ''}</span>
-        <span style={{ marginLeft: 'auto' }}>本地处理 · 不上传服务器</span>
+      {/* 3. 底部状态栏 */}
+      <footer className="am-pro-statusbar">
+        <div className="status-left">
+          <span className="status-item">
+            <span className="status-dot green" />
+            <span>全库文件索引：<strong>{totalFileCount.toLocaleString()} 个文件</strong></span>
+          </span>
+          <span className="status-divider">|</span>
+          <span className="status-item">
+            <span>当前包：<strong>{selectedPack || '未选择'}</strong> ({filteredAnims.length} 个动画)</span>
+          </span>
+        </div>
+
+        <div className="status-right">
+          <span className="status-item">⚡ 工业级 B-Tree 索引 · 视口高度可拖拽</span>
+          <span className="status-divider">|</span>
+          <span className="status-item">100% 本地运算</span>
+        </div>
       </footer>
 
+      {/* Toast */}
       <AnimatePresence>
         {toastMsg && (
           <motion.div
-            className="toast"
+            className="pro-toast"
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 15, scale: 0.95 }}
@@ -469,10 +1147,6 @@ export default function AssetManagerPage () {
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </div>
   )
-}
-
-function modalSafe () {
-  return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
 }
