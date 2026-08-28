@@ -1465,6 +1465,7 @@ export default function AssetManagerPage () {
                 onFrameData={setFrameData}
                 onToast={toast}
                 onCfgChange={patch => setSheetCfg(s => ({ ...s, [selectedId]: { ...(s[selectedId] || {}), ...patch } }))}
+                onOpenFolder={handleOpenFolder}
               />
             </section>
           )}

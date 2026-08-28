@@ -410,7 +410,7 @@ const FilmstripFrameCanvas = memo(function FilmstripFrameCanvas ({ data, frame }
 })
 
 // ---------- 专业视口工作台 (Pro Canvas Viewport) ----------
-export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange }) {
+export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onOpenFolder }) {
   const canvasRef = useRef(null)
   const containerRef = useRef(null)
 
@@ -693,7 +693,11 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange }) {
         </div>
       </div>
 
-      <div className={`pro-canvas-stage stage-${bgStyle}`}>
+      <div
+        className={`pro-canvas-stage stage-${bgStyle}`}
+        onDoubleClick={() => onOpenFolder?.(anim)}
+        title="双击直接在系统文件管理器中定位打开所在文件夹"
+      >
         {loading && <div className="canvas-loading"><span>正在加载像素帧数据…</span></div>}
 
         {!anim && !loading && (
