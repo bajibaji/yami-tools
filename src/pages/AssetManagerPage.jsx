@@ -1859,7 +1859,7 @@ export default function AssetManagerPage () {
           <div className="header-brand">
             <IconPackage size={18} className="brand-logo" />
             <span className="brand-title">ASSET WORKBENCH</span>
-            <span className="pro-pill">v1.4.2</span>
+            <span className="pro-pill">v1.5.0</span>
           </div>
 
           <button type="button" className="btn select-lib-btn" onClick={pickLibrary}>
@@ -1947,7 +1947,7 @@ export default function AssetManagerPage () {
 
           <button
             type="button"
-            className="btn header-mini-btn"
+            className="btn header-mini-btn btn-fixes"
             onClick={() => setFixesModalOpen(true)}
             title="查看并撤销全部聚类修复"
           >
@@ -1955,7 +1955,7 @@ export default function AssetManagerPage () {
           </button>
           <button
             type="button"
-            className="btn header-mini-btn"
+            className="btn header-mini-btn btn-backup"
             onClick={handleBackupData}
             title="导出收藏/标签/集合/修复/预设为 JSON 备份文件"
           >
@@ -1963,7 +1963,7 @@ export default function AssetManagerPage () {
           </button>
           <button
             type="button"
-            className="btn header-mini-btn"
+            className="btn header-mini-btn btn-import"
             onClick={() => dataImportRef.current && dataImportRef.current.click()}
             title="从 JSON 备份文件恢复用户数据"
           >
@@ -2145,44 +2145,45 @@ export default function AssetManagerPage () {
               </div>
 
               <div className="filter-bar-row">
-                <span className="filter-bar-label">尺寸</span>
+                <span className="filter-bar-label label-size">尺寸</span>
                 {['all', '16', '32', '48', '64', '96', '128', '256'].map(sz => (
                   <button
                     key={sz}
                     type="button"
-                    className={`filter-chip ${sizeFilter === sz ? 'active' : ''}`}
+                    className={`filter-chip chip-size ${sizeFilter === sz ? 'active' : ''}`}
                     onClick={() => setSizeFilter(sz)}
                     title={sz === 'all' ? '全部尺寸' : '单帧边长 = ' + sz + 'px'}
                   >
                     {sz === 'all' ? '全部' : sz + 'px'}
                   </button>
                 ))}
-                <span className="filter-bar-label">帧数</span>
+                <span className="filter-bar-label label-frame">帧数</span>
                 {[['all', '全部'], ['single', '单帧'], ['small', '2-9帧'], ['large', '10帧+'], ['multi', '精灵表/动图']].map(([k, label]) => (
                   <button
                     key={k}
                     type="button"
-                    className={`filter-chip ${frameFilter === k ? 'active' : ''}`}
+                    className={`filter-chip chip-frame ${frameFilter === k ? 'active' : ''}`}
                     onClick={() => setFrameFilter(k)}
                   >
                     {label}
                   </button>
                 ))}
-                <span className="filter-bar-label">排序</span>
+                <span className="filter-bar-label label-sort">排序</span>
                 <select className="sort-select" value={sortMode} onChange={e => setSortMode(e.target.value)} title="列表排序方式">
-                  <option value="default">默认顺序</option>
-                  <option value="name">名称 A-Z</option>
-                  <option value="count">帧数 多→少</option>
-                  <option value="recent">最近查看</option>
+                  <option value="default">↕ 默认顺序</option>
+                  <option value="name">🔤 名称 A-Z</option>
+                  <option value="count">🔢 帧数 多→少</option>
+                  <option value="recent">🕒 最近查看</option>
                 </select>
                 <button
                   type="button"
-                  className="btn dims-btn"
+                  className={`btn dims-btn ${dimsBuilding ? 'building' : ''}`}
                   onClick={buildDimsIndex}
                   disabled={dimsBuilding}
                   title="读取 PNG/GIF 文件头解析尺寸（一次性，结果持久化；再次点击=停止）"
                 >
-                  {dimsBuilding ? (dimsProgress || '尺寸索引构建中…') : '构建尺寸索引'}
+                  <IconActivity size={12} className={`dims-btn-ico ${dimsBuilding ? 'spin-icon' : ''}`} />
+                  <span>{dimsBuilding ? (dimsProgress || '尺寸索引构建中…') : '构建尺寸索引'}</span>
                 </button>
                 {sizeFilter !== 'all' && dimsMap.size === 0 && <span className="dim-info filter-hint">（尺寸筛选需先构建尺寸索引）</span>}
               </div>
@@ -2368,7 +2369,7 @@ export default function AssetManagerPage () {
             {selected && (
               <>
                 <div className="inspector-card">
-                  <div className="card-header"><IconSparkles size={13} style={{ marginRight: 6 }} /> 快捷操作</div>
+                  <div className="card-header header-actions"><IconSparkles size={13} style={{ marginRight: 6 }} /> 快捷操作</div>
                   <div className="action-buttons-grid">
                     <button
                       type="button"
@@ -2500,7 +2501,7 @@ export default function AssetManagerPage () {
                 </div>
 
                 <div className="inspector-card">
-                  <div className="card-header"><IconTag size={13} style={{ marginRight: 6 }} /> 标签管理</div>
+                  <div className="card-header header-tags"><IconTag size={13} style={{ marginRight: 6 }} /> 标签管理</div>
                   <div className="tag-chip-list inspector-tags">
                     {((tagMap[selected.id] || {}).tags || []).map(t => (
                       <button key={t} type="button" className="tag-chip active" onClick={() => removeTagFrom(selected.id, t)} title="点击移除该标签">
@@ -2522,7 +2523,7 @@ export default function AssetManagerPage () {
                 </div>
 
                 <div className="inspector-card">
-                  <div className="card-header"><IconFolderPlus size={13} style={{ marginRight: 6 }} /> 我的集合</div>
+                  <div className="card-header header-collections"><IconFolderPlus size={13} style={{ marginRight: 6 }} /> 我的集合</div>
                   <div className="tag-input-row">
                     <select className="tag-input col-select" value={colPick} onChange={handleColPickChange}>
                       <option value="">加入集合…</option>
@@ -2539,7 +2540,7 @@ export default function AssetManagerPage () {
 
                 {!String(selectedPack || '').startsWith('__') && (
                   <div className="inspector-card">
-                    <div className="card-header"><IconWrench size={13} style={{ marginRight: 6 }} /> 聚类修复</div>
+                    <div className="card-header header-fixes"><IconWrench size={13} style={{ marginRight: 6 }} /> 聚类修复</div>
                     <div className="fix-btn-grid">
                       <button type="button" className="btn" onClick={handleFixRename} title="仅改库内显示名，不改文件名">重命名</button>
                       <button type="button" className="btn" onClick={handleFixFps}>调整帧率</button>
@@ -2556,7 +2557,7 @@ export default function AssetManagerPage () {
 
                 {selected.dupRels && selected.dupRels.length > 1 && (
                   <div className="inspector-card">
-                    <div className="card-header"><IconCopy size={13} style={{ marginRight: 6 }} /> 重复素材</div>
+                    <div className="card-header header-dups"><IconCopy size={13} style={{ marginRight: 6 }} /> 重复素材</div>
                     <button
                       type="button"
                       className="btn"
@@ -2574,7 +2575,7 @@ export default function AssetManagerPage () {
                 )}
 
                 <div className="inspector-card">
-                  <div className="card-header"><IconActivity size={13} style={{ marginRight: 6 }} /> 规格与元数据</div>
+                  <div className="card-header header-meta"><IconActivity size={13} style={{ marginRight: 6 }} /> 规格与元数据</div>
                   <div className="meta-grid">
                     <div className="meta-row">
                       <span className="meta-k">动画名称</span>
@@ -2617,7 +2618,7 @@ export default function AssetManagerPage () {
 
                 {(selected.type === 'sheet' || selected.type === 'strip') && (
                   <div className="inspector-card">
-                    <div className="card-header"><IconLayers size={13} style={{ marginRight: 6 }} /> 精灵表切片微调</div>
+                    <div className="card-header header-sheet"><IconLayers size={13} style={{ marginRight: 6 }} /> 精灵表切片微调</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, color: 'var(--am-text-dim)' }}>
                         <span>当前切片:</span>
