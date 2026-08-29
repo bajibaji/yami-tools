@@ -31,6 +31,7 @@ import {
   dbDelete,
   dbClear,
   dbGet,
+  dbCount,
   dbQueryByIndex,
   dbQueryByPrefix
 } from '../asset/lib/idb-store.js'
@@ -963,7 +964,7 @@ export default function AssetManagerPage () {
     setScanInfo('')
   }, [toast, buildSearchIndex, warmupPacks, restoreLastView])
 
-  // 从库根目录清单秒恢复（换电脑/清缓存后），再后台增量校验
+  // 从库根目录清单秒恢复（换电脑/清缓存后）；素材变动靠手动「重新索引」增量同步
   const restoreFromManifest = useCallback(async (handle) => {
     const md = await readManifest(handle)
     if (!md || !md.files || !md.files.length) return false
@@ -982,13 +983,12 @@ export default function AssetManagerPage () {
       setPhase('ready')
       buildSearchIndex()
       warmupPacks(packList)
-      toast('已从本地清单快速恢复索引，正在后台增量校验…')
-      setTimeout(() => { runStreamScan(handle) }, 400)
+      toast('已从本地清单快速恢复索引；素材有变动时点「重新索引」增量同步')
       return true
     } catch (e) {
       return false
     }
-  }, [buildSearchIndex, warmupPacks, runStreamScan, toast])
+  }, [buildSearchIndex, warmupPacks, toast])
 
   // 初始化：0ms 秒开恢复索引
   useEffect(() => {
@@ -1062,8 +1062,8 @@ export default function AssetManagerPage () {
             }
           }
 
-          const cachedPacks = await dbAll('packs')
-          if (cachedPacks.length > 0) {
+          const [cachedPacks, fileCount] = await Promise.all([dbAll('packs'), dbCount('files')])
+          if (cachedPacks.length > 0 && fileCount > 0) {
             setPacks(cachedPacks)
             const total = cachedPacks.reduce((s, p) => s + p.count, 0)
             setTotalFileCount(total)
@@ -1098,8 +1098,8 @@ export default function AssetManagerPage () {
       setRootInfo({ type: 'handle', name: handle.name })
       setDirHandle(handle)
       ensureRootAbs()
-      const cachedPacks = await dbAll('packs')
-      if (cachedPacks.length) {
+      const [cachedPacks, fileCount] = await Promise.all([dbAll('packs'), dbCount('files')])
+      if (cachedPacks.length && fileCount > 0) {
         setPacks(cachedPacks)
         setTotalFileCount(cachedPacks.reduce((s, p) => s + p.count, 0))
         restoreLastView(cachedPacks)
@@ -1108,8 +1108,12 @@ export default function AssetManagerPage () {
         warmupPacks(cachedPacks)
         toast('已恢复上次素材库')
       } else {
-        setPhase('scanning')
-        await runStreamScan(handle)
+        // 缓存不完整时先试清单秒恢复，避免直接进入全量扫描
+        const ok = await restoreFromManifest(handle)
+        if (!ok) {
+          setPhase('scanning')
+          await runStreamScan(handle)
+        }
       }
     } catch (e) {
       toast('授权失败：' + e.message)
@@ -1129,11 +1133,25 @@ export default function AssetManagerPage () {
         setActiveAnims([])
         setSelectedId(null)
 
-        // 尝试从根目录的清单文件秒开恢复
+        // 优先复用本地 IndexedDB 索引（零重扫秒开）；files 缺失时再走清单恢复，避免「空分支」
+        const [cachedPacks, fileCount] = await Promise.all([dbAll('packs'), dbCount('files')])
+        if (cachedPacks.length && fileCount > 0) {
+          setPacks(cachedPacks)
+          setTotalFileCount(cachedPacks.reduce((s, p) => s + p.count, 0))
+          setSelectedPack(cachedPacks[0].name)
+          setExpandedPacks(new Set([cachedPacks[0].name]))
+          setPhase('ready')
+          buildSearchIndex()
+          warmupPacks(cachedPacks)
+          toast('已打开本地索引（未重扫）；素材有变动时点「重新索引」')
+          return
+        }
+
+        // 尝试从根目录的清单文件秒开恢复（不再自动后台全量扫描）
         const ok = await restoreFromManifest(handle)
         if (ok) return
 
-        // 否则直接启动流式扫描建立索引
+        // 本地缓存与清单都没有时才全量流式扫描（首次使用，无法避免）
         setPacks([])
         setPhase('scanning')
         await runStreamScan(handle)
@@ -1859,7 +1877,7 @@ export default function AssetManagerPage () {
           <div className="header-brand">
             <IconPackage size={18} className="brand-logo" />
             <span className="brand-title">ASSET WORKBENCH</span>
-            <span className="pro-pill">v1.5.0</span>
+            <span className="pro-pill">v1.5.1</span>
           </div>
 
           <button type="button" className="btn select-lib-btn" onClick={pickLibrary}>

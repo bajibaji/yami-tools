@@ -62,6 +62,16 @@ export async function dbAllKeys (store) {
   })
 }
 
+// 极速统计记录数（IDB 内置 count，毫秒级，用于判断索引是否完整）
+export async function dbCount (store) {
+  const t = await tx(store, 'readonly')
+  return new Promise((resolve, reject) => {
+    const req = t.objectStore(store).count()
+    req.onsuccess = () => resolve(req.result || 0)
+    req.onerror = () => reject(req.error)
+  })
+}
+
 export async function dbGet (store, key) {
   const t = await tx(store, 'readonly')
   return new Promise((resolve, reject) => {
