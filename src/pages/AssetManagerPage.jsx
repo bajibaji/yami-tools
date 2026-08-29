@@ -332,16 +332,8 @@ export default function AssetManagerPage () {
   const [fixSheetForm, setFixSheetForm] = useState({ cols: '', rows: '', cellW: '', cellH: '' })
   const [fixesModalOpen, setFixesModalOpen] = useState(false)
   const [dimsMap, setDimsMap] = useState(new Map())
-  const dimsMapRef = useRef(new Map())
-  dimsMapRef.current = dimsMap
-  const [dimsBuilding, setDimsBuilding] = useState(false)
-  const dimsBuildingRef = useRef(false)
-  const dimsAbortRef = useRef(false)
-  const [dimsProgress, setDimsProgress] = useState('')
   const lastViewedRef = useRef(new Map())
   const [sortMode, setSortMode] = useState('default')
-  const [sizeFilter, setSizeFilter] = useState('all')
-  const [frameFilter, setFrameFilter] = useState('all')
   const dataImportRef = useRef(null)
 
   // 视图状态
@@ -546,42 +538,17 @@ export default function AssetManagerPage () {
     loadDirectoryData(selectedPack, dirFilter, query)
   }, [phase, selectedPack, dirFilter, query, loadDirectoryData])
 
-  // 过滤动画（类型 / 尺寸 / 帧数 / 排序）
+  // 过滤与排序动画（类型 / 排序）
   const filteredAnims = useMemo(() => {
     let list = activeAnims
     if (typeFilter !== 'all') list = list.filter(a => a.type === typeFilter)
-
-    if (frameFilter !== 'all') {
-      list = list.filter(a => {
-        if (a.type === 'sequence') {
-          const c = a.count || 1
-          if (frameFilter === 'single') return c <= 1
-          if (frameFilter === 'small') return c >= 2 && c <= 9
-          return c >= 10
-        }
-        return frameFilter === 'multi'
-      })
-    }
-
-    if (sizeFilter !== 'all') {
-      const n = +sizeFilter
-      list = list.filter(a => {
-        if (a.type === 'strip' || a.type === 'sheet') {
-          const cfg = a.presetCfg || {}
-          return Boolean(cfg.cellW || cfg.cellH) && (cfg.cellW === n || cfg.cellH === n)
-        }
-        const rels = (a.files && a.files.length ? a.files.map(f => f.rel) : [a.rel]).filter(Boolean)
-        const d = rels.map(r => dimsMapRef.current.get(r)).find(Boolean)
-        return Boolean(d) && (d.w === n || d.h === n)
-      })
-    }
 
     if (sortMode === 'name') list = [...list].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
     else if (sortMode === 'count') list = [...list].sort((a, b) => (b.count || 0) - (a.count || 0))
     else if (sortMode === 'recent') list = [...list].sort((a, b) => (lastViewedRef.current.get(b.id) || 0) - (lastViewedRef.current.get(a.id) || 0))
 
     return list
-  }, [activeAnims, typeFilter, frameFilter, sizeFilter, sortMode, dimsMap])
+  }, [activeAnims, typeFilter, sortMode])
 
   const visibleAnims = useMemo(() => {
     return filteredAnims.slice(0, visibleCount)
@@ -692,7 +659,7 @@ export default function AssetManagerPage () {
     } catch (e) { /* ignore */ }
   }
 
-  // ---------- 素材库完整根路径：一次询问，之后统一拼接绝对路径 ----------
+  // ---------- 素材库完整根路径 ----------
   const saveRootAbs = useCallback((v) => {
     const val = (v || '').trim()
     setRootAbs(val)
@@ -700,47 +667,20 @@ export default function AssetManagerPage () {
     try { localStorage.setItem('yami_root_abs', val) } catch (e) { /* ignore */ }
   }, [])
 
-  const askRootAbs = useCallback(async () => {
-    const typed = window.prompt(
-      '请粘贴素材库根目录完整本地路径（仅首次，之后自动记忆）\r\n例如：D:\\YAHZJ\\技能素材',
-      rootAbsRef.current || rootInfoRef.current?.name || ''
-    )
-    if (typed && typed.trim()) {
-      saveRootAbs(typed)
-      return typed.trim()
-    }
-    return null
-  }, [saveRootAbs])
-
-  // 选库成功后自动记录根路径（若尚未记录）
-  const ensureRootAbs = useCallback(async () => {
-    if (rootAbsRef.current) return rootAbsRef.current
-    return askRootAbs()
-  }, [askRootAbs])
-
-  // 相对路径 → 完整本地路径（无根路径时返回 null）
+  // 相对路径 → 完整本地路径（无根路径时返回相对路径）
   const absPathOf = useCallback((rel) => {
     const root = rootAbsRef.current
-    if (!root || !rel) return null
+    if (!root || !rel) return rel || ''
     return root.replace(/[\\/]+$/, '') + '\\' + rel.replace(/\//g, '\\')
   }, [])
 
-  // ---------- 复制绝对路径（有根路径直接拼接；无则先询问一次并记忆） ----------
+  // ---------- 复制素材路径（非阻塞） ----------
   const handleCopyAbs = useCallback(async (target) => {
     if (!target || !target.rel) return ''
-    let root = rootAbsRef.current
-    if (!root) {
-      const typed = await askRootAbs()
-      if (typed) root = typed
-    }
-    const abs = root ? absPathOf(target.rel) : null
-    if (abs) {
-      await copyText(abs)
-      return abs
-    }
-    await copyText(target.rel)
-    return ''
-  }, [askRootAbs, absPathOf]) // rootInfo/rootAbs 经 ref 读取，不入依赖防循环刷新
+    const full = absPathOf(target.rel)
+    await copyText(full || target.rel)
+    return full || target.rel
+  }, [absPathOf])
 
   // ---------- 打开所在文件夹：弹出同目录素材浏览器弹窗 + 复制绝对路径 ----------
   const handleOpenFolder = useCallback(async (anim) => {
@@ -1037,51 +977,61 @@ export default function AssetManagerPage () {
         // ignore
       }
 
+      // 1. 无论浏览器磁盘权限状态如何，先从本地 IndexedDB 恢复全部包结构与上次查看的目录位置（0 秒秒进工作台）
+      try {
+        const [cachedPacks, fileCount] = await Promise.all([dbAll('packs'), dbCount('files')])
+        if (cachedPacks.length > 0 && fileCount > 0) {
+          setPacks(cachedPacks)
+          const total = cachedPacks.reduce((s, p) => s + p.count, 0)
+          setTotalFileCount(total)
+          restoreLastView(cachedPacks)
+          setPhase('ready')
+          buildSearchIndex()
+          warmupPacks(cachedPacks)
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // 2. 加载持久化文件夹句柄并校验/恢复权限
       if (!supportsDirectoryPicker()) return
       const handle = await loadRootHandle()
       if (!handle || handle.kind !== 'directory') return
 
       try {
-        const perm = await handle.queryPermission({ mode: 'read' })
-        if (perm === 'granted') {
-          setRootInfo({ type: 'handle', name: handle.name })
-          setDirHandle(handle)
-          ensureRootAbs()
+        setRootInfo({ type: 'handle', name: handle.name })
+        setDirHandle(handle)
 
-          if (favList && favList.length) {
-            for (const f of favList) {
-              const id = f.id || (String(f.key).startsWith('anim:') ? f.key.slice(5) : f.key)
-              if (id) {
-                favObjectsMapRef.current.set(id, {
-                  id,
-                  name: f.name || id.split('|').pop(),
-                  type: f.type || 'sheet',
-                  pack: f.pack || '我的收藏',
-                  dir: f.dir || '',
-                  rel: f.rel || '',
-                  count: f.count || 1,
-                  fps: f.fps || 15,
-                  entry: cachedEntry(f.entryMeta || { rel: f.rel, name: f.name }, handle),
-                  files: [cachedEntry(f.entryMeta || { rel: f.rel, name: f.name }, handle)],
-                  metaEntry: f.metaEntryMeta ? cachedEntry(f.metaEntryMeta, handle) : null,
-                  previewEntry: f.previewMeta ? cachedEntry(f.previewMeta, handle) : null,
-                  asepriteEntry: f.asepriteMeta ? cachedEntry(f.asepriteMeta, handle) : null,
-                  htmlEntry: f.htmlMeta ? cachedEntry(f.htmlMeta, handle) : null
-                })
-              }
+        if (favList && favList.length) {
+          for (const f of favList) {
+            const id = f.id || (String(f.key).startsWith('anim:') ? f.key.slice(5) : f.key)
+            if (id) {
+              favObjectsMapRef.current.set(id, {
+                id,
+                name: f.name || id.split('|').pop(),
+                type: f.type || 'sheet',
+                pack: f.pack || '我的收藏',
+                dir: f.dir || '',
+                rel: f.rel || '',
+                count: f.count || 1,
+                fps: f.fps || 15,
+                entry: cachedEntry(f.entryMeta || { rel: f.rel, name: f.name }, handle),
+                files: [cachedEntry(f.entryMeta || { rel: f.rel, name: f.name }, handle)],
+                metaEntry: f.metaEntryMeta ? cachedEntry(f.metaEntryMeta, handle) : null,
+                previewEntry: f.previewMeta ? cachedEntry(f.previewMeta, handle) : null,
+                asepriteEntry: f.asepriteMeta ? cachedEntry(f.asepriteMeta, handle) : null,
+                htmlEntry: f.htmlMeta ? cachedEntry(f.htmlMeta, handle) : null
+              })
             }
           }
+        }
 
+        const perm = await handle.queryPermission({ mode: 'read' })
+        if (perm === 'granted') {
+          setPendingReauth(null)
+          // 若 IndexedDB 为空，走清单秒恢复或流式扫描
           const [cachedPacks, fileCount] = await Promise.all([dbAll('packs'), dbCount('files')])
-          if (cachedPacks.length > 0 && fileCount > 0) {
-            setPacks(cachedPacks)
-            const total = cachedPacks.reduce((s, p) => s + p.count, 0)
-            setTotalFileCount(total)
-            restoreLastView(cachedPacks)
-            setPhase('ready')
-            buildSearchIndex()
-            warmupPacks(cachedPacks)
-          } else {
+          if (!cachedPacks.length || fileCount <= 0) {
             const ok = await restoreFromManifest(handle)
             if (!ok) {
               setPhase('scanning')
@@ -1099,7 +1049,7 @@ export default function AssetManagerPage () {
 
   // 一键重新授权上次素材库（Chrome 重启后权限会复位，此为浏览器限制）
   const reauthorize = async () => {
-    const handle = pendingReauth
+    const handle = pendingReauth || dirHandle || await loadRootHandle()
     if (!handle) return
     try {
       const perm = await handle.requestPermission({ mode: 'read' })
@@ -1107,7 +1057,6 @@ export default function AssetManagerPage () {
       setPendingReauth(null)
       setRootInfo({ type: 'handle', name: handle.name })
       setDirHandle(handle)
-      ensureRootAbs()
       const [cachedPacks, fileCount] = await Promise.all([dbAll('packs'), dbCount('files')])
       if (cachedPacks.length && fileCount > 0) {
         setPacks(cachedPacks)
@@ -1116,7 +1065,7 @@ export default function AssetManagerPage () {
         setPhase('ready')
         buildSearchIndex()
         warmupPacks(cachedPacks)
-        toast('已恢复上次素材库')
+        toast('已成功恢复素材库连接')
       } else {
         // 缓存不完整时先试清单秒恢复，避免直接进入全量扫描
         const ok = await restoreFromManifest(handle)
@@ -1139,7 +1088,6 @@ export default function AssetManagerPage () {
         setPendingReauth(null)
         setRootInfo({ type: 'handle', name: handle.name })
         setDirHandle(handle)
-        ensureRootAbs()
         setActiveAnims([])
         setSelectedId(null)
 
@@ -1184,7 +1132,6 @@ export default function AssetManagerPage () {
       const records = scanFallbackFiles(fileList, count => setScanInfo(`已读取 ${count.toLocaleString()} 个文件`))
       const rootDirName = fileList[0]?.webkitRelativePath?.split('/')[0] || '本地素材库'
       setRootInfo({ type: 'fallback', name: rootDirName })
-      ensureRootAbs()
       fallbackFilesMapRef.current.clear()
       for (const r of records) {
         if (r.file) fallbackFilesMapRef.current.set(r.rel, r.file)
@@ -1452,57 +1399,7 @@ export default function AssetManagerPage () {
     return () => clearTimeout(t)
   }, [selectedId])
 
-  // ---------- 尺寸索引（PNG/GIF 头部解析，按尺寸筛选的基础） ----------
-  const buildDimsIndex = useCallback(async () => {
-    if (dimsBuildingRef.current) { dimsAbortRef.current = true; toast('已请求停止尺寸索引构建…'); return }
-    const dh = dirHandleRef.current
-    const isFallback = rootInfoRef.current?.type === 'fallback'
-    if (!dh && !isFallback) { toast('请先选择素材库'); return }
-    if (!searchIndexReadyRef.current) await buildSearchIndex()
-    const recs = (searchIndexRef.current || []).filter(r => (r.ext === 'png' || r.ext === 'gif') && !dimsMapRef.current.has(r.rel))
-    if (!recs.length) { toast('尺寸索引已完整'); return }
-    dimsAbortRef.current = false
-    dimsBuildingRef.current = true
-    setDimsBuilding(true)
-    setDimsProgress('尺寸索引 0 / ' + recs.length.toLocaleString())
-    let done = 0
-    let next = 0
-    const pending = []
-    async function worker () {
-      while (!dimsAbortRef.current && next < recs.length) {
-        const i = next++
-        const rec = recs[i]
-        try {
-          const item = (isFallback && !rec.file) ? { ...rec, file: fallbackFilesMapRef.current.get(rec.rel) } : rec
-          const d = await readImageDims(cachedEntry(item, dh))
-          if (d) pending.push([rec.rel, { rel: rec.rel, ...d }])
-        } catch (e) { /* 跳过读不了的文件 */ }
-        done++
-        if (done % 150 === 0) {
-          setDimsProgress('尺寸索引 ' + done.toLocaleString() + ' / ' + recs.length.toLocaleString())
-          if (pending.length) {
-            const batch = pending.splice(0)
-            await dbBulkPut('dims', batch)
-          }
-          await new Promise(r => setTimeout(r, 0))
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: 6 }, worker))
-    if (pending.length) await dbBulkPut('dims', pending.splice(0))
-    if (dimsAbortRef.current) {
-      toast('尺寸索引已停止（本次完成 ' + done.toLocaleString() + ' 张）')
-    } else {
-      toast('尺寸索引完成：' + done.toLocaleString() + ' 张图片')
-    }
-    const dims = await dbAll('dims')
-    const m = new Map(dims.map(d => [d.rel, d]))
-    dimsMapRef.current = m
-    setDimsMap(m)
-    dimsBuildingRef.current = false
-    setDimsBuilding(false)
-    setDimsProgress('')
-  }, [buildSearchIndex, toast])
+
 
   // ---------- 聚类手工修复 ----------
   const refreshAfterFix = useCallback(async () => {
@@ -1887,7 +1784,7 @@ export default function AssetManagerPage () {
           <div className="header-brand">
             <IconPackage size={18} className="brand-logo" />
             <span className="brand-title">ASSET WORKBENCH</span>
-            <span className="pro-pill">v1.6.0</span>
+            <span className="pro-pill">v1.7.0</span>
           </div>
 
           <button type="button" className="btn select-lib-btn" onClick={pickLibrary}>
@@ -2172,51 +2069,17 @@ export default function AssetManagerPage () {
                 ))}
               </div>
 
-              <div className="filter-bar-row">
-                <span className="filter-bar-label label-size">尺寸</span>
-                {['all', '16', '32', '48', '64', '96', '128', '256'].map(sz => (
-                  <button
-                    key={sz}
-                    type="button"
-                    className={`filter-chip chip-size ${sizeFilter === sz ? 'active' : ''}`}
-                    onClick={() => setSizeFilter(sz)}
-                    title={sz === 'all' ? '全部尺寸' : '单帧边长 = ' + sz + 'px'}
-                  >
-                    {sz === 'all' ? '全部' : sz + 'px'}
-                  </button>
-                ))}
-                <span className="filter-bar-label label-frame">帧数</span>
-                {[['all', '全部'], ['single', '单帧'], ['small', '2-9帧'], ['large', '10帧+'], ['multi', '精灵表/动图']].map(([k, label]) => (
-                  <button
-                    key={k}
-                    type="button"
-                    className={`filter-chip chip-frame ${frameFilter === k ? 'active' : ''}`}
-                    onClick={() => setFrameFilter(k)}
-                  >
-                    {label}
-                  </button>
-                ))}
-                <span className="filter-bar-label label-sort">排序</span>
-                <select className="sort-select" value={sortMode} onChange={e => setSortMode(e.target.value)} title="列表排序方式">
-                  <option value="default">↕ 默认顺序</option>
-                  <option value="name">🔤 名称 A-Z</option>
-                  <option value="count">🔢 帧数 多→少</option>
-                  <option value="recent">🕒 最近查看</option>
-                </select>
-                <button
-                  type="button"
-                  className={`btn dims-btn ${dimsBuilding ? 'building' : ''}`}
-                  onClick={buildDimsIndex}
-                  disabled={dimsBuilding}
-                  title="读取 PNG/GIF 文件头解析尺寸（一次性，结果持久化；再次点击=停止）"
-                >
-                  <IconActivity size={12} className={`dims-btn-ico ${dimsBuilding ? 'spin-icon' : ''}`} />
-                  <span>{dimsBuilding ? (dimsProgress || '尺寸索引构建中…') : '构建尺寸索引'}</span>
-                </button>
-                {sizeFilter !== 'all' && dimsMap.size === 0 && <span className="dim-info filter-hint">（尺寸筛选需先构建尺寸索引）</span>}
-              </div>
-
               <div className="catalog-right-controls" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span className="filter-bar-label label-sort" style={{ margin: 0 }}>排序</span>
+                  <select className="sort-select" value={sortMode} onChange={e => setSortMode(e.target.value)} title="列表排序方式">
+                    <option value="default">默认顺序</option>
+                    <option value="name">名称 A-Z</option>
+                    <option value="count">帧数从多到少</option>
+                    <option value="recent">最近查看</option>
+                  </select>
+                </div>
+
                 {viewLayout === 'gallery' && (
                   <button
                     type="button"
@@ -2546,7 +2409,7 @@ export default function AssetManagerPage () {
                       placeholder="新标签，回车添加"
                       className="tag-input"
                     />
-                    <button type="button" className="btn" onClick={() => addTagTo(selected.id, tagInput)}>添加</button>
+                    <button type="button" className="btn tag-add-btn" onClick={() => addTagTo(selected.id, tagInput)}>添加</button>
                   </div>
                 </div>
 
@@ -2561,7 +2424,7 @@ export default function AssetManagerPage () {
                       <option value="__new__">＋ 新建集合</option>
                     </select>
                     {activeCollectionId && (
-                      <button type="button" className="btn" onClick={() => handleRemoveFromCollection(activeCollectionId, [selected.id])}>移出当前集合</button>
+                      <button type="button" className="btn col-remove-btn" onClick={() => handleRemoveFromCollection(activeCollectionId, [selected.id])}>移出当前集合</button>
                     )}
                   </div>
                 </div>
@@ -2588,8 +2451,7 @@ export default function AssetManagerPage () {
                     <div className="card-header header-dups"><IconCopy size={13} style={{ marginRight: 6 }} /> 重复素材</div>
                     <button
                       type="button"
-                      className="btn"
-                      style={{ width: '100%' }}
+                      className="btn dup-copy-btn"
                       onClick={async () => {
                         const rootAbs = (() => { try { return localStorage.getItem('yami_root_abs') || '' } catch (e) { return '' } })()
                         const text = selected.dupRels.map(r => rootAbs ? rootAbs.replace(/[\\/]+$/, '') + '\\' + r.replace(/\//g, '\\') : r).join('\n')
@@ -2656,11 +2518,10 @@ export default function AssetManagerPage () {
                       </div>
 
                       {/* 快速切片预设 */}
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      <div className="sheet-preset-group">
                         <button
                           type="button"
-                          className="btn"
-                          style={{ fontSize: 10, padding: '2px 8px' }}
+                          className={`sheet-preset-btn ${!sheetCfg[selectedId]?.cols && !sheetCfg[selectedId]?.cellW ? 'active' : ''}`}
                           onClick={() => setSheetCfg(s => ({ ...s, [selectedId]: {} }))}
                           title="恢复系统智能自动等宽与间隙切分"
                         >
@@ -2670,8 +2531,7 @@ export default function AssetManagerPage () {
                           <button
                             key={col}
                             type="button"
-                            className={`btn ${sheetCfg[selectedId]?.cols === +col ? 'primary' : ''}`}
-                            style={{ fontSize: 10, padding: '2px 6px' }}
+                            className={`sheet-preset-btn ${sheetCfg[selectedId]?.cols === +col ? 'active' : ''}`}
                             onClick={() => setSheetCfg(s => ({ ...s, [selectedId]: { cols: +col, rows: 1 } }))}
                             title={`强制单行等分 ${col} 帧`}
                           >
@@ -2680,13 +2540,12 @@ export default function AssetManagerPage () {
                         ))}
                       </div>
 
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      <div className="sheet-preset-group">
                         {['32', '48', '64', '80', '96', '128'].map(sz => (
                           <button
                             key={sz}
                             type="button"
-                            className={`btn ${sheetCfg[selectedId]?.cellW === +sz ? 'primary' : ''}`}
-                            style={{ fontSize: 10, padding: '2px 6px' }}
+                            className={`sheet-preset-btn ${sheetCfg[selectedId]?.cellW === +sz ? 'active' : ''}`}
                             onClick={() => setSheetCfg(s => ({ ...s, [selectedId]: { cellW: +sz, cellH: +sz } }))}
                             title={`按 ${sz}×${sz} px 正方形单元格切分`}
                           >
@@ -3105,6 +2964,96 @@ export default function AssetManagerPage () {
               </div>
               <div className="folder-modal-footer">
                 <button type="button" className="folder-done-btn" onClick={() => setFixesModalOpen(false)}>完成</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* 快捷键速查面板 */}
+        {shortcutsOpen && (
+          <div className="pro-modal-backdrop" onClick={() => setShortcutsOpen(false)}>
+            <motion.div
+              className="folder-explorer-modal shortcuts-modal"
+              onClick={e => e.stopPropagation()}
+              initial={{ opacity: 0, scale: 0.96, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
+            >
+              <div className="folder-modal-header">
+                <div className="folder-modal-title-wrap">
+                  <IconKeyboard size={18} style={{ color: 'var(--am-accent)' }} />
+                  <h3>素材管理器快捷键指南 (Keyboard Shortcuts)</h3>
+                </div>
+                <button type="button" className="folder-close-btn" onClick={() => setShortcutsOpen(false)} title="关闭 (Esc)"><IconX size={15} /></button>
+              </div>
+
+              <div className="shortcuts-modal-body">
+                <div className="shortcuts-grid">
+                  <div className="shortcut-group">
+                    <div className="shortcut-group-title">🔍 全局检索与导航</div>
+                    <div className="shortcut-item">
+                      <span className="shortcut-desc">聚焦全局搜索框</span>
+                      <kbd className="shortcut-key">/</kbd>
+                    </div>
+                    <div className="shortcut-item">
+                      <span className="shortcut-desc">切换素材 (2D 画廊/表格)</span>
+                      <div className="shortcut-keys"><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> 或 <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div>
+                    </div>
+                    <div className="shortcut-item">
+                      <span className="shortcut-desc">关闭弹窗 / 清空搜索</span>
+                      <kbd className="shortcut-key">Esc</kbd>
+                    </div>
+                    <div className="shortcut-item">
+                      <span className="shortcut-desc">打开快捷键帮助</span>
+                      <kbd className="shortcut-key">?</kbd>
+                    </div>
+                  </div>
+
+                  <div className="shortcut-group">
+                    <div className="shortcut-group-title">🎞️ 视口播放与微调</div>
+                    <div className="shortcut-item">
+                      <span className="shortcut-desc">自由滚轮平滑缩放</span>
+                      <span className="shortcut-desc-detail">鼠标滚轮 (1x ~ 32x)</span>
+                    </div>
+                    <div className="shortcut-item">
+                      <span className="shortcut-desc">查看原始未切片大图</span>
+                      <span className="shortcut-desc-detail">双击视口画布</span>
+                    </div>
+                    <div className="shortcut-item">
+                      <span className="shortcut-desc">原图滚轮放大/缩小</span>
+                      <span className="shortcut-desc-detail">原图弹窗内滚轮</span>
+                    </div>
+                    <div className="shortcut-item">
+                      <span className="shortcut-desc">原图按住鼠标左键</span>
+                      <span className="shortcut-desc-detail">自由拖动画布平移</span>
+                    </div>
+                  </div>
+
+                  <div className="shortcut-group">
+                    <div className="shortcut-group-title">⭐ 快捷操作与收藏</div>
+                    <div className="shortcut-item">
+                      <span className="shortcut-desc">快速加入 / 取消收藏</span>
+                      <kbd className="shortcut-key">F</kbd>
+                    </div>
+                    <div className="shortcut-item">
+                      <span className="shortcut-desc">快速编辑 / 添加标签</span>
+                      <kbd className="shortcut-key">T</kbd>
+                    </div>
+                    <div className="shortcut-item">
+                      <span className="shortcut-desc">导出 PNG 序列帧</span>
+                      <kbd className="shortcut-key">E</kbd>
+                    </div>
+                    <div className="shortcut-item">
+                      <span className="shortcut-desc">资源管理器地址栏跳转</span>
+                      <div className="shortcut-keys"><kbd>复制系统路径</kbd> + <kbd>Ctrl + L</kbd> 粘贴</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="folder-modal-footer">
+                <button type="button" className="folder-done-btn" onClick={() => setShortcutsOpen(false)}>知道了</button>
               </div>
             </motion.div>
           </div>

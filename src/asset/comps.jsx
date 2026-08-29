@@ -23,12 +23,103 @@ import {
   IconTag
 } from './icons.jsx'
 
+const VARIANT_COLORS = [
+  '#f7768e', // 1: 烈焰红
+  '#7aa2f7', // 2: 冰霜蓝
+  '#9ece6a', // 3: 翡翠绿
+  '#e0af68', // 4: 琥珀金
+  '#bb9af7', // 5: 柔光紫
+  '#ff9e64', // 6: 熔岩橙
+  '#73daca', // 7: 极光青
+  '#f43f5e', // 8: 霓虹粉
+  '#38bdf8', // 9: 苍穹蓝
+  '#a855f7'  // 10: 虚空紫
+]
+
+// 极速提取条带图中各行真实特征主色（使用 16x16 离屏微缩采样，耗时 < 0.2ms，零性能损耗）
+const _colorSampleCanvas = typeof document !== 'undefined' ? document.createElement('canvas') : null
+const _colorSampleCtx = _colorSampleCanvas ? _colorSampleCanvas.getContext('2d', { willReadFrequently: true }) : null
+
+export function extractRowDominantColors (image, rowCount) {
+  if (!image || !rowCount || rowCount <= 1 || !_colorSampleCtx) return []
+  const imgW = image.width
+  const imgH = image.height
+  const rowH = imgH / rowCount
+  const colors = []
+
+  const SAMPLE_SIZE = 16
+  _colorSampleCanvas.width = SAMPLE_SIZE
+  _colorSampleCanvas.height = SAMPLE_SIZE
+
+  for (let r = 0; r < rowCount; r++) {
+    _colorSampleCtx.clearRect(0, 0, SAMPLE_SIZE, SAMPLE_SIZE)
+    try {
+      _colorSampleCtx.drawImage(
+        image,
+        0, r * rowH, imgW, rowH,
+        0, 0, SAMPLE_SIZE, SAMPLE_SIZE
+      )
+      const imgData = _colorSampleCtx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data
+      let totalR = 0, totalG = 0, totalB = 0, count = 0
+      let maxSat = -1, bestR = 122, bestG = 162, bestB = 247
+
+      for (let i = 0; i < imgData.length; i += 4) {
+        const a = imgData[i + 3]
+        if (a < 50) continue
+        const red = imgData[i]
+        const green = imgData[i + 1]
+        const blue = imgData[i + 2]
+
+        const max = Math.max(red, green, blue)
+        const min = Math.min(red, green, blue)
+        const delta = max - min
+        const brightness = (red + green + blue) / 3
+
+        if (brightness < 25 || brightness > 240) continue
+
+        const sat = max === 0 ? 0 : delta / max
+        if (sat > maxSat) {
+          maxSat = sat
+          bestR = red
+          bestG = green
+          bestB = blue
+        }
+
+        totalR += red
+        totalG += green
+        totalB += blue
+        count++
+      }
+
+      if (maxSat > 0.2) {
+        colors.push(`rgb(${bestR}, ${bestG}, ${bestB})`)
+      } else if (count > 0) {
+        colors.push(`rgb(${Math.round(totalR / count)}, ${Math.round(totalG / count)}, ${Math.round(totalB / count)})`)
+      } else {
+        colors.push(VARIANT_COLORS[r % VARIANT_COLORS.length])
+      }
+    } catch (e) {
+      colors.push(VARIANT_COLORS[r % VARIANT_COLORS.length])
+    }
+  }
+
+  return colors
+}
+
 // 加载单个动画的帧位图（只为当前选中的单个动画服务，避免内存暴涨）
 export async function loadAnimData (anim, cfg) {
   if (!anim) return null
   if (anim.type === 'gif') {
     const blob = await entryBlob(anim.entry)
-    return { kind: 'gif', url: URL.createObjectURL(blob), frames: [], file: blob }
+    let w = 128, h = 128
+    try {
+      const bmp = await createImageBitmap(blob)
+      w = bmp.width
+      h = bmp.height
+    } catch (e) {
+      // fallback
+    }
+    return { kind: 'gif', url: URL.createObjectURL(blob), width: w, height: h, frames: [], file: blob }
   }
   if (anim.type === 'single' || (anim.type === 'sequence' && anim.files?.length === 1)) {
     const blob = await entryBlob(anim.entry)
@@ -354,11 +445,11 @@ export const GalleryCard = memo(function GalleryCard ({
           {tags.length > 0 && <span className="count-badge tag-badge" title={tags.join(', ')}>{tags.length} 标签</span>}
         </div>
 
-        {/* 缩略图快捷收藏星星按钮 + 标签按钮 */}
+        {/* 缩略图左上角标签按钮 + 右上角收藏星星按钮 */}
         {onTagClick && (
           <button
             type="button"
-            className={`card-tag-btn ${tags.length ? 'active' : ''}`}
+            className={`card-tag-btn ${tags.length ? 'active' : ''} ${showCheckbox ? 'has-checkbox' : ''}`}
             onClick={e => {
               e.stopPropagation()
               onTagClick(anim.id)
@@ -701,6 +792,7 @@ export const RawImageModal = memo(function RawImageModal ({ anim, onClose }) {
 export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onOpenFolder }) {
   const canvasRef = useRef(null)
   const containerRef = useRef(null)
+  const stageRef = useRef(null)
   const sliderRef = useRef(null)
   const counterRef = useRef(null)
 
@@ -710,6 +802,16 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
   const [playing, setPlaying] = useState(true)
   const [fps, setFps] = useState(anim?.fps || 15)
   const [zoom, setZoom] = useState(4)
+  const [isFit, setIsFit] = useState(() => {
+    try {
+      const s = localStorage.getItem('am_viewport_fit')
+      return s !== null ? s === 'true' : true
+    } catch (e) {
+      return true
+    }
+  })
+  const isFitRef = useRef(true)
+  isFitRef.current = isFit
   const [playMode, setPlayMode] = useState('loop') // 'loop' | 'once' | 'pingpong'
   const [direction, setDirection] = useState(1)
   const [bgStyle, setBgStyle] = useState('checker-dark') // 'checker-dark' | 'checker-light' | 'black' | 'white' | 'green'
@@ -799,9 +901,13 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
           return
         }
         setData(d)
+        dataRef.current = d
         onFrameDataRef.current?.(d)
         setIdx(0)
         idxRef.current = 0
+        if (isFitRef.current) {
+          requestAnimationFrame(() => applyFitZoom(d))
+        }
       })
       .catch(e => {
         if (token === loadTokenRef.current) onToastRef.current?.('预览失败：' + e.message)
@@ -830,6 +936,11 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
     cellH = cellH || 64
     return Math.max(1, Math.round(h / cellH))
   }, [data, cfg])
+
+  const rowColors = useMemo(() => {
+    if (!data?.image || stripRowCount <= 1) return []
+    return extractRowDominantColors(data.image, stripRowCount)
+  }, [data?.image, stripRowCount])
 
   const renderFrameToCanvas = useCallback((frameIndex) => {
     const cv = canvasRef.current
@@ -920,8 +1031,92 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
     }
   }, [idx, renderFrameToCanvas])
 
-  const frameW = data && data.kind !== 'gif' && data.frames[0] ? (data.kind === 'sheet' ? data.frames[0].w : data.frames[0].width) : 0
-  const frameH = data && data.kind !== 'gif' && data.frames[0] ? (data.kind === 'sheet' ? data.frames[0].h : data.frames[0].height) : 0
+  const frameW = data && data.kind !== 'gif' && data.frames?.[0] ? (data.kind === 'sheet' ? data.frames[0].w : (data.frames[0].width || data.frames[0].w || 0)) : (data?.kind === 'gif' ? (data.width || 128) : (data?.image ? data.image.width : 0))
+  const frameH = data && data.kind !== 'gif' && data.frames?.[0] ? (data.kind === 'sheet' ? data.frames[0].h : (data.frames[0].height || data.frames[0].h || 0)) : (data?.kind === 'gif' ? (data.height || 128) : (data?.image ? data.image.height : 0))
+
+  const applyFitZoom = useCallback((currentData = dataRef.current) => {
+    const stage = stageRef.current || containerRef.current
+    if (!stage) return
+    // 精确获取视口舞台的实际像素大小（预留 24px 呼吸内边距）
+    const stageW = Math.max(40, stage.clientWidth - 24)
+    const stageH = Math.max(40, stage.clientHeight - 24)
+    if (stageW <= 0 || stageH <= 0) return
+
+    let fw = 0
+    let fh = 0
+    if (currentData) {
+      if (currentData.kind === 'sheet' && currentData.frames?.[0]) {
+        fw = currentData.frames[0].w
+        fh = currentData.frames[0].h
+      } else if (currentData.kind === 'sequence' && currentData.frames?.[0]) {
+        fw = currentData.frames[0].width || currentData.frames[0].w
+        fh = currentData.frames[0].height || currentData.frames[0].h
+      } else if (currentData.kind === 'gif') {
+        fw = currentData.width || 128
+        fh = currentData.height || 128
+      } else if (currentData.image) {
+        fw = currentData.image.width
+        fh = currentData.image.height
+      }
+    }
+    if (!fw || !fh) return
+
+    // 适应视口的高度与宽度（严格按比例缩放至填满舞台）
+    const scaleW = stageW / fw
+    const scaleH = stageH / fh
+    const fitScale = Math.min(scaleW, scaleH)
+
+    if (fitScale <= 0) return
+
+    // 完美填满画布舞台高度/宽度（保留 2 位小数精确缩放，例如 1.85x, 2.7x, 5.2x）
+    const targetScale = Math.min(32, Math.max(0.1, Math.round(fitScale * 100) / 100))
+    setZoom(targetScale)
+  }, [])
+
+  // 处于 Fit 模式时，切换不同尺寸素材或尺寸加载完成自动 Fit
+  useEffect(() => {
+    if (isFit && data) {
+      applyFitZoom(data)
+    }
+  }, [isFit, data, applyFitZoom])
+
+  // 容器/视口舞台尺寸变动时自动重新计算 Fit
+  useEffect(() => {
+    if (!isFit || !stageRef.current) return
+    const el = stageRef.current
+    const ro = new ResizeObserver(() => {
+      applyFitZoom(dataRef.current)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [isFit, applyFitZoom])
+
+  const handleManualZoom = (delta) => {
+    setIsFit(false)
+    isFitRef.current = false
+    try { localStorage.setItem('am_viewport_fit', 'false') } catch (e) {}
+    setZoom(z => {
+      let next
+      if (delta > 0) {
+        next = z < 1 ? Math.min(1, Math.round((z + 0.25) * 100) / 100) : Math.floor(z + 1)
+      } else {
+        next = z <= 1 ? Math.max(0.1, Math.round((z - 0.25) * 100) / 100) : Math.ceil(z - 1)
+      }
+      return Math.min(32, Math.max(0.1, next))
+    })
+  }
+
+  const handleToggleFit = () => {
+    setIsFit(prev => {
+      const next = !prev
+      isFitRef.current = next
+      try { localStorage.setItem('am_viewport_fit', String(next)) } catch (e) {}
+      if (next) {
+        applyFitZoom(dataRef.current)
+      }
+      return next
+    })
+  }
 
   // 视口工作台原生滚轮直接放大/缩小（无需按住 Ctrl，直接滑轮 1x~32x）
   useEffect(() => {
@@ -931,7 +1126,14 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
       e.preventDefault()
       e.stopPropagation()
       const delta = e.deltaY > 0 ? -1 : 1
-      setZoom(z => Math.max(1, Math.min(32, z + delta)))
+      setIsFit(false)
+      isFitRef.current = false
+      try { localStorage.setItem('am_viewport_fit', 'false') } catch (e) {}
+      setZoom(z => {
+        const step = z >= 4 ? 1 : z >= 1 ? 0.5 : 0.1
+        const next = Math.round((z + delta * step) * 100) / 100
+        return Math.min(32, Math.max(0.1, next))
+      })
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
@@ -958,14 +1160,6 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
       if (sliderRef.current) sliderRef.current.value = idxRef.current
       if (counterRef.current) counterRef.current.innerHTML = `<strong>${idxRef.current + 1}</strong> / ${frameCount} 帧`
     }
-  }
-
-  const handleFit = () => {
-    if (!frameW || !frameH || !containerRef.current) return
-    const cw = containerRef.current.clientWidth - 80
-    const ch = containerRef.current.clientHeight - 80
-    const scale = Math.max(1, Math.floor(Math.min(cw / frameW, ch / frameH)))
-    setZoom(Math.min(16, scale))
   }
 
   return (
@@ -1006,22 +1200,43 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
             </div>
           )}
 
-          {(activePreviewAnim?.type === 'strip' || anim?.type === 'strip') && (
-            <label className="strip-variant-select" title="切换颜色变体（每一行一种颜色，在视口处操作）">
-              <span className="dim-info">变体</span>
-              <select
-                value={cfg?.variant ?? 'all'}
-                onChange={e => {
-                  const v = e.target.value === 'all' ? 'all' : +e.target.value
-                  onCfgChangeRef.current?.({ variant: v })
-                }}
-              >
-                <option value="all">全部颜色</option>
-                {Array.from({ length: stripRowCount }, (_, i) => (
-                  <option key={i} value={i}>{'颜色 ' + (i + 1)}</option>
-                ))}
-              </select>
-            </label>
+          {(activePreviewAnim?.type === 'strip' || anim?.type === 'strip') && stripRowCount > 1 && (
+            <div className="strip-variant-group" title="切换特效颜色变体（每一行对应一种颜色）">
+              <span className="variant-label">变体</span>
+              <div className="variant-pill-bar">
+                <button
+                  type="button"
+                  className={`variant-pill-btn ${(cfg?.variant === 'all' || cfg?.variant === undefined) ? 'active' : ''}`}
+                  onClick={() => onCfgChangeRef.current?.({ variant: 'all' })}
+                  title="全部颜色（连续播放）"
+                >
+                  全部
+                </button>
+                {Array.from({ length: stripRowCount }, (_, i) => {
+                  const color = rowColors[i] || VARIANT_COLORS[i % VARIANT_COLORS.length]
+                  const isActive = cfg?.variant === i
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      className={`variant-pill-btn num-btn ${isActive ? 'active' : ''}`}
+                      style={{
+                        '--var-color': color,
+                        borderColor: isActive ? color : `${color}66`,
+                        color: isActive ? '#090c13' : color,
+                        backgroundColor: isActive ? color : `${color}18`,
+                        boxShadow: isActive ? `0 0 10px ${color}88` : undefined
+                      }}
+                      onClick={() => onCfgChangeRef.current?.({ variant: i })}
+                      title={`颜色变体 ${i + 1}`}
+                    >
+                      <span className="var-dot" style={{ backgroundColor: color }} />
+                      <span>{i + 1}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
           )}
           <div className="bg-switcher" title="切换画布背景">
             <button
@@ -1076,15 +1291,23 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
           </button>
 
           <div className="zoom-controls">
-            <button type="button" className="zoom-btn" onClick={() => setZoom(z => Math.max(1, z - 1))}>−</button>
-            <span className="zoom-value">{zoom}x</span>
-            <button type="button" className="zoom-btn" onClick={() => setZoom(z => Math.min(16, z + 1))}>＋</button>
-            <button type="button" className="zoom-fit-btn" onClick={handleFit} title="适应视口">Fit</button>
+            <button type="button" className="zoom-btn" onClick={() => handleManualZoom(-1)}>−</button>
+            <span className="zoom-value">{Number(zoom.toFixed(2))}x</span>
+            <button type="button" className="zoom-btn" onClick={() => handleManualZoom(1)}>＋</button>
+            <button
+              type="button"
+              className={`zoom-fit-btn ${isFit ? 'active' : ''}`}
+              onClick={handleToggleFit}
+              title={isFit ? '已开启视口自适应 (点击退出)' : '开启自适应视口 (切换素材自动 Fit)'}
+            >
+              Fit
+            </button>
           </div>
         </div>
       </div>
 
       <div
+        ref={stageRef}
         className={`pro-canvas-stage stage-${bgStyle}`}
         onDoubleClick={() => anim && setShowRawModal(true)}
         title="双击直接查看原始完整大图 (也可点击右上角「查看原始图片」按钮)"
@@ -1100,14 +1323,14 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
         )}
 
         {anim && !loading && data && data.kind === 'gif' && (
-          <div className="canvas-img-container" style={{ transform: `scale(${zoom / 2})` }}>
-            <img src={data.url} alt={anim.name} className="pro-gif-img" />
+          <div className="canvas-wrapper" style={{ width: Math.round((data.width || 128) * zoom), height: Math.round((data.height || 128) * zoom) }}>
+            <img src={data.url} alt={anim.name} className="pro-gif-img" style={{ width: '100%', height: '100%' }} />
           </div>
         )}
 
-        {anim && !loading && data && data.kind !== 'gif' && (
-          <div className="canvas-wrapper" style={{ width: frameW * zoom, height: frameH * zoom }} onDoubleClick={() => setShowRawModal(true)} title="双击直接查看原始完整大图">
-            <canvas ref={canvasRef} style={{ width: frameW * zoom, height: frameH * zoom }} className="pro-canvas" />
+        {anim && !loading && data && data.kind !== 'gif' && frameW > 0 && frameH > 0 && (
+          <div className="canvas-wrapper" style={{ width: Math.round(frameW * zoom), height: Math.round(frameH * zoom) }} onDoubleClick={() => setShowRawModal(true)} title="双击直接查看原始完整大图">
+            <canvas ref={canvasRef} style={{ width: Math.round(frameW * zoom), height: Math.round(frameH * zoom) }} className="pro-canvas" />
             {showCrosshair && (
               <div className="canvas-crosshair">
                 <div className="crosshair-h" />
