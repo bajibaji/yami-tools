@@ -451,7 +451,7 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
     }
 
     // 4. 纯 GIF
-    if (sheets.length === 0 && frames.length === 0) {
+    if (true) { // 2026-08-29: GIF 无条件生成条目（Explosion VFX 等包即使同目录有同名 PNG 也要识别 GIF）
       for (const gif of gifs) {
         if (isPreviewGifName(gif.name)) continue
         anims.push({

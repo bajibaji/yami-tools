@@ -119,4 +119,4 @@ export const TOOLS = [
 ].map(t => ({ ...t, fullHref: t.route ? undefined : BASE + t.href }))
 
 // 构建时由 GitHub Actions 注入 VITE_APP_VERSION（如 v0.0.0）；本地开发回退到默认值
-export const HUB_VERSION = import.meta.env.VITE_APP_VERSION || 'v1.3.1'
+export const HUB_VERSION = import.meta.env.VITE_APP_VERSION || 'v1.3.2'
