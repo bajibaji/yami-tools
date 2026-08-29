@@ -39,7 +39,7 @@ import { VirtualList, Thumb, PreviewPane, GalleryCard, GRID_THUMB_SPEC } from '.
 import { prewarmThumbCache } from '../asset/lib/thumb.js'
 import { readImageDims } from '../asset/lib/dims.js'
 import { pinyin } from 'pinyin-pro'
-import { writeManifest, readManifest, MANIFEST_NAME } from '../asset/lib/manifest.js'
+import { writeManifest, readManifest, expandManifestFile, MANIFEST_NAME } from '../asset/lib/manifest.js'
 import {
   IconFolder,
   IconFolderOpen,
@@ -968,11 +968,18 @@ export default function AssetManagerPage () {
   const restoreFromManifest = useCallback(async (handle) => {
     const md = await readManifest(handle)
     if (!md || !md.files || !md.files.length) return false
+    const total = md.files.length
+    setScanning(true)
+    setScanInfo('正在从本地清单恢复索引 (0 / ' + total.toLocaleString() + ')…')
     try {
       await dbClear('files')
       await dbClear('packs')
-      for (let i = 0; i < md.files.length; i += 5000) {
-        await dbBulkPut('files', md.files.slice(i, i + 5000).map(f => [f.rel, f]))
+      for (let i = 0; i < total; i += 5000) {
+        await dbBulkPut('files', md.files.slice(i, i + 5000).map(f => {
+          const rec = expandManifestFile(f)
+          return [f.rel, rec]
+        }))
+        setScanInfo('正在从本地清单恢复索引 (' + Math.min(i + 5000, total).toLocaleString() + ' / ' + total.toLocaleString() + ')…')
         await new Promise(r => setTimeout(r, 0))
       }
       const packList = md.packs && md.packs.length ? md.packs : []
@@ -983,10 +990,13 @@ export default function AssetManagerPage () {
       setPhase('ready')
       buildSearchIndex()
       warmupPacks(packList)
-      toast('已从本地清单快速恢复索引；素材有变动时点「重新索引」增量同步')
+      toast('已从本地清单恢复索引（' + total.toLocaleString() + ' 条）；素材有变动时点「重新索引」')
       return true
     } catch (e) {
       return false
+    } finally {
+      setScanning(false)
+      setScanInfo('')
     }
   }, [buildSearchIndex, warmupPacks, toast])
 
@@ -1877,7 +1887,7 @@ export default function AssetManagerPage () {
           <div className="header-brand">
             <IconPackage size={18} className="brand-logo" />
             <span className="brand-title">ASSET WORKBENCH</span>
-            <span className="pro-pill">v1.5.1</span>
+            <span className="pro-pill">v1.6.0</span>
           </div>
 
           <button type="button" className="btn select-lib-btn" onClick={pickLibrary}>
