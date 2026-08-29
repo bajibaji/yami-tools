@@ -1528,34 +1528,54 @@ body {
   left: 4px;
   bottom: 4px;
   display: flex;
-  gap: 3px;
+  align-items: center;
+  gap: 2.5px;
+  max-width: calc(100% - 8px);
+  pointer-events: none;
+  z-index: 1;
 }
 
 .type-badge {
   font-size: 8px;
   font-weight: 700;
-  padding: 1px 5px;
+  height: 15px;
+  padding: 0 4px;
   border-radius: 3px;
-  background: rgba(0, 0, 0, 0.75);
-  color: #fff;
+  background: rgba(10, 12, 18, 0.85);
+  color: #c0caf5;
   border: 1px solid rgba(255, 255, 255, 0.15);
   backdrop-filter: blur(4px);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+}
+
+.type-badge svg {
+  flex-shrink: 0;
 }
 
 .count-badge {
   font-size: 8px;
-  padding: 1px 5px;
+  height: 15px;
+  padding: 0 4px;
   border-radius: 3px;
-  background: rgba(122, 162, 247, 0.25);
-  border: 1px solid rgba(122, 162, 247, 0.4);
-  color: var(--am-accent);
+  background: rgba(122, 162, 247, 0.2);
+  border: 1px solid rgba(122, 162, 247, 0.35);
+  color: #7aa2f7;
   font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
 }
 
 .ase-badge {
-  background: rgba(187, 154, 247, 0.25) !important;
-  border-color: rgba(187, 154, 247, 0.5) !important;
-  color: var(--am-purple) !important;
+  background: rgba(187, 154, 247, 0.2) !important;
+  border-color: rgba(187, 154, 247, 0.45) !important;
+  color: #bb9af7 !important;
 }
 
 .card-fav-btn {

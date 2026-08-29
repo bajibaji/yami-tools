@@ -399,10 +399,18 @@ export const GalleryCard = memo(function GalleryCard ({
   }, [hover, anim.previewEntry, previewGifUrl])
 
   const renderTypeIcon = () => {
-    if (anim.type === 'sheet') return <IconLayers size={10} />
-    if (anim.type === 'strip') return <IconFilm size={10} />
-    if (anim.type === 'sequence') return <IconSparkles size={10} />
-    return <IconImage size={10} />
+    if (anim.type === 'sheet') return <IconLayers size={9} />
+    if (anim.type === 'strip') return <IconFilm size={9} />
+    if (anim.type === 'sequence') return <IconSparkles size={9} />
+    return <IconImage size={9} />
+  }
+
+  const renderTypeLabel = () => {
+    if (anim.type === 'sequence') return 'SEQ'
+    if (anim.type === 'sheet') return 'SHEET'
+    if (anim.type === 'strip') return 'STRIP'
+    if (anim.type === 'single') return 'IMG'
+    return anim.type ? anim.type.toUpperCase() : 'IMG'
   }
 
   return (
@@ -438,9 +446,13 @@ export const GalleryCard = memo(function GalleryCard ({
         <div className="gallery-badges">
           <span className={`type-badge type-${anim.type}`}>
             {renderTypeIcon()}
-            <span>{anim.type === 'strip' ? 'STRIP' : anim.type.toUpperCase()}</span>
+            <span>{renderTypeLabel()}</span>
           </span>
-          {anim.dupCount ? <span className="count-badge dup-badge" title="重复素材份数">{anim.dupCount} 份</span> : anim.count > 1 && <span className="count-badge">{anim.count} 帧</span>}
+          {anim.dupCount ? (
+            <span className="count-badge dup-badge" title="重复素材份数">{anim.dupCount} 份</span>
+          ) : anim.count > 1 ? (
+            <span className="count-badge">{anim.count} 帧</span>
+          ) : null}
           {anim.asepriteEntry && <span className="count-badge ase-badge" title="含 Aseprite 原工程源文件">.ASE</span>}
           {tags.length > 0 && <span className="count-badge tag-badge" title={tags.join(', ')}>{tags.length} 标签</span>}
         </div>
