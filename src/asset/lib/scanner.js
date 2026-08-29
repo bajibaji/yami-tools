@@ -17,39 +17,19 @@ export function supportsDirectoryPicker () {
   return typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
 }
 
-const DB_NAME = 'yami-asset-manager'
-const DB_STORE = 'root'
-
-function openDb () {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1)
-    req.onupgradeneeded = () => {
-      if (!req.result.objectStoreNames.contains(DB_STORE)) req.result.createObjectStore(DB_STORE)
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-}
+import { dbPut, dbGet } from './idb-store.js'
 
 export async function saveRootHandle (handle) {
-  const db = await openDb()
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction(DB_STORE, 'readwrite')
-    tx.objectStore(DB_STORE).put(handle, 'root')
-    tx.oncomplete = resolve
-    tx.onerror = () => reject(tx.error)
-  })
+  try {
+    await dbPut('root', 'root', handle)
+  } catch (e) {
+    console.warn('[Scanner] 保存根目录句柄失败:', e)
+  }
 }
 
 export async function loadRootHandle () {
   try {
-    const db = await openDb()
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(DB_STORE, 'readonly')
-      const req = tx.objectStore(DB_STORE).get('root')
-      req.onsuccess = () => resolve(req.result || null)
-      req.onerror = () => reject(req.error)
-    })
+    return await dbGet('root', 'root')
   } catch (e) {
     return null
   }
@@ -59,7 +39,7 @@ function isImageName (name) { return IMG_EXTS.includes(extOf(name)) }
 function isMetaName (name) { return META_EXTS.includes(extOf(name)) }
 
 // 工业级流式扫描：支持 10万+ 文件的平稳迭代，分块回调，极速响应
-export async function streamScanRootHandle (root, { onBatch, onProgress, shouldAbort, chunkSize = 2000 } = {}) {
+export async function streamScanRootHandle (root, { onBatch, onProgress, shouldAbort, chunkSize = 1000 } = {}) {
   clearDirHandleCache()
   let scanned = 0
   let chunk = []
@@ -67,42 +47,46 @@ export async function streamScanRootHandle (root, { onBatch, onProgress, shouldA
 
   async function walkDir (dir, rel) {
     if (abort()) return true
-    for await (const [name, h] of dir.entries()) {
-      if (abort()) return true
-      if (name.startsWith('.') || name === 'node_modules') continue
-      const full = rel ? `${rel}/${name}` : name
+    try {
+      for await (const [name, h] of dir.entries()) {
+        if (abort()) return true
+        if (name.startsWith('.') || name === 'node_modules') continue
+        const full = rel ? `${rel}/${name}` : name
 
-      if (h.kind === 'directory') {
-        const stopped = await walkDir(h, full)
-        if (stopped) return true
-      } else {
-        scanned++
-        const ext = extOf(name)
-        const isImg = IMG_EXTS.includes(ext)
-        const isMeta = META_EXTS.includes(ext)
+        if (h.kind === 'directory') {
+          const stopped = await walkDir(h, full)
+          if (stopped) return true
+        } else {
+          scanned++
+          const ext = extOf(name)
+          const isImg = IMG_EXTS.includes(ext)
+          const isMeta = META_EXTS.includes(ext)
 
-        if (isImg || isMeta) {
-          chunk.push({
-            name,
-            rel: full,
-            dir: rel || '',
-            ext,
-            size: h.size ?? 0,
-            isImg,
-            isMeta,
-            pack: full.includes('/') ? full.split('/')[0] : '(根目录)'
-          })
+          if (isImg || isMeta) {
+            chunk.push({
+              name,
+              rel: full,
+              dir: rel || '',
+              ext,
+              size: 0,
+              isImg,
+              isMeta,
+              pack: full.includes('/') ? full.split('/')[0] : '(根目录)'
+            })
 
-          if (chunk.length >= chunkSize) {
-            if (onBatch) await onBatch(chunk, scanned)
-            chunk = []
+            if (chunk.length >= chunkSize) {
+              if (onBatch) await onBatch(chunk, scanned)
+              chunk = []
+            }
+          }
+
+          if (scanned % 300 === 0 && onProgress) {
+            onProgress(scanned, full)
           }
         }
-
-        if (scanned % 500 === 0 && onProgress) {
-          onProgress(scanned, full)
-        }
       }
+    } catch (err) {
+      console.warn('[Scanner] 遍历子目录跳过受限项:', rel, err)
     }
     return false
   }

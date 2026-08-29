@@ -1,6 +1,6 @@
 // 素材管理器本地持久化：IndexedDB（支持 10万+ 文件的按包 / 按目录 B-Tree 极速索引）
-const DB_NAME = 'yami-asset-manager-v3'
-const DB_VERSION = 2
+const DB_NAME = 'yami-asset-manager-v4'
+const DB_VERSION = 1
 export const STORES = {
   files: 'files',        // { rel, pack, dir, name, ext, size, isImg, isMeta }
   packs: 'packs',        // packName -> { name, total, imgs, dirs: [dirName] }
@@ -12,7 +12,8 @@ export const STORES = {
   profiles: 'profiles',  // pack -> preset rules
   prefs: 'prefs',
   thumb: 'thumb',
-  dims: 'dims'           // rel -> { rel, w, h }（图片尺寸索引，用于按尺寸筛选）
+  dims: 'dims',          // rel -> { rel, w, h }
+  root: 'root'           // 持久化 FileSystemDirectoryHandle
 }
 
 let dbPromise = null
@@ -21,6 +22,9 @@ export function openDb () {
   if (dbPromise) return dbPromise
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION)
+    req.onblocked = () => {
+      console.warn('[IDB] 数据库升级被旧连接阻塞，正在尝试建立新连接...')
+    }
     req.onupgradeneeded = () => {
       const db = req.result
       for (const key of Object.keys(STORES)) {
@@ -34,8 +38,15 @@ export function openDb () {
         }
       }
     }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
+    req.onsuccess = () => {
+      const db = req.result
+      db.onversionchange = () => db.close()
+      resolve(db)
+    }
+    req.onerror = () => {
+      dbPromise = null
+      reject(req.error)
+    }
   })
   return dbPromise
 }

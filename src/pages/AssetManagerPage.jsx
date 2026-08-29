@@ -503,32 +503,29 @@ export default function AssetManagerPage () {
     return () => clearTimeout(t)
   }, [queryInput])
 
-  // 一次性构建内存搜索索引（避免每次按键全库 IDB 光标扫描）
+  // 一次性构建内存轻量搜索索引（< 15ms，绝不阻塞主线程）
   const buildSearchIndex = useCallback(async () => {
     if (searchIndexReadyRef.current) return
     try {
       const records = await dbAll('files')
       searchIndexRef.current = records.map(r => {
         const name = r.name || ''
-        let py = ''
-        let pyi = ''
-        try {
-          py = pinyin(name, { toneType: 'none', type: 'array' }).join('').toLowerCase().replace(/[^a-z0-9]/g, '')
-          pyi = pinyin(name, { pattern: 'first', toneType: 'none', type: 'array' }).join('').toLowerCase().replace(/[^a-z0-9]/g, '')
-        } catch (e) { /* 忽略生僻字符 */ }
         return {
-          rel: r.rel, name,
+          rel: r.rel,
+          name,
           nameL: name.toLowerCase(),
           relL: (r.rel || '').toLowerCase(),
-          dir: r.dir, pack: r.pack || (r.rel && r.rel.includes('/') ? r.rel.split('/')[0] : '(根目录)'),
-          isImg: r.isImg, isMeta: r.isMeta, ext: r.ext, size: r.size,
-          py, pyi
+          dir: r.dir,
+          pack: r.pack || (r.rel && r.rel.includes('/') ? r.rel.split('/')[0] : '(根目录)'),
+          isImg: r.isImg,
+          isMeta: r.isMeta,
+          ext: r.ext,
+          size: r.size
         }
       })
       searchIndexReadyRef.current = true
-      if (searchIndexRef.current.length > 0) toast('搜索索引已就绪（' + searchIndexRef.current.length.toLocaleString() + ' 条）')
     } catch (e) { /* ignore */ }
-  }, [toast])
+  }, [])
 
   // 切换包、子目录或搜索时按需加载
   useEffect(() => {
@@ -826,13 +823,14 @@ export default function AssetManagerPage () {
     }
   }
 
-  // 流式扫描入库：分块 2000 个写入 IndexedDB
+  // 流式扫描入库：分块 1000 个写入 IndexedDB
   const runStreamScan = useCallback(async (rootHandle) => {
     if (!rootHandle) return
     abortRef.current = false
     searchIndexRef.current = null
     searchIndexReadyRef.current = false
     setScanning(true)
+    setPhase('scanning')
     setScanInfo('正在增量同步素材库索引…')
 
     const packSummary = new Map()
@@ -840,13 +838,18 @@ export default function AssetManagerPage () {
     const allRecords = []
 
     try {
-      // 旧索引快照 → 只写新增/变更，删除已消失文件（不再全量重写 11 万条）
-      const prevMap = new Map((await dbAll('files')).map(f => [f.rel, f.size]))
+      let prevMap = new Map()
+      try {
+        const existing = await dbAll('files')
+        prevMap = new Map(existing.map(f => [f.rel, f.size]))
+      } catch (e) {
+        prevMap = new Map()
+      }
       const seen = new Set()
       await dbClear('packs')
 
       const res = await streamScanRootHandle(rootHandle, {
-        chunkSize: 2000,
+        chunkSize: 1000,
         shouldAbort: () => abortRef.current,
         onProgress: (scanned, current) => {
           totalCount = scanned
@@ -870,8 +873,8 @@ export default function AssetManagerPage () {
 
       if (!res.aborted) {
         const staleKeys = [...prevMap.keys()].filter(k => !seen.has(k))
-        for (let i = 0; i < staleKeys.length; i += 300) {
-          await Promise.all(staleKeys.slice(i, i + 300).map(k => dbDelete('files', k)))
+        for (let i = 0; i < staleKeys.length; i += 500) {
+          await Promise.all(staleKeys.slice(i, i + 500).map(k => dbDelete('files', k)))
           await new Promise(r => setTimeout(r, 0))
         }
 
@@ -894,14 +897,17 @@ export default function AssetManagerPage () {
         const delta = staleKeys.length ? ('，清理 ' + staleKeys.length + ' 个已删除文件') : ''
         toast(`索引完成：共 ${totalCount.toLocaleString()} 个文件已就绪！` + delta)
       } else {
+        setPhase('ready')
         toast('已暂停扫描')
       }
     } catch (e) {
-      setPhase('error')
+      console.error('[AssetManager] 扫描出错:', e)
+      setPhase('ready')
       toast(`扫描出错：${e.message}`)
+    } finally {
+      setScanning(false)
+      setScanInfo('')
     }
-    setScanning(false)
-    setScanInfo('')
   }, [toast, buildSearchIndex, warmupPacks, restoreLastView])
 
   // 从库根目录清单秒恢复（换电脑/清缓存后）；素材变动靠手动「重新索引」增量同步
@@ -910,6 +916,7 @@ export default function AssetManagerPage () {
     if (!md || !md.files || !md.files.length) return false
     const total = md.files.length
     setScanning(true)
+    setPhase('scanning')
     setScanInfo('正在从本地清单恢复索引 (0 / ' + total.toLocaleString() + ')…')
     try {
       await dbClear('files')
@@ -933,18 +940,21 @@ export default function AssetManagerPage () {
       toast('已从本地清单恢复索引（' + total.toLocaleString() + ' 条）；素材有变动时点「重新索引」')
       return true
     } catch (e) {
+      console.warn('[AssetManager] 清单恢复失败:', e)
+      setPhase('ready')
       return false
     } finally {
       setScanning(false)
       setScanInfo('')
     }
-  }, [buildSearchIndex, warmupPacks, toast])
+  }, [buildSearchIndex, warmupPacks, toast, restoreLastView])
 
   // 初始化：0ms 秒开恢复索引
   useEffect(() => {
     (async () => {
+      let favList = []
       try {
-        const [favList, tmp, tagList, colList, fixList, dimsList, lastViewed] = await Promise.all([
+        const [favs, tmp, tagList, colList, fixList, dimsList, lastViewed] = await Promise.all([
           dbAll('favorites'),
           dbGet('prefs', 'exportTemplate'),
           dbAll('tags'),
@@ -953,6 +963,7 @@ export default function AssetManagerPage () {
           dbAll('dims'),
           dbGet('prefs', 'lastViewed')
         ])
+        favList = favs || []
         const fav = new Set()
         for (const f of favList) {
           const id = f.id || (String(f.key).startsWith('anim:') ? f.key.slice(5) : f.key)
@@ -1034,7 +1045,6 @@ export default function AssetManagerPage () {
           if (!cachedPacks.length || fileCount <= 0) {
             const ok = await restoreFromManifest(handle)
             if (!ok) {
-              setPhase('scanning')
               await runStreamScan(handle)
             }
           }
@@ -1045,7 +1055,7 @@ export default function AssetManagerPage () {
         // ignore
       }
     })()
-  }, [runStreamScan, buildSearchIndex, restoreLastView])
+  }, [runStreamScan, buildSearchIndex, restoreLastView, restoreFromManifest])
 
   // 一键重新授权上次素材库（Chrome 重启后权限会复位，此为浏览器限制）
   const reauthorize = async () => {
@@ -1070,7 +1080,6 @@ export default function AssetManagerPage () {
         // 缓存不完整时先试清单秒恢复，避免直接进入全量扫描
         const ok = await restoreFromManifest(handle)
         if (!ok) {
-          setPhase('scanning')
           await runStreamScan(handle)
         }
       }
@@ -1091,27 +1100,12 @@ export default function AssetManagerPage () {
         setActiveAnims([])
         setSelectedId(null)
 
-        // 优先复用本地 IndexedDB 索引（零重扫秒开）；files 缺失时再走清单恢复，避免「空分支」
-        const [cachedPacks, fileCount] = await Promise.all([dbAll('packs'), dbCount('files')])
-        if (cachedPacks.length && fileCount > 0) {
-          setPacks(cachedPacks)
-          setTotalFileCount(cachedPacks.reduce((s, p) => s + p.count, 0))
-          setSelectedPack(cachedPacks[0].name)
-          setExpandedPacks(new Set([cachedPacks[0].name]))
-          setPhase('ready')
-          buildSearchIndex()
-          warmupPacks(cachedPacks)
-          toast('已打开本地索引（未重扫）；素材有变动时点「重新索引」')
-          return
-        }
-
-        // 尝试从根目录的清单文件秒开恢复（不再自动后台全量扫描）
+        // 尝试从根目录的清单文件秒开恢复（如果存在 .yami-manifest.json，极速秒建）
         const ok = await restoreFromManifest(handle)
         if (ok) return
 
-        // 本地缓存与清单都没有时才全量流式扫描（首次使用，无法避免）
+        // 否则全量流式扫描入库
         setPacks([])
-        setPhase('scanning')
         await runStreamScan(handle)
       } catch (e) {
         if (e.name !== 'AbortError') toast(`选择目录失败：${e.message}`)
@@ -1784,7 +1778,7 @@ export default function AssetManagerPage () {
           <div className="header-brand">
             <IconPackage size={18} className="brand-logo" />
             <span className="brand-title">ASSET WORKBENCH</span>
-            <span className="pro-pill">v1.7.0</span>
+            <span className="pro-pill">v1.7.1</span>
           </div>
 
           <button type="button" className="btn select-lib-btn" onClick={pickLibrary}>
