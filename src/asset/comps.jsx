@@ -19,7 +19,8 @@ import {
   IconStepForward,
   IconEye,
   IconX,
-  IconDownload
+  IconDownload,
+  IconTag
 } from './icons.jsx'
 
 // 加载单个动画的帧位图（只为当前选中的单个动画服务，避免内存暴涨）
@@ -54,7 +55,7 @@ export async function loadAnimData (anim, cfg) {
   if (anim.type === 'strip') {
     const blob = await entryBlob(anim.entry)
     const image = await createImageBitmap(blob)
-    const frames = resolveStripFrames(image, cfg)
+    const frames = resolveStripFrames(image, { ...(anim.presetCfg || {}), ...(cfg || {}) })
     return {
       kind: 'sheet',
       image,
@@ -274,9 +275,11 @@ export const GalleryCard = memo(function GalleryCard ({
   isMultiSelected = false,
   showCheckbox = false,
   thumbSize = 84,
+  tags = [],
   onSelect,
   onToggleFav,
   onToggleMulti,
+  onTagClick,
   onDoubleClick
 }) {
   const [hover, setHover] = useState(false)
@@ -346,11 +349,25 @@ export const GalleryCard = memo(function GalleryCard ({
             {renderTypeIcon()}
             <span>{anim.type === 'strip' ? 'STRIP' : anim.type.toUpperCase()}</span>
           </span>
-          {anim.count > 1 && <span className="count-badge">{anim.count} 帧</span>}
+          {anim.dupCount ? <span className="count-badge dup-badge" title="重复素材份数">{anim.dupCount} 份</span> : anim.count > 1 && <span className="count-badge">{anim.count} 帧</span>}
           {anim.asepriteEntry && <span className="count-badge ase-badge" title="含 Aseprite 原工程源文件">.ASE</span>}
+          {tags.length > 0 && <span className="count-badge tag-badge" title={tags.join(', ')}>{tags.length} 标签</span>}
         </div>
 
-        {/* 缩略图快捷收藏星星按钮 */}
+        {/* 缩略图快捷收藏星星按钮 + 标签按钮 */}
+        {onTagClick && (
+          <button
+            type="button"
+            className={`card-tag-btn ${tags.length ? 'active' : ''}`}
+            onClick={e => {
+              e.stopPropagation()
+              onTagClick(anim.id)
+            }}
+            title={tags.length ? ('标签：' + tags.join(', ')) : '添加标签'}
+          >
+            <IconTag size={13} />
+          </button>
+        )}
         <button
           type="button"
           className={`card-fav-btn ${isFav ? 'active' : ''}`}

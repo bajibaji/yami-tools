@@ -1265,10 +1265,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 14px;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  padding: 6px 14px;
   background: var(--am-bg-panel);
   border-bottom: 1px solid var(--am-border);
-  height: 42px;
+  min-height: 42px;
   flex: none;
 }
 
@@ -3108,3 +3110,68 @@ body {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* ===== v1.4 新增：标签/集合/修复/筛选/查重/尺寸索引 ===== */
+.header-mini-btn { font-size: 11px; padding: 4px 9px; white-space: nowrap; }
+.mini-add-btn { background: none; border: none; color: var(--am-text-dim); cursor: pointer; padding: 0 4px; display: inline-flex; align-items: center; }
+.mini-add-btn:hover { color: var(--am-accent); }
+.tree-del { margin-left: 6px; color: var(--am-text-dim); font-weight: 700; opacity: 0; transition: opacity .12s; }
+.tree-row:hover .tree-del, .tag-chip:hover .tag-del { opacity: 1; }
+.tree-del:hover { color: #f7768e; }
+
+.tag-chip-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.tag-chip-list.sidebar-tags { padding: 2px 8px 8px; }
+.tag-chip-list.inspector-tags { margin-bottom: 8px; }
+.tag-chip { display: inline-flex; align-items: center; gap: 4px; background: rgba(122,162,247,.12); border: 1px solid rgba(122,162,247,.25); color: var(--am-accent); border-radius: 10px; font-size: 10.5px; padding: 2px 7px; cursor: pointer; transition: background .12s; }
+.tag-chip:hover { background: rgba(122,162,247,.22); }
+.tag-chip.active { background: var(--am-accent); color: #0b1020; border-color: var(--am-accent); }
+.tag-count { opacity: .75; font-size: 9.5px; }
+.tag-del { opacity: .55; font-weight: 700; margin-left: 2px; }
+.tag-del:hover { opacity: 1; }
+.tag-input-row { display: flex; gap: 6px; align-items: center; }
+.tag-input { flex: 1; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); border-radius: 8px; color: var(--am-text); font-size: 12px; padding: 5px 8px; outline: none; }
+.tag-input:focus { border-color: var(--am-accent); }
+.col-select { appearance: auto; }
+
+.filter-bar-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; flex-basis: 100%; order: 3; border-top: 1px solid var(--am-border); padding: 6px 0 2px; margin-top: 2px; }
+.filter-bar-label { font-size: 10px; color: var(--am-text-dim); text-transform: uppercase; letter-spacing: .5px; margin: 0 4px 0 8px; }
+.filter-chip { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); color: var(--am-text-dim); border-radius: 9px; font-size: 10.5px; padding: 2px 8px; cursor: pointer; transition: all .12s; }
+.filter-chip:hover { color: var(--am-text); border-color: rgba(255,255,255,.3); }
+.filter-chip.active { background: var(--am-accent); border-color: var(--am-accent); color: #0b1020; }
+.sort-select { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14); color: var(--am-text); border-radius: 8px; font-size: 11px; padding: 3px 6px; outline: none; }
+.dims-btn { font-size: 10.5px; padding: 2px 8px; white-space: nowrap; }
+.filter-hint { font-size: 10px; color: #ffd166; }
+
+.fix-btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.fix-btn-grid .btn { font-size: 11px; padding: 4px 6px; }
+
+.card-tag-btn { position: absolute; right: 26px; top: 4px; z-index: 3; width: 20px; height: 20px; border-radius: 6px; border: none; background: rgba(0,0,0,.45); color: rgba(255,255,255,.75); cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity .12s; }
+.gallery-card:hover .card-tag-btn { opacity: 1; }
+.card-tag-btn.active { opacity: .9; color: #7aa2f7; background: rgba(122,162,247,.18); }
+.card-tag-btn:hover { color: #7aa2f7; }
+.dup-badge { background: rgba(247,118,142,.18); color: #f7768e; }
+.tag-badge { background: rgba(122,162,247,.18); color: #7aa2f7; }
+
+.batch-col-select { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.2); color: var(--am-text); border-radius: 8px; font-size: 12px; padding: 5px 8px; outline: none; }
+
+.tag-edit-modal { max-width: 460px; }
+.fix-modal { max-width: 560px; }
+.fixes-manage-modal { max-width: 640px; }
+.fix-frame-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 6px; max-height: 320px; overflow: auto; margin-top: 8px; }
+.fix-frame-item { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 4px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1); border-radius: 8px; cursor: pointer; }
+.fix-frame-item.moved { opacity: .45; border-style: dashed; }
+.fix-frame-name { font-size: 9px; color: var(--am-text-dim); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fix-merge-list { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow: auto; margin-top: 8px; }
+.fix-merge-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1); border-radius: 8px; cursor: pointer; }
+.fix-merge-item.active { border-color: var(--am-accent); background: rgba(122,162,247,.1); }
+.fix-merge-name { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fix-sheet-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.fix-sheet-form label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--am-text-dim); }
+.fix-sheet-form input { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); border-radius: 8px; color: var(--am-text); font-size: 12px; padding: 5px 8px; outline: none; }
+.fix-sheet-form input:focus { border-color: var(--am-accent); }
+.fix-manage-list { display: flex; flex-direction: column; gap: 4px; max-height: 360px; overflow: auto; margin-top: 4px; }
+.fix-manage-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; }
+.fix-manage-main { flex: 1; min-width: 0; }
+.fix-manage-id { font-size: 10px; color: var(--am-accent); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fix-manage-desc { font-size: 11px; color: var(--am-text-dim); margin-top: 2px; }
+

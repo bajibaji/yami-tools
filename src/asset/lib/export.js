@@ -89,7 +89,7 @@ export async function buildExportItems (anim, frameData, template = DEFAULT_TEMP
     return items
   }
 
-  if (anim.type === 'sheet' && frameData) {
+  if ((anim.type === 'sheet' || anim.type === 'strip') && frameData) {
     const { image, frames } = frameData
     const original = await entryBlob(anim.entry)
     items.push({ name: anim.entry.name, blob: original })

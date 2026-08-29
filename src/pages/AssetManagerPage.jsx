@@ -36,6 +36,8 @@ import {
 } from '../asset/lib/idb-store.js'
 import { VirtualList, Thumb, PreviewPane, GalleryCard, GRID_THUMB_SPEC } from '../asset/comps.jsx'
 import { prewarmThumbCache } from '../asset/lib/thumb.js'
+import { readImageDims } from '../asset/lib/dims.js'
+import { pinyin } from 'pinyin-pro'
 import { writeManifest, readManifest, MANIFEST_NAME } from '../asset/lib/manifest.js'
 import {
   IconFolder,
@@ -63,7 +65,11 @@ import {
   IconArrowLeft,
   IconX,
   IconLayoutGrid,
-  IconLayoutColumns
+  IconLayoutColumns,
+  IconTag,
+  IconCopy,
+  IconWrench,
+  IconFolderPlus
 } from '../asset/icons.jsx'
 
 const TYPE_ICONS = {
@@ -77,6 +83,41 @@ const TYPE_ICONS = {
 
 const GALLERY_PAGE_SIZE = 48
 const DEFAULT_VIEWPORT_HEIGHT = 380
+
+// 动画快照（收藏/集合/标签共用）：只存元数据，避免把 File 句柄写进 IndexedDB
+function snapshotAnim (anim) {
+  if (!anim) return null
+  const meta = (e) => (e ? { name: e.name, rel: e.rel, dir: e.dir, ext: e.ext, size: e.size } : null)
+  return {
+    id: anim.id, name: anim.name, type: anim.type, pack: anim.pack, dir: anim.dir, rel: anim.rel,
+    count: anim.count, fps: anim.fps,
+    entryMeta: meta(anim.entry),
+    metaEntryMeta: meta(anim.metaEntry),
+    previewMeta: meta(anim.previewEntry),
+    asepriteMeta: meta(anim.asepriteEntry),
+    htmlMeta: meta(anim.htmlEntry)
+  }
+}
+
+// 快照还原为可预览的动画对象
+function reviveSnap (s, dirHandle, fallbackMap) {
+  if (!s) return null
+  const entryOf = (m) => {
+    if (!m || !dirHandle) return null
+    const item = (fallbackMap && !m.file) ? { ...m, file: fallbackMap.get(m.rel) } : m
+    return cachedEntry(item, dirHandle)
+  }
+  return {
+    id: s.id, name: s.name || String(s.id || '').split('|').pop(), type: s.type || 'sheet',
+    pack: s.pack || '快照', dir: s.dir || '', rel: s.rel || '', count: s.count || 1, fps: s.fps || 15,
+    entry: entryOf(s.entryMeta),
+    files: entryOf(s.entryMeta) ? [entryOf(s.entryMeta)] : [],
+    metaEntry: entryOf(s.metaEntryMeta),
+    previewEntry: entryOf(s.previewMeta),
+    asepriteEntry: entryOf(s.asepriteMeta),
+    htmlEntry: entryOf(s.htmlMeta)
+  }
+}
 
 // 将平铺路径列表构建为嵌套目录树
 function buildDirectoryTree (dirs, packName) {
@@ -184,6 +225,19 @@ const DirectoryTreeNode = memo(function DirectoryTreeNode ({
   )
 })
 
+// 修复记录的人类可读描述
+function describeFix (f) {
+  if (!f) return '空修复'
+  const parts = []
+  if (f.hide) parts.push('隐藏卡片')
+  if (f.name) parts.push('改名 → ' + f.name)
+  if (f.fps) parts.push('帧率 ' + f.fps + 'fps')
+  if (f.mergeTarget) parts.push('并入 ' + f.mergeTarget)
+  if (f.splitParts && f.splitParts.length) parts.push('拆分 ' + f.splitParts.length + ' 组')
+  if (f.sheet) parts.push('重切 ' + JSON.stringify(f.sheet))
+  return parts.length ? parts.join(' · ') : '空修复'
+}
+
 function useToast () {
   const [msg, setMsg] = useState(null)
   const timer = useRef(null)
@@ -259,6 +313,36 @@ export default function AssetManagerPage () {
   const [favAnims, setFavAnims] = useState(new Set())
   const [exportTemplate, setExportTemplate] = useState(DEFAULT_TEMPLATE)
 
+  // 标签 / 集合 / 修复 / 尺寸索引 / 最近查看 / 排序筛选
+  const [tagMap, setTagMap] = useState({}) // animId -> { id, tags: [], anim: 快照 }
+  const tagMapRef = useRef({})
+  tagMapRef.current = tagMap
+  const [tagFilter, setTagFilter] = useState(null)
+  const [tagModalAnimId, setTagModalAnimId] = useState(null)
+  const [tagInput, setTagInput] = useState('')
+  const [collections, setCollections] = useState([])
+  const [activeCollectionId, setActiveCollectionId] = useState(null)
+  const [colPick, setColPick] = useState('')
+  const fixesMapRef = useRef({})
+  const [fixesCount, setFixesCount] = useState(0) // 修复变化时触发重渲染
+  const [fixModal, setFixModal] = useState(null) // { kind: 'split'|'merge'|'sheet', animId }
+  const [fixSplitSel, setFixSplitSel] = useState(new Set())
+  const [fixMergeTargetId, setFixMergeTargetId] = useState('')
+  const [fixSheetForm, setFixSheetForm] = useState({ cols: '', rows: '', cellW: '', cellH: '' })
+  const [fixesModalOpen, setFixesModalOpen] = useState(false)
+  const [dimsMap, setDimsMap] = useState(new Map())
+  const dimsMapRef = useRef(new Map())
+  dimsMapRef.current = dimsMap
+  const [dimsBuilding, setDimsBuilding] = useState(false)
+  const dimsBuildingRef = useRef(false)
+  const dimsAbortRef = useRef(false)
+  const [dimsProgress, setDimsProgress] = useState('')
+  const lastViewedRef = useRef(new Map())
+  const [sortMode, setSortMode] = useState('default')
+  const [sizeFilter, setSizeFilter] = useState('all')
+  const [frameFilter, setFrameFilter] = useState('all')
+  const dataImportRef = useRef(null)
+
   // 视图状态
   const [viewLayout, setViewLayout] = useState('split') // 'split' | 'gallery' | 'table'
   const [typeFilter, setTypeFilter] = useState('all')
@@ -306,6 +390,12 @@ export default function AssetManagerPage () {
     if (!folderModalAnim) return []
     return activeAnims.filter(a => a.pack === folderModalAnim.pack && a.dir === folderModalAnim.dir)
   }, [folderModalAnim, activeAnims])
+
+  // 修复弹窗对应的动画对象
+  const fixAnim = useMemo(() => (fixModal ? activeAnims.find(a => a.id === fixModal.animId) || null : null), [fixModal, activeAnims])
+
+  // 修复弹窗可合并的兄弟动画（同目录）
+  const fixSiblings = useMemo(() => (fixAnim ? activeAnims.filter(a => a.dir === fixAnim.dir && a.id !== fixAnim.id).slice(0, 200) : []), [fixAnim, activeAnims])
 
   const animsCacheRef = useRef(new Map())
   const favObjectsMapRef = useRef(new Map())
@@ -366,7 +456,10 @@ export default function AssetManagerPage () {
       if (searchKeyword && searchKeyword.trim()) {
         if (!searchIndexReadyRef.current) await buildSearchIndex()
         const q = searchKeyword.trim().toLowerCase()
-        fileRecords = (searchIndexRef.current || []).filter(r => r.nameL.includes(q) || r.relL.includes(q)).slice(0, 500)
+        const tokens = q.split(/\s+/).filter(Boolean) // 空格分词，全部命中（AND）
+        fileRecords = (searchIndexRef.current || [])
+          .filter(r => tokens.every(t => r.nameL.includes(t) || r.relL.includes(t) || r.py.includes(t) || r.pyi.includes(t)))
+          .slice(0, 500)
       } else if (dirPath) {
         fileRecords = await dbQueryByPrefix('files', 'dir', dirPath)
       } else if (packName) {
@@ -384,7 +477,7 @@ export default function AssetManagerPage () {
           const item = (isFallback && !m.file) ? { ...m, file: fallbackFilesMapRef.current.get(m.rel) } : m
           return cachedEntry(item, dirHandle)
         })
-        const animList = await clusterFiles(images, metas, {}, {})
+        const animList = await clusterFiles(images, metas, {}, fixesMapRef.current)
         if (myReq !== loadReqRef.current) return
         animsCacheRef.current.set(cacheKey, animList)
         setActiveAnims(animList)
@@ -422,13 +515,23 @@ export default function AssetManagerPage () {
     if (searchIndexReadyRef.current) return
     try {
       const records = await dbAll('files')
-      searchIndexRef.current = records.map(r => ({
-        rel: r.rel, name: r.name,
-        nameL: (r.name || '').toLowerCase(),
-        relL: (r.rel || '').toLowerCase(),
-        dir: r.dir, pack: r.pack || (r.rel && r.rel.includes('/') ? r.rel.split('/')[0] : '(根目录)'),
-        isImg: r.isImg, isMeta: r.isMeta, ext: r.ext, size: r.size
-      }))
+      searchIndexRef.current = records.map(r => {
+        const name = r.name || ''
+        let py = ''
+        let pyi = ''
+        try {
+          py = pinyin(name, { toneType: 'none', type: 'array' }).join('').toLowerCase().replace(/[^a-z0-9]/g, '')
+          pyi = pinyin(name, { pattern: 'first', toneType: 'none', type: 'array' }).join('').toLowerCase().replace(/[^a-z0-9]/g, '')
+        } catch (e) { /* 忽略生僻字符 */ }
+        return {
+          rel: r.rel, name,
+          nameL: name.toLowerCase(),
+          relL: (r.rel || '').toLowerCase(),
+          dir: r.dir, pack: r.pack || (r.rel && r.rel.includes('/') ? r.rel.split('/')[0] : '(根目录)'),
+          isImg: r.isImg, isMeta: r.isMeta, ext: r.ext, size: r.size,
+          py, pyi
+        }
+      })
       searchIndexReadyRef.current = true
       if (searchIndexRef.current.length > 0) toast('搜索索引已就绪（' + searchIndexRef.current.length.toLocaleString() + ' 条）')
     } catch (e) { /* ignore */ }
@@ -437,17 +540,47 @@ export default function AssetManagerPage () {
   // 切换包、子目录或搜索时按需加载
   useEffect(() => {
     if (phase !== 'ready') return
-    if (selectedPack === '__fav__') return
+    if (selectedPack === '__fav__' || selectedPack === '__tag__' || selectedPack === '__col__' || selectedPack === '__dup__') return
     setVisibleCount(GALLERY_PAGE_SIZE)
     loadDirectoryData(selectedPack, dirFilter, query)
   }, [phase, selectedPack, dirFilter, query, loadDirectoryData])
 
-  // 过滤动画
+  // 过滤动画（类型 / 尺寸 / 帧数 / 排序）
   const filteredAnims = useMemo(() => {
     let list = activeAnims
     if (typeFilter !== 'all') list = list.filter(a => a.type === typeFilter)
+
+    if (frameFilter !== 'all') {
+      list = list.filter(a => {
+        if (a.type === 'sequence') {
+          const c = a.count || 1
+          if (frameFilter === 'single') return c <= 1
+          if (frameFilter === 'small') return c >= 2 && c <= 9
+          return c >= 10
+        }
+        return frameFilter === 'multi'
+      })
+    }
+
+    if (sizeFilter !== 'all') {
+      const n = +sizeFilter
+      list = list.filter(a => {
+        if (a.type === 'strip' || a.type === 'sheet') {
+          const cfg = a.presetCfg || {}
+          return Boolean(cfg.cellW || cfg.cellH) && (cfg.cellW === n || cfg.cellH === n)
+        }
+        const rels = (a.files && a.files.length ? a.files.map(f => f.rel) : [a.rel]).filter(Boolean)
+        const d = rels.map(r => dimsMapRef.current.get(r)).find(Boolean)
+        return Boolean(d) && (d.w === n || d.h === n)
+      })
+    }
+
+    if (sortMode === 'name') list = [...list].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+    else if (sortMode === 'count') list = [...list].sort((a, b) => (b.count || 0) - (a.count || 0))
+    else if (sortMode === 'recent') list = [...list].sort((a, b) => (lastViewedRef.current.get(b.id) || 0) - (lastViewedRef.current.get(a.id) || 0))
+
     return list
-  }, [activeAnims, typeFilter])
+  }, [activeAnims, typeFilter, frameFilter, sizeFilter, sortMode, dimsMap])
 
   const visibleAnims = useMemo(() => {
     return filteredAnims.slice(0, visibleCount)
@@ -520,6 +653,7 @@ export default function AssetManagerPage () {
     setSelectedPack(packName)
     setDirFilter(null)
     setQuery('')
+    setTagFilter(null)
     try {
       localStorage.setItem('am_last_pack', packName)
       localStorage.removeItem('am_last_dir')
@@ -550,6 +684,7 @@ export default function AssetManagerPage () {
     setSelectedPack(packName)
     setDirFilter(dirPath)
     setQuery('')
+    setTagFilter(null)
     try {
       localStorage.setItem('am_last_pack', packName)
       localStorage.setItem('am_last_dir', dirPath)
@@ -729,7 +864,7 @@ export default function AssetManagerPage () {
           const item = (isFallback && !m.file) ? { ...m, file: fallbackFilesMapRef.current.get(m.rel) } : m
           return cachedEntry(item, dh)
         })
-        animsCacheRef.current.set('pack:' + p.name, await clusterFiles(images, metas, {}, {}))
+        animsCacheRef.current.set('pack:' + p.name, await clusterFiles(images, metas, {}, fixesMapRef.current))
       } catch (e) {
         console.warn('[AssetManager] 预热包聚类异常:', e)
       }
@@ -859,9 +994,14 @@ export default function AssetManagerPage () {
   useEffect(() => {
     (async () => {
       try {
-        const [favList, tmp] = await Promise.all([
+        const [favList, tmp, tagList, colList, fixList, dimsList, lastViewed] = await Promise.all([
           dbAll('favorites'),
-          dbGet('prefs', 'exportTemplate')
+          dbGet('prefs', 'exportTemplate'),
+          dbAll('tags'),
+          dbAll('collections'),
+          dbAll('fixes'),
+          dbAll('dims'),
+          dbGet('prefs', 'lastViewed')
         ])
         const fav = new Set()
         for (const f of favList) {
@@ -870,6 +1010,19 @@ export default function AssetManagerPage () {
         }
         setFavAnims(fav)
         if (tmp) setExportTemplate(tmp)
+        const tm = {}
+        for (const t of tagList) if (t && t.id) tm[t.id] = t
+        setTagMap(tm)
+        setCollections((colList || []).filter(c => c && c.id).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)))
+        const fx = {}
+        for (const f of fixList) if (f && f.id) fx[f.id] = f
+        fixesMapRef.current = fx
+        setFixesCount(Object.keys(fx).length)
+        const dm = new Map()
+        for (const d of dimsList) if (d && d.rel) dm.set(d.rel, d)
+        dimsMapRef.current = dm
+        setDimsMap(dm)
+        if (lastViewed && typeof lastViewed === 'object') lastViewedRef.current = new Map(Object.entries(lastViewed))
       } catch (e) {
         // ignore
       }
@@ -1059,6 +1212,9 @@ export default function AssetManagerPage () {
           setFolderModalAnim(null)
           return
         }
+        if (tagModalAnimId) { setTagModalAnimId(null); return }
+        if (fixModal) { setFixModal(null); return }
+        if (fixesModalOpen) { setFixesModalOpen(false); return }
         if (shortcutsOpen) {
           setShortcutsOpen(false)
           return
@@ -1121,7 +1277,7 @@ export default function AssetManagerPage () {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [filteredAnims, visibleAnims, selectedId, folderModalAnim, shortcutsOpen, viewLayout, cardSize])
+  }, [filteredAnims, visibleAnims, selectedId, folderModalAnim, shortcutsOpen, viewLayout, cardSize, tagModalAnimId, fixModal, fixesModalOpen])
 
   // ---------- 导出与收藏（0ms 响应，不刷新目录，静默写入 IndexedDB） ----------
   const toggleFav = useCallback((targetId) => {
@@ -1195,7 +1351,15 @@ export default function AssetManagerPage () {
     setGifBusy(true)
     setGifProgress(0)
     try {
-      const blob = await exportAnimToGif(frameData, selected.name, selected.fps || 15, p => setGifProgress(p))
+      // 预览 GIF 持久化缓存：同一动画同一切片配置只编码一次（IndexedDB）
+      const cacheKey = 'gif:' + selected.id + ':' + (selected.fps || 15) + ':' + JSON.stringify(sheetCfg[selectedId] || {})
+      let blob = await dbGet('thumb', cacheKey)
+      if (blob) {
+        toast('已复用缓存的 GIF（同配置无需重新编码）')
+      } else {
+        blob = await exportAnimToGif(frameData, selected.name, selected.fps || 15, p => setGifProgress(p))
+        if (blob) dbPut('thumb', cacheKey, blob).catch(() => {})
+      }
       if (blob) {
         downloadBlob(blob, `${sanitize(selected.name)}.gif`)
         toast(`GIF 已下载：${sanitize(selected.name)}.gif`)
@@ -1255,6 +1419,399 @@ export default function AssetManagerPage () {
     toast(ok ? `已批量复制 ${list.length} 个绝对路径` : '复制失败')
   }
 
+  // ---------- 最近查看记录（用于「最近查看」排序，静默持久化） ----------
+  useEffect(() => {
+    if (!selectedId) return
+    lastViewedRef.current.set(selectedId, Date.now())
+    const t = setTimeout(() => {
+      const obj = {}
+      for (const [k, v] of lastViewedRef.current) obj[k] = v
+      dbPut('prefs', 'lastViewed', obj).catch(() => {})
+    }, 4000)
+    return () => clearTimeout(t)
+  }, [selectedId])
+
+  // ---------- 尺寸索引（PNG/GIF 头部解析，按尺寸筛选的基础） ----------
+  const buildDimsIndex = useCallback(async () => {
+    if (dimsBuildingRef.current) { dimsAbortRef.current = true; toast('已请求停止尺寸索引构建…'); return }
+    const dh = dirHandleRef.current
+    const isFallback = rootInfoRef.current?.type === 'fallback'
+    if (!dh && !isFallback) { toast('请先选择素材库'); return }
+    if (!searchIndexReadyRef.current) await buildSearchIndex()
+    const recs = (searchIndexRef.current || []).filter(r => (r.ext === 'png' || r.ext === 'gif') && !dimsMapRef.current.has(r.rel))
+    if (!recs.length) { toast('尺寸索引已完整'); return }
+    dimsAbortRef.current = false
+    dimsBuildingRef.current = true
+    setDimsBuilding(true)
+    setDimsProgress('尺寸索引 0 / ' + recs.length.toLocaleString())
+    let done = 0
+    let next = 0
+    const pending = []
+    async function worker () {
+      while (!dimsAbortRef.current && next < recs.length) {
+        const i = next++
+        const rec = recs[i]
+        try {
+          const item = (isFallback && !rec.file) ? { ...rec, file: fallbackFilesMapRef.current.get(rec.rel) } : rec
+          const d = await readImageDims(cachedEntry(item, dh))
+          if (d) pending.push([rec.rel, { rel: rec.rel, ...d }])
+        } catch (e) { /* 跳过读不了的文件 */ }
+        done++
+        if (done % 150 === 0) {
+          setDimsProgress('尺寸索引 ' + done.toLocaleString() + ' / ' + recs.length.toLocaleString())
+          if (pending.length) {
+            const batch = pending.splice(0)
+            await dbBulkPut('dims', batch)
+          }
+          await new Promise(r => setTimeout(r, 0))
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: 6 }, worker))
+    if (pending.length) await dbBulkPut('dims', pending.splice(0))
+    if (dimsAbortRef.current) {
+      toast('尺寸索引已停止（本次完成 ' + done.toLocaleString() + ' 张）')
+    } else {
+      toast('尺寸索引完成：' + done.toLocaleString() + ' 张图片')
+    }
+    const dims = await dbAll('dims')
+    const m = new Map(dims.map(d => [d.rel, d]))
+    dimsMapRef.current = m
+    setDimsMap(m)
+    dimsBuildingRef.current = false
+    setDimsBuilding(false)
+    setDimsProgress('')
+  }, [buildSearchIndex, toast])
+
+  // ---------- 聚类手工修复 ----------
+  const refreshAfterFix = useCallback(async () => {
+    animsCacheRef.current.clear()
+    setVisibleCount(GALLERY_PAGE_SIZE)
+    await loadDirectoryData(selectedPack, dirFilter, query)
+    toast('修复已应用，当前视图已重新聚类')
+  }, [loadDirectoryData, selectedPack, dirFilter, query])
+
+  const applyFixPatch = useCallback(async (animId, patch, replace = false) => {
+    const cur = replace ? {} : { ...(fixesMapRef.current[animId] || {}) }
+    const next = { ...cur, ...patch, id: animId }
+    for (const k of Object.keys(next)) if (next[k] == null) delete next[k]
+    if (Object.keys(next).length <= 1) {
+      delete fixesMapRef.current[animId]
+      await dbDelete('fixes', animId)
+    } else {
+      fixesMapRef.current[animId] = next
+      await dbPut('fixes', animId, next)
+    }
+    setFixesCount(Object.keys(fixesMapRef.current).length)
+    await refreshAfterFix()
+  }, [refreshAfterFix])
+
+  const handleFixRename = async () => {
+    if (!selected) return
+    const v = window.prompt('重命名该动画（仅影响库内显示，不改文件名）', selected.name || '')
+    if (v && v.trim() && v.trim() !== selected.name) await applyFixPatch(selected.id, { name: v.trim() })
+  }
+  const handleFixFps = async () => {
+    if (!selected) return
+    const v = window.prompt('设置动画帧率 FPS（1-60）', String(selected.fps || 15))
+    const n = parseInt(v, 10)
+    if (n > 0 && n <= 60) await applyFixPatch(selected.id, { fps: n })
+  }
+  const handleFixHide = async () => {
+    if (!selected) return
+    if (!window.confirm('隐藏该动画卡片？（文件不受影响，可在「修复管理」里恢复）')) return
+    await applyFixPatch(selected.id, { hide: true })
+  }
+  const handleFixUndoCurrent = async () => {
+    if (!selected || !fixesMapRef.current[selected.id]) { toast('当前动画没有修复记录'); return }
+    await applyFixPatch(selected.id, {}, true)
+  }
+  const openFixSplit = () => {
+    if (!selected) return
+    if (!selected.files || selected.files.length < 2) { toast('仅多帧序列动画可拆分'); return }
+    setFixSplitSel(new Set(selected.files.map(f => f.rel)))
+    setFixModal({ kind: 'split', animId: selected.id })
+  }
+  const doFixSplit = async () => {
+    if (!fixModal) return
+    const anim = activeAnims.find(a => a.id === fixModal.animId)
+    if (!anim || !anim.files) return
+    const moveRels = anim.files.filter(f => !fixSplitSel.has(f.rel)).map(f => f.rel)
+    if (!moveRels.length) { toast('至少把一帧移出原动画（取消勾选）'); return }
+    if (moveRels.length === anim.files.length) { toast('至少保留一帧在原动画'); return }
+    const name = window.prompt('新动画名称', (anim.name || '动画') + ' 拆分')
+    if (!name || !name.trim()) return
+    const parts = [...((fixesMapRef.current[anim.id] || {}).splitParts || []), { name: name.trim(), rels: moveRels }]
+    await applyFixPatch(anim.id, { splitParts: parts })
+    setFixModal(null)
+  }
+  const openFixMerge = () => {
+    if (!selected) return
+    setFixMergeTargetId('')
+    setFixModal({ kind: 'merge', animId: selected.id })
+  }
+  const doFixMerge = async () => {
+    if (!fixModal) return
+    if (!fixMergeTargetId) { toast('请选择要并入的目标动画'); return }
+    await applyFixPatch(fixModal.animId, { mergeTarget: fixMergeTargetId })
+    setFixModal(null)
+  }
+  const openFixSheet = () => {
+    if (!selected) return
+    if (selected.type !== 'sheet' && selected.type !== 'strip') { toast('仅精灵表 / Strip 动画可重切'); return }
+    setFixSheetForm({ cols: '', rows: '', cellW: '', cellH: '' })
+    setFixModal({ kind: 'sheet', animId: selected.id })
+  }
+  const doFixSheet = async () => {
+    if (!fixModal) return
+    const f = fixSheetForm
+    const sheet = {}
+    if (f.cols && +f.cols > 0) sheet.cols = +f.cols
+    if (f.rows && +f.rows > 0) sheet.rows = +f.rows
+    if (f.cellW && +f.cellW > 0) sheet.cellW = +f.cellW
+    if (f.cellH && +f.cellH > 0) sheet.cellH = +f.cellH
+    if (!Object.keys(sheet).length) { toast('至少填写一项切片参数'); return }
+    await applyFixPatch(fixModal.animId, { sheet })
+    setSheetCfg(s => ({ ...s, [fixModal.animId]: {} }))
+    setFixModal(null)
+  }
+  const handleDeleteFix = async (animId) => {
+    delete fixesMapRef.current[animId]
+    await dbDelete('fixes', animId)
+    setFixesCount(Object.keys(fixesMapRef.current).length)
+    animsCacheRef.current.clear()
+    await loadDirectoryData(selectedPack, dirFilter, query)
+    toast('已撤销该修复')
+  }
+
+  // ---------- 标签 ----------
+  const allTags = useMemo(() => {
+    const counts = {}
+    for (const v of Object.values(tagMap)) {
+      for (const t of (v.tags || [])) counts[t] = (counts[t] || 0) + 1
+    }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-CN'))
+  }, [tagMap])
+
+  const saveTags = useCallback(async (animId, tags) => {
+    const anim = activeAnims.find(a => a.id === animId) || null
+    const clean = [...new Set(tags.map(t => String(t).trim()).filter(Boolean))].slice(0, 20)
+    const next = { ...tagMapRef.current }
+    if (clean.length) {
+      const cur = next[animId] || {}
+      const snap = snapshotAnim(anim) || cur.anim
+      next[animId] = { ...cur, id: animId, tags: clean, anim: snap }
+      await dbPut('tags', animId, next[animId])
+    } else {
+      delete next[animId]
+      await dbDelete('tags', animId)
+    }
+    setTagMap(next)
+    toast(clean.length ? '标签已保存' : '标签已清空')
+  }, [activeAnims, toast])
+
+  const addTagTo = async (animId, tag) => {
+    const t = String(tag || '').trim()
+    if (!t) return
+    const cur = tagMapRef.current[animId] || { tags: [] }
+    if ((cur.tags || []).includes(t)) { toast('标签已存在：' + t); return }
+    await saveTags(animId, [...(cur.tags || []), t])
+    setTagInput('')
+  }
+  const removeTagFrom = async (animId, tag) => {
+    const cur = tagMapRef.current[animId] || { tags: [] }
+    await saveTags(animId, (cur.tags || []).filter(x => x !== tag))
+  }
+  const handleDeleteTagGlobal = async (tag) => {
+    if (!window.confirm('删除标签「' + tag + '」？将从所有素材上移除该标签')) return
+    const next = { ...tagMapRef.current }
+    const updates = []
+    for (const [id, v] of Object.entries(next)) {
+      const nt = (v.tags || []).filter(x => x !== tag)
+      if (nt.length) { v.tags = nt; updates.push([id, v]) } else { delete next[id]; updates.push([id, null]) }
+    }
+    for (const [id, v] of updates) {
+      if (v) await dbPut('tags', id, v); else await dbDelete('tags', id)
+    }
+    setTagMap(next)
+    toast('已删除标签：' + tag)
+  }
+  const handleSelectTag = async (tag) => {
+    const wasActive = tagFilter === tag
+    setTagFilter(wasActive ? null : tag)
+    if (wasActive) return
+    const dh = dirHandleRef.current
+    const fbMap = fallbackFilesMapRef.current
+    const hits = Object.values(tagMapRef.current).filter(v => (v.tags || []).includes(tag))
+    const anims = hits.map(v => (v.anim ? reviveSnap(v.anim, dh, fbMap) : null)).filter(Boolean)
+    setSelectedPack('__tag__')
+    setDirFilter(null)
+    setQuery('')
+    setActiveAnims(anims)
+    setSelectedId(anims[0] ? anims[0].id : null)
+    toast('标签「' + tag + '」：' + anims.length + ' 个素材')
+  }
+
+  // ---------- 集合 ----------
+  const handleCreateCollection = async () => {
+    const name = window.prompt('新集合名称（如：火焰技能备选）', '')
+    if (!name || !name.trim()) return
+    const col = { id: 'col_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: name.trim(), createdAt: Date.now(), items: [] }
+    await dbPut('collections', col.id, col)
+    setCollections(prev => [...prev, col])
+    toast('已创建集合：' + col.name)
+  }
+  const handleOpenCollection = async (id) => {
+    const col = await dbGet('collections', id)
+    if (!col) return
+    setActiveCollectionId(id)
+    setSelectedPack('__col__')
+    setDirFilter(null)
+    setQuery('')
+    const dh = dirHandleRef.current
+    const fbMap = fallbackFilesMapRef.current
+    const anims = (col.items || []).map(s => reviveSnap(s, dh, fbMap)).filter(Boolean)
+    setActiveAnims(anims)
+    setSelectedId(anims[0] ? anims[0].id : null)
+  }
+  const handleAddToCollection = async (colId, ids) => {
+    const col = await dbGet('collections', colId)
+    if (!col) { toast('集合不存在'); return }
+    const existing = new Set((col.items || []).map(s => s.id))
+    let added = 0
+    for (const id of ids) {
+      const anim = activeAnims.find(a => a.id === id)
+      if (!anim || existing.has(id)) continue
+      col.items.push({ order: col.items.length, note: '', ...snapshotAnim(anim) })
+      existing.add(id)
+      added++
+    }
+    if (!added) { toast('所选素材均已在集合中'); return }
+    await dbPut('collections', colId, col)
+    setCollections(prev => prev.map(c => (c.id === colId ? col : c)))
+    toast('已加入 ' + added + ' 个素材到集合「' + col.name + '」')
+  }
+  const handleRemoveFromCollection = async (colId, ids) => {
+    const col = await dbGet('collections', colId)
+    if (!col) return
+    col.items = (col.items || []).filter(s => !ids.includes(s.id))
+    await dbPut('collections', colId, col)
+    setCollections(prev => prev.map(c => (c.id === colId ? col : c)))
+    if (activeCollectionId === colId) {
+      const dh = dirHandleRef.current
+      const fbMap = fallbackFilesMapRef.current
+      const anims = col.items.map(s => reviveSnap(s, dh, fbMap)).filter(Boolean)
+      setActiveAnims(anims)
+      setMultiSel(new Set())
+    }
+    toast('已从集合移除 ' + ids.length + ' 项')
+  }
+  const handleDeleteCollection = async (id) => {
+    if (!window.confirm('删除该集合？（素材文件不受影响）')) return
+    await dbDelete('collections', id)
+    setCollections(prev => prev.filter(c => c.id !== id))
+    if (activeCollectionId === id) {
+      setActiveCollectionId(null)
+      setSelectedPack(null)
+      setActiveAnims([])
+      setSelectedId(null)
+    }
+    toast('已删除集合')
+  }
+  const handleColPickChange = async (e) => {
+    const v = e.target.value
+    setColPick('')
+    if (!v) return
+    if (v === '__new__') { await handleCreateCollection(); return }
+    const ids = [...multiSel]
+    if (!ids.length && selected) ids.push(selected.id) // 检查器里未勾选时默认加入当前选中素材
+    if (!ids.length) { toast('请先勾选素材（画廊视图）'); return }
+    await handleAddToCollection(v, ids)
+  }
+
+  // ---------- 查重视图 ----------
+  const handleOpenDups = async () => {
+    if (!searchIndexReadyRef.current) await buildSearchIndex()
+    const groups = new Map()
+    for (const r of searchIndexRef.current || []) {
+      if (!r.isImg) continue
+      const k = r.nameL + '#' + (r.size || 0)
+      if (!groups.has(k)) groups.set(k, [])
+      groups.get(k).push(r)
+    }
+    const dupGroups = [...groups.values()].filter(g => g.length > 1).sort((a, b) => b.length - a.length).slice(0, 1000)
+    const dh = dirHandleRef.current
+    const isFallback = rootInfoRef.current?.type === 'fallback'
+    const anims = dupGroups.map((g, i) => {
+      const first = g[0]
+      const item = (isFallback && !first.file) ? { ...first, file: fallbackFilesMapRef.current.get(first.rel) } : first
+      const entry = cachedEntry(item, dh)
+      return {
+        id: 'dup:' + i,
+        name: first.name,
+        type: 'single',
+        pack: first.pack || '(根目录)',
+        dir: first.dir || '',
+        rel: first.rel,
+        count: 1,
+        dupCount: g.length,
+        dupRels: g.map(r => r.rel),
+        fps: 15,
+        entry,
+        files: [entry]
+      }
+    })
+    setSelectedPack('__dup__')
+    setDirFilter(null)
+    setQuery('')
+    setActiveAnims(anims)
+    setSelectedId(anims[0] ? anims[0].id : null)
+    toast('发现 ' + dupGroups.length + ' 组重复素材（文件名+大小一致，最多显示 1000 组）')
+  }
+
+  // ---------- 用户数据备份 / 导入 ----------
+  const handleBackupData = async () => {
+    try {
+      const [favorites, tags, collections, fixes, profiles] = await Promise.all([
+        dbAll('favorites'), dbAll('tags'), dbAll('collections'), dbAll('fixes'), dbAll('profiles')
+      ])
+      const prefs = {
+        exportTemplate: await dbGet('prefs', 'exportTemplate'),
+        lastViewed: await dbGet('prefs', 'lastViewed')
+      }
+      const data = { app: 'yami-asset-manager', version: 2, exportedAt: new Date().toISOString(), favorites, tags, collections, fixes, profiles, prefs }
+      downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), 'yami素材库数据备份-' + new Date().toISOString().slice(0, 10) + '.json')
+      toast('已导出用户数据备份（收藏/标签/集合/修复/预设）')
+    } catch (e) { toast('备份失败：' + e.message) }
+  }
+  const handleImportData = async (e) => {
+    const file = e.target.files && e.target.files[0]
+    e.target.value = ''
+    if (!file) return
+    try {
+      const d = JSON.parse(await file.text())
+      if (!d || d.app !== 'yami-asset-manager') throw new Error('不是有效的素材管理器备份文件')
+      if (!window.confirm('导入将覆盖当前收藏/标签/集合/修复数据，继续？')) return
+      for (const s of ['favorites', 'tags', 'collections', 'fixes', 'profiles']) await dbClear(s)
+      const putAll = async (store, list, keyOf) => {
+        const pairs = []
+        for (const v of list || []) {
+          const k = keyOf(v)
+          if (k) pairs.push([k, v])
+        }
+        if (pairs.length) await dbBulkPut(store, pairs)
+      }
+      await putAll('favorites', d.favorites, v => v.id ? ('anim:' + v.id) : null)
+      await putAll('tags', d.tags, v => v.id)
+      await putAll('collections', d.collections, v => v.id)
+      await putAll('fixes', d.fixes, v => v.id)
+      await putAll('profiles', d.profiles, v => v.pack || v.id || v.name)
+      if (d.prefs && d.prefs.exportTemplate) await dbPut('prefs', 'exportTemplate', d.prefs.exportTemplate)
+      if (d.prefs && d.prefs.lastViewed) await dbPut('prefs', 'lastViewed', d.prefs.lastViewed)
+      toast('数据已导入，正在刷新…')
+      setTimeout(() => window.location.reload(), 1200)
+    } catch (err) { toast('导入失败：' + err.message) }
+  }
   // 渲染表格行（useCallback 稳定引用，避免 VirtualList 每帧重建）
   const renderTableRow = useCallback((anim) => {
     const isSelected = anim.id === selectedId
@@ -1309,7 +1866,7 @@ export default function AssetManagerPage () {
           <div className="header-brand">
             <IconPackage size={18} className="brand-logo" />
             <span className="brand-title">ASSET WORKBENCH</span>
-            <span className="pro-pill">v1.3.1</span>
+            <span className="pro-pill">v1.4.0</span>
           </div>
 
           <button type="button" className="btn select-lib-btn" onClick={pickLibrary}>
@@ -1353,7 +1910,7 @@ export default function AssetManagerPage () {
             <input
               ref={searchInputRef}
               type="search"
-              placeholder="搜索 11万+ 文件名、相对路径 (按 / 聚焦)..."
+              placeholder="搜索支持空格分词与拼音（如 huoyan / fire ball / 火焰），按 / 聚焦…"
               value={queryInput}
               onChange={e => setQueryInput(e.target.value)}
               className="search-input"
@@ -1397,6 +1954,31 @@ export default function AssetManagerPage () {
 
           <button
             type="button"
+            className="btn header-mini-btn"
+            onClick={() => setFixesModalOpen(true)}
+            title="查看并撤销全部聚类修复"
+          >
+            <IconWrench size={13} style={{ marginRight: 4, verticalAlign: -2 }} />修复{fixesCount > 0 ? ` (${fixesCount})` : ''}
+          </button>
+          <button
+            type="button"
+            className="btn header-mini-btn"
+            onClick={handleBackupData}
+            title="导出收藏/标签/集合/修复/预设为 JSON 备份文件"
+          >
+            <IconDownload size={13} style={{ marginRight: 4, verticalAlign: -2 }} />备份数据
+          </button>
+          <button
+            type="button"
+            className="btn header-mini-btn"
+            onClick={() => dataImportRef.current && dataImportRef.current.click()}
+            title="从 JSON 备份文件恢复用户数据"
+          >
+            <IconCopy size={13} style={{ marginRight: 4, verticalAlign: -2 }} />导入数据
+          </button>
+          <input ref={dataImportRef} type="file" accept="application/json,.json" onChange={handleImportData} hidden />
+          <button
+            type="button"
             className="icon-btn"
             onClick={() => setShortcutsOpen(!shortcutsOpen)}
             title="快捷键 (?)"
@@ -1426,6 +2008,71 @@ export default function AssetManagerPage () {
                 <IconStar size={13} filled className="tree-ico" style={{ color: '#ffd166' }} />
                 <span className="tree-name">我的收藏夹</span>
                 <span className="tree-count">{favAnims.size}</span>
+              </button>
+            </div>
+
+            <div className="explorer-group">
+              <div className="group-label">
+                <span>我的集合 ({collections.length})</span>
+                <button type="button" className="mini-add-btn" onClick={handleCreateCollection} title="新建集合"><IconFolderPlus size={12} /></button>
+              </div>
+              {collections.map(c => (
+                <div key={c.id} className="pack-node">
+                  <button
+                    type="button"
+                    className={`tree-row ${activeCollectionId === c.id && selectedPack === '__col__' ? 'active' : ''}`}
+                    onClick={() => handleOpenCollection(c.id)}
+                    title={'打开集合：' + c.name}
+                  >
+                    <IconLayers size={13} className="tree-ico" />
+                    <span className="tree-name">{c.name}</span>
+                    <span className="tree-count">{(c.items || []).length}</span>
+                    <span
+                      className="tree-del"
+                      onClick={e => { e.stopPropagation(); handleDeleteCollection(c.id) }}
+                      title="删除集合"
+                    >×</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="explorer-group">
+              <div className="group-label">
+                <span>标签 ({allTags.length})</span>
+              </div>
+              {allTags.length > 0 && (
+                <div className="tag-chip-list sidebar-tags">
+                  {allTags.map(([t, n]) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className={`tag-chip ${tagFilter === t ? 'active' : ''}`}
+                      onClick={() => handleSelectTag(t)}
+                      title={'点击筛选，共 ' + n + ' 个素材'}
+                    >
+                      <span>{t}</span>
+                      <span className="tag-count">{n}</span>
+                      <span
+                        className="tag-del"
+                        onClick={e => { e.stopPropagation(); handleDeleteTagGlobal(t) }}
+                        title="删除该标签"
+                      >×</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="explorer-group">
+              <button
+                type="button"
+                className={`tree-row ${selectedPack === '__dup__' ? 'active' : ''}`}
+                onClick={handleOpenDups}
+                title="按「文件名+文件大小」找出重复素材"
+              >
+                <IconCopy size={13} className="tree-ico" />
+                <span className="tree-name">查重视图</span>
               </button>
             </div>
 
@@ -1502,6 +2149,49 @@ export default function AssetManagerPage () {
                     <span>{k === 'all' ? '全部' : k.toUpperCase()}</span>
                   </button>
                 ))}
+              </div>
+
+              <div className="filter-bar-row">
+                <span className="filter-bar-label">尺寸</span>
+                {['all', '16', '32', '48', '64', '96', '128', '256'].map(sz => (
+                  <button
+                    key={sz}
+                    type="button"
+                    className={`filter-chip ${sizeFilter === sz ? 'active' : ''}`}
+                    onClick={() => setSizeFilter(sz)}
+                    title={sz === 'all' ? '全部尺寸' : '单帧边长 = ' + sz + 'px'}
+                  >
+                    {sz === 'all' ? '全部' : sz + 'px'}
+                  </button>
+                ))}
+                <span className="filter-bar-label">帧数</span>
+                {[['all', '全部'], ['single', '单帧'], ['small', '2-9帧'], ['large', '10帧+'], ['multi', '精灵表/动图']].map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    className={`filter-chip ${frameFilter === k ? 'active' : ''}`}
+                    onClick={() => setFrameFilter(k)}
+                  >
+                    {label}
+                  </button>
+                ))}
+                <span className="filter-bar-label">排序</span>
+                <select className="sort-select" value={sortMode} onChange={e => setSortMode(e.target.value)} title="列表排序方式">
+                  <option value="default">默认顺序</option>
+                  <option value="name">名称 A-Z</option>
+                  <option value="count">帧数 多→少</option>
+                  <option value="recent">最近查看</option>
+                </select>
+                <button
+                  type="button"
+                  className="btn dims-btn"
+                  onClick={buildDimsIndex}
+                  disabled={dimsBuilding}
+                  title="读取 PNG/GIF 文件头解析尺寸（一次性，结果持久化；再次点击=停止）"
+                >
+                  {dimsBuilding ? (dimsProgress || '尺寸索引构建中…') : '构建尺寸索引'}
+                </button>
+                {sizeFilter !== 'all' && dimsMap.size === 0 && <span className="dim-info filter-hint">（尺寸筛选需先构建尺寸索引）</span>}
               </div>
 
               <div className="catalog-right-controls" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1581,6 +2271,8 @@ export default function AssetManagerPage () {
                         onSelect={setSelectedId}
                         onToggleFav={toggleFav}
                         onToggleMulti={toggleMulti}
+                        tags={(tagMap[anim.id] || {}).tags || []}
+                        onTagClick={id => setTagModalAnimId(id)}
                         onDoubleClick={handleOpenFolder}
                       />
                     ))}
@@ -1813,6 +2505,80 @@ export default function AssetManagerPage () {
                     )}
                   </div>
                 </div>
+
+                <div className="inspector-card">
+                  <div className="card-header"><IconTag size={13} style={{ marginRight: 6 }} /> 标签管理</div>
+                  <div className="tag-chip-list inspector-tags">
+                    {((tagMap[selected.id] || {}).tags || []).map(t => (
+                      <button key={t} type="button" className="tag-chip active" onClick={() => removeTagFrom(selected.id, t)} title="点击移除该标签">
+                        {t} <span className="tag-del">×</span>
+                      </button>
+                    ))}
+                    {!((tagMap[selected.id] || {}).tags || []).length && <span className="dim-info">暂无标签</span>}
+                  </div>
+                  <div className="tag-input-row">
+                    <input
+                      value={tagInput}
+                      onChange={e => setTagInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') addTagTo(selected.id, tagInput) }}
+                      placeholder="新标签，回车添加"
+                      className="tag-input"
+                    />
+                    <button type="button" className="btn" onClick={() => addTagTo(selected.id, tagInput)}>添加</button>
+                  </div>
+                </div>
+
+                <div className="inspector-card">
+                  <div className="card-header"><IconFolderPlus size={13} style={{ marginRight: 6 }} /> 我的集合</div>
+                  <div className="tag-input-row">
+                    <select className="tag-input col-select" value={colPick} onChange={handleColPickChange}>
+                      <option value="">加入集合…</option>
+                      {collections.map(c => (
+                        <option key={c.id} value={c.id}>{c.name} ({(c.items || []).length})</option>
+                      ))}
+                      <option value="__new__">＋ 新建集合</option>
+                    </select>
+                    {activeCollectionId && (
+                      <button type="button" className="btn" onClick={() => handleRemoveFromCollection(activeCollectionId, [selected.id])}>移出当前集合</button>
+                    )}
+                  </div>
+                </div>
+
+                {!String(selectedPack || '').startsWith('__') && (
+                  <div className="inspector-card">
+                    <div className="card-header"><IconWrench size={13} style={{ marginRight: 6 }} /> 聚类修复</div>
+                    <div className="fix-btn-grid">
+                      <button type="button" className="btn" onClick={handleFixRename} title="仅改库内显示名，不改文件名">重命名</button>
+                      <button type="button" className="btn" onClick={handleFixFps}>调整帧率</button>
+                      <button type="button" className="btn" onClick={openFixSplit} title="把选中的帧拆成独立新动画">拆分动画</button>
+                      <button type="button" className="btn" onClick={openFixMerge} title="并入同目录的另一个动画">合并到…</button>
+                      <button type="button" className="btn" onClick={openFixSheet} title="手动指定列/行/单元格尺寸切片">重切精灵表</button>
+                      <button type="button" className="btn" onClick={handleFixHide} title="从库中隐藏该卡片（文件不动）">隐藏卡片</button>
+                      {fixesMapRef.current[selected.id] && (
+                        <button type="button" className="btn" onClick={handleFixUndoCurrent}>撤销本动画修复</button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {selected.dupRels && selected.dupRels.length > 1 && (
+                  <div className="inspector-card">
+                    <div className="card-header"><IconCopy size={13} style={{ marginRight: 6 }} /> 重复素材</div>
+                    <button
+                      type="button"
+                      className="btn"
+                      style={{ width: '100%' }}
+                      onClick={async () => {
+                        const rootAbs = (() => { try { return localStorage.getItem('yami_root_abs') || '' } catch (e) { return '' } })()
+                        const text = selected.dupRels.map(r => rootAbs ? rootAbs.replace(/[\\/]+$/, '') + '\\' + r.replace(/\//g, '\\') : r).join('\n')
+                        const okc = await copyText(text)
+                        toast(okc ? '已复制 ' + selected.dupRels.length + ' 个重复文件路径' : '复制失败')
+                      }}
+                    >
+                      <IconCopy size={13} style={{ marginRight: 4, verticalAlign: -2 }} />复制全部重复路径 ({selected.dupRels.length})
+                    </button>
+                  </div>
+                )}
 
                 <div className="inspector-card">
                   <div className="card-header"><IconActivity size={13} style={{ marginRight: 6 }} /> 规格与元数据</div>
@@ -2113,6 +2879,23 @@ export default function AssetManagerPage () {
             <button type="button" className="batch-btn" onClick={handleBatchFav} title="批量加入收藏夹">
               <IconStar size={13} filled style={{ color: '#ffd166' }} /> 批量收藏
             </button>
+            <select className="batch-col-select" defaultValue="" onChange={handleColPickChange} title="将选中素材加入集合">
+              <option value="">加入集合…</option>
+              {collections.map(c => (
+                <option key={c.id} value={c.id}>{c.name} ({(c.items || []).length})</option>
+              ))}
+              <option value="__new__">＋ 新建集合</option>
+            </select>
+            {selectedPack === '__col__' && activeCollectionId && (
+              <button
+                type="button"
+                className="batch-btn"
+                onClick={() => handleRemoveFromCollection(activeCollectionId, [...multiSel])}
+                title="把选中素材从当前集合移除"
+              >
+                <IconX size={13} /> 移出集合
+              </button>
+            )}
             <button type="button" className="batch-btn" onClick={handleBatchCopyPaths} title="批量复制相对路径">
               <IconTable size={13} /> 复制路径
             </button>
@@ -2124,6 +2907,187 @@ export default function AssetManagerPage () {
       </AnimatePresence>
 
 
+
+      {/* 6.5 标签编辑弹窗 */}
+      <AnimatePresence>
+        {tagModalAnimId && (() => {
+          const ta = activeAnims.find(a => a.id === tagModalAnimId)
+          const ttags = (tagMap[tagModalAnimId] || {}).tags || []
+          return (
+            <div className="pro-modal-backdrop" onClick={() => setTagModalAnimId(null)}>
+              <motion.div
+                className="folder-explorer-modal tag-edit-modal"
+                onClick={e => e.stopPropagation()}
+                initial={{ opacity: 0, scale: 0.96, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: 10 }}
+                transition={{ duration: 0.1, ease: 'easeOut' }}
+              >
+                <div className="folder-modal-header">
+                  <div className="folder-modal-title-wrap">
+                    <IconTag size={18} style={{ color: 'var(--am-accent)' }} />
+                    <h3>标签管理：{ta ? ta.name : ''}</h3>
+                  </div>
+                  <button type="button" className="folder-close-btn" onClick={() => setTagModalAnimId(null)} title="关闭 (Esc)"><IconX size={15} /></button>
+                </div>
+                <div className="folder-modal-body">
+                  <div className="tag-chip-list">
+                    {ttags.map(t => (
+                      <button key={t} type="button" className="tag-chip active" onClick={() => removeTagFrom(tagModalAnimId, t)} title="点击移除">
+                        {t} <span className="tag-del">×</span>
+                      </button>
+                    ))}
+                    {!ttags.length && <span className="dim-info">暂无标签，输入后回车添加</span>}
+                  </div>
+                  <div className="tag-input-row">
+                    <input
+                      autoFocus
+                      value={tagInput}
+                      onChange={e => setTagInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') addTagTo(tagModalAnimId, tagInput) }}
+                      placeholder="新标签，回车添加（如：火焰 / 备选 / 高清）"
+                      className="tag-input"
+                    />
+                    <button type="button" className="btn primary" onClick={() => addTagTo(tagModalAnimId, tagInput)}>添加</button>
+                  </div>
+                  <div className="dim-info" style={{ marginTop: 8 }}>提示：左侧「标签」栏可点击标签快速筛选；标签随备份文件一起导出。</div>
+                </div>
+                <div className="folder-modal-footer">
+                  <button type="button" className="folder-done-btn" onClick={() => setTagModalAnimId(null)}>完成</button>
+                </div>
+              </motion.div>
+            </div>
+          )
+        })()}
+      </AnimatePresence>
+
+      {/* 6.6 修复弹窗：拆分 / 合并 / 重切 */}
+      <AnimatePresence>
+        {fixModal && fixAnim && (
+          <div className="pro-modal-backdrop" onClick={() => setFixModal(null)}>
+            <motion.div
+              className="folder-explorer-modal fix-modal"
+              onClick={e => e.stopPropagation()}
+              initial={{ opacity: 0, scale: 0.96, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              transition={{ duration: 0.1, ease: 'easeOut' }}
+            >
+              <div className="folder-modal-header">
+                <div className="folder-modal-title-wrap">
+                  <IconWrench size={18} style={{ color: 'var(--am-accent)' }} />
+                  <h3>{fixModal.kind === 'split' ? '拆分动画：' : fixModal.kind === 'merge' ? '合并到其他动画：' : '重切精灵表：'}{fixAnim.name}</h3>
+                </div>
+                <button type="button" className="folder-close-btn" onClick={() => setFixModal(null)} title="关闭 (Esc)"><IconX size={15} /></button>
+              </div>
+              <div className="folder-modal-body">
+                {fixModal.kind === 'split' && (
+                  <>
+                    <p className="dim-info">勾选的帧保留在原动画；取消勾选的帧将拆到新动画（拆分后可再次拆分）。</p>
+                    <div className="fix-frame-grid">
+                      {fixAnim.files.map((f, i) => (
+                        <label key={f.rel} className={'fix-frame-item ' + (fixSplitSel.has(f.rel) ? '' : 'moved')} title={f.rel}>
+                          <Thumb entry={f} size={48} thumbSpec={(fixAnim.type === 'strip' || fixAnim.type === 'sheet') ? GRID_THUMB_SPEC : null} />
+                          <input
+                            type="checkbox"
+                            checked={fixSplitSel.has(f.rel)}
+                            onChange={() => setFixSplitSel(s => {
+                              const n = new Set(s)
+                              if (n.has(f.rel)) n.delete(f.rel); else n.add(f.rel)
+                              return n
+                            })}
+                          />
+                          <span className="fix-frame-name">{i + 1}. {f.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="folder-modal-footer">
+                      <button type="button" className="folder-done-btn" onClick={doFixSplit}>确认拆分</button>
+                    </div>
+                  </>
+                )}
+                {fixModal.kind === 'merge' && (
+                  <>
+                    <p className="dim-info">当前动画的全部帧将并入所选目标动画，本卡片随之消失（可撤销）。</p>
+                    {fixSiblings.length === 0 && <p className="dim-info">同目录下没有其他动画可合并。</p>}
+                    <div className="fix-merge-list">
+                      {fixSiblings.map(s => (
+                        <label key={s.id} className={'fix-merge-item ' + (fixMergeTargetId === s.id ? 'active' : '')}>
+                          <input type="radio" name="fix-merge-target" checked={fixMergeTargetId === s.id} onChange={() => setFixMergeTargetId(s.id)} />
+                          <span className="fix-merge-name">{s.name}</span>
+                          <span className="dim-info">{s.count || 1} 帧 · {s.type.toUpperCase()}</span>
+                        </label>
+                      ))}
+                    </div>
+                    {fixSiblings.length > 0 && (
+                      <div className="folder-modal-footer">
+                        <button type="button" className="folder-done-btn" onClick={doFixMerge} disabled={!fixMergeTargetId}>并入所选动画</button>
+                      </div>
+                    )}
+                  </>
+                )}
+                {fixModal.kind === 'sheet' && (
+                  <>
+                    <p className="dim-info">留空 = 保持自动识别。保存后立即重新切片并重新聚类。</p>
+                    <div className="fix-sheet-form">
+                      {[['cols', '列数'], ['rows', '行数'], ['cellW', '单元格宽 px'], ['cellH', '单元格高 px']].map(([k, label]) => (
+                        <label key={k}>
+                          <span>{label}</span>
+                          <input type="number" min="1" max="2048" value={fixSheetForm[k]} onChange={e => setFixSheetForm(f => ({ ...f, [k]: e.target.value }))} placeholder="自动" />
+                        </label>
+                      ))}
+                    </div>
+                    <div className="folder-modal-footer">
+                      <button type="button" className="folder-done-btn" onClick={doFixSheet}>保存重切</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 6.7 修复管理弹窗 */}
+      <AnimatePresence>
+        {fixesModalOpen && (
+          <div className="pro-modal-backdrop" onClick={() => setFixesModalOpen(false)}>
+            <motion.div
+              className="folder-explorer-modal fixes-manage-modal"
+              onClick={e => e.stopPropagation()}
+              initial={{ opacity: 0, scale: 0.96, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              transition={{ duration: 0.1, ease: 'easeOut' }}
+            >
+              <div className="folder-modal-header">
+                <div className="folder-modal-title-wrap">
+                  <IconWrench size={18} style={{ color: 'var(--am-accent)' }} />
+                  <h3>聚类修复管理（{Object.keys(fixesMapRef.current).length} 条）</h3>
+                </div>
+                <button type="button" className="folder-close-btn" onClick={() => setFixesModalOpen(false)} title="关闭 (Esc)"><IconX size={15} /></button>
+              </div>
+              <div className="folder-modal-body">
+                {Object.keys(fixesMapRef.current).length === 0 && <p className="dim-info">暂无修复记录。</p>}
+                <div className="fix-manage-list">
+                  {Object.entries(fixesMapRef.current).map(([id, f]) => (
+                    <div key={id} className="fix-manage-item">
+                      <div className="fix-manage-main">
+                        <div className="fix-manage-id" title={id}>{id}</div>
+                        <div className="fix-manage-desc">{describeFix(f)}</div>
+                      </div>
+                      <button type="button" className="btn" onClick={() => handleDeleteFix(id)}>撤销</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="folder-modal-footer">
+                <button type="button" className="folder-done-btn" onClick={() => setFixesModalOpen(false)}>完成</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* 7. Toast 提示 */}
       <AnimatePresence>

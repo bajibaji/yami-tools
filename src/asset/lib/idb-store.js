@@ -1,5 +1,6 @@
 // 素材管理器本地持久化：IndexedDB（支持 10万+ 文件的按包 / 按目录 B-Tree 极速索引）
 const DB_NAME = 'yami-asset-manager-v3'
+const DB_VERSION = 2
 export const STORES = {
   files: 'files',        // { rel, pack, dir, name, ext, size, isImg, isMeta }
   packs: 'packs',        // packName -> { name, total, imgs, dirs: [dirName] }
@@ -7,10 +8,11 @@ export const STORES = {
   tags: 'tags',          // rel -> [string]
   favorites: 'favorites', // rel -> 1
   collections: 'collections', // { id, name, createdAt, items: [{ rel, order, note }] }
-  fixes: 'fixes',        // animId -> { name, fps, members: [rel], order: [rel] }
+  fixes: 'fixes',        // animId -> { id, name?, fps?, hide?, mergeTarget?, splitParts?, sheet? }
   profiles: 'profiles',  // pack -> preset rules
   prefs: 'prefs',
-  thumb: 'thumb'
+  thumb: 'thumb',
+  dims: 'dims'           // rel -> { rel, w, h }（图片尺寸索引，用于按尺寸筛选）
 }
 
 let dbPromise = null
@@ -18,7 +20,7 @@ let dbPromise = null
 export function openDb () {
   if (dbPromise) return dbPromise
   dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1)
+    const req = indexedDB.open(DB_NAME, DB_VERSION)
     req.onupgradeneeded = () => {
       const db = req.result
       for (const key of Object.keys(STORES)) {
@@ -46,6 +48,15 @@ export async function dbAll (store) {
   const t = await tx(store, 'readonly')
   return new Promise((resolve, reject) => {
     const req = t.objectStore(store).getAll()
+    req.onsuccess = () => resolve(req.result || [])
+    req.onerror = () => reject(req.error)
+  })
+}
+
+export async function dbAllKeys (store) {
+  const t = await tx(store, 'readonly')
+  return new Promise((resolve, reject) => {
+    const req = t.objectStore(store).getAllKeys()
     req.onsuccess = () => resolve(req.result || [])
     req.onerror = () => reject(req.error)
   })

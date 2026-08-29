@@ -245,6 +245,17 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
     metaByDir.get(m.dir).push(m)
   }
 
+  // 兄弟 Aseprite 源文件目录配对（POZAC 等包：PNG/ 帧序列的 .aseprite 源在兄弟目录 Aseprite/ 下）
+  const aseSiblingByParent = new Map()
+  for (const dir of metaByDir.keys()) {
+    const lastSeg = (dir.split('/').pop() || '').toLowerCase().trim()
+    if (/^(aseprite|ase|asprite)$/i.test(lastSeg) && dir.includes('/')) {
+      const parent = dir.slice(0, dir.lastIndexOf('/'))
+      if (!aseSiblingByParent.has(parent)) aseSiblingByParent.set(parent, [])
+      aseSiblingByParent.get(parent).push(dir)
+    }
+  }
+
   // 1. 预处理：识别兄弟子目录（例如 .../Explosion 1/PNG 与 .../Explosion 1/spritesheet）
   const dirMap = new Map()
   for (const [dir, files] of dirGroups) {
@@ -297,8 +308,18 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
     const curMetas = metaByDir.get(dir) || []
     const combinedMetas = pairedSource ? [...curMetas, ...pairedSource.metaFiles] : curMetas
     const metaTexts = combinedMetas.filter(m => m.ext === 'txt' || m.ext === 'json')
-    const aseMetas = combinedMetas.filter(m => m.ext === 'ase' || m.ext === 'aseprite')
+    let aseMetas = combinedMetas.filter(m => m.ext === 'ase' || m.ext === 'aseprite')
     const htmlMetas = combinedMetas.filter(m => m.ext === 'html' || m.ext === 'htm')
+
+    // 本目录是 PNG/frames 序列目录时，把兄弟 Aseprite/ 目录下的源文件并入（按文件名前缀配对）
+    if (dir.includes('/')) {
+      const parent = dir.slice(0, dir.lastIndexOf('/'))
+      const siblings = aseSiblingByParent.get(parent)
+      if (siblings && siblings.length) {
+        const extra = siblings.flatMap(sd => metaByDir.get(sd) || []).filter(m => m.ext === 'ase' || m.ext === 'aseprite')
+        if (extra.length) aseMetas = [...aseMetas, ...extra.filter(e => !aseMetas.some(x => x.rel === e.rel))]
+      }
+    }
 
     const gifs = files.filter(f => f.ext === 'gif')
 
@@ -310,7 +331,11 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
       (metaTexts.some(m => /spritesheet/i.test(m.name)) && files.filter(x => x.ext === 'png').length <= 2)
     ))
 
-    const frames = files.filter(f => !gifs.includes(f) && !sheets.includes(f))
+    let frames = files.filter(f => !gifs.includes(f) && !sheets.includes(f))
+    // POZAC 等包：包根/子包根（深度<=2）的 PNG 均为 Preview 封面图（内容全部在 PNG/ 子目录），跳过避免生成垃圾卡片
+    const dirDepth = dir ? dir.split('/').length : 0
+    if (preset.rootPngSkip && dirDepth <= 2) frames = frames.filter(f => f.ext !== 'png')
+    else if (preset.skipPreviewPng && dirDepth <= 2) frames = frames.filter(f => !isPreviewGifName(f.name))
 
     const dirPreviewGif = gifs.find(g => isPreviewGifName(g.name)) || gifs[0] || null
     const dirAseEntry = aseMetas[0] || null
@@ -537,8 +562,84 @@ export function clusterFilesSync (images, metas = [], profiles = {}, fixesMap = 
     }
   }
 
-  return finalAnims
+  return applyFixes(finalAnims, fixesMap)
 }
+
+// 用户手工修复覆盖：hide 隐藏 / rename 改名 / fps / sheet 重切 / merge 合并 / split 拆分
+// fixesMap: animId -> { hide?, name?, fps?, mergeTarget?, splitParts?, sheet? }
+export function applyFixes (anims, fixesMap = {}) {
+  if (!anims || !anims.length) return anims
+  const fixIds = fixesMap ? Object.keys(fixesMap).filter(k => fixesMap[k] && typeof fixesMap[k] === 'object') : []
+  if (!fixIds.length) return anims
+
+  const byId = new Map(anims.map(a => [a.id, a]))
+  const removed = new Set()
+  const added = []
+  const relOf = f => (f && f.rel) || ''
+
+  const rebuild = (a) => {
+    a.count = (a.files || []).length
+    if (!a.entry && a.files && a.files.length) a.entry = a.files[0]
+    if (a.files && a.files.length && a.rel !== a.files[0].rel) a.rel = a.files[0].rel
+    return a
+  }
+
+  for (const id of fixIds) {
+    const fix = fixesMap[id]
+    const a = byId.get(id)
+    if (!a) continue
+
+    if (fix.hide) { removed.add(id); continue }
+
+    // 合并：本动画并入目标动画
+    if (fix.mergeTarget && byId.has(fix.mergeTarget)) {
+      const t = byId.get(fix.mergeTarget)
+      const seen = new Set((t.files || []).map(relOf))
+      for (const f of a.files || []) {
+        if (f && !seen.has(relOf(f))) { t.files.push(f); seen.add(relOf(f)) }
+      }
+      rebuild(t)
+      removed.add(id)
+      continue
+    }
+
+    // 拆分：选中的帧拆为独立新动画，其余留在原动画
+    if (Array.isArray(fix.splitParts) && fix.splitParts.length) {
+      const moved = new Set()
+      fix.splitParts.forEach((p, i) => {
+        const rels = (p.rels || []).filter(r => r && !moved.has(r))
+        if (!rels.length) return
+        rels.forEach(r => moved.add(r))
+        const files = rels.map(r => (a.files || []).find(f => f && relOf(f) === r)).filter(Boolean)
+        if (!files.length) return
+        added.push(rebuild({
+          ...a,
+          id: a.id + '|split|' + i,
+          name: p.name || ('拆分 ' + (i + 1)),
+          rel: files[0].rel,
+          entry: files[0],
+          files,
+          variants: null,
+          splitFrom: a.id
+        }))
+      })
+      const keep = (a.files || []).filter(f => f && !moved.has(relOf(f)))
+      if (!keep.length) { removed.add(id); continue }
+      a.files = keep
+      rebuild(a)
+    }
+
+    if (fix.name) a.name = fix.name
+    if (fix.fps) a.fps = fix.fps
+    if (fix.sheet && typeof fix.sheet === 'object') a.presetCfg = { ...(a.presetCfg || {}), ...fix.sheet }
+  }
+
+  const out = []
+  for (const a of anims) if (!removed.has(a.id)) out.push(a)
+  for (const a of added) out.push(a)
+  return out
+}
+
 export function normalizeEffectKey (name) {
   return String(name || '')
     .toLowerCase()

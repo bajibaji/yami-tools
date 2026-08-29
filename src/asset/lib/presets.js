@@ -20,6 +20,8 @@ export const BUILTIN_PRESETS = [
     sheetMeta: 'none',
     sheetByDir: false,
     numericPool: false,
+    aseSibling: true,      // PNG/ 帧序列的 Aseprite 源文件在兄弟目录 Aseprite/ 下，自动配对
+    rootPngSkip: true,     // 包根目录的 PNG 均为 Preview 封面图（内容全部在 PNG/ 子目录），跳过避免生成垃圾卡片
     previewGifPattern: 'preview|预览|sample|cover|thumb'
   },
   {
