@@ -1036,8 +1036,7 @@ export default function AssetManagerPage () {
         if (perm === 'granted') {
           setRootInfo({ type: 'handle', name: handle.name })
           setDirHandle(handle)
-        } else if (perm === 'prompt') {
-          setPendingReauth(handle)
+          ensureRootAbs()
 
           if (favList && favList.length) {
             for (const f of favList) {
@@ -1079,6 +1078,8 @@ export default function AssetManagerPage () {
               await runStreamScan(handle)
             }
           }
+        } else if (perm === 'prompt') {
+          setPendingReauth(handle)
         }
       } catch (e) {
         // ignore
@@ -1127,20 +1128,12 @@ export default function AssetManagerPage () {
         ensureRootAbs()
         setActiveAnims([])
         setSelectedId(null)
-        const cachedPacks = await dbAll('packs')
-        if (cachedPacks.length) {
-          setPacks(cachedPacks)
-          setTotalFileCount(cachedPacks.reduce((s, p) => s + p.count, 0))
-          setSelectedPack(cachedPacks[0].name)
-          setExpandedPacks(new Set([cachedPacks[0].name]))
-          setPhase('ready')
-          buildSearchIndex()
-          warmupPacks(cachedPacks)
-          toast('已打开本地索引（未重扫）；素材有变动时点「重新索引」')
-          return
-        }
+
+        // 尝试从根目录的清单文件秒开恢复
         const ok = await restoreFromManifest(handle)
         if (ok) return
+
+        // 否则直接启动流式扫描建立索引
         setPacks([])
         setPhase('scanning')
         await runStreamScan(handle)
@@ -1866,7 +1859,7 @@ export default function AssetManagerPage () {
           <div className="header-brand">
             <IconPackage size={18} className="brand-logo" />
             <span className="brand-title">ASSET WORKBENCH</span>
-            <span className="pro-pill">v1.4.1</span>
+            <span className="pro-pill">v1.4.2</span>
           </div>
 
           <button type="button" className="btn select-lib-btn" onClick={pickLibrary}>
