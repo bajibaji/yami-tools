@@ -1866,7 +1866,7 @@ export default function AssetManagerPage () {
           <div className="header-brand">
             <IconPackage size={18} className="brand-logo" />
             <span className="brand-title">ASSET WORKBENCH</span>
-            <span className="pro-pill">v1.4.0</span>
+            <span className="pro-pill">v1.4.1</span>
           </div>
 
           <button type="button" className="btn select-lib-btn" onClick={pickLibrary}>

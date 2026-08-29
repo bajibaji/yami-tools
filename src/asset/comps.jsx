@@ -575,25 +575,6 @@ export const RawImageModal = memo(function RawImageModal ({ anim, onClose }) {
           </div>
 
           <div className="raw-modal-tools">
-            {files.length > 1 && (
-              <div className="raw-frame-selector" title="切换查看该序列的不同帧原图">
-                <span className="dim-info">帧</span>
-                <select
-                  value={selectedFileIdx}
-                  onChange={e => {
-                    setSelectedFileIdx(+e.target.value)
-                    resetView()
-                  }}
-                >
-                  {files.map((f, i) => (
-                    <option key={i} value={i}>
-                      第 {i + 1} 帧 ({f.name})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
             <div className="bg-switcher" title="切换画布背景">
               <button
                 type="button"
@@ -662,6 +643,39 @@ export const RawImageModal = memo(function RawImageModal ({ anim, onClose }) {
             <div className="raw-modal-loading">正在载入原始图像…</div>
           )}
         </div>
+
+        {/* 序列帧平铺选择带：直接平铺展示所有帧供用户点击切换 */}
+        {files.length > 1 && (
+          <div className="raw-frame-strip-bar">
+            <div className="raw-frame-strip-info">
+              <IconSparkles size={13} style={{ color: 'var(--am-accent)' }} />
+              <span>序列帧平铺选择 ({files.length} 帧)</span>
+              <span className="raw-frame-strip-hint">直接点击下方任意帧快速切换当前原图</span>
+            </div>
+            <div className="raw-frame-strip-track">
+              {files.map((f, i) => {
+                const isActive = i === selectedFileIdx
+                return (
+                  <div
+                    key={i}
+                    className={`raw-frame-tile ${isActive ? 'active' : ''}`}
+                    onClick={() => {
+                      setSelectedFileIdx(i)
+                      resetView()
+                    }}
+                    title={`第 ${i + 1} 帧：${f.name}`}
+                  >
+                    <div className="raw-frame-tile-idx">#{i + 1}</div>
+                    <div className="raw-frame-tile-thumb">
+                      <Thumb entry={f} size={48} className="frame-thumb-img" />
+                    </div>
+                    <div className="raw-frame-tile-name" title={f.name}>{f.name}</div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="raw-modal-footer">
           <div className="footer-file-info">
@@ -1072,8 +1086,8 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
 
       <div
         className={`pro-canvas-stage stage-${bgStyle}`}
-        onDoubleClick={() => onOpenFolder?.(anim)}
-        title="双击直接在系统文件管理器中定位打开所在文件夹"
+        onDoubleClick={() => anim && setShowRawModal(true)}
+        title="双击直接查看原始完整大图 (也可点击右上角「查看原始图片」按钮)"
       >
         {loading && <div className="canvas-loading"><span>正在加载像素帧数据…</span></div>}
 
@@ -1092,7 +1106,7 @@ export function PreviewPane ({ anim, cfg, onFrameData, onToast, onCfgChange, onO
         )}
 
         {anim && !loading && data && data.kind !== 'gif' && (
-          <div className="canvas-wrapper" style={{ width: frameW * zoom, height: frameH * zoom }} onDoubleClick={() => onOpenFolderRef.current && onOpenFolderRef.current(animRef.current)} title="双击：在应用内定位到所在文件夹">
+          <div className="canvas-wrapper" style={{ width: frameW * zoom, height: frameH * zoom }} onDoubleClick={() => setShowRawModal(true)} title="双击直接查看原始完整大图">
             <canvas ref={canvasRef} style={{ width: frameW * zoom, height: frameH * zoom }} className="pro-canvas" />
             {showCrosshair && (
               <div className="canvas-crosshair">
