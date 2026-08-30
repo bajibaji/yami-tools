@@ -1778,7 +1778,7 @@ export default function AssetManagerPage () {
           <div className="header-brand">
             <IconPackage size={18} className="brand-logo" />
             <span className="brand-title">ASSET WORKBENCH</span>
-            <span className="pro-pill">v1.7.2</span>
+            <span className="pro-pill">v1.7.3</span>
           </div>
 
           <button type="button" className="btn select-lib-btn" onClick={pickLibrary}>
@@ -2266,7 +2266,7 @@ export default function AssetManagerPage () {
                       <IconDownload size={16} className="btn-ico" />
                       <div className="btn-text">
                         <strong>导出 PNG 序列帧</strong>
-                        <small>连续编号单帧图包 (ZIP)</small>
+                        <small>单帧图包 (ZIP)</small>
                       </div>
                     </button>
 
@@ -2280,7 +2280,7 @@ export default function AssetManagerPage () {
                       <IconLayers size={16} className="btn-ico" />
                       <div className="btn-text">
                         <strong>导出 Spritesheet</strong>
-                        <small>PNG 大图 + TXT 坐标</small>
+                        <small>PNG 大图 + 坐标</small>
                       </div>
                     </button>
 
@@ -2294,7 +2294,7 @@ export default function AssetManagerPage () {
                       <IconFilm size={16} className="btn-ico" />
                       <div className="btn-text">
                         <strong>导出 GIF 动图</strong>
-                        <small>动态预览图 (256色)</small>
+                        <small>动态预览图</small>
                       </div>
                     </button>
 
@@ -2307,7 +2307,7 @@ export default function AssetManagerPage () {
                       <IconFolderOpen size={16} className="btn-ico" />
                       <div className="btn-text">
                         <strong>打开所在文件夹</strong>
-                        <small>同目录预览 + 复制完整路径</small>
+                        <small>同目录浏览 / 路径</small>
                       </div>
                     </button>
 
@@ -2323,7 +2323,7 @@ export default function AssetManagerPage () {
                       <IconTable size={16} className="btn-ico" />
                       <div className="btn-text">
                         <strong>复制系统文件路径</strong>
-                        <small>在文件管理器粘贴即达</small>
+                        <small>在资源管理器打开</small>
                       </div>
                     </button>
 
@@ -2335,7 +2335,7 @@ export default function AssetManagerPage () {
                       <IconStar size={16} filled={favAnims.has(selected.id)} className="btn-ico" />
                       <div className="btn-text">
                         <strong>{favAnims.has(selected.id) ? '已收藏' : '加入收藏'}</strong>
-                        <small>快捷键 F</small>
+                        <small>快捷键 F 切换</small>
                       </div>
                     </button>
 
@@ -2355,8 +2355,8 @@ export default function AssetManagerPage () {
                       >
                         <IconPalette size={16} className="btn-ico" />
                         <div className="btn-text">
-                          <strong>下载 .aseprite 原文件</strong>
-                          <small>{selected.asepriteEntry.name}</small>
+                          <strong>下载 .aseprite</strong>
+                          <small>Aseprite 原工程</small>
                         </div>
                       </button>
                     )}
@@ -2377,8 +2377,8 @@ export default function AssetManagerPage () {
                       >
                         <IconExternalLink size={16} className="btn-ico" />
                         <div className="btn-text">
-                          <strong>打开原作者预览页</strong>
-                          <small>{selected.htmlEntry.name}</small>
+                          <strong>原作者预览页</strong>
+                          <small>浏览器中打开</small>
                         </div>
                       </button>
                     )}
