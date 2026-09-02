@@ -5,6 +5,7 @@
   const PROBE_VERSION = 2;
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
+  const BRIDGE_PORT = 5966;
   
   const state = {
     running: true,
@@ -27,7 +28,6 @@
   let frameRendererMs = new Map();
   let frameEventMs = new Map();
 
-  // 最近几帧暂存，用于实时流广播
   let recentUpdaterSnap = [];
   let recentEventSnap = [];
 
@@ -241,9 +241,8 @@
         };
         window.dispatchEvent(new CustomEvent('yami-perf-jank', { detail: state.lastJankEvent }));
         
-        if (channel) {
-          channel.postMessage({ type: 'PERF_STREAM_JANK', data: jankRecord });
-        }
+        broadcastSSE('jank', jankRecord);
+        if (channel) channel.postMessage({ type: 'PERF_STREAM_JANK', data: jankRecord });
       }
     }
 
@@ -317,6 +316,82 @@
     };
   }
 
+  // ---------------- 本地轻量 SSE / HTTP 服务 (解决跨浏览器跨域隔离) ----------------
+  const sseClients = new Set();
+  function broadcastSSE(event, data) {
+    if (!sseClients.size) return;
+    const payload = 'event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n';
+    for (const res of sseClients) {
+      try { res.write(payload); } catch (e) { sseClients.delete(res); }
+    }
+  }
+
+  try {
+    if (typeof require === 'function') {
+      const http = require('http');
+      const server = http.createServer(function(req, res) {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+        if (req.method === 'OPTIONS') {
+          res.writeHead(204);
+          res.end();
+          return;
+        }
+
+        if (req.url === '/stream') {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive'
+          });
+          sseClients.add(res);
+          req.on('close', function() { sseClients.delete(res); });
+          return;
+        }
+
+        if (req.url === '/live') {
+          const recent = state.samples.slice(-15);
+          const avgCompute = recent.length ? recent.reduce(function(s, x) { return s + x.compute; }, 0) / recent.length : 0;
+          const last = recent[recent.length - 1] || {};
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            fps: last.fps || 60,
+            compute: Number(avgCompute.toFixed(2)),
+            frameTime: Number((last.interval || 16.6).toFixed(2)),
+            update: Number((last.update || 0).toFixed(2)),
+            render: Number((last.render || 0).toFixed(2)),
+            actors: (typeof Scene !== 'undefined' && Scene.actors) ? Scene.actors.length : 0,
+            updaters: recentUpdaterSnap || [],
+            events: recentEventSnap || [],
+            timestamp: Date.now()
+          }));
+          return;
+        }
+
+        if (req.url === '/report') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(buildReport()));
+          return;
+        }
+
+        res.writeHead(404);
+        res.end();
+      });
+
+      server.on('error', function(err) {
+        if (err.code !== 'EADDRINUSE') console.warn('调试端口错误:', err.message);
+      });
+
+      server.listen(BRIDGE_PORT, '127.0.0.1', function() {
+        console.log('⚡ [Yami Perf Bridge] 本地实时调试服务已就绪: http://127.0.0.1:' + BRIDGE_PORT);
+      });
+    }
+  } catch (e) {
+    console.warn('Node.js http bridge 未启动:', e);
+  }
+
   let channel = null;
   try {
     channel = new BroadcastChannel('yami-perf-lab-channel');
@@ -324,26 +399,26 @@
 
   // ---------------- 实时数据流广播 (每 200ms 推送一次) ----------------
   setInterval(function() {
-    if (!channel || !state.running || !state.samples.length) return;
+    if (!state.running || !state.samples.length) return;
     const recent = state.samples.slice(-15);
     if (!recent.length) return;
     const avgCompute = recent.reduce(function(s, x) { return s + x.compute; }, 0) / recent.length;
     const last = recent[recent.length - 1];
     
-    channel.postMessage({
-      type: 'PERF_STREAM_TICK',
-      data: {
-        fps: last.fps || 60,
-        compute: Number(avgCompute.toFixed(2)),
-        frameTime: Number(last.interval.toFixed(2)),
-        update: Number(last.update.toFixed(2)),
-        render: Number(last.render.toFixed(2)),
-        actors: (typeof Scene !== 'undefined' && Scene.actors) ? Scene.actors.length : 0,
-        updaters: recentUpdaterSnap || [],
-        events: recentEventSnap || [],
-        timestamp: Date.now()
-      }
-    });
+    const streamPacket = {
+      fps: last.fps || 60,
+      compute: Number(avgCompute.toFixed(2)),
+      frameTime: Number(last.interval.toFixed(2)),
+      update: Number(last.update.toFixed(2)),
+      render: Number(last.render.toFixed(2)),
+      actors: (typeof Scene !== 'undefined' && Scene.actors) ? Scene.actors.length : 0,
+      updaters: recentUpdaterSnap || [],
+      events: recentEventSnap || [],
+      timestamp: Date.now()
+    };
+
+    broadcastSSE('tick', streamPacket);
+    if (channel) channel.postMessage({ type: 'PERF_STREAM_TICK', data: streamPacket });
   }, 200);
 
   window.__YAMI_PERF_PROBE__ = {
@@ -372,9 +447,8 @@
     },
     sendToPerfLab: function () {
       const report = buildReport();
-      if (channel) {
-        channel.postMessage({ type: 'PERF_REPORT_SYNC', data: report });
-      }
+      broadcastSSE('report', report);
+      if (channel) channel.postMessage({ type: 'PERF_REPORT_SYNC', data: report });
       try {
         localStorage.setItem('yami-perf-lab-latest-report', JSON.stringify(report));
       } catch (e) {}

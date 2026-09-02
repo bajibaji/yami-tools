@@ -654,15 +654,62 @@
     console.warn('BroadcastChannel 不受支持或被限制')
   }
 
-  window.addEventListener('storage', (event) => {
-    if (event.key === 'yami-perf-lab-latest-report' && event.newValue) {
-      try {
-        const data = JSON.parse(event.newValue)
-        importRawData(data, `存储同步探针 (${new Date().toLocaleTimeString()})`, true)
-        toast('⚡ 从本地存储同步到最新性能数据！', 'success')
-      } catch (e) {}
+  // ---------------- 5966 端口 SSE 跨域长连接直通 ----------------
+  function connectLocalSSE() {
+    try {
+      const sse = new EventSource('http://127.0.0.1:5966/stream')
+      sse.addEventListener('tick', (e) => {
+        try {
+          const data = JSON.parse(e.data)
+          updateLiveUI(data)
+        } catch (err) {}
+      })
+      sse.addEventListener('jank', (e) => {
+        try {
+          const jank = JSON.parse(e.data)
+          liveJankHistory.unshift(jank)
+          if (liveJankHistory.length > 20) liveJankHistory.pop()
+          if (els.liveJankList) {
+            els.liveJankList.innerHTML = liveJankHistory.map(j => `
+              <div class="live-jank-item" title="点击查看详情">
+                <span>⚠️ 帧 #${j.frame} 掉帧 <b>${j.compute}ms</b> (${escapeHtml((j.updaters[0] && j.updaters[0].name) || 'Update')})</span>
+                <span style="color: var(--muted);">${new Date().toLocaleTimeString()}</span>
+              </div>
+            `).join('')
+          }
+        } catch (err) {}
+      })
+      sse.addEventListener('report', (e) => {
+        try {
+          const report = JSON.parse(e.data)
+          importRawData(report, `实时同步探针 (${new Date().toLocaleTimeString()})`, true)
+          toast('⚡ 已接收到游戏端最新性能快照！', 'success')
+        } catch (err) {}
+      })
+      sse.onerror = () => {
+        pollHttpFallback()
+      }
+    } catch (e) {
+      pollHttpFallback()
     }
-  })
+  }
+
+  let isPolling = false
+  async function pollHttpFallback() {
+    if (isPolling) return
+    isPolling = true
+    try {
+      const res = await fetch('http://127.0.0.1:5966/live')
+      if (res.ok) {
+        const data = await res.json()
+        updateLiveUI(data)
+      }
+    } catch (e) {}
+    isPolling = false
+  }
+
+  connectLocalSSE()
+  setInterval(pollHttpFallback, 1000)
 
   // 启动时检查是否有最近未消费的同步数据
   try {
