@@ -7,12 +7,17 @@
 
   const core = window.YamiPerfAnalyzer
   const BASELINE_KEY = 'yami-perf-analysis-baseline-v2'
-  const state = { reports: [], activeTab: 'overview', baseline: loadBaseline() }
+  const state = { reports: [], activeTab: 'live', baseline: loadBaseline() }
   const $ = (id) => document.getElementById(id)
   const els = {
     traceInput: $('trace-input'), spectorInput: $('spector-input'), probeInput: $('probe-input'),
     traceDrop: $('trace-drop'), spectorDrop: $('spector-drop'), probeDrop: $('probe-drop'),
     copyProbe: $('copy-probe'), probeScript: $('probe-script'), autoInstallExt: $('auto-install-ext'),
+    liveIndicator: $('live-indicator'), liveStatusText: $('live-status-text'),
+    liveValFps: $('live-val-fps'), liveValCompute: $('live-val-compute'),
+    liveValActors: $('live-val-actors'), liveValTop: $('live-val-top'),
+    liveCanvas: $('live-canvas'), liveSubsystemsList: $('live-subsystems-list'),
+    liveJankList: $('live-jank-list'),
     helpButton: $('help-button'), helpModal: $('help-modal'), helpClose: $('help-close'),
     clear: $('clear-reports'), saveBaseline: $('save-baseline'), clearBaseline: $('clear-baseline'), exportReport: $('export-report'),
     sourceList: $('source-list'), status: $('status-text'), baselineInfo: $('baseline-info'),
@@ -200,7 +205,7 @@
   }
 
   function render() {
-    const hasReports = state.reports.length > 0
+    const hasReports = state.reports.length > 0 || state.activeTab === 'live'
     els.empty.classList.toggle('hidden', hasReports)
     els.dashboard.classList.toggle('hidden', !hasReports)
     els.clear.disabled = !hasReports
@@ -482,12 +487,166 @@
   els.exportReport.addEventListener('click', exportAnalysis)
   render()
 
+  // ---------------- 实时监控大盘与流式渲染器 ----------------
+  const liveHistory = [] // 存放最近 120 个点（约 24 秒）
+  const liveJankHistory = []
+  let lastStreamTick = 0
+  const canvas = els.liveCanvas
+  const ctx = canvas ? canvas.getContext('2d') : null
+
+  function updateLiveUI(data) {
+    lastStreamTick = Date.now()
+    if (els.liveIndicator) {
+      els.liveIndicator.classList.add('online')
+      els.liveStatusText.textContent = `🟢 游戏实时在线 (${data.fps} FPS | ${data.compute}ms)`
+    }
+    if (els.liveValFps) els.liveValFps.textContent = `${data.fps} FPS`
+    if (els.liveValCompute) els.liveValCompute.textContent = `${data.compute} ms`
+    if (els.liveValActors) els.liveValActors.textContent = `${data.actors} 个`
+    
+    const topMod = (data.updaters && data.updaters[0]) ? `${data.updaters[0].name} (${data.updaters[0].ms}ms)` : '--'
+    if (els.liveValTop) els.liveValTop.textContent = topMod
+
+    // 记录波形历史
+    liveHistory.push(data)
+    if (liveHistory.length > 120) liveHistory.shift()
+
+    // 渲染子系统条形图
+    if (els.liveSubsystemsList && data.updaters && data.updaters.length) {
+      const maxMs = Math.max(16.7, ...data.updaters.map(u => u.ms))
+      els.liveSubsystemsList.innerHTML = data.updaters.map(u => {
+        const pct = Math.min(100, Math.round((u.ms / maxMs) * 100))
+        const isBad = u.ms > 10
+        return `
+          <div class="live-bar-item">
+            <div class="live-bar-header">
+              <span>${escapeHtml(u.name)}</span>
+              <span style="font-family: monospace; font-weight: 600; color: ${isBad ? 'var(--red)' : 'var(--text)'};">${u.ms} ms</span>
+            </div>
+            <div class="live-bar-track">
+              <div class="live-bar-fill" style="width: ${pct}%; background: ${isBad ? 'linear-gradient(90deg, #f59e0b, #ef4444)' : 'linear-gradient(90deg, #4f46e5, #06b6d4)'};"></div>
+            </div>
+          </div>
+        `
+      }).join('')
+    }
+
+    drawLiveWaveform()
+  }
+
+  function drawLiveWaveform() {
+    if (!ctx || !canvas || state.activeTab !== 'live') return
+    const w = canvas.width
+    const h = canvas.height
+    ctx.clearRect(0, 0, w, h)
+
+    // 绘制背景网格
+    ctx.strokeStyle = '#202635'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    for (let y = 30; y < h; y += 40) {
+      ctx.moveTo(0, y)
+      ctx.lineTo(w, y)
+    }
+    ctx.stroke()
+
+    // 绘制 16.7ms (60 FPS) 预算基准虚线
+    const budgetY = h - (16.7 / 50) * (h - 30) - 20
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.45)'
+    ctx.setLineDash([4, 4])
+    ctx.beginPath()
+    ctx.moveTo(0, budgetY)
+    ctx.lineTo(w, budgetY)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    ctx.fillStyle = '#ef4444'
+    ctx.font = '10px monospace'
+    ctx.fillText('16.7ms 预算线', 8, budgetY - 4)
+
+    if (liveHistory.length < 2) return
+
+    const step = w / 120
+    const startX = w - (liveHistory.length - 1) * step
+
+    // 1. 绘制单帧计算耗时区域 (蓝色渐变)
+    ctx.beginPath()
+    ctx.moveTo(startX, h)
+    for (let i = 0; i < liveHistory.length; i++) {
+      const x = startX + i * step
+      const ms = liveHistory[i].compute
+      const y = Math.max(10, h - (ms / 50) * (h - 40) - 20)
+      ctx.lineTo(x, y)
+    }
+    ctx.lineTo(w, h)
+    ctx.closePath()
+    const grad = ctx.createLinearGradient(0, 0, 0, h)
+    grad.addColorStop(0, 'rgba(79, 70, 229, 0.45)')
+    grad.addColorStop(1, 'rgba(79, 70, 229, 0.02)')
+    ctx.fillStyle = grad
+    ctx.fill()
+
+    // 2. 绘制耗时折线
+    ctx.beginPath()
+    ctx.lineWidth = 2
+    ctx.strokeStyle = '#818cf8'
+    for (let i = 0; i < liveHistory.length; i++) {
+      const x = startX + i * step
+      const ms = liveHistory[i].compute
+      const y = Math.max(10, h - (ms / 50) * (h - 40) - 20)
+      if (i === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+
+    // 3. 绘制 FPS 折线 (绿色)
+    ctx.beginPath()
+    ctx.lineWidth = 1.5
+    ctx.strokeStyle = '#10b981'
+    for (let i = 0; i < liveHistory.length; i++) {
+      const x = startX + i * step
+      const fps = Math.min(60, liveHistory[i].fps || 60)
+      const y = Math.max(10, h - (fps / 60) * (h - 40) - 10)
+      if (i === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+  }
+
+  // 离线心跳检测 (2秒无数据则置为等待)
+  setInterval(() => {
+    if (lastStreamTick && Date.now() - lastStreamTick > 2500) {
+      if (els.liveIndicator) {
+        els.liveIndicator.classList.remove('online')
+        els.liveStatusText.textContent = '⚪ 等待游戏在线...'
+      }
+    }
+  }, 1000)
+
   // ---------------- 自动化桥接与广播监听 ----------------
   try {
     const channel = new BroadcastChannel('yami-perf-lab-channel')
     channel.addEventListener('message', (event) => {
-      if (event.data && event.data.type === 'PERF_REPORT_SYNC' && event.data.data) {
-        importRawData(event.data.data, `自动同步探针 (${new Date().toLocaleTimeString()})`, true)
+      const msg = event.data
+      if (!msg) return
+
+      if (msg.type === 'PERF_STREAM_TICK' && msg.data) {
+        updateLiveUI(msg.data)
+      } else if (msg.type === 'PERF_STREAM_JANK' && msg.data) {
+        const jank = msg.data
+        liveJankHistory.unshift(jank)
+        if (liveJankHistory.length > 20) liveJankHistory.pop()
+        
+        if (els.liveJankList) {
+          els.liveJankList.innerHTML = liveJankHistory.map(j => `
+            <div class="live-jank-item" title="点击展开此卡顿分析">
+              <span>⚠️ 帧 #${j.frame} 掉帧 <b>${j.compute}ms</b> (${escapeHtml((j.updaters[0] && j.updaters[0].name) || 'Update')})</span>
+              <span style="color: var(--muted);">${new Date(j.elapsedMs).toLocaleTimeString ? new Date().toLocaleTimeString() : ''}</span>
+            </div>
+          `).join('')
+        }
+      } else if (msg.type === 'PERF_REPORT_SYNC' && msg.data) {
+        importRawData(msg.data, `自动同步探针 (${new Date().toLocaleTimeString()})`, true)
         toast('⚡ 已接收到游戏端最新性能快照！', 'success')
       }
     })

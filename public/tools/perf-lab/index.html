@@ -19,6 +19,10 @@
           </div>
         </div>
         <div class="topbar-actions">
+          <div id="live-indicator" class="live-indicator">
+            <span class="live-dot"></span>
+            <span id="live-status-text">等待游戏在线...</span>
+          </div>
           <a class="hub-back" href="../../index.html">← 工具合集</a>
           <button id="help-button" class="button" type="button" title="查看使用说明">使用说明？</button>
           <button id="export-report" class="button" type="button" disabled>导出分析</button>
@@ -80,7 +84,8 @@
 
         <section class="main-panel">
           <nav class="tabs" aria-label="分析视图">
-            <button class="tab active" type="button" data-tab="overview">总览</button>
+            <button class="tab active" type="button" data-tab="live">⚡ 实时监视</button>
+            <button class="tab" type="button" data-tab="overview">总览</button>
             <button class="tab" type="button" data-tab="cpu">CPU 与长帧</button>
             <button class="tab" type="button" data-tab="webgl">WebGL</button>
             <button class="tab" type="button" data-tab="probe">超帧定位</button>
@@ -88,12 +93,44 @@
 
           <div id="empty-view" class="empty-view">
             <div class="empty-symbol">⌁</div>
-            <h1>导入真机采集报告</h1>
-            <p>支持 Electron DevTools Performance trace、Spector.js WebGL capture 与 Yami 真机逐帧探针。</p>
+            <h1>等待游戏启动或导入报告</h1>
+            <p>在 Open Yami 中启动试玩窗口后，上方将自动实时显示帧率波形与子系统负载；亦可直接拖入录制文件。</p>
           </div>
 
-          <div id="dashboard" class="dashboard hidden">
-            <section data-panel="overview">
+          <div id="dashboard" class="dashboard">
+            <section data-panel="live">
+              <div class="metrics-grid">
+                <div class="metric-card"><div class="metric-label">实时帧率 (FPS)</div><div class="metric-value" id="live-val-fps" style="color: var(--green);">--</div></div>
+                <div class="metric-card"><div class="metric-label">单帧计算耗时</div><div class="metric-value" id="live-val-compute">--</div></div>
+                <div class="metric-card"><div class="metric-label">同屏活动实体 (Actors)</div><div class="metric-value" id="live-val-actors">--</div></div>
+                <div class="metric-card"><div class="metric-label">最高负载模块</div><div class="metric-value" id="live-val-top" style="font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">--</div></div>
+              </div>
+
+              <div class="section-head">
+                <h2>实时滚动性能波形 (最近 60 秒)</h2>
+                <span>绿色: FPS (目标 60) | 蓝色: 帧耗时 (预算 16.7ms)</span>
+              </div>
+              <div style="background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px; position: relative;">
+                <canvas id="live-canvas" width="1100" height="180" style="width: 100%; height: 180px; display: block;"></canvas>
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px;">
+                <div>
+                  <div class="section-head"><h2>实时子系统耗时明细</h2><span>毫秒占比</span></div>
+                  <div id="live-subsystems-list" style="display: flex; flex-direction: column; gap: 7px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px; min-height: 160px;">
+                    <div class="empty-state small" style="margin: auto; color: var(--muted);">等待游戏帧流...</div>
+                  </div>
+                </div>
+                <div>
+                  <div class="section-head"><h2>实时掉帧事件捕获流</h2><span>>33.3ms 卡顿告警</span></div>
+                  <div id="live-jank-list" style="display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 12px; min-height: 160px; max-height: 220px; overflow-y: auto;">
+                    <div class="empty-state small" style="margin: auto; color: var(--muted);">暂无卡顿，运行平稳</div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section data-panel="overview" class="hidden">
               <div id="metrics-grid" class="metrics-grid"></div>
               <div class="section-head"><h2>诊断结论</h2></div>
               <div id="findings" class="findings"></div>

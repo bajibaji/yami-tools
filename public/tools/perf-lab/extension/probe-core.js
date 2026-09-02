@@ -27,6 +27,10 @@
   let frameRendererMs = new Map();
   let frameEventMs = new Map();
 
+  // 最近几帧暂存，用于实时流广播
+  let recentUpdaterSnap = [];
+  let recentEventSnap = [];
+
   const now = () => performance.now();
   const finite = (v, f) => (Number.isFinite(Number(v)) ? Number(v) : (f || 0));
   const round2 = (v) => Math.round(finite(v, 0) * 100) / 100;
@@ -182,6 +186,7 @@
 
     const compute = frameUpdate + frameRender;
     state.frameSeq += 1;
+    const currentFps = (typeof Time !== 'undefined' && Time.fps) || Math.round(1000 / (interval || 16.6));
     const currentSample = {
       frame: state.frameSeq,
       elapsedMs: round2(t - state.startedPerf),
@@ -189,22 +194,25 @@
       update: frameUpdate,
       render: frameRender,
       compute: compute,
-      fps: (typeof Time !== 'undefined' && Time.fps) || Math.round(1000 / (interval || 16.6))
+      fps: currentFps
     };
     state.samples.push(currentSample);
     if (state.samples.length > MAX_SAMPLES) state.samples.shift();
 
-    if (compute > BUDGET) {
-      const top = function(map) {
-        return Array.from(map.entries())
-          .map(function (e) { return { name: e[0], ms: round3(e[1]) }; })
-          .sort(function (a, b) { return b.ms - a.ms; })
-          .slice(0, 5);
-      };
+    const top = function(map) {
+      return Array.from(map.entries())
+        .map(function (e) { return { name: e[0], ms: round3(e[1]) }; })
+        .sort(function (a, b) { return b.ms - a.ms; })
+        .slice(0, 5);
+    };
 
-      const updaterItems = top(frameUpdaterMs);
+    recentUpdaterSnap = top(frameUpdaterMs);
+    recentEventSnap = top(frameEventMs);
+
+    if (compute > BUDGET) {
+      const updaterItems = recentUpdaterSnap;
       const rendererItems = top(frameRendererMs);
-      const eventItems = top(frameEventMs);
+      const eventItems = recentEventSnap;
       const attributedUpdate = Array.from(frameUpdaterMs.values()).reduce(function (a, b) { return a + b; }, 0);
       const attributedRender = Array.from(frameRendererMs.values()).reduce(function (a, b) { return a + b; }, 0);
 
@@ -223,7 +231,7 @@
       };
       state.overBudgetFrames.push(jankRecord);
 
-      if (compute > 33.3 && t - state.lastJankTime > 1000) {
+      if (compute > 33.3 && t - state.lastJankTime > 800) {
         state.lastJankTime = t;
         const mainCulprit = (updaterItems[0] && updaterItems[0].name) || (eventItems[0] && eventItems[0].name) || 'Game Update';
         state.lastJankEvent = {
@@ -232,6 +240,10 @@
           culprit: mainCulprit
         };
         window.dispatchEvent(new CustomEvent('yami-perf-jank', { detail: state.lastJankEvent }));
+        
+        if (channel) {
+          channel.postMessage({ type: 'PERF_STREAM_JANK', data: jankRecord });
+        }
       }
     }
 
@@ -309,6 +321,30 @@
   try {
     channel = new BroadcastChannel('yami-perf-lab-channel');
   } catch (e) {}
+
+  // ---------------- 实时数据流广播 (每 200ms 推送一次) ----------------
+  setInterval(function() {
+    if (!channel || !state.running || !state.samples.length) return;
+    const recent = state.samples.slice(-15);
+    if (!recent.length) return;
+    const avgCompute = recent.reduce(function(s, x) { return s + x.compute; }, 0) / recent.length;
+    const last = recent[recent.length - 1];
+    
+    channel.postMessage({
+      type: 'PERF_STREAM_TICK',
+      data: {
+        fps: last.fps || 60,
+        compute: Number(avgCompute.toFixed(2)),
+        frameTime: Number(last.interval.toFixed(2)),
+        update: Number(last.update.toFixed(2)),
+        render: Number(last.render.toFixed(2)),
+        actors: (typeof Scene !== 'undefined' && Scene.actors) ? Scene.actors.length : 0,
+        updaters: recentUpdaterSnap || [],
+        events: recentEventSnap || [],
+        timestamp: Date.now()
+      }
+    });
+  }, 200);
 
   window.__YAMI_PERF_PROBE__ = {
     version: PROBE_VERSION,

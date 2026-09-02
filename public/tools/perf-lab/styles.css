@@ -23,6 +23,18 @@ button, input { font: inherit; }
 .button:disabled, .icon-button:disabled { opacity: .4; cursor: default; }
 .accent-button { background: linear-gradient(135deg, #4f46e5, #6366f1); border-color: #6366f1; color: #fff; font-weight: 600; text-decoration: none; text-align: center; }
 .accent-button:hover:not(:disabled) { background: linear-gradient(135deg, #4338ca, #4f46e5); border-color: #818cf8; }
+.live-indicator { display: flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 20px; background: var(--panel-2); border: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+.live-indicator.online { border-color: rgba(86, 217, 139, 0.4); color: var(--green); }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: #64748b; transition: all 0.3s; }
+.live-indicator.online .live-dot { background: var(--green); box-shadow: 0 0 8px var(--green); animation: live-pulse 1.2s infinite; }
+@keyframes live-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.3); } }
+
+.live-bar-item { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.live-bar-header { display: flex; justify-content: space-between; color: var(--text); }
+.live-bar-track { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+.live-bar-fill { height: 100%; background: linear-gradient(90deg, #4f46e5, #06b6d4); border-radius: 3px; transition: width 0.2s ease; }
+.live-jank-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 5px; font-size: 11px; color: var(--text); cursor: pointer; transition: background 0.15s; }
+.live-jank-item:hover { background: rgba(239, 68, 68, 0.18); }
 .icon-button { width: 30px; height: 30px; border-radius: 5px; font-size: 18px; line-height: 1; }
 .workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: 300px 1fr; }
 .side-panel { min-height: 0; overflow-y: auto; padding: 14px; background: var(--panel); border-right: 1px solid var(--border); }
