@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = 2;
+  const PROBE_VERSION = 3;
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -12,7 +12,7 @@
     startedAt: Date.now(),
     startedPerf: performance.now(),
     frameSeq: 0,
-    hooked: { game: false, updaters: 0, renderers: 0, events: 0 },
+    hooked: { game: false, updaters: 0, renderers: 0, events: 0, webgl: false },
     samples: [],
     overBudgetFrames: [],
     updaterTotal: new Map(),
@@ -30,6 +30,59 @@
 
   let recentUpdaterSnap = [];
   let recentEventSnap = [];
+
+  // WebGL 实时统计
+  const glStats = {
+    drawCalls: 0,
+    triangles: 0,
+    programSwitches: 0,
+    textureBinds: 0,
+    lastDrawCalls: 0,
+    lastTriangles: 0,
+    lastProgramSwitches: 0,
+    lastTextureBinds: 0
+  };
+
+  function hookWebGL() {
+    if (state.hooked.webgl) return;
+    const hookProto = function(proto) {
+      if (!proto || proto.__yamiGlHooked__) return;
+      proto.__yamiGlHooked__ = true;
+      state.hooked.webgl = true;
+
+      const origDrawElements = proto.drawElements;
+      proto.drawElements = function(mode, count, type, offset) {
+        glStats.drawCalls++;
+        if (mode === 4 /* TRIANGLES */) glStats.triangles += count / 3;
+        return origDrawElements.apply(this, arguments);
+      };
+
+      const origDrawArrays = proto.drawArrays;
+      proto.drawArrays = function(mode, first, count) {
+        glStats.drawCalls++;
+        if (mode === 4) glStats.triangles += count / 3;
+        return origDrawArrays.apply(this, arguments);
+      };
+
+      const origUseProgram = proto.useProgram;
+      proto.useProgram = function(p) {
+        glStats.programSwitches++;
+        return origUseProgram.apply(this, arguments);
+      };
+
+      const origBindTexture = proto.bindTexture;
+      proto.bindTexture = function(t, tex) {
+        glStats.textureBinds++;
+        return origBindTexture.apply(this, arguments);
+      };
+    };
+
+    try {
+      if (typeof WebGLRenderingContext !== 'undefined') hookProto(WebGLRenderingContext.prototype);
+      if (typeof WebGL2RenderingContext !== 'undefined') hookProto(WebGL2RenderingContext.prototype);
+    } catch (e) {}
+  }
+  hookWebGL();
 
   const now = () => performance.now();
   const finite = (v, f) => (Number.isFinite(Number(v)) ? Number(v) : (f || 0));
@@ -162,6 +215,7 @@
 
   function refresh() {
     hookGame();
+    hookWebGL();
     if (typeof Game !== 'undefined') {
       wrapModules(Game.updaters, 'update', state.updaterTotal, 'Updater');
       wrapModules(Game.renderers, 'render', state.rendererTotal, 'Renderer');
@@ -184,6 +238,16 @@
     
     if (state.frameSeq % 60 === 0) refresh();
 
+    // 固化上一帧 WebGL 计数
+    glStats.lastDrawCalls = glStats.drawCalls;
+    glStats.lastTriangles = Math.round(glStats.triangles);
+    glStats.lastProgramSwitches = glStats.programSwitches;
+    glStats.lastTextureBinds = glStats.textureBinds;
+    glStats.drawCalls = 0;
+    glStats.triangles = 0;
+    glStats.programSwitches = 0;
+    glStats.textureBinds = 0;
+
     const compute = frameUpdate + frameRender;
     state.frameSeq += 1;
     const currentFps = (typeof Time !== 'undefined' && Time.fps) || Math.round(1000 / (interval || 16.6));
@@ -194,7 +258,9 @@
       update: frameUpdate,
       render: frameRender,
       compute: compute,
-      fps: currentFps
+      fps: currentFps,
+      drawCalls: glStats.lastDrawCalls,
+      triangles: glStats.lastTriangles
     };
     state.samples.push(currentSample);
     if (state.samples.length > MAX_SAMPLES) state.samples.shift();
@@ -203,7 +269,7 @@
       return Array.from(map.entries())
         .map(function (e) { return { name: e[0], ms: round3(e[1]) }; })
         .sort(function (a, b) { return b.ms - a.ms; })
-        .slice(0, 5);
+        .slice(0, 6);
     };
 
     recentUpdaterSnap = top(frameUpdaterMs);
@@ -225,6 +291,7 @@
         attributedUpdate: round2(attributedUpdate),
         attributedRender: round2(attributedRender),
         unattributed: round2(Math.max(0, compute - attributedUpdate - attributedRender)),
+        drawCalls: glStats.lastDrawCalls,
         updaters: updaterItems,
         renderers: rendererItems,
         events: eventItems
@@ -280,6 +347,50 @@
     }).sort(function (a, b) { return b.total - a.total; });
   }
 
+  function getMemoryInfo() {
+    try {
+      if (typeof performance !== 'undefined' && performance.memory) {
+        return {
+          used: Number((performance.memory.usedJSHeapSize / 1048576).toFixed(1)),
+          total: Number((performance.memory.totalJSHeapSize / 1048576).toFixed(1))
+        };
+      }
+    } catch (e) {}
+    return { used: 0, total: 0 };
+  }
+
+  function getSceneDetails() {
+    const s = typeof Scene !== 'undefined' ? Scene : {};
+    return {
+      actors: (s.actors && s.actors.length) || 0,
+      lights: (s.lights && s.lights.length) || 0,
+      particles: (s.particles && s.particles.length) || 0,
+      bullets: (s.bullets && s.bullets.length) || 0,
+      weather: (s.weather && s.weather.name) || '无',
+      camera: (typeof Camera !== 'undefined' ? { x: Math.round(Camera.x || 0), y: Math.round(Camera.y || 0), zoom: Camera.zoom || 1 } : null)
+    };
+  }
+
+  function getActiveEventsDetails() {
+    try {
+      const list = typeof EventManager !== 'undefined' && EventManager.activeEvents ? EventManager.activeEvents : [];
+      return Array.from(list).map(function(ev) {
+        const initial = ev.initial || ev.commands || {};
+        const p = ev.path || initial.path || '';
+        const name = ev.name || initial.name || (p ? p.split('/').pop() : '事件');
+        return {
+          type: ev.type || initial.type || 'event',
+          name: name,
+          path: p,
+          index: ev.commandIndex || 0,
+          running: ev.running !== false
+        };
+      }).slice(0, 20);
+    } catch (e) {
+      return [];
+    }
+  }
+
   function buildReport() {
     const computeList = state.samples.map(function (s) { return s.compute; });
     const intervalList = state.samples.map(function (s) { return s.interval; });
@@ -294,9 +405,15 @@
       samples: state.samples.length,
       budgetMs: BUDGET,
       hooked: state.hooked,
-      scene: {
-        actors: (typeof Scene !== 'undefined' && Scene.actors) ? Scene.actors.length + ' 个' : '0 个'
+      scene: getSceneDetails(),
+      memory: getMemoryInfo(),
+      webgl: {
+        lastDrawCalls: glStats.lastDrawCalls,
+        lastTriangles: glStats.lastTriangles,
+        lastProgramSwitches: glStats.lastProgramSwitches,
+        lastTextureBinds: glStats.lastTextureBinds
       },
+      activeEvents: getActiveEventsDetails(),
       compute: {
         avg: round2(computeAvg),
         p95: round2(percentile(computeList, 0.95)),
@@ -316,7 +433,7 @@
     };
   }
 
-  // ---------------- 本地轻量 SSE / HTTP 服务 (解决跨浏览器跨域隔离) ----------------
+  // ---------------- 本地轻量 SSE / HTTP 服务 ----------------
   const sseClients = new Set();
   function broadcastSSE(event, data) {
     if (!sseClients.size) return;
@@ -362,7 +479,10 @@
             frameTime: Number((last.interval || 16.6).toFixed(2)),
             update: Number((last.update || 0).toFixed(2)),
             render: Number((last.render || 0).toFixed(2)),
-            actors: (typeof Scene !== 'undefined' && Scene.actors) ? Scene.actors.length : 0,
+            drawCalls: glStats.lastDrawCalls,
+            triangles: glStats.lastTriangles,
+            memory: getMemoryInfo(),
+            scene: getSceneDetails(),
             updaters: recentUpdaterSnap || [],
             events: recentEventSnap || [],
             timestamp: Date.now()
@@ -411,7 +531,10 @@
       frameTime: Number(last.interval.toFixed(2)),
       update: Number(last.update.toFixed(2)),
       render: Number(last.render.toFixed(2)),
-      actors: (typeof Scene !== 'undefined' && Scene.actors) ? Scene.actors.length : 0,
+      drawCalls: glStats.lastDrawCalls,
+      triangles: glStats.lastTriangles,
+      memory: getMemoryInfo(),
+      scene: getSceneDetails(),
       updaters: recentUpdaterSnap || [],
       events: recentEventSnap || [],
       timestamp: Date.now()
@@ -424,7 +547,11 @@
   window.__YAMI_PERF_PROBE__ = {
     version: PROBE_VERSION,
     state: state,
+    glStats: glStats,
     getReport: buildReport,
+    getSceneDetails: getSceneDetails,
+    getMemoryInfo: getMemoryInfo,
+    getActiveEvents: getActiveEventsDetails,
     copy: function () {
       const json = JSON.stringify(buildReport(), null, 2);
       navigator.clipboard.writeText(json).then(function() { console.log('✅ 性能报告已复制到剪贴板'); });
