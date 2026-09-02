@@ -179,6 +179,8 @@
             const ms = now() - t0;
             rec(state.eventTotal, name, ms);
             addFrame(frameEventMs, name, ms);
+            if (recentEventHistory.length > 50) recentEventHistory.shift();
+            recentEventHistory.push({ name: name, ms: round3(ms), time: Date.now() });
           }
           return r;
         };
@@ -360,34 +362,80 @@
   }
 
   function getSceneDetails() {
-    const s = typeof Scene !== 'undefined' ? Scene : {};
+    const s = typeof Scene !== 'undefined' ? Scene : null;
+    if (!s) return { actors: 0, visibleActors: 0, lights: 0, emitters: 0, particles: 0, animations: 0, triggers: 0, camera: null };
+    
+    const actorCount = (s.actor && s.actor.list) ? s.actor.list.length : 0;
+    const visibleActorCount = s.visibleActors ? (s.visibleActors.count || s.visibleActors.length || 0) : 0;
+    const lightCount = (s.light && s.light.list) ? s.light.list.length : 0;
+    const emitterCount = (s.emitter && s.emitter.list) ? s.emitter.list.length : 0;
+    const animCount = (s.animation && s.animation.list) ? s.animation.list.length : 0;
+    const triggerCount = (s.trigger && s.trigger.list) ? s.trigger.list.length : 0;
+    const particleTotal = s.particleCount || 0;
+
+    let cam = null;
+    if (typeof Camera !== 'undefined') {
+      cam = {
+        x: Math.round(Camera.x || 0),
+        y: Math.round(Camera.y || 0),
+        zoom: Number((Camera.zoom || 1).toFixed(2)),
+        width: Math.round(Camera.width || 0),
+        height: Math.round(Camera.height || 0)
+      };
+    }
+
     return {
-      actors: (s.actors && s.actors.length) || 0,
-      lights: (s.lights && s.lights.length) || 0,
-      particles: (s.particles && s.particles.length) || 0,
-      bullets: (s.bullets && s.bullets.length) || 0,
-      weather: (s.weather && s.weather.name) || '无',
-      camera: (typeof Camera !== 'undefined' ? { x: Math.round(Camera.x || 0), y: Math.round(Camera.y || 0), zoom: Camera.zoom || 1 } : null)
+      actors: actorCount,
+      visibleActors: visibleActorCount,
+      lights: lightCount,
+      emitters: emitterCount,
+      particles: particleTotal,
+      animations: animCount,
+      triggers: triggerCount,
+      camera: cam
     };
   }
 
+  // 最近执行事件轨迹
+  const recentEventHistory = [];
+
   function getActiveEventsDetails() {
     try {
-      const list = typeof EventManager !== 'undefined' && EventManager.activeEvents ? EventManager.activeEvents : [];
-      return Array.from(list).map(function(ev) {
+      const em = typeof EventManager !== 'undefined' ? EventManager : null;
+      if (!em) return { active: [], history: recentEventHistory.slice(-10).reverse(), totalRegistered: 0 };
+      
+      const list = Array.from(em.activeEvents || []);
+      const active = list.map(function(ev) {
         const initial = ev.initial || ev.commands || {};
         const p = ev.path || initial.path || '';
-        const name = ev.name || initial.name || (p ? p.split('/').pop() : '事件');
+        const name = p ? p.split('/').pop() : (ev.type || initial.type || '事件');
+        const cmdIndex = typeof ev.index === 'number' ? ev.index : 0;
+        const cmdTotal = (ev.commands && ev.commands.length) || 0;
         return {
-          type: ev.type || initial.type || 'event',
           name: name,
+          type: ev.type || initial.type || 'event',
           path: p,
-          index: ev.commandIndex || 0,
-          running: ev.running !== false
+          index: cmdIndex,
+          total: cmdTotal,
+          priority: !!ev.priority
         };
-      }).slice(0, 20);
+      });
+
+      // 统计全局注册事件总数
+      let totalRegistered = 0;
+      try {
+        if (typeof Data !== 'undefined' && Data.events) {
+          totalRegistered = Object.keys(Data.events).length;
+        }
+      } catch (e) {}
+
+      return {
+        active: active,
+        history: recentEventHistory.slice(-10).reverse(),
+        totalRegistered: totalRegistered
+      };
     } catch (e) {
-      return [];
+      return { active: [], history: [], totalRegistered: 0 };
     }
   }
 
