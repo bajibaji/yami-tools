@@ -14,7 +14,7 @@
 - **多维能力复合体**：
   1. **性能与卡顿分析（Profiler）** [已落地]
   2. **作弊与调试控制台（Cheats & Debug Console）** [规划中]
-  3. **场景实体与碰撞盒层级检视（Scene Inspector & Hitbox）** [规划中]
+  3. **场景对象与碰撞盒层级检视（Scene Inspector & Hitbox）** [规划中]
   4. **全局变量与开关动态监视/修改（Variable & Switch Watcher）** [规划中]
   5. **事件单步调试与指令断点（Event Debugger）** [规划中]
 
@@ -52,11 +52,17 @@
   2. **DOM 层零死锁解耦**：只在 `mousedown` 阶段对父容器进行 `e.stopPropagation()` 阻断，**严禁对 click 和 mouseup 进行冒泡拦截**，让浏览器的点击事件自然分发至每一个具体的 Tab 和关闭按钮；
   3. **结果**：插件内所有按钮和 Tab 拥有 100% 原生点击反馈与灵敏切换，游戏底层绝对不会触发走位，且不改动 Yami 源码一行代码！
 
-### ④ 引擎内部真实数据结构映射 (严禁盲猜字段)
-- **角色列表**：不是 `Scene.actors`，而是 `Scene.actor.list`（实体数组）；可见实体为 `Scene.visibleActors.count`。
-- **光源与粒子**：不是 `Scene.lights`，而是 `Scene.light.list` 与 `Scene.emitter.list`；总微粒数为 `Scene.particleCount`。
-- **动画与触发器**：`Scene.animation.list` 与 `Scene.trigger.list`。
-- **活跃事件**：`EventManager.activeEvents` 中的对象为 `EventHandler` 实例，当前指令行为 `ev.index`，总指令为 `ev.commands.length`，路径为 `ev.path` 或 `ev.initial.path`。
+### ④ 引擎原生 F10 调试数据源 100% 对齐对照表 (F10 Stats Mapping)
+- 经深入逆向 Yami 引擎 `Script/main.ts` 中 F10 统计渲染器的源码，核心对应关系如下：
+  1. **分辨率**：`${GL.width}x${GL.height}`
+  2. **实时帧率 (FPS)**：`${Time.fps}`
+  3. **角色 (Actors)**：`${Scene.visibleActors.count}/${Scene.actor.list.length}`（同屏可见 / 场景总数）
+  4. **骨骼动画 (Anims)**：`${Scene.visibleAnimations.count}/${Scene.animation.list.length}`
+  5. **场景触发器 (Triggers)**：`${Scene.visibleTriggers.count}/${Scene.trigger.list.length}`
+  6. **粒子总数 (Particles)**：`${Scene.particleCount}`
+  7. **界面元素总数 (Elements)**：`${UI.manager.list.length}`（关键排查 UI 内存泄漏指标）
+  8. **显存纹理缓存 (Textures)**：`${GL.textureManager.count}`（显存缓存纹理总数）
+- **插件目前已全面对接上述底层 API，数值与 F10 严丝合缝完全一致！**
 
 ### ⑤ Tab 强隔离与防幽灵 DOM 重叠 (Ghost DOM Prevention)
 - **现象**：Tab 内容重叠混在一块，或者热重载后存在多个面板实例。
@@ -102,6 +108,46 @@
   4. `📜 活跃事件`：当前运行事件/全局注册事件/最近事件流水轨迹
 
 ---
+
+
+
+---
+
+## 4.5 抓真凶四大能力 (PROBE_VERSION 4, 2026-09 落地)
+
+从"系统模块级统计"下沉到"**具体对象级归因**"，附 A/B 实验开关与渲染上传探测：
+
+### ① 对象级归因下沉 (卡顿真凶定位)
+- 周期重扫并包装 `Scene.actor.list / animation.list / trigger.list / emitter.list` 的 `update`，以及 `UI.manager.list` 每个已连接元素的 `element.updaters.update`（引擎 ui.ts 元素独立更新器）。
+- 对象名解析：`name / title / key → data.name → 本地化反查(Local.textMap[Local.active]) → 构造名/类别#序号`；纯 16 位 GUID 与 "default" 跳过。名字会被翻译成显示文本（如动画显示"烈焰爆发"）。
+- 隔帧采样(每 3 帧测 1 帧)控制开销；卡顿帧快照(`jankRecord.objects`)直接给出当帧对象耗时榜：
+  `"卡顿 80ms: 角色·Boss 45ms + 粒子·火焰雨 28ms"`
+- 聚合总榜进 `report.objects`(总/均/峰)，`report.wrappedObjects` 报告各类别已包装数量。
+
+### ② 嫌疑开关 (A/B 实验验证真凶)
+- API: `window.__YAMI_PERF_PROBE__.suspend(kind, on)` / `.getSuspend()`，kind = `actors / animations / emitters / triggers / ui / events`。
+- 挂起在对象包装层短路真实 update（不改引擎源码、不替换方法，恢复零成本）。
+- HUD 总览页新增 🧪 嫌疑开关行：一键暂停角色/动画/粒子/触发器/界面/事件——**关掉后 FPS 回升 = 真凶确认**。
+
+### ③ 卡顿详情面板
+- HUD 总览卡顿列表每条可点击展开：完整归因（update/render/未归因分解、对象榜、系统模块榜、事件榜、DC/纹理上传/大绘制）＋ 前后 60 帧计算耗时波形 canvas（16.7/33.3ms 参考线 + 卡顿帧红点）。
+- 告警 culprit 优先取当帧对象级第一名。
+
+### ④ WebGL 纹理上传与超大规模绘制探测
+- 引擎渲染为合批渲染（对象数据批量入数组统一 draw），无法逐对象归因 DC；改 hook `texImage2D / texSubImage2D / texImage3D` 统计**纹理上传次数与每帧上传 KB**（按签名分流估算，RPG 首帧大纹理上传是典型卡顿元凶）。
+- `drawElements/drawArrays` count > 20000 记一次"超大规模绘制"。
+- 渲染 Tab 新增两卡展示；`/live`、SSE `tick`、`report` 均带 `objects` / 上传字段供分析台。
+
+
+### Pro 复审加固 (2026-09)
+- **角色碰撞差额归因**: SceneActorManager.update = Σactor.update + 碰撞检测/网格分区。已 wrap 管理器，把差额记入 `actors:碰撞与分区(集合)` 条目——大场景 O(n²) 碰撞是典型卡顿元凶，此前会漏归因。suspend('actors') 连管理器一起短路(角色系统全停)。
+- **XSS 防护**: 对象名/事件名/模块名来自游戏数据，进入 innerHTML 前一律 `esc()` 转义。
+- **内存上限**: overBudgetFrames 保留最近 200 条；objectTotal 超 500 条目清空重建(场景切换后旧对象名不残留)。
+- **纹理上传估算修正**: texImage3D 按 w*h*depth 计体积，单帧 >1GB 视为异常丢弃。
+
+### 数据与 UI 变更速览
+- `probe.state.suspend`、`probe.state.objWrapped`、`recentObjSnap`（帧榜）
+- 自回归验证脚本: `.e2e-tmp/verify-perf-probe.mjs`（mock 完整引擎环境真实执行，27 项断言全绿）
 
 ## 5. 复合插件未来模块化蓝图 (To-Be Architecture)
 

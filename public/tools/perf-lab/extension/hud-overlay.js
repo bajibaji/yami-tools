@@ -314,6 +314,27 @@
         pointer-events: none !important;
       }
       .yami-perf-toast.show { opacity: 1 !important; transform: translateY(0) !important; }
+
+      /* 🧪 嫌疑开关 (A/B 实验) */
+      .yami-perf-sus-row { display: flex !important; flex-wrap: wrap !important; gap: 5px !important; align-items: center !important; }
+      .yami-perf-sus-pill {
+        display: inline-block !important; padding: 3px 10px !important; border-radius: 10px !important;
+        font-size: 11px !important; cursor: pointer !important; border: 1px solid #333333 !important;
+        background: #262626 !important; color: #707070 !important; user-select: none !important;
+        position: static !important; width: auto !important; height: auto !important;
+      }
+      .yami-perf-sus-pill:hover { background: #303030 !important; color: #d8d8d8 !important; }
+      .yami-perf-sus-pill.on { background: #3a2410 !important; color: #ffb060 !important; border-color: #7a4a20 !important; }
+
+      /* ⚠️ 卡顿详情面板 */
+      .yami-perf-jank-item { cursor: pointer !important; }
+      .yami-perf-jank-item:hover { border-color: #f06000 !important; background: #38241c !important; }
+      .yami-perf-jank-detail { display: none !important; margin-top: 6px !important; background: #1c1c1c !important; border: 1px solid #2e2e2e !important; border-radius: 3px !important; padding: 8px !important; font-size: 11px !important; }
+      .yami-perf-jank-detail.show { display: block !important; }
+      .yami-perf-wave { width: 100% !important; height: 64px !important; background: #141414 !important; border: 1px solid #262626 !important; border-radius: 2px !important; display: block !important; }
+      .yami-perf-objrow { display: flex !important; justify-content: space-between !important; align-items: center !important; padding: 2px 6px !important; border-radius: 2px !important; }
+      .yami-perf-objrow:nth-child(odd) { background: rgba(255,255,255,0.03) !important; }
+      .yami-perf-kind { color: #909090 !important; margin-right: 6px !important; font-size: 10px !important; }
     `;
     document.head.appendChild(style);
 
@@ -363,7 +384,7 @@
       <div class="yami-perf-tabs" id="yami-tabs-bar">
         <div class="yami-perf-tab active" data-ptab="overview" role="button">⚡ 性能总览</div>
         <div class="yami-perf-tab" data-ptab="render" role="button">🎨 渲染DrawCall</div>
-        <div class="yami-perf-tab" data-ptab="scene" role="button">🎬 场景实体</div>
+        <div class="yami-perf-tab" data-ptab="scene" role="button">🎬 场景与对象</div>
         <div class="yami-perf-tab" data-ptab="events" role="button">📜 活跃事件</div>
       </div>
 
@@ -391,6 +412,16 @@
 
           <div class="yami-perf-box">
             <div class="yami-perf-box-title">
+              <span>🧪 嫌疑开关 (A/B 实验)</span>
+              <span style="color: #808080;">点击暂停某类对象更新 · 卡顿消失即真凶</span>
+            </div>
+            <div class="yami-perf-sus-row" id="sus-row" style="padding: 2px 0;">
+              <span style="color: #606060; font-size: 10px;">角色 / 动画 / 粒子 / 触发器 / 界面 / 事件</span>
+            </div>
+          </div>
+
+          <div class="yami-perf-box">
+            <div class="yami-perf-box-title">
               <span>🔥 模块超帧耗时排行 (卡顿元凶)</span>
               <span>总耗时</span>
             </div>
@@ -407,6 +438,7 @@
             <div id="box-jank-list" style="display: flex; flex-direction: column; gap: 4px; max-height: 120px; overflow-y: auto;">
               <div style="color: #808080; font-size: 11px; text-align: center; padding: 6px;">暂无严重掉帧</div>
             </div>
+            <div class="yami-perf-jank-detail" id="box-jank-detail"></div>
           </div>
         </div>
 
@@ -429,6 +461,14 @@
               <div class="yami-perf-card-label">纹理绑定 (BindTexture)</div>
               <div class="yami-perf-card-value" id="val-textures">0</div>
             </div>
+            <div class="yami-perf-card">
+              <div class="yami-perf-card-label">纹理上传 (texImage2D · 本帧)</div>
+              <div class="yami-perf-card-value" id="val-uploads" style="color: #f0b000;">0 次 / 0 KB</div>
+            </div>
+            <div class="yami-perf-card">
+              <div class="yami-perf-card-label">超大规模绘制 (>2万顶点)</div>
+              <div class="yami-perf-card-value" id="val-bigdraws" style="color: #f06000;">0 次</div>
+            </div>
           </div>
 
           <div class="yami-perf-box">
@@ -441,35 +481,45 @@
           </div>
         </div>
 
-        <!-- 选项卡 3: 场景与对象 -->
+        <!-- 选项卡 3: 场景与对象 (100% 对齐引擎 F10 原生数据) -->
         <div class="yami-perf-tab-content" id="ptab-scene">
           <div class="yami-perf-grid">
             <div class="yami-perf-card">
-              <div class="yami-perf-card-label">角色总数 / 可见实体</div>
+              <div class="yami-perf-card-label">角色 (Actors: 可见/总数)</div>
               <div class="yami-perf-card-value" id="val-actors" style="color: #1cff9b;">0 / 0</div>
             </div>
             <div class="yami-perf-card">
-              <div class="yami-perf-card-label">光源数量 (Light)</div>
-              <div class="yami-perf-card-value" id="val-lights">0</div>
+              <div class="yami-perf-card-label">动画与触发器 (Anims / Triggers)</div>
+              <div class="yami-perf-card-value" id="val-anims-triggers" style="font-size: 13px;">0/0 | 0/0</div>
             </div>
             <div class="yami-perf-card">
-              <div class="yami-perf-card-label">发射器 / 粒子微粒总数</div>
-              <div class="yami-perf-card-value" id="val-particles">0 / 0</div>
+              <div class="yami-perf-card-label">粒子与光源 (Particles / Lights)</div>
+              <div class="yami-perf-card-value" id="val-particles" style="font-size: 13px;">粒子 0 | 光源 0</div>
             </div>
             <div class="yami-perf-card">
-              <div class="yami-perf-card-label">场景动画 / 触发器</div>
-              <div class="yami-perf-card-value" id="val-animations">0 / 0</div>
+              <div class="yami-perf-card-label">界面元素 / 纹理 (Elements/Textures)</div>
+              <div class="yami-perf-card-value" id="val-elements-textures" style="font-size: 13px; color: #0080c0;">0 界面 | 0 纹理</div>
             </div>
           </div>
 
           <div class="yami-perf-box">
             <div class="yami-perf-box-title">
-              <span>🎬 场景摄像机视口状态</span>
+              <span>🔍 对象级耗时排行 (总 / 均 / 峰 · 卡顿真凶)</span>
+              <span id="val-objwrapped" style="color: #808080;">0 已包装</span>
+            </div>
+            <div id="box-objects-list" style="display: flex; flex-direction: column; gap: 3px;">
+              <div style="color: #808080; font-size: 11px; text-align: center; padding: 6px;">正在采集对象级耗时...</div>
+            </div>
+          </div>
+
+          <div class="yami-perf-box">
+            <div class="yami-perf-box-title">
+              <span>🎬 场景环境与摄像机视口状态</span>
             </div>
             <div style="display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: #d8d8d8;">
+              <div style="display: flex; justify-content: space-between;"><span>画布原生分辨率:</span><b id="val-native-res" style="color: #1cff9b; font-family: Consolas, monospace;">1920x1080</b></div>
               <div style="display: flex; justify-content: space-between;"><span>摄像机中心 (X / Y):</span><b id="val-cam-pos" style="color: #ffffff; font-family: Consolas, monospace;">0, 0</b></div>
-              <div style="display: flex; justify-content: space-between;"><span>视口分辨率 (宽 x 高):</span><b id="val-cam-res" style="color: #ffffff; font-family: Consolas, monospace;">0 x 0</b></div>
-              <div style="display: flex; justify-content: space-between;"><span>摄像机缩放倍率 (Zoom):</span><b id="val-cam-zoom" style="color: #ffffff; font-family: Consolas, monospace;">1.0x</b></div>
+              <div style="display: flex; justify-content: space-between;"><span>摄像机缩放率 (Zoom):</span><b id="val-cam-zoom" style="color: #ffffff; font-family: Consolas, monospace;">1.0x</b></div>
             </div>
           </div>
         </div>
@@ -528,6 +578,45 @@
       toast.classList.add('show');
       setTimeout(() => toast.classList.remove('show'), duration || 2000);
     }
+
+    // HTML 转义: 游戏数据中的对象名/事件名/模块名一律先转义再进 innerHTML (防 XSS 与 UI 破坏)
+    function esc(v) {
+      return String(v == null ? '' : v)
+        .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+    }
+
+    // 🧪 嫌疑开关 (A/B 实验)：暂停某类对象更新，卡顿消失即真凶
+    const SUS_KINDS = [
+      ['actors', '角色'], ['animations', '动画'], ['emitters', '粒子'],
+      ['triggers', '触发器'], ['ui', '界面'], ['events', '事件']
+    ];
+    const susRow = document.getElementById('sus-row');
+
+    function renderSusPills() {
+      const probe = window.__YAMI_PERF_PROBE__;
+      if (!susRow || !probe || !probe.getSuspend) return;
+      const st = probe.getSuspend();
+      susRow.innerHTML = SUS_KINDS.map(function (k) {
+        const on = st[k[0]] === true;
+        return '<div class="yami-perf-sus-pill' + (on ? ' on' : '') + '" data-sus="' + k[0] + '" role="button">' + (on ? '▶ 恢复 ' : '⏸ 暂停 ') + k[1] + '</div>';
+      }).join('');
+    }
+    if (susRow) {
+      susRow.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const pill = e.target.closest('.yami-perf-sus-pill');
+        if (!pill) return;
+        const probe = window.__YAMI_PERF_PROBE__;
+        if (!probe || !probe.suspend || !probe.getSuspend) return;
+        const kind = pill.dataset.sus;
+        const next = probe.suspend(kind, !(probe.getSuspend()[kind] === true));
+        renderSusPills();
+        const label = (SUS_KINDS.find(function (k) { return k[0] === kind; }) || [])[1] || kind;
+        showToast(next ? ('⏸ 已暂停' + label + '更新 — 观察 FPS 是否回升 (真凶验证)') : ('▶ 已恢复' + label + '更新'), 2000);
+      });
+    }
+    renderSusPills();
 
     // 防穿透隔离
     let isPreventingInput = false;
@@ -641,6 +730,8 @@
     });
 
     // 刷新数据函数
+    const OBJ_KIND_LABEL = { actors: '角色', animations: '动画', emitters: '粒子', triggers: '触发器', ui: '界面', events: '事件' };
+
     function refreshDockData() {
       try {
         const probe = window.__YAMI_PERF_PROBE__;
@@ -651,6 +742,7 @@
         const mem = probe.getMemoryInfo ? probe.getMemoryInfo() : { used: 0, total: 0 };
         const scene = probe.getSceneDetails ? probe.getSceneDetails() : {};
         const eventsData = probe.getActiveEvents ? probe.getActiveEvents() : { active: [], history: [], totalRegistered: 0 };
+        if (susRow && susRow.querySelectorAll('.yami-perf-sus-pill').length === 0) renderSusPills();
         const gl = report.webgl || {};
         const comp = report.compute || { avg: 0, p99: 0, overBudgetCount: 0 };
 
@@ -684,7 +776,7 @@
               return `
                 <div class="yami-perf-bar-row">
                   <div class="yami-perf-bar-head">
-                    <span style="color: #ffffff; font-weight: 500;">${item.name}</span>
+                    <span style="color: #ffffff; font-weight: 500;">${esc(item.name)}</span>
                     <span style="font-family: Consolas, monospace; color: ${isBad ? '#f06000' : '#808080'};">
                       总 ${item.total}ms | 均 ${item.avg}ms | 峰 ${item.max}ms
                     </span>
@@ -704,11 +796,14 @@
           jankCount.textContent = `${janks.length} 次`;
           if (janks.length) {
             jankList.innerHTML = janks.map(j => {
+              const topObj = j.objects && j.objects[0];
               const topMod = (j.updaters && j.updaters[0] && j.updaters[0].name) || 'Game Update';
+              const who = esc(topObj ? ('🎯 ' + (OBJ_KIND_LABEL[topObj.kind] || topObj.kind) + '·' + topObj.name) : topMod);
+              const upInfo = (j.textureUploadKB || 0) > 0 ? ('⤴ ' + j.textureUploadKB + 'KB ') : '';
               return `
-                <div style="display: flex; justify-content: space-between; align-items: center; padding: 3px 6px; background: #2e2020; border: 1px solid #482020; border-radius: 2px; font-size: 10px;">
-                  <span>⚠️ <b>#${j.frame}</b> <b style="color: #ff4040;">${j.compute}ms</b> (${topMod})</span>
-                  <span style="color: #808080; font-family: Consolas, monospace;">+${j.elapsedMs}ms</span>
+                <div class="yami-perf-jank-item" data-jframe="${j.frame}" role="button" style="display: flex; justify-content: space-between; align-items: center; padding: 3px 6px; background: #2e2020; border: 1px solid #482020; border-radius: 2px; font-size: 10px;">
+                  <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">⚠️ <b>#${j.frame}</b> <b style="color: #ff4040;">${j.compute}ms</b> <span style="color: #c8a050; font-size: 10px;">${who}</span></span>
+                  <span style="color: #808080; font-family: Consolas, monospace; flex-shrink: 0; margin-left: 6px;">${upInfo}+${j.elapsedMs}ms</span>
                 </div>
               `;
             }).join('');
@@ -728,6 +823,10 @@
         if (triEl) triEl.textContent = `${gl.lastTriangles || 0}`;
         if (shaderEl) shaderEl.textContent = `${gl.lastProgramSwitches || 0} 次`;
         if (texEl) texEl.textContent = `${gl.lastTextureBinds || 0} 次`;
+        const upEl = document.getElementById('val-uploads');
+        const bigEl = document.getElementById('val-bigdraws');
+        if (upEl) upEl.textContent = `${gl.lastTextureUploads || 0} 次 / ${gl.lastTextureUploadKB || 0} KB`;
+        if (bigEl) bigEl.textContent = `${gl.lastBigDraws || 0} 次`;
 
         if (renderersList && report.renderers) {
           const rList = report.renderers.slice(0, 5);
@@ -736,7 +835,7 @@
             renderersList.innerHTML = rList.map(item => `
               <div class="yami-perf-bar-row">
                 <div class="yami-perf-bar-head">
-                  <span style="color: #ffffff;">${item.name}</span>
+                  <span style="color: #ffffff;">${esc(item.name)}</span>
                   <span style="font-family: Consolas, monospace; color: #808080;">总 ${item.total}ms | 均 ${item.avg}ms</span>
                 </div>
                 <div class="yami-perf-bar-track">
@@ -747,24 +846,53 @@
           }
         }
 
-        // 3. 场景选项卡
+        // 3. 场景选项卡 (100% 对齐 F10 原生数据)
         const actorsEl = document.getElementById('val-actors');
-        const lightsEl = document.getElementById('val-lights');
+        const animsTriggersEl = document.getElementById('val-anims-triggers');
         const particlesEl = document.getElementById('val-particles');
-        const animsEl = document.getElementById('val-animations');
+        const elementsTexturesEl = document.getElementById('val-elements-textures');
+        const nativeResEl = document.getElementById('val-native-res');
         const camPosEl = document.getElementById('val-cam-pos');
-        const camResEl = document.getElementById('val-cam-res');
         const camZoomEl = document.getElementById('val-cam-zoom');
 
-        if (actorsEl) actorsEl.textContent = `${scene.actors || 0} (可见: ${scene.visibleActors || 0})`;
-        if (lightsEl) lightsEl.textContent = `${scene.lights || 0} 个`;
-        if (particlesEl) particlesEl.textContent = `发射器 ${scene.emitters || 0} / 微粒 ${scene.particles || 0}`;
-        if (animsEl) animsEl.textContent = `动画 ${scene.animations || 0} / 触发器 ${scene.triggers || 0}`;
+        if (actorsEl) actorsEl.textContent = `${scene.visibleActors || 0} / ${scene.actors || 0}`;
+        if (animsTriggersEl) animsTriggersEl.textContent = `${scene.visibleAnimations || 0}/${scene.animations || 0} | ${scene.visibleTriggers || 0}/${scene.triggers || 0}`;
+        if (particlesEl) particlesEl.textContent = `粒子 ${scene.particles || 0} (发射器: ${scene.emitters || 0})`;
+        if (elementsTexturesEl) elementsTexturesEl.textContent = `界面: ${scene.elements || 0} | 纹理: ${scene.textures || 0}`;
+        if (nativeResEl) nativeResEl.textContent = scene.resolution || '1920x1080';
 
         if (scene.camera) {
           if (camPosEl) camPosEl.textContent = `${scene.camera.x}, ${scene.camera.y}`;
-          if (camResEl) camResEl.textContent = `${scene.camera.width} x ${scene.camera.height}`;
           if (camZoomEl) camZoomEl.textContent = `${scene.camera.zoom}x`;
+        }
+
+        // 3.5 对象级耗时排行 (卡顿真凶)
+        const objectsListEl = document.getElementById('box-objects-list');
+        const objWrappedEl = document.getElementById('val-objwrapped');
+        if (objWrappedEl && report.wrappedObjects) {
+          const w = report.wrappedObjects;
+          const parts = [];
+          for (const k of ['actors', 'animations', 'emitters', 'triggers', 'ui']) {
+            if (w[k]) parts.push((OBJ_KIND_LABEL[k] || k) + ' ' + w[k]);
+          }
+          objWrappedEl.textContent = parts.length ? '已包装 ' + parts.join(' · ') : '';
+        }
+        if (objectsListEl) {
+          const objList = report.objects || [];
+          if (objList.length) {
+            const maxTotal = objList[0].total || 1;
+            objectsListEl.innerHTML = objList.slice(0, 8).map(function (item) {
+              const isBad = item.max > 16.7;
+              const k = OBJ_KIND_LABEL[item.kind] || item.kind;
+              return '<div class="yami-perf-objrow">'
+                + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span class="yami-perf-kind">' + esc(k) + '</span><span style="color:#ffffff;">' + esc(item.name) + '</span></span>'
+                + '<span style="font-family: Consolas, monospace; color: ' + (isBad ? '#f06000' : '#808080') + '; flex-shrink: 0; margin-left: 8px;">总 ' + item.total + 'ms | 均 ' + item.avg + 'ms | 峰 ' + item.max + 'ms</span>'
+                + '</div>'
+                + '<div class="yami-perf-bar-track"><div class="yami-perf-bar-fill' + (isBad ? ' bad' : '') + '" style="width:' + Math.min(100, Math.round(item.total / maxTotal * 100)) + '%;"></div></div>';
+            }).join('');
+          } else {
+            objectsListEl.innerHTML = '<div style="color: #808080; font-size: 11px; text-align: center; padding: 6px;">暂无对象级耗时数据 (场景对象更新中自动采集)</div>';
+          }
         }
 
         // 4. 活跃事件选项卡
@@ -780,7 +908,7 @@
           if (eventsData.active.length) {
             activeListEl.innerHTML = eventsData.active.map(ev => `
               <div class="yami-perf-event-row">
-                <span class="yami-perf-event-name" title="${ev.path || ev.name}">▶ ${ev.name}</span>
+                <span class="yami-perf-event-name" title="${esc(ev.path || ev.name)}">▶ ${esc(ev.name)}</span>
                 <span class="yami-perf-event-tag">指令 #${ev.index} / ${ev.total}</span>
               </div>
             `).join('');
@@ -793,7 +921,7 @@
           if (eventsData.history && eventsData.history.length) {
             historyListEl.innerHTML = eventsData.history.map(h => `
               <div class="yami-perf-event-row">
-                <span class="yami-perf-event-name" title="${h.name}">⚡ ${h.name}</span>
+                <span class="yami-perf-event-name" title="${esc(h.name)}">⚡ ${esc(h.name)}</span>
                 <span class="yami-perf-event-tag" style="color: ${h.ms > 5 ? '#f06000' : '#1cff9b'};">${h.ms}ms</span>
               </div>
             `).join('');
@@ -805,6 +933,117 @@
         console.error('[YAMI PERF] refreshDockData error:', err);
       }
     }
+
+    // ⚠️ 卡顿详情面板: 点击卡顿记录展开完整归因 + 60帧波形
+    let currentJankFrame = null;
+
+    function drawJankWave(canvas, timeline, jank) {
+      if (!canvas || !timeline || !jank) return;
+      const ctx2 = canvas.getContext('2d');
+      const W = canvas.width || 460;
+      const H = canvas.height || 64;
+      ctx2.clearRect(0, 0, W, H);
+      // 定位 jank 帧在 timeline 中的索引
+      let idx = timeline.length - 1;
+      for (let i = 0; i < timeline.length; i++) {
+        if (timeline[i].elapsedMs >= jank.elapsedMs) { idx = i; break; }
+      }
+      const from = Math.max(0, idx - 30);
+      const to = Math.min(timeline.length - 1, idx + 30);
+      const slice = timeline.slice(from, to + 1);
+      if (!slice.length) return;
+      const maxC = Math.max(50, jank.compute || 50);
+      const pad = 2;
+      const xStep = (W - pad * 2) / Math.max(1, slice.length - 1);
+      const y = (v, m) => H - pad - (Math.min(v, m) / m) * (H - pad * 2 - 8);
+      ctx2.strokeStyle = '#2a2a2a';
+      ctx2.lineWidth = 1;
+      // 16.7ms 与 33.3ms 参考线
+      ctx2.strokeStyle = '#3a3a3a'; ctx2.beginPath();
+      ctx2.moveTo(0, y(16.7, maxC)); ctx2.lineTo(W, y(16.7, maxC)); ctx2.stroke();
+      ctx2.strokeStyle = '#4a2020'; ctx2.beginPath();
+      ctx2.moveTo(0, y(33.3, maxC)); ctx2.lineTo(W, y(33.3, maxC)); ctx2.stroke();
+      // compute 曲线
+      ctx2.strokeStyle = '#ff8060'; ctx2.lineWidth = 1.2; ctx2.beginPath();
+      for (let i = 0; i < slice.length; i++) {
+        const x = pad + i * xStep;
+        const yy = y(slice[i].compute || 0, maxC);
+        if (i === 0) ctx2.moveTo(x, yy); else ctx2.lineTo(x, yy);
+      }
+      ctx2.stroke();
+      // jank 点
+      ctx2.fillStyle = '#ff4040';
+      ctx2.fillRect(pad + (idx - from) * xStep - 1.5, y(jank.compute, maxC) - 1.5, 3, 3);
+      ctx2.fillStyle = '#7a7a7a';
+      ctx2.font = '8px Consolas, monospace';
+      ctx2.fillText('16.7ms', 4, y(16.7, maxC) - 2);
+      ctx2.fillText('33.3ms', 4, y(33.3, maxC) - 2);
+    }
+
+    function renderJankRows(arr) {
+      if (!arr || !arr.length) return '<div style="color: #707070;">—</div>';
+      return arr.slice(0, 6).map(function (x) {
+        return '<div class="yami-perf-objrow">'
+          + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span class="yami-perf-kind">' + esc(OBJ_KIND_LABEL[x.kind] || x.kind || '') + '</span><span style="color:#e8e8e8;">' + esc(x.name || '') + '</span></span>'
+          + '<span style="font-family: Consolas, monospace; color: #ff9060; flex-shrink: 0; margin-left: 8px;">' + x.ms + 'ms</span>'
+          + '</div>';
+      }).join('');
+    }
+    function renderModuleRows(arr) {
+      if (!arr || !arr.length) return '<div style="color: #707070;">—</div>';
+      return arr.slice(0, 6).map(function (x) {
+        return '<div class="yami-perf-objrow"><span style="color:#e8e8e8;">' + esc(x.name || '') + '</span>'
+          + '<span style="font-family: Consolas, monospace; color: #a0a0a0; flex-shrink: 0; margin-left: 8px;">' + x.ms + 'ms</span></div>';
+      }).join('');
+    }
+
+    function toggleJankDetail(frame) {
+      const detail = document.getElementById('box-jank-detail');
+      const probe = window.__YAMI_PERF_PROBE__;
+      if (!detail || !probe || !probe.getReport) return;
+      if (currentJankFrame === frame) {
+        currentJankFrame = null;
+        detail.classList.remove('show');
+        detail.innerHTML = '';
+        return;
+      }
+      currentJankFrame = frame;
+      const report = probe.getReport();
+      const janks = (report.overBudgetFrames || []).filter(function (f) { return f.compute > 33.3; }).slice(-6).reverse();
+      const j = janks.find(function (f) { return f.frame === frame; });
+      if (!j) return;
+      detail.innerHTML = ''
+        + '<div style="display: flex; justify-content: space-between; color: #909090; padding-bottom: 4px; border-bottom: 1px solid #262626; margin-bottom: 6px;">'
+        + '<span>帧 #' + j.frame + ' · compute <b style="color:#ff4040;">' + j.compute + 'ms</b> (update ' + j.update + ' / render ' + j.render + ' / 未归因 ' + (j.unattributed || 0) + ')</span>'
+        + '<span>DC ' + (j.drawCalls || 0) + ' · 上传 ' + (j.textureUploadKB || 0) + 'KB · 大绘制 ' + (j.bigDraws || 0) + '</span>'
+        + '</div>'
+        + '<canvas class="yami-perf-wave" id="jank-wave-canvas"></canvas>'
+        + '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px;">'
+        + '<div><div style="color:#ff9060; padding: 2px 0;">🎯 对象归因 (当帧)</div>' + renderJankRows(j.objects) + '</div>'
+        + '<div><div style="color:#ffc860; padding: 2px 0;">⚙️ 系统模块 (当帧)</div>' + renderModuleRows(j.updaters) + '</div>'
+        + '</div>'
+        + (j.events && j.events.length ? '<div style="margin-top: 4px;"><div style="color:#7fd0ff; padding: 2px 0;">📜 活跃事件 (当帧)</div>' + renderModuleRows(j.events) + '</div>' : '')
+        + '<div style="color:#808080; padding-top: 4px;">点击记录可收起 · 波形为前后 60 帧计算耗时 (红色=本卡顿帧)</div>';
+      detail.classList.add('show');
+      const canvas = document.getElementById('jank-wave-canvas');
+      if (canvas) {
+        const dpr = window.devicePixelRatio || 1;
+        const w = canvas.clientWidth || 420;
+        canvas.width = w * dpr;
+        canvas.height = 64 * dpr;
+        canvas.style.height = '64px';
+        drawJankWave(canvas, report.timeline || [], j);
+      }
+    }
+
+    // 卡顿列表点击委派 (dock 内)
+    dock.addEventListener('click', function (e) {
+      e.stopPropagation();
+      const item = e.target.closest('.yami-perf-jank-item');
+      if (item && item.dataset.jframe) {
+        toggleJankDetail(Number(item.dataset.jframe));
+      }
+    });
 
     // 快捷键 Home 呼出/收起，ESC 收起
     window.addEventListener('keydown', (e) => {

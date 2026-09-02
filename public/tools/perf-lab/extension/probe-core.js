@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = 3;
+  const PROBE_VERSION = 4;
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -18,8 +18,14 @@
     updaterTotal: new Map(),
     rendererTotal: new Map(),
     eventTotal: new Map(),
+    objectTotal: new Map(),
     lastJankTime: 0,
-    lastJankEvent: null
+    lastJankEvent: null,
+    // 嫌疑开关: 挂起某类对象的真实更新(用于 A/B 实验验证真凶)
+    suspend: { actors: false, animations: false, emitters: false, triggers: false, ui: false, events: false },
+    // 已包装对象集合(防重复 + 恢复计数)
+    objWrapped: { actors: 0, animations: 0, emitters: 0, triggers: 0, ui: 0 },
+    frameObjMs: new Map()
   };
 
   let frameUpdate = 0;
@@ -37,11 +43,61 @@
     triangles: 0,
     programSwitches: 0,
     textureBinds: 0,
+    textureUploads: 0,
+    textureUploadKB: 0,
+    bigDraws: 0,
     lastDrawCalls: 0,
     lastTriangles: 0,
     lastProgramSwitches: 0,
-    lastTextureBinds: 0
+    lastTextureBinds: 0,
+    lastTextureUploads: 0,
+    lastTextureUploadKB: 0,
+    lastBigDraws: 0
   };
+
+  // 估计一次纹理上传的字节数(KB), 按方法签名分流取宽高(texImage2D: 新9参签名 width=args[3],height=args[4]; texSubImage2D: width=args[4],height=args[5]; 老签名/带source时从源对象取)
+  function texUploadKB(method, args) {
+    try {
+      let width = 0, height = 0;
+      const n = args.length;
+      if (method === 'texImage2D' && n >= 9) {
+        if (typeof args[3] === 'number' && typeof args[4] === 'number') { width = args[3]; height = args[4]; }
+      } else if (method === 'texSubImage2D' && n >= 9) {
+        if (typeof args[4] === 'number' && typeof args[5] === 'number') { width = args[4]; height = args[5]; }
+      } else if (method === 'texImage3D' && n >= 10) {
+        if (typeof args[3] === 'number' && typeof args[4] === 'number' && typeof args[5] === 'number') {
+          width = args[3]; height = args[4] * Math.max(1, args[5]);
+        }
+      }
+      if (width <= 0 || height <= 0) {
+        const src = args[n - 1];
+        if (src && typeof src === 'object') {
+          const w = src.width || src.naturalWidth || 0;
+          const h = src.height || src.naturalHeight || 0;
+          if (w > 0 && h > 0) { width = width > 0 ? width : w; height = height > 0 ? height : h; }
+        }
+      }
+      if (width <= 0 || height <= 0) return 0;
+      const kb = width * height * 4 / 1024;
+      if (kb > 1048576) return 0;   // 单帧上传 >1GB 视为异常数据
+      return Math.max(1, Math.round(kb));
+    } catch (e) { return 0; }
+  }
+
+  function hookTexUpload(proto, methodName) {
+    if (!proto || proto['__yamiTexHook_' + methodName + '__']) return;
+    const orig = proto[methodName];
+    if (typeof orig !== 'function') return;
+    Object.defineProperty(proto, '__yamiTexHook_' + methodName + '__', { value: true, configurable: true });
+    proto[methodName] = function () {
+      const kb = texUploadKB(methodName, arguments);
+      if (kb > 0) {
+        glStats.textureUploads++;
+        glStats.textureUploadKB += kb;
+      }
+      return orig.apply(this, arguments);
+    };
+  }
 
   function hookWebGL() {
     if (state.hooked.webgl) return;
@@ -53,6 +109,7 @@
       const origDrawElements = proto.drawElements;
       proto.drawElements = function(mode, count, type, offset) {
         glStats.drawCalls++;
+        if (count > 20000) glStats.bigDraws++;
         if (mode === 4 /* TRIANGLES */) glStats.triangles += count / 3;
         return origDrawElements.apply(this, arguments);
       };
@@ -60,6 +117,7 @@
       const origDrawArrays = proto.drawArrays;
       proto.drawArrays = function(mode, first, count) {
         glStats.drawCalls++;
+        if (count > 20000) glStats.bigDraws++;
         if (mode === 4) glStats.triangles += count / 3;
         return origDrawArrays.apply(this, arguments);
       };
@@ -78,8 +136,17 @@
     };
 
     try {
-      if (typeof WebGLRenderingContext !== 'undefined') hookProto(WebGLRenderingContext.prototype);
-      if (typeof WebGL2RenderingContext !== 'undefined') hookProto(WebGL2RenderingContext.prototype);
+      if (typeof WebGLRenderingContext !== 'undefined') {
+        hookProto(WebGLRenderingContext.prototype);
+        hookTexUpload(WebGLRenderingContext.prototype, 'texImage2D');
+        hookTexUpload(WebGLRenderingContext.prototype, 'texSubImage2D');
+      }
+      if (typeof WebGL2RenderingContext !== 'undefined') {
+        hookProto(WebGL2RenderingContext.prototype);
+        hookTexUpload(WebGL2RenderingContext.prototype, 'texImage2D');
+        hookTexUpload(WebGL2RenderingContext.prototype, 'texSubImage2D');
+        hookTexUpload(WebGL2RenderingContext.prototype, 'texImage3D');
+      }
     } catch (e) {}
   }
   hookWebGL();
@@ -154,6 +221,192 @@
     } catch (e) {}
   }
 
+  // ============ ① 对象级归因下沉: 包装场景对象实例的 update(角色/动画/触发器/粒子/界面) ============
+  // 帧级对象计时采样开关(隔帧采样降低开销): 0=本帧不测 1=本帧测量
+  let objSampling = 0;
+  let recentObjSnap = [];
+
+  // 本地化文本反查(对象名字若是本地化ID则转为显示文本)
+  function localizeText(name) {
+    try {
+      if (typeof Local === 'undefined' || !Local || !Local.textMap) return null;
+      const item = Local.textMap[name];
+      if (!item || !item.contents) return null;
+      const lang = (typeof Local.active === 'string' && Local.active) ? Local.active : 'zh-CN';
+      const content = item.contents[lang];
+      if (typeof content === 'string' && content.length > 0) return content;
+    } catch (e) {}
+    return null;
+  }
+
+  function shortName(v) {
+    const s = localizeText(v) || v;
+    return s.length > 36 ? s.slice(0, 36) : s;
+  }
+
+  function resolveObjectName(obj, kind, index) {
+    if (!obj) return kind + '#' + index;
+    const candidates = [];
+    try { if (typeof obj.name === 'string' && obj.name) candidates.push(obj.name); } catch (e) {}
+    try { if (typeof obj.title === 'string' && obj.title) candidates.push(obj.title); } catch (e) {}
+    try { if (typeof obj.key === 'string' && obj.key) candidates.push(obj.key); } catch (e) {}
+    try {
+      const d = obj.data || obj.preset;
+      if (d) {
+        for (const k of ['name', 'title']) {
+          const v = d[k];
+          if (typeof v === 'string' && v) { candidates.push(v); break; }
+        }
+      }
+    } catch (e) {}
+    for (const c of candidates) {
+      if (c === 'default' || /^[0-9a-f]{16}$/i.test(c)) continue;
+      return shortName(c);
+    }
+    const ctor = obj && obj.constructor && obj.constructor.name;
+    return ctor && ctor !== 'Object' && ctor !== 'Function' ? ctor : kind + '#' + index;
+  }
+
+  function topObjects(map, n) {
+    return Array.from(map.entries())
+      .map(function (e) {
+        const sep = e[0].indexOf('::');
+        return { kind: e[0].slice(0, sep), name: e[0].slice(sep + 2), ms: round3(e[1]) };
+      })
+      .sort(function (a, b) { return b.ms - a.ms; })
+      .slice(0, n || 8);
+  }
+
+  function formatObjList(map) {
+    return Array.from(map.entries()).map(function (entry) {
+      const sep = entry[0].indexOf('::');
+      const v = entry[1];
+      return {
+        kind: entry[0].slice(0, sep),
+        name: entry[0].slice(sep + 2),
+        count: v.count,
+        total: round2(v.sum),
+        avg: round3(v.count ? v.sum / v.count : 0),
+        max: round2(v.max)
+      };
+    }).sort(function (a, b) { return b.total - a.total; });
+  }
+
+  function recordObjectMs(kind, name, ms) {
+    if (!(ms > 0)) return;
+    const key = kind + '::' + name;
+    rec(state.objectTotal, key, ms);
+    addFrame(state.frameObjMs, key, ms);
+  }
+
+  // 包装单个场景对象: 挂起开关在包装层短路真实更新, 达到"嫌疑开关"效果
+  function wrapOneObject(obj, kind, index) {
+    try {
+      if (!obj || typeof obj.update !== 'function' || obj.__yamiPerfObjWrapped__) return false;
+      const name = resolveObjectName(obj, kind, index);
+      const orig = obj.update.bind(obj);
+      Object.defineProperty(obj, '__yamiPerfObjWrapped__', { value: true, configurable: true });
+      obj.update = function () {
+        if (state.suspend[kind] === true) return undefined;
+        const t0 = objSampling === 1 ? now() : 0;
+        let r;
+        try {
+          r = orig.apply(this, arguments);
+        } finally {
+          if (objSampling === 1) {
+            const ms = now() - t0;
+            if (ms > 0) recordObjectMs(kind, name, ms);
+          }
+        }
+        return r;
+      };
+      return true;
+    } catch (e) { return false; }
+  }
+
+  // 角色管理器差额归因: SceneActorManager.update = Σactor.update + 碰撞检测/网格分区(集合级开销)
+  // 引擎 scene.ts: manager.update 内除对象分发外还有 ActorCollider.handle*Collisions 等,
+  // 大场景碰撞是常见卡顿元凶, 必须把差额归因出来, 否则对象榜会漏掉它。
+  function wrapActorManager(mgr) {
+    try {
+      if (!mgr || typeof mgr.update !== 'function' || mgr.__yamiPerfMgrWrapped__) return;
+      const orig = mgr.update.bind(mgr);
+      Object.defineProperty(mgr, '__yamiPerfMgrWrapped__', { value: true, configurable: true });
+      mgr.update = function () {
+        if (state.suspend.actors === true) return undefined;   // 嫌疑开关: 角色系统全停(含碰撞)
+        const t0 = objSampling === 1 ? now() : 0;
+        let r;
+        try {
+          r = orig.apply(this, arguments);
+        } finally {
+          if (objSampling === 1) {
+            const ms = now() - t0;
+            let objSum = 0;
+            state.frameObjMs.forEach(function (v, k) {
+              if (k.indexOf('actors::') === 0) objSum += v;
+            });
+            const diff = ms - objSum;
+            if (diff > 0.05) recordObjectMs('actors', '碰撞与分区(集合)', diff);
+          }
+        }
+        return r;
+      };
+    } catch (e) {}
+  }
+
+  // 周期重扫场景/界面对象列表(对象会随场景切换增删, 每60帧增量包装新对象)
+  function wrapSceneObjects() {
+    try {
+      const s = typeof Scene !== 'undefined' ? Scene : null;
+      if (s) {
+        wrapActorManager(s.actor);
+        const groups = [
+          ['actors', s.actor && s.actor.list],
+          ['animations', s.animation && s.animation.list],
+          ['triggers', s.trigger && s.trigger.list],
+          ['emitters', s.emitter && s.emitter.list]
+        ];
+        for (const g of groups) {
+          const kind = g[0];
+          const list = g[1];
+          if (!list || !list.length) continue;
+          let count = 0;
+          for (let i = 0; i < list.length; i++) {
+            if (wrapOneObject(list[i], kind, i)) count++;
+          }
+          if (count > 0) state.objWrapped[kind] += count;
+        }
+      }
+      // 界面元素: 每个已连接元素的更新器列表(引擎 ui.ts: element.updaters.update)
+      if (typeof UI !== 'undefined' && UI.manager && UI.manager.list && UI.manager.list.length) {
+        let count = 0;
+        for (let i = 0; i < UI.manager.list.length; i++) {
+          const el = UI.manager.list[i];
+          if (!el || !el.updaters || typeof el.updaters.update !== 'function' || el.updaters.__yamiPerfUIRegWrapped__) continue;
+          const name = resolveObjectName(el, 'ui', i);
+          const orig = el.updaters.update.bind(el.updaters);
+          Object.defineProperty(el.updaters, '__yamiPerfUIRegWrapped__', { value: true, configurable: true });
+          el.updaters.update = function () {
+            if (state.suspend.ui === true) return undefined;
+            const t0 = objSampling === 1 ? now() : 0;
+            let r;
+            try {
+              r = orig.apply(this, arguments);
+            } finally {
+              if (objSampling === 1) {
+                const ms = now() - t0;
+                if (ms > 0) recordObjectMs('ui', name, ms);
+              }
+            }
+            return r;
+          };
+          count++;
+        }
+        if (count > 0) state.objWrapped.ui += count;
+      }
+    } catch (e) {}
+  }
+
   function wrapEventHandlers() {
     try {
       const list = typeof EventManager !== 'undefined' && EventManager.activeEvents ? EventManager.activeEvents : [];
@@ -171,6 +424,7 @@
         const orig = event.update.bind(event);
         Object.defineProperty(event, '__yamiPerfProbeEventWrapped__', { value: true, configurable: true });
         event.update = function () {
+          if (state.suspend.events === true) return undefined;
           const t0 = now();
           let r;
           try {
@@ -225,6 +479,8 @@
       state.hooked.renderers = (Game.renderers && Game.renderers.length) || 0;
     }
     wrapEventHandlers();
+    wrapSceneObjects();
+    if (state.objectTotal.size > 500) state.objectTotal.clear();
     if (typeof EventManager !== 'undefined' && EventManager.activeEvents) {
       state.hooked.events = EventManager.activeEvents.length;
     }
@@ -238,6 +494,7 @@
     lastTick = t;
     if (!state.running) return;
     
+    objSampling = (state.frameSeq % 3 === 0) ? 1 : 0;
     if (state.frameSeq % 60 === 0) refresh();
 
     // 固化上一帧 WebGL 计数
@@ -245,10 +502,16 @@
     glStats.lastTriangles = Math.round(glStats.triangles);
     glStats.lastProgramSwitches = glStats.programSwitches;
     glStats.lastTextureBinds = glStats.textureBinds;
+    glStats.lastTextureUploads = glStats.textureUploads;
+    glStats.lastTextureUploadKB = glStats.textureUploadKB;
+    glStats.lastBigDraws = glStats.bigDraws;
     glStats.drawCalls = 0;
     glStats.triangles = 0;
     glStats.programSwitches = 0;
     glStats.textureBinds = 0;
+    glStats.textureUploads = 0;
+    glStats.textureUploadKB = 0;
+    glStats.bigDraws = 0;
 
     const compute = frameUpdate + frameRender;
     state.frameSeq += 1;
@@ -276,6 +539,7 @@
 
     recentUpdaterSnap = top(frameUpdaterMs);
     recentEventSnap = top(frameEventMs);
+    recentObjSnap = topObjects(state.frameObjMs, 8);
 
     if (compute > BUDGET) {
       const updaterItems = recentUpdaterSnap;
@@ -294,15 +558,22 @@
         attributedRender: round2(attributedRender),
         unattributed: round2(Math.max(0, compute - attributedUpdate - attributedRender)),
         drawCalls: glStats.lastDrawCalls,
+        textureUploads: glStats.lastTextureUploads,
+        textureUploadKB: glStats.lastTextureUploadKB,
+        bigDraws: glStats.lastBigDraws,
         updaters: updaterItems,
         renderers: rendererItems,
-        events: eventItems
+        events: eventItems,
+        objects: recentObjSnap
       };
       state.overBudgetFrames.push(jankRecord);
+      if (state.overBudgetFrames.length > 200) state.overBudgetFrames.splice(0, state.overBudgetFrames.length - 200);
 
       if (compute > 33.3 && t - state.lastJankTime > 800) {
         state.lastJankTime = t;
-        const mainCulprit = (updaterItems[0] && updaterItems[0].name) || (eventItems[0] && eventItems[0].name) || 'Game Update';
+        const topObj = recentObjSnap[0];
+        const mainCulprit = (topObj && topObj.ms > 5) ? topObj.name
+          : (updaterItems[0] && updaterItems[0].name) || (eventItems[0] && eventItems[0].name) || 'Game Update';
         state.lastJankEvent = {
           time: t,
           compute: round2(compute),
@@ -320,6 +591,7 @@
     frameUpdaterMs = new Map();
     frameRendererMs = new Map();
     frameEventMs = new Map();
+    state.frameObjMs = new Map();
   }
 
   const probeInterval = setInterval(function() {
@@ -363,15 +635,30 @@
 
   function getSceneDetails() {
     const s = typeof Scene !== 'undefined' ? Scene : null;
-    if (!s) return { actors: 0, visibleActors: 0, lights: 0, emitters: 0, particles: 0, animations: 0, triggers: 0, camera: null };
+    if (!s) return {
+      actors: 0, visibleActors: 0,
+      animations: 0, visibleAnimations: 0,
+      triggers: 0, visibleTriggers: 0,
+      lights: 0, emitters: 0, particles: 0,
+      elements: 0, textures: 0,
+      resolution: '0x0',
+      camera: null
+    };
     
+    // 100% 对齐 Yami 引擎原生 F10 调试数据源
     const actorCount = (s.actor && s.actor.list) ? s.actor.list.length : 0;
-    const visibleActorCount = s.visibleActors ? (s.visibleActors.count || s.visibleActors.length || 0) : 0;
+    const visibleActorCount = s.visibleActors ? (s.visibleActors.count || 0) : 0;
+    const animCount = (s.animation && s.animation.list) ? s.animation.list.length : 0;
+    const visibleAnimCount = s.visibleAnimations ? (s.visibleAnimations.count || 0) : 0;
+    const triggerCount = (s.trigger && s.trigger.list) ? s.trigger.list.length : 0;
+    const visibleTriggerCount = s.visibleTriggers ? (s.visibleTriggers.count || 0) : 0;
     const lightCount = (s.light && s.light.list) ? s.light.list.length : 0;
     const emitterCount = (s.emitter && s.emitter.list) ? s.emitter.list.length : 0;
-    const animCount = (s.animation && s.animation.list) ? s.animation.list.length : 0;
-    const triggerCount = (s.trigger && s.trigger.list) ? s.trigger.list.length : 0;
     const particleTotal = s.particleCount || 0;
+
+    const uiElements = (typeof UI !== 'undefined' && UI.manager && UI.manager.list) ? UI.manager.list.length : 0;
+    const textureCount = (typeof GL !== 'undefined' && GL.textureManager) ? GL.textureManager.count : 0;
+    const res = (typeof GL !== 'undefined') ? `${GL.width}x${GL.height}` : '0x0';
 
     let cam = null;
     if (typeof Camera !== 'undefined') {
@@ -387,11 +674,16 @@
     return {
       actors: actorCount,
       visibleActors: visibleActorCount,
+      animations: animCount,
+      visibleAnimations: visibleAnimCount,
+      triggers: triggerCount,
+      visibleTriggers: visibleTriggerCount,
       lights: lightCount,
       emitters: emitterCount,
       particles: particleTotal,
-      animations: animCount,
-      triggers: triggerCount,
+      elements: uiElements,
+      textures: textureCount,
+      resolution: res,
       camera: cam
     };
   }
@@ -459,7 +751,10 @@
         lastDrawCalls: glStats.lastDrawCalls,
         lastTriangles: glStats.lastTriangles,
         lastProgramSwitches: glStats.lastProgramSwitches,
-        lastTextureBinds: glStats.lastTextureBinds
+        lastTextureBinds: glStats.lastTextureBinds,
+        lastTextureUploads: glStats.lastTextureUploads,
+        lastTextureUploadKB: glStats.lastTextureUploadKB,
+        lastBigDraws: glStats.lastBigDraws
       },
       activeEvents: getActiveEventsDetails(),
       compute: {
@@ -476,6 +771,9 @@
       updaters: formatList(state.updaterTotal),
       renderers: formatList(state.rendererTotal),
       events: formatList(state.eventTotal),
+      objects: formatObjList(state.objectTotal).slice(0, 12),
+      wrappedObjects: Object.assign({}, state.objWrapped),
+      suspend: Object.assign({}, state.suspend),
       overBudgetFrames: state.overBudgetFrames,
       timeline: state.samples.slice(-300)
     };
@@ -533,6 +831,9 @@
             scene: getSceneDetails(),
             updaters: recentUpdaterSnap || [],
             events: recentEventSnap || [],
+            objects: recentObjSnap || [],
+            textureUploads: glStats.lastTextureUploads,
+            textureUploadKB: glStats.lastTextureUploadKB,
             timestamp: Date.now()
           }));
           return;
@@ -585,6 +886,9 @@
       scene: getSceneDetails(),
       updaters: recentUpdaterSnap || [],
       events: recentEventSnap || [],
+      objects: recentObjSnap || [],
+      textureUploads: glStats.lastTextureUploads,
+      textureUploadKB: glStats.lastTextureUploadKB,
       timestamp: Date.now()
     };
 
@@ -600,6 +904,15 @@
     getSceneDetails: getSceneDetails,
     getMemoryInfo: getMemoryInfo,
     getActiveEvents: getActiveEventsDetails,
+    // ② 嫌疑开关: 挂起/恢复某类对象的真实更新 (actors/animations/emitters/triggers/ui/events)
+    suspend: function (kind, on) {
+      if (!Object.prototype.hasOwnProperty.call(state.suspend, kind)) return false;
+      state.suspend[kind] = !!on;
+      return state.suspend[kind];
+    },
+    getSuspend: function () {
+      return Object.assign({}, state.suspend);
+    },
     copy: function () {
       const json = JSON.stringify(buildReport(), null, 2);
       navigator.clipboard.writeText(json).then(function() { console.log('✅ 性能报告已复制到剪贴板'); });
