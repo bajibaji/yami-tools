@@ -9,60 +9,66 @@
       return;
     }
 
-    // 注入样式
     const style = document.createElement('style');
     style.textContent = `
+      /* ============================================================
+       * Yami 原生深色调设计规范
+       * 底层工作区: #181818 | 窗口背景: #282828 | 标题/头部: #303030
+       * 面板卡片: #252525 | 边框: #181818 / #101010
+       * 文本: #d8d8d8 (主) / #ffffff (强调) / #808080 (辅助/次要)
+       * 状态色: #1cff9b (正常高亮) / #f06000 (警戒) / #ff4040 (掉帧)
+       * 强调/选区: #084872 / #0080c0 | 字体: Inter, Microsoft YaHei UI
+       * ============================================================ */
       #yami-perf-mini-hud {
         position: fixed;
-        top: 12px;
-        right: 12px;
+        top: 8px;
+        right: 8px;
         z-index: 999999;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+        font-family: Inter, "Microsoft YaHei UI", sans-serif;
+        font-size: 12px;
         user-select: none;
       }
       .yami-perf-capsule {
         display: flex;
         align-items: center;
-        gap: 8px;
-        background: rgba(15, 23, 42, 0.88);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        backdrop-filter: blur(10px);
-        padding: 5px 12px;
-        border-radius: 20px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        gap: 6px;
+        background: #202020;
+        border: 1px solid #101010;
+        border-radius: 3px;
+        padding: 3px 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
         cursor: pointer;
-        transition: all 0.2s ease;
+        color: #d8d8d8;
+        transition: background 0.12s, border-color 0.12s;
       }
       .yami-perf-capsule:hover {
-        transform: translateY(-1px);
-        border-color: #818cf8;
-        background: rgba(15, 23, 42, 0.96);
+        background: #303030;
+        border-color: #0080c0;
+        color: #ffffff;
       }
       .yami-perf-badge {
-        width: 8px;
-        height: 8px;
+        width: 7px;
+        height: 7px;
         border-radius: 50%;
-        background: #10b981;
-        box-shadow: 0 0 8px #10b981;
-        transition: background 0.3s;
+        background: #1cff9b;
+        box-shadow: 0 0 5px rgba(28, 255, 155, 0.6);
       }
-      .yami-perf-badge.warn { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
-      .yami-perf-badge.bad { background: #ef4444; box-shadow: 0 0 8px #ef4444; animation: yami-pulse 0.8s infinite; }
-      @keyframes yami-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+      .yami-perf-badge.warn { background: #f06000; box-shadow: 0 0 5px rgba(240, 96, 0, 0.6); }
+      .yami-perf-badge.bad { background: #ff4040; box-shadow: 0 0 6px rgba(255, 64, 64, 0.8); animation: yami-pulse 0.8s infinite; }
+      @keyframes yami-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-      /* 内置性能大盘 Modal */
+      /* 游戏内置诊断大盘 (Yami 原生暗黑风格) */
       .yami-perf-modal-overlay {
         position: fixed;
-        top: 0; left: 0; right: 0; bottom: 0;
+        inset: 0;
         background: rgba(0, 0, 0, 0.65);
-        backdrop-filter: blur(6px);
         z-index: 1000000;
         display: flex;
         align-items: center;
         justify-content: center;
         opacity: 0;
         pointer-events: none;
-        transition: opacity 0.2s ease;
+        transition: opacity 0.12s ease;
       }
       .yami-perf-modal-overlay.show {
         opacity: 1;
@@ -70,161 +76,196 @@
       }
       .yami-perf-modal {
         width: 820px;
-        max-width: 92vw;
-        max-height: 88vh;
-        background: #0f172a;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        border-radius: 12px;
-        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
-        color: #f1f5f9;
+        max-width: 95vw;
+        max-height: 90vh;
+        background: #282828;
+        border: 1px solid #101010;
+        border-radius: 3px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
+        color: #d8d8d8;
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        font-family: Inter, "Microsoft YaHei UI", sans-serif;
       }
       .yami-perf-modal-header {
-        padding: 12px 18px;
-        background: #1e293b;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        height: 34px;
+        padding: 0 12px;
+        background: #303030;
+        border-bottom: 1px solid #181818;
         display: flex;
         align-items: center;
         justify-content: space-between;
       }
       .yami-perf-modal-title {
-        font-size: 15px;
-        font-weight: 700;
+        font-size: 12px;
+        font-weight: 600;
         display: flex;
         align-items: center;
         gap: 8px;
-        color: #e2e8f0;
+        color: #ffffff;
+      }
+      .yami-perf-tag {
+        font-size: 11px;
+        color: #b0e0e6;
+        background: #084872;
+        padding: 1px 6px;
+        border-radius: 2px;
+        border: 1px solid #101010;
       }
       .yami-perf-close-btn {
-        background: none;
+        background: transparent;
         border: none;
-        color: #94a3b8;
-        font-size: 20px;
-        line-height: 1;
+        color: #808080;
+        font-size: 18px;
         cursor: pointer;
-        padding: 4px 8px;
-        border-radius: 4px;
+        padding: 0 6px;
+        line-height: 24px;
+        border-radius: 2px;
       }
       .yami-perf-close-btn:hover {
-        background: rgba(255, 255, 255, 0.1);
-        color: #fff;
+        background: #e81123;
+        color: #ffffff;
       }
       .yami-perf-modal-body {
-        padding: 16px 18px;
+        padding: 12px;
         overflow-y: auto;
         display: flex;
         flex-direction: column;
-        gap: 16px;
+        gap: 12px;
+        background: #202020;
       }
+      .yami-perf-modal-body::-webkit-scrollbar {
+        width: 6px;
+      }
+      .yami-perf-modal-body::-webkit-scrollbar-track {
+        background: #181818;
+      }
+      .yami-perf-modal-body::-webkit-scrollbar-thumb {
+        background: #484848;
+        border-radius: 2px;
+      }
+
       .yami-perf-grid {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
-        gap: 10px;
+        gap: 8px;
       }
       .yami-perf-card {
-        background: rgba(30, 41, 59, 0.6);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 8px;
-        padding: 10px 12px;
+        background: #282828;
+        border: 1px solid #181818;
+        border-radius: 3px;
+        padding: 8px 10px;
       }
       .yami-perf-card-label {
         font-size: 11px;
-        color: #94a3b8;
+        color: #808080;
       }
       .yami-perf-card-value {
-        font-size: 18px;
+        font-size: 16px;
         font-weight: 700;
-        margin-top: 4px;
-        font-family: monospace;
+        margin-top: 3px;
+        color: #ffffff;
+        font-family: Consolas, Menlo, monospace;
       }
-      .yami-perf-section-title {
-        font-size: 13px;
-        font-weight: 600;
-        color: #cbd5e1;
-        margin: 4px 0 6px;
+
+      .yami-perf-section-head {
         display: flex;
+        align-items: baseline;
         justify-content: space-between;
+        margin-bottom: 5px;
       }
-      .yami-perf-section-title small {
+      .yami-perf-section-head span:first-child {
+        font-size: 12px;
+        font-weight: 600;
+        color: #d8d8d8;
+      }
+      .yami-perf-section-head span:last-child {
         font-size: 11px;
-        font-weight: 400;
-        color: #94a3b8;
+        color: #808080;
       }
-      .yami-perf-list {
-        background: rgba(30, 41, 59, 0.6);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 8px;
-        padding: 10px;
+
+      .yami-perf-panel-box {
+        background: #282828;
+        border: 1px solid #181818;
+        border-radius: 3px;
+        padding: 8px 10px;
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 6px;
       }
+
       .yami-perf-bar-row {
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 3px;
         font-size: 12px;
       }
       .yami-perf-bar-head {
         display: flex;
         justify-content: space-between;
+        color: #d8d8d8;
       }
       .yami-perf-bar-track {
-        height: 6px;
-        background: rgba(255, 255, 255, 0.08);
-        border-radius: 3px;
+        height: 5px;
+        background: #18191a;
+        border-radius: 2px;
         overflow: hidden;
+        border: 1px solid #101010;
       }
       .yami-perf-bar-fill {
         height: 100%;
-        background: linear-gradient(90deg, #6366f1, #06b6d4);
-        border-radius: 3px;
+        background: #0080c0;
+        border-radius: 2px;
       }
       .yami-perf-bar-fill.bad {
-        background: linear-gradient(90deg, #f59e0b, #ef4444);
+        background: #f06000;
       }
+
       .yami-perf-modal-footer {
-        padding: 10px 18px;
-        background: #1e293b;
-        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        height: 38px;
+        padding: 0 12px;
+        background: #303030;
+        border-top: 1px solid #181818;
         display: flex;
         justify-content: space-between;
         align-items: center;
       }
       .yami-perf-btn {
-        background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        color: #f1f5f9;
-        padding: 6px 12px;
-        border-radius: 6px;
+        background: #484848;
+        border: 1px solid #282828;
+        color: #d8d8d8;
+        padding: 4px 10px;
+        border-radius: 2px;
         font-size: 12px;
         cursor: pointer;
-        transition: all 0.15s;
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
+        transition: background 0.1s, border-color 0.1s;
       }
       .yami-perf-btn:hover {
-        background: #4f46e5;
-        border-color: #6366f1;
+        background: #505050;
+        color: #ffffff;
+        border-color: #383838;
       }
+      .yami-perf-btn:active {
+        background: #303840;
+      }
+
       .yami-perf-toast {
         position: fixed;
-        bottom: 24px;
-        right: 24px;
+        bottom: 20px;
+        right: 20px;
         z-index: 1000001;
-        background: rgba(15, 23, 42, 0.94);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        color: #fff;
-        padding: 8px 16px;
-        border-radius: 6px;
+        background: #282828;
+        border: 1px solid #101010;
+        border-left: 3px solid #1cff9b;
+        color: #d8d8d8;
+        padding: 6px 14px;
+        border-radius: 2px;
         font-size: 12px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
         opacity: 0;
-        transform: translateY(8px);
-        transition: all 0.2s;
+        transform: translateY(6px);
+        transition: all 0.15s ease;
         pointer-events: none;
       }
       .yami-perf-toast.show {
@@ -238,11 +279,11 @@
     const hud = document.createElement('div');
     hud.id = 'yami-perf-mini-hud';
     hud.innerHTML = `
-      <div class="yami-perf-capsule" id="yami-capsule" title="点击展开内置性能分析台 (快捷键: Home)">
+      <div class="yami-perf-capsule" id="yami-capsule" title="点击展开性能诊断台 (快捷键: Home)">
         <div class="yami-perf-badge" id="yami-badge"></div>
-        <span id="yami-fps" style="font-weight: 700; font-size: 12px; color: #f8fafc;">60 FPS</span>
-        <span style="color: #64748b;">|</span>
-        <span id="yami-ms" style="color: #cbd5e1; font-family: monospace; font-size: 12px;">16ms</span>
+        <span id="yami-fps" style="font-weight: 600; color: #ffffff;">60 FPS</span>
+        <span style="color: #606060;">|</span>
+        <span id="yami-ms" style="color: #a0a0a0; font-family: Consolas, monospace;">16.7ms</span>
       </div>
     `;
     document.body.appendChild(hud);
@@ -255,59 +296,59 @@
       <div class="yami-perf-modal">
         <div class="yami-perf-modal-header">
           <div class="yami-perf-modal-title">
-            <span>⚡ YAMI 本地性能诊断台</span>
-            <span style="font-size: 11px; font-weight: 400; color: #818cf8; background: rgba(99, 102, 241, 0.15); padding: 2px 8px; border-radius: 12px;">Home 键呼出/关闭</span>
+            <span>⌁ YAMI 运行时性能诊断</span>
+            <span class="yami-perf-tag">Home 键呼出/隐藏</span>
           </div>
           <button class="yami-perf-close-btn" id="yami-modal-close" title="关闭 (ESC)">×</button>
         </div>
         <div class="yami-perf-modal-body">
           <div class="yami-perf-grid">
             <div class="yami-perf-card">
-              <div class="yami-perf-card-label">当前 / P95 帧率</div>
-              <div class="yami-perf-card-value" id="modal-val-fps" style="color: #10b981;">60 FPS</div>
+              <div class="yami-perf-card-label">实时 / P95 帧率</div>
+              <div class="yami-perf-card-value" id="modal-val-fps" style="color: #1cff9b;">60 FPS</div>
             </div>
             <div class="yami-perf-card">
-              <div class="yami-perf-card-label">计算耗时 (均值 / P99)</div>
+              <div class="yami-perf-card-label">单帧计算耗时 (均值 / P99)</div>
               <div class="yami-perf-card-value" id="modal-val-compute">-- ms</div>
             </div>
             <div class="yami-perf-card">
               <div class="yami-perf-card-label">超预算帧数 (>16.7ms)</div>
-              <div class="yami-perf-card-value" id="modal-val-overbudget" style="color: #f59e0b;">0 帧</div>
+              <div class="yami-perf-card-value" id="modal-val-overbudget" style="color: #f06000;">0 帧</div>
             </div>
             <div class="yami-perf-card">
-              <div class="yami-perf-card-label">当前活动实体 (Scene)</div>
+              <div class="yami-perf-card-label">当前活动实体 (Scene.actors)</div>
               <div class="yami-perf-card-value" id="modal-val-actors">--</div>
             </div>
           </div>
 
           <div>
-            <div class="yami-perf-section-title">
-              <span>🔥 超帧定位与子系统耗时排行 (卡顿元凶)</span>
-              <small>按总耗时排序</small>
+            <div class="yami-perf-section-head">
+              <span>超帧定位与模块耗时排行 (卡顿元凶)</span>
+              <span>按总耗时排序</span>
             </div>
-            <div class="yami-perf-list" id="modal-updaters-list">
-              <div style="color: #94a3b8; font-size: 12px; text-align: center; padding: 12px;">正在采集运行数据...</div>
+            <div class="yami-perf-panel-box" id="modal-updaters-list">
+              <div style="color: #808080; font-size: 12px; text-align: center; padding: 10px;">正在采集运行数据...</div>
             </div>
           </div>
 
           <div>
-            <div class="yami-perf-section-title">
-              <span>⚠️ 最近严重掉帧现场 (>33.3ms)</span>
-              <small id="modal-jank-count">已捕获 0 次</small>
+            <div class="yami-perf-section-head">
+              <span>严重掉帧现场快照 (>33.3ms)</span>
+              <span id="modal-jank-count">已捕获 0 次</span>
             </div>
-            <div class="yami-perf-list" id="modal-jank-list" style="max-height: 160px; overflow-y: auto;">
-              <div style="color: #94a3b8; font-size: 12px; text-align: center; padding: 12px;">运行平稳，暂无严重卡顿</div>
+            <div class="yami-perf-panel-box" id="modal-jank-list" style="max-height: 140px; overflow-y: auto;">
+              <div style="color: #808080; font-size: 12px; text-align: center; padding: 10px;">运行平稳，暂无严重掉帧</div>
             </div>
           </div>
         </div>
 
         <div class="yami-perf-modal-footer">
-          <div style="font-size: 11px; color: #64748b;">
-            💡 提示：按 <b>Home</b> 或 <b>ESC</b> 键随时返回游戏
+          <div style="font-size: 11px; color: #808080;">
+            提示：按 <b>Home</b> 或 <b>ESC</b> 键随时返回游戏
           </div>
           <div style="display: flex; gap: 8px;">
-            <button class="yami-perf-btn" id="modal-btn-copy">📋 复制探针 JSON</button>
-            <button class="yami-perf-btn" id="modal-btn-dl">💾 保存报告文件</button>
+            <button class="yami-perf-btn" id="modal-btn-copy">复制分析 JSON</button>
+            <button class="yami-perf-btn" id="modal-btn-dl">保存报告文件</button>
           </div>
         </div>
       </div>
@@ -362,7 +403,7 @@
       }
       if (actorsEl) actorsEl.textContent = report.scene.actors;
 
-      // 渲染排行榜
+      // 渲染耗时排行
       if (updatersList) {
         const list = [...(report.updaters || []), ...(report.events || [])].sort((a, b) => b.total - a.total).slice(0, 6);
         if (list.length) {
@@ -373,9 +414,9 @@
             return `
               <div class="yami-perf-bar-row">
                 <div class="yami-perf-bar-head">
-                  <span style="font-weight: 500;">${item.name}</span>
-                  <span style="font-family: monospace; color: ${isBad ? '#ef4444' : '#cbd5e1'};">
-                    总计 ${item.total}ms | 均值 ${item.avg}ms | 最大 ${item.max}ms
+                  <span style="color: #ffffff;">${item.name}</span>
+                  <span style="font-family: Consolas, monospace; font-size: 11px; color: ${isBad ? '#f06000' : '#a0a0a0'};">
+                    总计 ${item.total}ms | 均值 ${item.avg}ms | 峰值 ${item.max}ms
                   </span>
                 </div>
                 <div class="yami-perf-bar-track">
@@ -387,22 +428,22 @@
         }
       }
 
-      // 渲染最近卡顿帧
+      // 渲染卡顿快照
       if (jankList && jankCount) {
-        const janks = (report.overBudgetFrames || []).filter(f => f.compute > 33.3).slice(-10).reverse();
+        const janks = (report.overBudgetFrames || []).filter(f => f.compute > 33.3).slice(-8).reverse();
         jankCount.textContent = `已捕获 ${janks.length} 次严重掉帧`;
         if (janks.length) {
           jankList.innerHTML = janks.map(j => {
             const topMod = (j.updaters && j.updaters[0] && j.updaters[0].name) || 'Game Update';
             return `
-              <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 5px; font-size: 11px;">
-                <span>⚠️ <b>帧 #${j.frame}</b> 耗时 <b style="color: #ef4444;">${j.compute}ms</b> (归因: <b>${topMod}</b>)</span>
-                <span style="color: #94a3b8; font-family: monospace;">+${j.elapsedMs}ms</span>
+              <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; background: #2e2020; border: 1px solid #482020; border-radius: 2px; font-size: 11px;">
+                <span>⚠️ <b>帧 #${j.frame}</b> 耗时 <b style="color: #ff4040;">${j.compute}ms</b> (归因: <b>${topMod}</b>)</span>
+                <span style="color: #808080; font-family: Consolas, monospace;">+${j.elapsedMs}ms</span>
               </div>
             `;
           }).join('');
         } else {
-          jankList.innerHTML = '<div style="color: #94a3b8; font-size: 12px; text-align: center; padding: 12px;">运行平稳，暂无严重卡顿</div>';
+          jankList.innerHTML = '<div style="color: #808080; font-size: 12px; text-align: center; padding: 10px;">运行平稳，暂无严重掉帧</div>';
         }
       }
     }
@@ -417,14 +458,14 @@
     document.getElementById('modal-btn-copy').addEventListener('click', () => {
       if (window.__YAMI_PERF_PROBE__) {
         window.__YAMI_PERF_PROBE__.copy();
-        showToast('📋 完整探针分析 JSON 已复制到剪贴板！');
+        showToast('✓ 完整探针分析 JSON 已复制到剪贴板');
       }
     });
 
     document.getElementById('modal-btn-dl').addEventListener('click', () => {
       if (window.__YAMI_PERF_PROBE__) {
         window.__YAMI_PERF_PROBE__.download();
-        showToast('💾 探针报告 JSON 文件已下载！');
+        showToast('✓ 探针报告 JSON 文件已下载');
       }
     });
 
