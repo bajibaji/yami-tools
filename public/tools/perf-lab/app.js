@@ -468,7 +468,7 @@
         await writable.close()
       }
 
-      toast('🎉 性能探针扩展安装成功！重启 Open Yami 编辑器即可生效（试玩时按 F8 直通分析）。', 'success')
+      toast('🎉 性能探针扩展安装成功！重启 Open Yami 编辑器即可生效（试玩时按 Home 直通分析）。', 'success')
     } catch (err) {
       if (err.name === 'AbortError') return
       toast(`安装失败: ${err.message}，请使用「下载 ZIP」手动解压安装`, 'error')

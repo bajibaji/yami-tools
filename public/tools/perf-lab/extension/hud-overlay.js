@@ -24,7 +24,7 @@
 
     const hud = document.createElement('div');
     hud.id = 'yami-perf-mini-hud';
-    hud.innerHTML = '<div class="yami-perf-capsule" id="yami-capsule" title="点击展开性能操作 (快捷键: F8 同步)">' +
+    hud.innerHTML = '<div class="yami-perf-capsule" id="yami-capsule" title="点击展开性能操作 (快捷键: Home 同步)">' +
       '<div class="yami-perf-badge" id="yami-badge"></div>' +
       '<span class="yami-perf-fps" id="yami-fps">60 FPS</span>' +
       '<span style="color: #64748b;">|</span>' +
@@ -32,7 +32,7 @@
       '</div>' +
       '<div class="yami-perf-menu" id="yami-menu">' +
       '<div class="yami-perf-menu-header">' +
-      '<span>⚡ YAMI 性能分析桥</span><span style="color: #6366f1;">F8 快捷键</span>' +
+      '<span>⚡ YAMI 性能分析桥</span><span style="color: #6366f1;">Home 快捷键</span>' +
       '</div>' +
       '<button class="yami-perf-btn accent" id="btn-sync-open">🚀 一键同步至分析台</button>' +
       '<button class="yami-perf-btn" id="btn-copy-json">📋 复制探针 JSON</button>' +
@@ -98,7 +98,7 @@
     });
 
     window.addEventListener('keydown', function(e) {
-      if (e.key === 'F8') {
+      if (e.key === 'Home' || e.code === 'Home') {
         e.preventDefault();
         triggerSync();
       } else if (e.ctrlKey && e.shiftKey && e.code === 'KeyP') {
@@ -109,7 +109,7 @@
     window.addEventListener('yami-perf-jank', function(e) {
       const detail = e.detail || {};
       badge.className = 'yami-perf-badge bad';
-      showToast('⚠️ 捕获卡顿: ' + detail.compute + 'ms (' + detail.culprit + ') [按 F8 查看]', 3000);
+      showToast('⚠️ 捕获卡顿: ' + detail.compute + 'ms (' + detail.culprit + ') [按 Home 查看]', 3000);
       setTimeout(function() {
         badge.className = 'yami-perf-badge';
       }, 3000);
