@@ -1,4 +1,4 @@
-/* Electron 性能分析台 · perf-lab v0.4.1
+/* Electron 性能分析台 · perf-lab v0.5.0
  * 分析三类真机报告：DevTools Performance trace、Spector.js capture、Yami 真机逐帧探针。
  * 新增「超帧定位」：导入探针 JSON 后，按“哪段代码最常导致帧超过 16.7ms”排序展示。
  */
@@ -12,7 +12,7 @@
   const els = {
     traceInput: $('trace-input'), spectorInput: $('spector-input'), probeInput: $('probe-input'),
     traceDrop: $('trace-drop'), spectorDrop: $('spector-drop'), probeDrop: $('probe-drop'),
-    copyProbe: $('copy-probe'), probeScript: $('probe-script'),
+    copyProbe: $('copy-probe'), probeScript: $('probe-script'), autoInstallExt: $('auto-install-ext'),
     helpButton: $('help-button'), helpModal: $('help-modal'), helpClose: $('help-close'),
     clear: $('clear-reports'), saveBaseline: $('save-baseline'), clearBaseline: $('clear-baseline'), exportReport: $('export-report'),
     sourceList: $('source-list'), status: $('status-text'), baselineInfo: $('baseline-info'),
@@ -164,6 +164,23 @@
     return `${Math.round(value)} B`
   }
 
+  function importRawData(raw, fileName = '探针报告', autoSwitch = false) {
+    try {
+      const analysis = core.analyze(raw)
+      state.reports = state.reports.filter((entry) => entry.kind !== analysis.kind)
+      state.reports.push({ ...analysis, fileName, importedAt: Date.now() })
+      toast(`已分析 ${fileName}`, 'success')
+      if (autoSwitch && analysis.kind === 'probe') {
+        state.activeTab = 'probe'
+      }
+      render()
+      return true
+    } catch (error) {
+      toast(`${fileName}：${error.message}`, 'error')
+      return false
+    }
+  }
+
   async function importFiles(files, expectedKind) {
     const list = [...files]
     if (!list.length) return
@@ -175,14 +192,11 @@
           const names = { trace: 'DevTools Performance trace', spector: 'Spector.js capture', probe: 'Yami 真机探针' }
           throw new Error(`这不是 ${names[expectedKind] || expectedKind}`)
         }
-        state.reports = state.reports.filter((entry) => entry.kind !== analysis.kind)
-        state.reports.push({ ...analysis, fileName: file.name, importedAt: Date.now() })
-        toast(`已分析 ${file.name}`, 'success')
+        importRawData(raw, file.name, analysis.kind === 'probe')
       } catch (error) {
         toast(`${file.name}：${error.message}`, 'error')
       }
     }
-    render()
   }
 
   function render() {
@@ -417,6 +431,47 @@
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !els.helpModal.classList.contains('hidden')) closeHelp() })
 
 
+  async function installExtensionDirectly() {
+    if (!('showDirectoryPicker' in window)) {
+      toast('当前浏览器环境不支持直接写入目录，请点击「下载 ZIP」解压到 extension 文件夹', 'error')
+      document.getElementById('download-ext-zip')?.click()
+      return
+    }
+
+    try {
+      toast('请在弹出的系统窗口中选择「Open Yami RPG Editor」安装目录或其 extension 文件夹...', 'info')
+      const dirHandle = await window.showDirectoryPicker({
+        id: 'yami-editor-root',
+        mode: 'readwrite',
+        startIn: 'desktop'
+      })
+
+      let targetExtDir = dirHandle
+      if (dirHandle.name !== 'extension') {
+        targetExtDir = await dirHandle.getDirectoryHandle('extension', { create: true })
+      }
+
+      const pluginDir = await targetExtDir.getDirectoryHandle('yami-perf-extension', { create: true })
+      const files = ['manifest.json', 'probe-core.js', 'hud-overlay.js']
+      for (const file of files) {
+        const res = await fetch(`./extension/${file}`)
+        if (!res.ok) throw new Error(`无法获取 ${file}`)
+        const content = await res.text()
+        const fileHandle = await pluginDir.getFileHandle(file, { create: true })
+        const writable = await fileHandle.createWritable()
+        await writable.write(content)
+        await writable.close()
+      }
+
+      toast('🎉 性能探针扩展安装成功！重启 Open Yami 编辑器即可生效（试玩时按 F8 直通分析）。', 'success')
+    } catch (err) {
+      if (err.name === 'AbortError') return
+      toast(`安装失败: ${err.message}，请使用「下载 ZIP」手动解压安装`, 'error')
+    }
+  }
+
+  els.autoInstallExt?.addEventListener('click', installExtensionDirectly)
+
   bindDrop(els.traceDrop, els.traceInput, 'trace')
   bindDrop(els.spectorDrop, els.spectorInput, 'spector')
   bindDrop(els.probeDrop, els.probeInput, 'probe')
@@ -426,4 +481,38 @@
   els.clearBaseline.addEventListener('click', clearBaseline)
   els.exportReport.addEventListener('click', exportAnalysis)
   render()
+
+  // ---------------- 自动化桥接与广播监听 ----------------
+  try {
+    const channel = new BroadcastChannel('yami-perf-lab-channel')
+    channel.addEventListener('message', (event) => {
+      if (event.data && event.data.type === 'PERF_REPORT_SYNC' && event.data.data) {
+        importRawData(event.data.data, `自动同步探针 (${new Date().toLocaleTimeString()})`, true)
+        toast('⚡ 已接收到游戏端最新性能快照！', 'success')
+      }
+    })
+  } catch (e) {
+    console.warn('BroadcastChannel 不受支持或被限制')
+  }
+
+  window.addEventListener('storage', (event) => {
+    if (event.key === 'yami-perf-lab-latest-report' && event.newValue) {
+      try {
+        const data = JSON.parse(event.newValue)
+        importRawData(data, `存储同步探针 (${new Date().toLocaleTimeString()})`, true)
+        toast('⚡ 从本地存储同步到最新性能数据！', 'success')
+      } catch (e) {}
+    }
+  })
+
+  // 启动时检查是否有最近未消费的同步数据
+  try {
+    const cached = localStorage.getItem('yami-perf-lab-latest-report')
+    if (cached) {
+      const data = JSON.parse(cached)
+      if (data && Date.now() - new Date(data.generatedAt || 0).getTime() < 60000) {
+        importRawData(data, '最近实时探针', true)
+      }
+    }
+  } catch (e) {}
 })()

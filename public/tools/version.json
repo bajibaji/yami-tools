@@ -12,7 +12,7 @@ window.TOOL_VERSIONS = {
     "version": "0.1.0 beta"
   },
   "perf-lab": {
-    "version": "0.4.1"
+    "version": "0.5.0"
   },
   "localization-lab": {
     "version": "0.2.1 beta"

@@ -87,6 +87,7 @@ node tools/perf-lab/self-check.js
 
 ## 版本
 
+- v0.5.0（2026-09-02）：新增 Open Yami 专属性能探针扩展（yami-perf-extension）与一键直通分析台；支持在分析台页面一键安装扩展到编辑器及 BroadcastChannel 自动数据同步。
 - v0.4.1（2026-08-24）：用真实 156MB DevTools trace 与探针报告修复时间边界、profile 串线、工具开销误报和探针帧内归因丢失；新增证据覆盖率与持续卡顿诊断。
 - v0.4.0（2026-08-22）：新增 Yami 真机逐帧探针与「超帧定位」页。
 - v0.3.0（2026-08-22）：移除浏览器快速回归，改为 Electron DevTools + Spector.js 真机报告分析台。

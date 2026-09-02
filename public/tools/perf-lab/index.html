@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0d0f14" />
     <title>YA TOOLS · Electron 性能分析台</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="./styles.css?v=20260824-perf-analysis-11" />
+    <link rel="stylesheet" href="./styles.css?v=20260902-perf-analysis-12" />
   </head>
   <body>
     <div class="app-shell">
@@ -15,7 +15,7 @@
           <div class="brand-mark">⌁</div>
           <div>
             <div class="eyebrow">ELECTRON RUNTIME ANALYSIS</div>
-            <div class="brand-name">YA TOOLS<span>性能分析台 <em class="version-tag" data-app-version>v0.4.1</em></span></div>
+            <div class="brand-name">YA TOOLS<span>性能分析台 <em class="version-tag" data-app-version>v0.5.0</em></span></div>
           </div>
         </div>
         <div class="topbar-actions">
@@ -45,10 +45,18 @@
             <span><b>Yami 真机探针</b><small>导入逐帧探针 JSON</small></span>
           </div>
 
-          <div class="panel-head"><h2>真机探针（逐帧定位）</h2></div>
+          <div class="panel-head"><h2>自动探针扩展 (推荐)</h2></div>
           <p class="hint">
-            在 Electron 游戏 DevTools 控制台粘贴下方脚本，游玩目标片段；结束后执行
-            <code>window.__YAMI_PERF_PROBE__.copy()</code>，把复制的 JSON 保存为文件后拖入上方「Yami 真机探针」。
+            安装到 Open Yami 编辑器后，试玩时自动监控，按 <code>F8</code> 一键直通分析台，无需手动粘代码。
+          </p>
+          <div class="button-row" style="margin-bottom: 10px;">
+            <button id="auto-install-ext" class="button accent-button" type="button" style="flex: 1;">⚡ 安装到编辑器</button>
+            <a id="download-ext-zip" class="button" href="./yami-perf-extension.zip" download="yami-perf-extension.zip" title="下载扩展 ZIP 压缩包">📦 下载 ZIP</a>
+          </div>
+
+          <div class="panel-head"><h2>控制台手动脚本</h2></div>
+          <p class="hint">
+            若未安装扩展，可在游戏 DevTools 控制台手动粘贴下方脚本并执行 <code>window.__YAMI_PERF_PROBE__.copy()</code>。
           </p>
           <button id="copy-probe" class="button button-block" type="button">复制探针脚本</button>
           <textarea id="probe-script" class="probe-script" readonly spellcheck="false" aria-label="真机探针脚本"></textarea>

@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Yami Perf-Lab Auto Bridge",
+  "version": "1.0.0",
+  "description": "Open Yami 游戏自动化性能探针与卡顿分析扩展，实时打点并一键同步至 perf-lab 分析台。",
+  "author": "Yami Tools Team",
+  "action": {
+    "default_title": "Yami Perf-Lab"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "file://*/*",
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "probe-core.js",
+        "hud-overlay.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false,
+      "world": "MAIN"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "hud.css"
+      ],
+      "matches": [
+        "*://*/*",
+        "file://*/*"
+      ]
+    }
+  ]
+}
