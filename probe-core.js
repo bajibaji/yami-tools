@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '0.1.1';
+  const PROBE_VERSION = '0.2.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -25,7 +25,9 @@
     suspend: { actors: false, animations: false, emitters: false, triggers: false, ui: false, events: false, audio: false },
     // 已包装对象集合(防重复 + 恢复计数)
     objWrapped: { actors: 0, animations: 0, emitters: 0, triggers: 0, ui: 0 },
-    frameObjMs: new Map()
+    frameObjMs: new Map(),
+    errorHistory: [],
+    errorUnreadCount: 0
   };
 
   let frameUpdate = 0;
@@ -871,6 +873,144 @@
     }
   }
 
+  
+  // ============================================================
+  // 控制台异常与后台错误黑匣子分析引擎 (Error Analyzer)
+  // ============================================================
+  function analyzeError(msg, stack, url) {
+    const text = String(msg || '');
+    let category = 'RuntimeError';
+    let title = '脚本运行时未知异常';
+    let reason = '代码执行过程中抛出异常，未能正常捕获';
+    let suggestion = '检查报错文件所在行号的上下文逻辑';
+
+    if (/Cannot read propert/i.test(text) || /is (null|undefined)/i.test(text)) {
+      category = 'NullPointer';
+      const propMatch = text.match(/reading ['"]?([^'")\s]+)['"]?/i) || text.match(/of (null|undefined)/i);
+      const propName = propMatch ? propMatch[1] : '属性';
+      title = '尝试访问空对象的属性 [' + propName + ']';
+      reason = '目标对象尚未生成、已被销毁，或变量未被正确初始化，此时直接读取其属性导致引擎崩溃。';
+      suggestion = '在访问前添加判空保护: 例如 if (target && target.' + propName + ')，避免对 null 进行解引用。';
+    } else if (/is not a function/i.test(text)) {
+      category = 'MissingFunction';
+      const funcMatch = text.match(/['"]?([^'")\s]+)['"]? is not a function/i);
+      const funcName = funcMatch ? funcMatch[1] : '方法';
+      title = '调用的函数不存在 [' + funcName + '()]';
+      reason = '尝试调用一个对象上未定义的方法。通常是因为函数名拼写错误、依赖的前置插件未启用，或引擎版本 API 差异。';
+      suggestion = '核对函数名大小写拼写，或在调用前检查: if (typeof target.' + funcName + ' === "function")。';
+    } else if (/is not defined/i.test(text)) {
+      category = 'UndefinedVariable';
+      const varMatch = text.match(/['"]?([^'")\s]+)['"]? is not defined/i);
+      const varName = varMatch ? varMatch[1] : '变量';
+      title = '使用了未声明的变量 [' + varName + ']';
+      reason = '直接访问了一个从未声明、或者拼写错误的全局/局部变量。';
+      suggestion = '检查变量名拼写，或确认在使用前是否通过 let/const/var 或全局 Variable 进行了初始化。';
+    } else if (/Maximum call stack size exceeded/i.test(text)) {
+      category = 'StackOverflow';
+      title = '调用栈溢出 · 疑似逻辑死循环';
+      reason = '函数在极短时间内自我递归调用数万次，通常是因为事件互相调用或递归函数缺少退出边界。';
+      suggestion = '排查涉及的事件或脚本，确认递归退出分支，或在循环事件末尾添加【等待 1 帧】切断同步爆栈。';
+    } else if (/404|not found|ERR_FILE_NOT_FOUND/i.test(text)) {
+      category = 'ResourceNotFound';
+      title = '游戏素材资源文件丢失 (404)';
+      reason = '游戏引擎尝试从硬盘加载贴图、音频或数据文件，但文件在对应路径下不存在。';
+      suggestion = '检查工程对应目录下是否存在该文件，注意文件名拼写或后缀格式。';
+    } else if (/Unexpected token|JSON/i.test(text)) {
+      category = 'JSONParseError';
+      title = '数据文件或 JSON 格式损坏';
+      reason = '尝试读取并解析 JSON 存档或配置文件时遇到语法格式错误（如多余逗号、未闭合括号）。';
+      suggestion = '检查对应 .json 文件格式是否规范，或在 JSON.parse 处增加 try...catch 保护。';
+    }
+
+    return {
+      category: category,
+      title: title,
+      reason: reason,
+      suggestion: suggestion
+    };
+  }
+
+  function recordError(item) {
+    const analysis = analyzeError(item.message, item.stack, item.source);
+    const errRecord = {
+      id: 'err_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+      timestamp: Date.now(),
+      type: item.type,
+      message: item.message,
+      source: item.source,
+      lineno: item.lineno,
+      colno: item.colno,
+      stack: item.stack,
+      analysis: analysis
+    };
+    state.errorHistory.unshift(errRecord);
+    if (state.errorHistory.length > 100) state.errorHistory.pop();
+    state.errorUnreadCount++;
+    try {
+      window.dispatchEvent(new CustomEvent('yami-perf-new-error', { detail: errRecord }));
+    } catch (e) {}
+  }
+
+  function installGlobalErrorHooks() {
+    try {
+      // 1. 全局未捕获异常
+      const origOnError = window.onerror;
+      window.onerror = function(message, source, lineno, colno, error) {
+        recordError({
+          type: 'error',
+          message: String(message),
+          source: source || '运行时脚本',
+          lineno: lineno || 0,
+          colno: colno || 0,
+          stack: (error && error.stack) ? error.stack : (source + ':' + lineno + ':' + colno)
+        });
+        if (typeof origOnError === 'function') {
+          return origOnError.apply(this, arguments);
+        }
+        return false;
+      };
+
+      // 2. Promise 未捕获拒绝
+      window.addEventListener('unhandledrejection', function(event) {
+        const reason = event.reason;
+        const msg = reason ? (reason.message || String(reason)) : 'Promise 被拒绝';
+        const stack = reason ? (reason.stack || '') : '';
+        recordError({
+          type: 'unhandled_rejection',
+          message: msg,
+          source: 'Promise 异步逻辑',
+          lineno: 0,
+          colno: 0,
+          stack: stack
+        });
+      });
+
+      // 3. 代理 console.error
+      if (console && console.error) {
+        const origConsoleError = console.error.bind(console);
+        console.error = function() {
+          const args = Array.prototype.slice.call(arguments);
+          const text = args.map(function(a) {
+            return (typeof a === 'object' && a !== null) ? (a.message || a.stack || JSON.stringify(a)) : String(a);
+          }).join(' ');
+          if (!text.includes('[Yami Perf]')) {
+            recordError({
+              type: 'console_error',
+              message: text,
+              source: 'console.error',
+              lineno: 0,
+              colno: 0,
+              stack: (new Error()).stack
+            });
+          }
+          return origConsoleError.apply(console, arguments);
+        };
+      }
+    } catch (e) {}
+  }
+  installGlobalErrorHooks();
+
   function buildReport() {
     const computeList = state.samples.map(function (s) { return s.compute; });
     const intervalList = state.samples.map(function (s) { return s.interval; });
@@ -1144,7 +1284,7 @@
         culprits.push({
           level: isSmooth ? 'warn' : (dc > 120 ? 'bad' : 'warn'),
           type: 'render',
-          title: (isSmooth ? '💡 低配优化建议: 绘制批次偏多' : '画面绘制批次过多') + ' (DrawCall: ' + dc + ' 次)',
+          title: (isSmooth ? '[低配优化建议] 绘制批次偏多' : '画面绘制批次过多') + ' (DrawCall: ' + dc + ' 次)',
           file: 'WebGL 图块与贴图材质 (Tilesets & Textures)',
           location: '每帧绘制调用: ' + dc + ' 次 (同屏面数: ' + (glStats.lastTriangles || 0) + ')',
           reason: isSmooth 
@@ -1365,6 +1505,9 @@
     performAutoUpdate: performAutoUpdate,
     compareVersion: compareVersion,
     getDiagnosisReport: getDiagnosisReport,
+    getErrors: function() { return state.errorHistory.slice(); },
+    getErrorCount: function() { return state.errorHistory.length; },
+    clearErrors: function() { state.errorHistory = []; state.errorUnreadCount = 0; return true; },
     getSceneDetails: getSceneDetails,
     getMemoryInfo: getMemoryInfo,
     getActiveEvents: getActiveEventsDetails,

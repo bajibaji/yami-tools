@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Yami Perf-Lab Auto Bridge",
-  "version": "0.1.1",
-  "description": "Open Yami 游戏自动化性能探针与卡顿分析扩展",
+  "name": "DanJuan妙妙插件",
+  "version": "0.2.0",
+  "description": "DanJuan妙妙插件 - Open Yami 开发者非侵入式辅助套件 (性能大盘/控制台报错分析)",
   "action": {
-    "default_title": "Yami Perf-Lab"
+    "default_title": "DanJuan妙妙插件"
   },
   "content_scripts": [
     {
