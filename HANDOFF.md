@@ -122,6 +122,24 @@
   - 发现新版时，前端 UI 浮现醒目升级条；
   - 利用 Yami 编辑器的 Electron 原生 Node.js 模块（`fs`/`path`）直接下载更新文件覆盖本地安装目录，彻底告别手动解压复制。
 
+### ⑩ Git 提交与智能版本自增规范 (Strict Git & Smart SemVer Policy)
+后续任何 AI 助手或开发者接手维护，**必须严格遵守以下发布与版本准则**：
+1. **严禁主动 Git 提交 (No Autonomous Git)**：
+   - 在日常功能开发、Bug 修复、样式调优过程中，**绝对禁止擅自执行任何 `git commit` 或 `git push` 操作**！
+   - 所有改动在本地仓库（`extension` 分支）完成后，直接单向覆盖拷贝到 `D:\Program Files\Open Yami RPG Editor\extension\yami-perf-extension` 进行实机联调。
+2. **唯一口令驱动触发 (User Command-Driven)**：
+   - **只有当用户明确在对话中发出“git上去”、“提交代码”、“发布版本”等明确指令时，方可触发 Git 流程**！
+3. **改动幅度智能决定版本号大小 (Smart SemVer Auto-Bump)**：
+   - 触发提交时，智能分析本次相对于上一个 Git 版本的改动体量：
+     - **补丁号 Patch (`x.y.Z + 1`)**：中小型 Bug 修复、文案优化、CSS 样式微调、小幅性能调优（小改动量）；
+     - **次版本号 Minor (`x.Y + 1.0`)**：新增功能模块（如新增排查项、新增诊断算法、新增可视化视图、新模式开发）；
+     - **主版本号 Major (`X + 1.0.0`)**：跨模块核心架构重构、不兼容的底层变更，或从测试版（0.x）正式升级为里程碑版本（1.0.0）；
+   - **自动化落地闭环**：
+     1. 自动同步更新 `manifest.json` 和 `probe-core.js` 中的语义化版本号；
+     2. 生成规范的 Commit 提交说明；
+     3. 执行 `git commit` 并推送到 `origin/extension`；
+     4. 镜像覆盖到编辑器扩展目录，确保双端一致。
+
 ---
 
 ## 4. 当前已交付模块现状 (As-Is)
