@@ -49,6 +49,25 @@ if (fs.existsSync(SRC_CSS_PATH)) {
   }
 }
 
+// 1.5 版本号单一事实源强校验 (SSOT Version Consistency)
+const manifestPath = path.join(ROOT_DIR, 'manifest.json');
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+const manifestVer = manifest.version;
+
+const probeRaw = fs.readFileSync(PROBE_JS_PATH, 'utf8');
+const probeVerMatch = probeRaw.match(/const\s+PROBE_VERSION\s*=\s*['"]([^'"]+)['"]/);
+if (!probeVerMatch || probeVerMatch[1] !== manifestVer) {
+  console.error(`❌ [版本号不一致] manifest.json 为 ${manifestVer}, 但 probe-core.js PROBE_VERSION 为 ${probeVerMatch ? probeVerMatch[1] : 'null'}`);
+  process.exit(1);
+}
+
+const hudRaw = fs.readFileSync(HUD_JS_PATH, 'utf8');
+if (hudRaw.includes("probe.version : '") && !hudRaw.includes(`probe.version : '${manifestVer}'`)) {
+  console.error(`❌ [版本号不一致] hud-overlay.js 兜底版本号与 manifest.json (${manifestVer}) 不一致`);
+  process.exit(1);
+}
+console.log(`  [版本核验] 组件全线单一事实源版本号已完全对齐为: v${manifestVer}`);
+
 // 2. 语法测试 (Syntax Check)
 try {
   execSync(`node --check "${HUD_JS_PATH}"`, { stdio: 'pipe' });

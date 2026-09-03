@@ -4006,7 +4006,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '0.2.1';
+      const cur = (probe && probe.version) ? probe.version : '0.3.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -4063,7 +4063,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '0.2.1') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '0.3.0') + ')');
           refreshVersionBadge();
         }
       });
