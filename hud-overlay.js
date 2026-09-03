@@ -426,7 +426,7 @@
 
       /* 标签导航栏：强制独立 flex 布局，免疫任何外部污染 */
       .yami-perf-tabs {
-        display: flex !important;
+        display: none !important;
         flex-direction: row !important;
         height: 34px !important;
         min-height: 34px !important;
@@ -498,7 +498,7 @@
         color: #ffffff !important;
       }
       .yami-mode-btn.active {
-        background: #0080c0 !important;
+        background: #0080c0 !important; /* 恢复原版专业高亮蓝 */
         color: #ffffff !important;
         font-weight: 600 !important;
         box-shadow: 0 1px 4px rgba(0, 128, 192, 0.4) !important;
@@ -867,6 +867,1092 @@
       .yami-perf-objrow { display: flex !important; justify-content: space-between !important; align-items: center !important; padding: 2px 6px !important; border-radius: 2px !important; }
       .yami-perf-objrow:nth-child(odd) { background: rgba(255,255,255,0.03) !important; }
       .yami-perf-kind { color: #909090 !important; margin-right: 6px !important; font-size: 10px !important; }
+
+      /* 胶囊异常红光抖动动画 */
+      .yami-perf-capsule.shake {
+        animation: yami-capsule-shake 0.5s ease-in-out !important;
+        border-color: #ff4d4f !important;
+        box-shadow: 0 0 10px rgba(255, 77, 79, 0.6) !important;
+      }
+      @keyframes yami-capsule-shake {
+        0%, 100% { transform: translateX(0); }
+        20%, 60% { transform: translateX(-4px); }
+        40%, 80% { transform: translateX(4px); }
+      }
+
+      /* 胶囊正下方轻量报错弹窗气泡 */
+      .yami-error-bubble {
+        display: none !important;
+        margin-top: 6px !important;
+        background: #231515 !important;
+        border: 1px solid #752828 !important;
+        border-radius: 3px !important;
+        padding: 6px 10px !important;
+        color: #ff9b9b !important;
+        font-size: 11px !important;
+        line-height: 1.4 !important;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.75) !important;
+        cursor: pointer !important;
+        max-width: 260px !important;
+        min-width: 180px !important;
+        transition: opacity 0.2s, transform 0.2s !important;
+        transform: translateY(-4px) !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      .yami-error-bubble.show {
+        display: block !important;
+        transform: translateY(0) !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+      }
+      .yami-error-bubble:hover {
+        background: #321c1c !important;
+        border-color: #ff4d4f !important;
+        color: #ffffff !important;
+      }
+
+
+      /* ============================================================
+         DanJuan妙妙插件 · 存档管理 (Save Lab) 模块样式 (ui-ux-pro-max)
+         ============================================================ */
+      .yami-save-container {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 12px;
+        height: 100%;
+        box-sizing: border-box;
+        overflow-y: auto;
+      }
+
+      /* 槽位选择条 */
+      .yami-save-slots-wrap {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        overflow-x: auto;
+        padding-bottom: 2px;
+      }
+      .yami-save-slots-wrap::-webkit-scrollbar {
+        height: 3px;
+      }
+      .yami-save-slots-wrap::-webkit-scrollbar-thumb {
+        background: #333333;
+        border-radius: 2px;
+      }
+      .yami-save-slot-btn {
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: #1e1e1e;
+        border: 1px solid #303030;
+        border-radius: 4px;
+        padding: 5px 10px;
+        color: #aaaaaa;
+        font-size: 11px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        user-select: none;
+      }
+      .yami-save-slot-btn:hover {
+        background: #282828;
+        color: #ffffff;
+        border-color: #444444;
+      }
+      .yami-save-slot-btn.active {
+        background: #102436;
+        border-color: #0080c0;
+        color: #38bdf8;
+        font-weight: 600;
+      }
+      .yami-save-slot-time {
+        font-size: 10px;
+        color: #666666;
+      }
+      .yami-save-slot-btn.active .yami-save-slot-time {
+        color: #0284c7;
+      }
+
+      /* 便当盒概览卡片 (Bento Grid) */
+      .yami-save-bento {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        background: #181818;
+        border: 1px solid #282828;
+        border-radius: 6px;
+        padding: 10px;
+      }
+      .yami-save-bento-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .yami-save-bento-label {
+        font-size: 10px;
+        color: #707070;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .yami-save-bento-value {
+        font-size: 13px;
+        font-weight: 600;
+        color: #e2e8f0;
+        font-family: Consolas, monospace;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .yami-save-bento-value.highlight {
+        color: #fbbf24;
+      }
+      .yami-save-bento-value.blue {
+        color: #38bdf8;
+      }
+
+      /* 子模式导航 Tabs */
+      .yami-save-subnav {
+        display: flex;
+        background: #161616;
+        border-radius: 4px;
+        padding: 2px;
+        border: 1px solid #282828;
+        gap: 2px;
+      }
+      .yami-save-subnav-btn {
+        flex: 1;
+        text-align: center;
+        padding: 6px 0;
+        font-size: 11px;
+        color: #888888;
+        cursor: pointer;
+        border-radius: 3px;
+        transition: all 0.12s ease;
+        user-select: none;
+      }
+      .yami-save-subnav-btn:hover {
+        color: #ffffff;
+        background: #202020;
+      }
+      .yami-save-subnav-btn.active {
+        color: #ffffff;
+        background: #2a2a2a;
+        font-weight: 600;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+      }
+
+      /* 面板容器 */
+      .yami-save-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      /* 常用速改表单 */
+      .yami-save-section-card {
+        background: #1a1a1a;
+        border: 1px solid #282828;
+        border-radius: 5px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .yami-save-section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 11px;
+        font-weight: 600;
+        color: #cccccc;
+        border-bottom: 1px solid #222222;
+        padding-bottom: 6px;
+      }
+      .yami-save-form-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .yami-save-form-label {
+        font-size: 12px;
+        color: #999999;
+        min-width: 70px;
+      }
+      .yami-save-input-group {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex: 1;
+        justify-content: flex-end;
+      }
+      .yami-save-input {
+        background: #111111;
+        border: 1px solid #333333;
+        border-radius: 3px;
+        color: #ffffff;
+        padding: 4px 8px;
+        font-size: 12px;
+        font-family: Consolas, monospace;
+        width: 90px;
+        text-align: right;
+        box-sizing: border-box;
+      }
+      .yami-save-input:focus {
+        border-color: #0080c0;
+        outline: none;
+      }
+      .yami-save-mini-btn {
+        background: #252525;
+        border: 1px solid #3a3a3a;
+        border-radius: 3px;
+        color: #cccccc;
+        font-size: 10px;
+        padding: 4px 8px;
+        cursor: pointer;
+        transition: all 0.12s;
+        white-space: nowrap;
+        user-select: none;
+      }
+      .yami-save-mini-btn:hover {
+        background: #333333;
+        color: #ffffff;
+        border-color: #555555;
+      }
+      .yami-save-mini-btn.primary {
+        background: #0f3d5c;
+        border-color: #0080c0;
+        color: #38bdf8;
+      }
+      .yami-save-mini-btn.primary:hover {
+        background: #155580;
+        color: #ffffff;
+      }
+
+      /* 变量与开关搜索及列表 */
+      .yami-save-search-input {
+        width: 100%;
+        background: #121212;
+        border: 1px solid #2e2e2e;
+        border-radius: 4px;
+        color: #e0e0e0;
+        font-size: 11px;
+        padding: 6px 10px;
+        box-sizing: border-box;
+      }
+      .yami-save-search-input:focus {
+        border-color: #0080c0;
+        outline: none;
+      }
+      .yami-save-vars-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-height: 280px;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+      .yami-save-vars-list::-webkit-scrollbar {
+        width: 4px;
+      }
+      .yami-save-vars-list::-webkit-scrollbar-thumb {
+        background: #333333;
+        border-radius: 2px;
+      }
+      .yami-save-var-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: #1a1a1a;
+        border: 1px solid #262626;
+        border-radius: 4px;
+        padding: 6px 8px;
+        font-size: 11px;
+        gap: 8px;
+      }
+      .yami-save-var-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        overflow: hidden;
+        flex: 1;
+      }
+      .yami-save-var-name {
+        color: #d1d5db;
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .yami-save-var-id {
+        font-size: 9px;
+        color: #64748b;
+        font-family: Consolas, monospace;
+      }
+
+      /* 现代开关 Toggle */
+      .yami-save-toggle {
+        position: relative;
+        display: inline-block;
+        width: 32px;
+        height: 18px;
+        flex-shrink: 0;
+      }
+      .yami-save-toggle input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .yami-save-toggle-slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background-color: #333333;
+        border-radius: 18px;
+        transition: .2s;
+      }
+      .yami-save-toggle-slider:before {
+        position: absolute;
+        content: "";
+        height: 12px;
+        width: 12px;
+        left: 3px;
+        bottom: 3px;
+        background-color: #ffffff;
+        border-radius: 50%;
+        transition: .2s;
+      }
+      .yami-save-toggle input:checked + .yami-save-toggle-slider {
+        background-color: #0080c0;
+      }
+      .yami-save-toggle input:checked + .yami-save-toggle-slider:before {
+        transform: translateX(14px);
+      }
+
+      /* JSON 树形检视区 */
+      .yami-save-tree-box {
+        background: #111111;
+        border: 1px solid #242424;
+        border-radius: 4px;
+        padding: 8px;
+        max-height: 320px;
+        overflow: auto;
+        font-family: Consolas, monospace;
+        font-size: 11px;
+        color: #cccccc;
+      }
+      .yami-save-tree-node {
+        margin-left: 12px;
+        line-height: 1.6;
+      }
+      .yami-save-tree-key {
+        color: #38bdf8;
+      }
+      .yami-save-tree-val-str { color: #a3e635; }
+      .yami-save-tree-val-num { color: #fbbf24; }
+      .yami-save-tree-val-bool { color: #f472b6; }
+      .yami-save-tree-val-null { color: #94a3b8; }
+      .yami-save-tree-annotate {
+        color: #f97316;
+        margin-left: 6px;
+        font-size: 10px;
+        font-style: italic;
+      }
+
+      /* 底部保存与回滚动作条 */
+      .yami-save-footer-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding-top: 8px;
+        border-top: 1px solid #242424;
+        margin-top: auto;
+      }
+      .yami-save-act-btn {
+        flex: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 7px 12px;
+        font-size: 11px;
+        font-weight: 500;
+        border-radius: 4px;
+        cursor: pointer;
+        user-select: none;
+        transition: all 0.15s ease;
+      }
+      .yami-save-act-btn.default {
+        background: #202020;
+        border: 1px solid #333333;
+        color: #cccccc;
+      }
+      .yami-save-act-btn.default:hover {
+        background: #2b2b2b;
+        color: #ffffff;
+      }
+      .yami-save-act-btn.primary {
+        background: #0080c0;
+        border: 1px solid #0099e6;
+        color: #ffffff;
+        font-weight: 600;
+        box-shadow: 0 2px 6px rgba(0, 128, 192, 0.4);
+      }
+      .yami-save-act-btn.primary:hover {
+        background: #0094de;
+        box-shadow: 0 3px 8px rgba(0, 128, 192, 0.6);
+      }
+
+
+      /* ============================================================
+         Open Yami 官方深色系统色彩对齐 (SSOT: Project/css/foundation.css)
+         ============================================================ */
+
+      /* 1. 外壳与顶栏 */
+      .yami-perf-dock {
+        background: #282828 !important; /* --nav-bar-background: #282828 */
+        border: 1px solid #181818 !important;
+        color: #d8d8d8 !important; /* --text-color: #d8d8d8 */
+      }
+      .yami-perf-dock-header {
+        background: #202020 !important; /* --title-background: #202020 */
+        border-bottom: 1px solid #181818 !important;
+      }
+      .yami-dock-title-text {
+        color: #ffffff !important; /* --text-color-active: #ffffff */
+        font-weight: 600 !important;
+      }
+      .yami-dock-btn {
+        background: #383838 !important; /* --fieldset-background: #383838 */
+        border: 1px solid #242424 !important;
+        color: #d8d8d8 !important;
+      }
+      .yami-dock-btn:hover {
+        background: #484848 !important; /* --button-background-hover: #505050 */
+        color: #ffffff !important;
+      }
+
+      /* 2. 主页卡片与状态条 */
+      .yami-home-status-card {
+        background: #343434 !important;
+        border: 1px solid #202020 !important;
+      }
+      .yami-home-subtitle {
+        color: #a0a0a0 !important; /* --recent-card-stat-color: #a0a0a0 */
+      }
+      .yami-home-module-item {
+        background: #383838 !important; /* --summary-background: #383838 */
+        border: 1px solid #242424 !important;
+        border-radius: 3px !important;
+      }
+      .yami-home-module-item:hover {
+        background: #404040 !important; /* --summary-background-hover: #404040 */
+        border-color: #181818 !important;
+      }
+      .yami-home-module-title {
+        color: #ffffff !important; /* --text-color-active: #ffffff */
+        font-weight: 600 !important;
+      }
+      .yami-home-module-desc {
+        color: #a0a0a0 !important; /* --recent-card-stat-color: #a0a0a0 */
+      }
+
+      /* 3. 主页卡片徽章与图标色彩 (蓝、绿、黄、灰、红) */
+      /* 模块 1: 性能分析 (蓝色) */
+      .yami-home-module-icon-box {
+        color: #38bdf8 !important;
+      }
+      .yami-home-module-badge.active {
+        background: #102e47 !important;
+        border: 1px solid #084872 !important; /* --selected-background: #084872 */
+        color: #38bdf8 !important;
+        font-weight: 600 !important;
+      }
+
+      /* 模块 2: 控制台报错 (绿色进入) */
+      .yami-home-module-icon-box.green {
+        color: #4ade80 !important;
+      }
+      .yami-home-module-badge.green {
+        background: #143823 !important;
+        border: 1px solid #1e6b45 !important;
+        color: #4ade80 !important;
+        font-weight: 600 !important;
+      }
+      .yami-home-module-badge.green:hover {
+        background: #1b4d30 !important;
+        color: #ffffff !important;
+      }
+
+      /* 模块 3: 存档管理 (黄色进入) */
+      .yami-home-module-icon-box.yellow {
+        color: #fbbf24 !important;
+      }
+      .yami-home-module-badge.yellow {
+        background: #3d2f10 !important;
+        border: 1px solid #7d5f19 !important;
+        color: #fbbf24 !important;
+        font-weight: 600 !important;
+      }
+      .yami-home-module-badge.yellow:hover {
+        background: #544116 !important;
+        color: #ffffff !important;
+      }
+
+      /* 规划中徽章 (灰色) */
+      .yami-home-module-badge.plan,
+      .yami-home-module-item.disabled .yami-home-module-badge {
+        background: #2a2a2a !important;
+        border: 1px solid #202020 !important;
+        color: #606060 !important; /* --text-color-disabled: #606060 */
+      }
+
+      /* 报警异常徽章 (红色) */
+      .yami-home-module-badge.danger {
+        background: #45151b !important;
+        border: 1px solid #8c2634 !important;
+        color: #ff8595 !important;
+        font-weight: 600 !important;
+      }
+
+      /* 4. 存档管理面板色彩对齐 */
+      .yami-save-bento {
+        background: #303030 !important; /* --window-background: #303030 */
+        border: 1px solid #202020 !important;
+      }
+      .yami-save-bento-label {
+        color: #808080 !important; /* --text-color-unit: #808080 */
+      }
+      .yami-save-bento-value {
+        color: #ffffff !important; /* --text-color-active: #ffffff */
+      }
+      .yami-save-bento-value.highlight {
+        color: #ffd700 !important; /* --command-color-inventory: #ffd700 */
+      }
+      .yami-save-bento-value.blue {
+        color: #b0e0e6 !important; /* --text-color-strong: #b0e0e6 */
+      }
+
+      /* 槽位选择条 */
+      .yami-save-slot-btn {
+        background: #383838 !important; /* --fieldset-background: #383838 */
+        border: 1px solid #242424 !important;
+        color: #d8d8d8 !important;
+      }
+      .yami-save-slot-btn:hover {
+        background: #444444 !important;
+        color: #ffffff !important;
+      }
+      .yami-save-slot-btn.active {
+        background: #084872 !important; /* --selected-background: #084872 */
+        border-color: #0080ff !important; /* --input-border-color-focus: #0080ff */
+        color: #ffffff !important;
+      }
+      .yami-save-slot-time {
+        color: #808080 !important; /* --text-color-unit: #808080 */
+      }
+      .yami-save-slot-btn.active .yami-save-slot-time {
+        color: #90d4ff !important;
+      }
+
+      /* 子导航 Tabs */
+      .yami-save-subnav {
+        background: #202020 !important; /* --tab-item-background: #202020 */
+        border: 1px solid #181818 !important;
+      }
+      .yami-save-subnav-btn {
+        color: #a0a0a0 !important;
+      }
+      .yami-save-subnav-btn:hover {
+        background: #2c2c2c !important;
+        color: #ffffff !important;
+      }
+      .yami-save-subnav-btn.active {
+        background: #383838 !important;
+        color: #ffffff !important;
+        font-weight: 600 !important;
+      }
+
+      /* 速改与变量卡片 */
+      .yami-save-section-card {
+        background: #383838 !important;
+        border: 1px solid #242424 !important;
+      }
+      .yami-save-section-head {
+        color: #ffffff !important;
+        border-bottom: 1px solid #2c2c2c !important;
+      }
+      .yami-save-form-label {
+        color: #d8d8d8 !important;
+      }
+      .yami-save-var-item {
+        background: #343434 !important;
+        border: 1px solid #242424 !important;
+      }
+      .yami-save-var-name {
+        color: #ffffff !important;
+      }
+      .yami-save-var-id {
+        color: #808080 !important;
+      }
+
+      /* 输入框 (1:1 遵循 Yami --input-background: #18191a) */
+      .yami-save-input,
+      .yami-save-search-input {
+        background: #18191a !important; /* --input-background: #18191a */
+        border: 1px solid #080808 !important; /* --input-border: 1px solid #080808 */
+        color: #d8d8d8 !important; /* --text-color: #d8d8d8 */
+      }
+      .yami-save-input:focus,
+      .yami-save-search-input:focus {
+        border-color: #0080ff !important; /* --input-border-color-focus: #0080ff */
+      }
+
+      /* 按钮 (1:1 遵循 Yami --button-background: #484848) */
+      .yami-save-mini-btn,
+      .yami-save-act-btn.default,
+      .yami-perf-btn {
+        background: #484848 !important; /* --button-background: #484848 */
+        border: 1px solid #282828 !important;
+        color: #d8d8d8 !important;
+      }
+      .yami-save-mini-btn:hover,
+      .yami-save-act-btn.default:hover,
+      .yami-perf-btn:hover {
+        background: #505050 !important; /* --button-background-hover: #505050 */
+        color: #ffffff !important;
+      }
+      .yami-save-mini-btn.primary,
+      .yami-save-act-btn.primary {
+        background: #084872 !important; /* --selected-background: #084872 */
+        border: 1px solid #0080ff !important;
+        color: #ffffff !important;
+      }
+      .yami-save-mini-btn.primary:hover,
+      .yami-save-act-btn.primary:hover {
+        background: #0c5b8f !important;
+      }
+      .yami-save-tree-box {
+        background: #18191a !important;
+        border: 1px solid #080808 !important;
+      }
+
+
+      /* 槽位选择栏升级为 3 列响应式网格 (告别单行截断点不到) */
+      .yami-save-container {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 10px !important;
+        padding: 10px 12px 14px 12px !important;
+        box-sizing: border-box !important;
+        height: auto !important;
+      }
+      .yami-save-slots-wrap {
+        display: grid !important;
+        grid-template-columns: repeat(3, 1fr) !important;
+        gap: 6px !important;
+        max-height: 120px !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        padding-right: 2px !important;
+      }
+      .yami-save-slots-wrap::-webkit-scrollbar {
+        width: 4px !important;
+      }
+      .yami-save-slots-wrap::-webkit-scrollbar-thumb {
+        background: #383838 !important;
+        border-radius: 2px !important;
+      }
+      .yami-save-slot-btn {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        justify-content: center !important;
+        padding: 6px 8px !important;
+        min-width: 0 !important;
+        border-radius: 3px !important;
+        box-sizing: border-box !important;
+      }
+      .yami-save-slot-title {
+        font-size: 11px !important;
+        font-weight: 600 !important;
+        color: #d8d8d8 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        width: 100% !important;
+        text-align: left !important;
+      }
+      .yami-save-slot-time {
+        font-size: 9px !important;
+        color: #808080 !important;
+        margin-top: 2px !important;
+        white-space: nowrap !important;
+      }
+      .yami-save-slot-btn.active .yami-save-slot-title {
+        color: #ffffff !important;
+      }
+      .yami-save-slot-btn.active .yami-save-slot-time {
+        color: #90d4ff !important;
+      }
+
+
+      /* 模式切换按钮：2px 工业级硬朗微圆角 (告别 12px 大圆角) */
+      .yami-mode-switch {
+        display: flex !important;
+        background: #18191a !important;
+        border: 1px solid #141414 !important;
+        border-radius: 2px !important;
+        padding: 1px !important;
+        gap: 2px !important;
+        user-select: none !important;
+      }
+      .yami-mode-btn {
+        padding: 2px 7px !important;
+        font-size: 11px !important;
+        font-weight: 500 !important;
+        border-radius: 2px !important;
+        cursor: pointer !important;
+        color: #888888 !important;
+        transition: all 0.12s ease !important;
+      }
+      .yami-mode-btn.active {
+        background: #0080c0 !important; /* 恢复原版专业高亮蓝 */
+        color: #ffffff !important;
+        font-weight: 600 !important;
+        box-shadow: 0 1px 4px rgba(0, 128, 192, 0.4) !important;
+      }
+
+      /* 穿透模式物理级绝对隔离：禁止对模式切换器等进行任何点击 */
+      .yami-perf-dock.show.through #yami-mode-switch,
+      .yami-perf-dock.show.through #yami-mode-switch * {
+        pointer-events: none !important;
+        opacity: 0.35 !important;
+      }
+      .yami-perf-dock.show.through #btn-clear-errors {
+        pointer-events: none !important;
+        opacity: 0.35 !important;
+      }
+      /* 仅顶栏穿透控制按钮与退出按钮可接收点击 */
+      .yami-perf-dock.show.through #btn-dock-pin {
+        pointer-events: auto !important;
+        opacity: 1 !important;
+      }
+      .yami-perf-dock.show.through #btn-dock-close,
+      .yami-perf-dock.show.through #btn-suite-back {
+        pointer-events: auto !important;
+      }
+
+      /* ============================================================
+         用户认可的统一标准工业深灰配色体系 (对齐右下角按钮标准 #333333)
+         ============================================================ */
+
+      /* 1. 大盘基底 (深邃深黑灰 #222222，沉稳托底) */
+      .yami-perf-dock {
+        background: #202020 !important;
+        border: 1px solid #141414 !important;
+        box-shadow: -4px 0 24px rgba(0, 0, 0, 0.85) !important;
+        color: #d8d8d8 !important;
+      }
+      .yami-perf-dock-header {
+        background: #191919 !important;
+        border-bottom: 1px solid #121212 !important;
+      }
+      .yami-perf-dock-footer {
+        background: #191919 !important;
+        border-top: 1px solid #121212 !important;
+      }
+
+      /* 2. 主页卡片 (对齐右下角按钮质感: #333333 底色 + #3d3d3d 边框) */
+      .yami-home-status-card {
+        background: #2a2a2a !important;
+        border: 1px solid #363636 !important;
+        border-radius: 3px !important;
+      }
+      .yami-home-module-item {
+        background: #303030 !important; /* 彻底告别死黑，采用正统深灰 */
+        border: 1px solid #3c3c3c !important;
+        border-radius: 3px !important;
+        transition: all 0.12s ease !important;
+      }
+      .yami-home-module-item:hover {
+        background: #3a3a3a !important; /* 悬浮高亮反馈 */
+        border-color: #4a4a4a !important;
+      }
+      .yami-home-module-title {
+        color: #ffffff !important;
+        font-weight: 600 !important;
+      }
+      .yami-home-module-desc {
+        color: #a8a8a8 !important;
+      }
+
+      /* 3. 存档管理卡片与槽位 (全线对齐 #303030 / #333333 质感) */
+      .yami-save-bento {
+        background: #2b2b2b !important;
+        border: 1px solid #383838 !important;
+        border-radius: 4px !important;
+      }
+      .yami-save-section-card {
+        background: #303030 !important;
+        border: 1px solid #3c3c3c !important;
+        border-radius: 4px !important;
+      }
+      .yami-save-slot-btn {
+        background: #303030 !important;
+        border: 1px solid #3c3c3c !important;
+        color: #d8d8d8 !important;
+        border-radius: 3px !important;
+      }
+      .yami-save-slot-btn:hover {
+        background: #3a3a3a !important;
+        border-color: #4a4a4a !important;
+        color: #ffffff !important;
+      }
+      .yami-save-slot-btn.active {
+        background: #084872 !important; /* Yami 经典选中高亮蓝 */
+        border-color: #0080ff !important;
+        color: #ffffff !important;
+      }
+
+      /* 4. 按钮统一标准 (#333333 实体色) */
+      .yami-save-mini-btn,
+      .yami-save-act-btn.default,
+      .yami-perf-btn,
+      .yami-dock-btn {
+        background: #333333 !important;
+        border: 1px solid #3d3d3d !important;
+        border-radius: 2px !important;
+        color: #e0e0e0 !important;
+      }
+      .yami-save-mini-btn:hover,
+      .yami-save-act-btn.default:hover,
+      .yami-perf-btn:hover,
+      .yami-dock-btn:hover {
+        background: #404040 !important;
+        border-color: #555555 !important;
+        color: #ffffff !important;
+      }
+
+      /* 5. 变量行与树形框 */
+      .yami-save-var-item {
+        background: #2b2b2b !important;
+        border: 1px solid #383838 !important;
+      }
+      .yami-save-tree-box {
+        background: #18191a !important;
+        border: 1px solid #282828 !important;
+      }
+
+      /* 6. 输入框 (黑底凹陷，极佳可读性) */
+      .yami-save-input,
+      .yami-save-search-input {
+        background: #141414 !important;
+        border: 1px solid #242424 !important;
+        border-radius: 2px !important;
+        color: #ffffff !important;
+      }
+      .yami-save-input:focus,
+      .yami-save-search-input:focus {
+        border-color: #0080ff !important;
+      }
+
+      /* 7. 主页彩色徽章强化 */
+      .yami-home-module-badge.active {
+        background: #0d2f47 !important;
+        border: 1px solid #084872 !important;
+        color: #38bdf8 !important;
+        font-weight: 600 !important;
+      }
+      .yami-home-module-badge.green {
+        background: #143d22 !important;
+        border: 1px solid #22c55e !important;
+        color: #4ade80 !important;
+        font-weight: 600 !important;
+      }
+      .yami-home-module-badge.green:hover {
+        background: #1e5230 !important;
+        color: #ffffff !important;
+      }
+      .yami-home-module-badge.yellow {
+        background: #453208 !important;
+        border: 1px solid #eab308 !important;
+        color: #fbbf24 !important;
+        font-weight: 600 !important;
+      }
+      .yami-home-module-badge.yellow:hover {
+        background: #5c430c !important;
+        color: #ffffff !important;
+      }
+
+
+      /* 槽位网格：彻底放开高度限制，全量展开展现，告别死矮框与滚动条 */
+      .yami-save-slots-wrap {
+        display: grid !important;
+        grid-template-columns: repeat(3, 1fr) !important;
+        gap: 6px !important;
+        max-height: none !important;
+        height: auto !important;
+        overflow: visible !important;
+        padding-right: 0 !important;
+      }
+
+      /* 普通/专业模式切换按钮：2px 硬朗微圆角 + 原版高亮蓝 (#0080c0) */
+      .yami-mode-switch {
+        display: flex !important;
+        background: #141414 !important;
+        border: 1px solid #0c0c0c !important;
+        border-radius: 2px !important;
+        padding: 1px !important;
+        gap: 2px !important;
+        user-select: none !important;
+      }
+      .yami-mode-btn {
+        padding: 2px 7px !important;
+        font-size: 11px !important;
+        font-weight: 500 !important;
+        border-radius: 2px !important;
+        cursor: pointer !important;
+        color: #888888 !important;
+        transition: all 0.12s ease !important;
+      }
+      .yami-mode-btn:hover {
+        color: #ffffff !important;
+      }
+      .yami-mode-btn.active {
+        background: #0080c0 !important; /* 恢复原版专业高亮蓝 */
+        color: #ffffff !important;
+        font-weight: 600 !important;
+        box-shadow: 0 1px 4px rgba(0, 128, 192, 0.4) !important;
+      }
+
+
+      /* ============================================================
+         DanJuan妙妙插件 - 存档管理子面板最大弹窗高度自适应贯通
+         解决“常用速改/变量与开关/JSON树形图仅显示一部分”的局促矮小问题
+         ============================================================ */
+      #page-save.yami-suite-page {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+      }
+
+      .yami-save-container {
+        display: flex !important;
+        flex-direction: column !important;
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        gap: 8px !important;
+        padding: 2px 2px 4px 2px !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+      }
+
+      .yami-save-slots-wrap,
+      .yami-save-bento,
+      .yami-save-subnav,
+      .yami-save-footer-actions {
+        flex-shrink: 0 !important;
+      }
+
+      .yami-save-panel {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+      }
+
+      /* 1. 常用速改：纵向自由弹性流动，滚动条原生舒适 */
+      .yami-save-quick-scroll {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        overflow-y: auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+        padding-right: 3px !important;
+      }
+      .yami-save-quick-scroll::-webkit-scrollbar {
+        width: 4px !important;
+      }
+      .yami-save-quick-scroll::-webkit-scrollbar-thumb {
+        background: #383838 !important;
+        border-radius: 2px !important;
+      }
+
+      /* 2. 变量与开关：卡片与列表自适应吞噬全部垂直空间，贯通到底部 */
+      .yami-save-vars-wrapper {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+        margin: 0 !important;
+        padding: 8px 10px !important;
+      }
+
+      .yami-save-var-list {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        max-height: none !important;
+        overflow-y: auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        padding-right: 4px !important;
+      }
+      .yami-save-var-list::-webkit-scrollbar {
+        width: 4px !important;
+      }
+      .yami-save-var-list::-webkit-scrollbar-thumb {
+        background: #383838 !important;
+        border-radius: 2px !important;
+      }
+
+      /* 3. JSON 树形图：彻底放开 320px 死高度限制，全屏最大化呈现代码视窗 */
+      .yami-save-tree-wrapper {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        overflow: hidden !important;
+      }
+
+      .yami-save-tree-box {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        max-height: none !important;
+        overflow: auto !important;
+        background: #141414 !important;
+        border: 1px solid #282828 !important;
+        border-radius: 4px !important;
+        padding: 8px 10px !important;
+        margin: 0 !important;
+        box-sizing: border-box !important;
+      }
+      .yami-save-tree-box::-webkit-scrollbar {
+        width: 5px !important;
+        height: 5px !important;
+      }
+      .yami-save-tree-box::-webkit-scrollbar-thumb {
+        background: #383838 !important;
+        border-radius: 2px !important;
+      }
     `;
     document.head.appendChild(style);
 
@@ -881,6 +1967,13 @@
         <span id="yami-ms" style="color: #a0a0a0; font-family: Consolas, monospace;">16.7ms</span>
         <span style="color: #606060;">|</span>
         <span id="yami-dc" style="color: #0080c0; font-family: Consolas, monospace;">0 DC</span>
+      </div>
+      <div id="yami-error-bubble" class="yami-error-bubble" title="点击打开控制台报错黑匣子查看详情">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px;">
+          <span id="yami-error-bubble-title" style="font-weight: 600; color: #ff5252;">[控制台异常]</span>
+          <span style="color: #888888; font-size: 10px;">点击排查 &gt;</span>
+        </div>
+        <div id="yami-error-bubble-text" style="color: #f0f0f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">捕获到未处理错误</div>
       </div>
     `;
     document.body.appendChild(hud);
@@ -930,7 +2023,7 @@
         <div class="yami-update-btn" id="btn-do-update" role="button">一键热更新</div>
       </div>
 
-      <div class="yami-perf-tabs" id="yami-tabs-bar">
+      <div class="yami-perf-tabs" id="yami-tabs-bar" style="display: none !important;">
         <div class="yami-perf-tab active" data-ptab="overview" role="button"><i class="yami-icon yami-icon-settings"></i><span>性能总览</span></div>
         <div class="yami-perf-tab" data-ptab="render" role="button"><i class="yami-icon yami-icon-cube"></i><span>渲染DrawCall</span></div>
         <div class="yami-perf-tab" data-ptab="scene" role="button"><i class="yami-icon yami-icon-scene"></i><span>场景实体</span></div>
@@ -970,7 +2063,7 @@
             <!-- 模块 2: 控制台报错 (Remix Icon: ri-bug-line) -->
             <div class="yami-home-module-item" data-target="errors" role="button">
               <div class="yami-home-module-main">
-                <div class="yami-home-module-icon-box" title="RemixIcon: ri-bug-line">
+                <div class="yami-home-module-icon-box green" title="RemixIcon: ri-bug-line">
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 10H20.618C20.8655 9.33644 21 8.66356 21 8H19C19 6.89543 18.1046 6 17 6H15.8293C15.3441 5.3727 14.7176 4.88603 14 4.56846V2H10V4.56846C9.28238 4.88603 8.65588 5.3727 8.17071 6H7C5.89543 6 5 6.89543 5 8H3C3 8.66356 3.13451 9.33644 3.38197 10H5V11C5 11.3409 5.03433 11.674 5.10014 12H3V14H5.38197C5.86714 15.3273 6.84333 16.4022 8.12154 16.8944L6.29289 18.7231L7.70711 20.1373L9.93934 17.9051C10.5794 17.9678 11.2338 18 11.9 18C12.5662 18 13.2206 17.9678 13.8607 17.9051L16.0929 20.1373L17.5071 18.7231L15.6785 16.8944C16.9567 16.4022 17.9329 15.3273 18.418 14H21V12H18.8999C18.9657 11.674 19 11.3409 19 11V10ZM17 8V11C17 13.7614 14.7614 16 12 16C9.23858 16 7 13.7614 7 11V8H17ZM9 10H11V12H9V10ZM13 10H15V12H13V10Z"></path></svg>
                 </div>
                 <div>
@@ -978,21 +2071,21 @@
                   <div class="yami-home-module-desc">未捕获异常与智能分析</div>
                 </div>
               </div>
-              <div class="yami-home-module-badge" id="yami-home-error-badge">查看</div>
+              <div class="yami-home-module-badge green" id="yami-home-error-badge">进入</div>
             </div>
 
-            <!-- 模块 3: 场景实体 (Remix Icon: ri-stack-line) -->
-            <div class="yami-home-module-item disabled">
+            <!-- 模块 3: 存档管理 (Remix Icon: ri-save-3-line) -->
+            <div class="yami-home-module-item" data-target="save" role="button">
               <div class="yami-home-module-main">
-                <div class="yami-home-module-icon-box" title="RemixIcon: ri-stack-line">
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M20.0827 8.79093L12.0001 4.30078L3.91748 8.79093L12.0001 13.2811L20.0827 8.79093ZM12.0001 2.03223L22.8088 8.03706C23.0567 8.17478 23.1437 8.48496 23.006 8.73288C22.9567 8.82155 22.8817 8.89437 22.7915 8.94168L12.5028 14.3312C12.1884 14.496 11.8119 14.496 11.4974 14.3312L1.20874 8.94168C0.96082 8.81181 0.863777 8.50417 0.992019 8.25625C1.04085 8.16198 1.11707 8.08479 1.21143 8.03706L12.0001 2.03223ZM3.91748 11.9999L12.0001 16.4901L20.0827 11.9999L22.7915 13.4217C23.0394 13.5516 23.1365 13.8592 23.0082 14.1071C22.9594 14.2014 22.8832 14.2786 22.7888 14.3263L12.5001 20.0422C12.1895 20.2148 11.8108 20.2148 11.5001 20.0422L1.21143 14.3263C0.963507 14.1886 0.876542 13.8784 1.01426 13.6305C1.06357 13.5418 1.13859 13.469 1.22874 13.4217L3.91748 11.9999Z"></path></svg>
+                <div class="yami-home-module-icon-box yellow" title="RemixIcon: ri-save-3-line">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M7 19V13H17V19H19V7.82843L16.1716 5H5V19H7ZM4 3H17L21.7071 7.70711C21.8946 7.89464 22 8.149 22 8.41421V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3H4ZM9 15V19H15V15H9Z"></path></svg>
                 </div>
                 <div>
-                  <div class="yami-home-module-title">场景实体</div>
-                  <div class="yami-home-module-desc">同屏对象与触发器</div>
+                  <div class="yami-home-module-title">存档管理</div>
+                  <div class="yami-home-module-desc">槽位速改、数据解密与变量调试</div>
                 </div>
               </div>
-              <div class="yami-home-module-badge">规划中</div>
+              <div class="yami-home-module-badge yellow">进入</div>
             </div>
 
             <!-- 模块 4: 变量与开关 (Remix Icon: ri-equalizer-line) -->
@@ -1238,15 +2331,22 @@
           </div>
         </div>
         </div>
+      </div><!-- end page-profiler -->
+
+      <!-- 页面 4: 存档管理 (Save Lab) 位于 dock-body 内部 -->
+      <div class="yami-suite-page" id="page-save" style="display: none !important;">
+        <div class="yami-save-container" id="yami-save-root">
+          <!-- 动态装载 SaveLab 视图 -->
+        </div>
       </div>
 
-      </div><!-- end page-profiler -->
+      </div><!-- end yami-perf-dock-body -->
+
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span>运行中</span>
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.2.1 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.3.0 (检查更新)</span>
         </div>
-        <div style="display: flex; gap: 6px;">
+        <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
           <div class="yami-perf-btn" id="dock-btn-dl" role="button">保存报告</div>
         </div>
@@ -1262,6 +2362,7 @@
     const modeSwitchEl = document.getElementById('yami-mode-switch');
     const clearErrorsBtnEl = document.getElementById('btn-clear-errors');
     const tabsBarEl = document.getElementById('yami-tabs-bar');
+    const exportGroupEl = document.getElementById('yami-dock-export-group');
     const homeErrorBadgeEl = document.getElementById('yami-home-error-badge');
     const homeStatusDotEl = document.getElementById('yami-home-status-dot');
     const homeStatusTextEl = document.getElementById('yami-home-status-text');
@@ -1272,7 +2373,8 @@
     const pages = {
       home: document.getElementById('page-home'),
       profiler: document.getElementById('page-profiler'),
-      errors: document.getElementById('page-errors')
+      errors: document.getElementById('page-errors'),
+      save: document.getElementById('page-save')
     };
 
     // ============================================================
@@ -1315,6 +2417,11 @@
       if (tabsBarEl) {
         const isPro = localStorage.getItem('yami-perf-mode') === 'pro';
         tabsBarEl.style.setProperty('display', (pageDef.showTabs && isPro) ? 'flex' : 'none', 'important');
+      }
+
+      // 底栏导出按钮组显隐调度：仅当进入性能分析 (profiler) 视图时精准浮现，其余视图绝对隐藏
+      if (exportGroupEl) {
+        exportGroupEl.style.setProperty('display', pageDef.showExportBtns ? 'flex' : 'none', 'important');
       }
 
       // 调度页面容器显隐
@@ -1475,17 +2582,65 @@
           homeStatusTextEl.textContent = '运行健康';
         }
         if (homeErrorBadgeEl) {
-          homeErrorBadgeEl.className = 'yami-home-module-badge';
-          homeErrorBadgeEl.textContent = '查看';
+          homeErrorBadgeEl.className = 'yami-home-module-badge green';
+          homeErrorBadgeEl.textContent = '进入';
         }
       }
     }
 
-    // 监听新错误事件
-    window.addEventListener('yami-perf-new-error', function() {
+    // 监听新错误事件 (胶囊红光抖动 + 下方气泡弹窗)
+    let errorBubbleTimer = null;
+    const errorBubbleEl = document.getElementById('yami-error-bubble');
+    const errorBubbleTitleEl = document.getElementById('yami-error-bubble-title');
+    const errorBubbleTextEl = document.getElementById('yami-error-bubble-text');
+    const capsuleEl = document.getElementById('yami-capsule');
+
+    if (errorBubbleEl) {
+      errorBubbleEl.addEventListener('click', function(e) {
+        e.stopPropagation();
+        errorBubbleEl.classList.remove('show');
+        switchView('errors');
+        toggleDock(true);
+      });
+    }
+
+    // 全局测试快捷指令: 在 F12 控制台敲 __testDanJuanError() 即可测试
+    window.__testDanJuanError = function() {
+      toggleDock(false);
+      setTimeout(function() {
+        console.error(new TypeError("DanJuan测试异常: Cannot read properties of undefined (reading 'hp')"));
+      }, 500);
+    };
+
+    window.addEventListener('yami-perf-new-error', function(e) {
       updateHomeStatus();
       if (currentView === 'errors') {
         renderErrorsList();
+      }
+
+      // 如果大盘未展开，触发右上角浮窗抖动 + 在浮窗下方弹窗显示
+      if (!isDockOpen) {
+        if (capsuleEl) {
+          capsuleEl.classList.remove('shake');
+          void capsuleEl.offsetWidth; // 触发 reflow 重置动画
+          capsuleEl.classList.add('shake');
+        }
+
+        if (errorBubbleEl && errorBubbleTextEl) {
+          const detail = e.detail;
+          const analysis = detail && detail.analysis;
+          if (errorBubbleTitleEl) {
+            errorBubbleTitleEl.textContent = (analysis && analysis.title) ? `[异常] ${analysis.title}` : '[控制台异常]';
+          }
+          const rawMsg = (detail && (detail.summary || detail.message)) ? (detail.summary || detail.message) : '捕获到未捕获错误';
+          errorBubbleTextEl.textContent = rawMsg;
+          errorBubbleEl.classList.add('show');
+
+          if (errorBubbleTimer) clearTimeout(errorBubbleTimer);
+          errorBubbleTimer = setTimeout(function() {
+            errorBubbleEl.classList.remove('show');
+          }, 4500);
+        }
       }
     });
 
@@ -1508,6 +2663,7 @@
 
     // 页面 1: 主页大厅契约
     Views.register('home', {
+      showExportBtns: false,
       title: 'DanJuan妙妙插件',
       showBack: false,
       showModeSwitch: false,
@@ -1522,7 +2678,8 @@
 
     // 页面 2: 控制台报错黑匣子契约
     Views.register('errors', {
-      title: '控制台异常与错误分析',
+      showExportBtns: false,
+      title: '控制台报错',
       showBack: true,
       showModeSwitch: false,
       showClearErrors: true,
@@ -1538,7 +2695,8 @@
 
     // 页面 3: 性能排查与诊断契约
     Views.register('profiler', {
-      title: '性能分析与卡顿排查',
+      showExportBtns: true,
+      title: '性能分析',
       showBack: true,
       showModeSwitch: true,
       showClearErrors: false,
@@ -1560,6 +2718,955 @@
     });
 
     // 默认激活路由
+    
+    // ============================================================
+    // DanJuan妙妙插件 · 存档台 (Save Lab) 微内核实现
+    // ============================================================
+    const SaveLab = {
+      ctx: null,
+      gameDir: '',
+      saveFiles: [],
+      currentSlot: '',
+      currentData: null,
+      currentMeta: null,
+      currentSubTab: 'quick',
+      varKeyword: '',
+      dict: {
+        guidMap: new Map(),
+        attributes: new Map(),
+        variables: new Map(),
+        teams: new Map()
+      },
+      isDictLoaded: false,
+
+      getGameDir() {
+        try {
+          if (typeof require !== 'undefined') {
+            const fs = require('fs');
+            const path = require('path');
+            const os = require('os');
+
+            // 1. 最高优先级：游戏试玩运行时环境 (Game Runtime)
+            // 只要在试玩独立窗口中，window.location 即代表当前游戏绝对真实位置
+            if (typeof window !== 'undefined' && window.location && window.location.pathname) {
+              let p = decodeURIComponent(window.location.pathname);
+              if (process.platform === 'win32' && p.startsWith('/')) p = p.slice(1);
+              // 排除 Open Yami 编辑器自身安装路径
+              if (!p.includes('resources/app') && !p.includes('resources\\app')) {
+                let dir = path.dirname(p);
+                for (let i = 0; i < 5; i++) {
+                  if (fs.existsSync(path.join(dir, 'Data', 'manifest.json')) || fs.existsSync(path.join(dir, 'Save'))) {
+                    this.gameDir = dir.replace(/\\/g, '/');
+                    return this.gameDir;
+                  }
+                  const parent = path.dirname(dir);
+                  if (parent === dir) break;
+                  dir = parent;
+                }
+              }
+            }
+
+            // 2. 次高优先级：Open Yami 编辑器主窗口环境 (Editor Host)
+            if (typeof document !== 'undefined') {
+              let isWelcomeHome = false;
+              try {
+                // Open Yami 原生 PageManager 状态识别
+                const manager = document.getElementById('workspace-page-manager');
+                if (manager && manager.index === 'home') isWelcomeHome = true;
+                const visibleHome = document.querySelector('page-frame[value="home"].visible');
+                if (visibleHome) isWelcomeHome = true;
+              } catch (e) {}
+
+              // 若确认为编辑器启动时的空白欢迎页且未打开任何工程，则不盲目扫描
+              if (isWelcomeHome) {
+                this.gameDir = '';
+                return '';
+              }
+            }
+
+            // 3. 编辑器已打开工程：通过 window.File.root 获取
+            if (typeof window !== 'undefined' && window.File && typeof window.File.root === 'string' && window.File.root) {
+              const root = window.File.root.replace(/[\\/]+$/, '').replace(/\\/g, '/');
+              if (fs.existsSync(root) && (fs.existsSync(path.join(root, 'Data')) || fs.existsSync(path.join(root, 'Save')))) {
+                this.gameDir = root;
+                return root;
+              }
+            }
+
+            // 4. 编辑器全自动跟随：从 ~/.openyami/config.json 获取当前打开的 project
+            try {
+              const cfgPath = path.join(os.homedir(), '.openyami', 'config.json');
+              if (fs.existsSync(cfgPath)) {
+                const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+                if (cfg && typeof cfg.project === 'string' && cfg.project) {
+                  const pDir = path.dirname(cfg.project).replace(/\\/g, '/');
+                  if (fs.existsSync(pDir) && (fs.existsSync(path.join(pDir, 'Data')) || fs.existsSync(path.join(pDir, 'Save')))) {
+                    this.gameDir = pDir;
+                    return pDir;
+                  }
+                }
+              }
+            } catch (errCfg) {}
+
+            // 5. 进程当前工作目录探测 (排除编辑器安装路径)
+            if (typeof process !== 'undefined' && process.cwd) {
+              const cwd = process.cwd().replace(/\\/g, '/');
+              if (!cwd.includes('Open Yami RPG Editor') && (fs.existsSync(path.join(cwd, 'Data')) || fs.existsSync(path.join(cwd, 'Save')))) {
+                this.gameDir = cwd;
+                return cwd;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('[SaveLab] 检测工程异常:', e);
+        }
+        this.gameDir = '';
+        return '';
+      },
+
+      loadDictionaries() {
+        try {
+          if (typeof require === 'undefined') return;
+          const fs = require('fs');
+          const path = require('path');
+          const dir = this.getGameDir();
+          if (!dir) return;
+
+          // 1. Data/manifest.json -> GUID 中文字典
+          const manifestPath = path.join(dir, 'Data', 'manifest.json');
+          if (fs.existsSync(manifestPath)) {
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+            for (const [type, group] of Object.entries(manifest)) {
+              if (Array.isArray(group)) {
+                for (const item of group) {
+                  if (item && item.path) {
+                    const m = String(item.path).match(/\.([0-9a-f]{16})\.\S+$/);
+                    if (m) {
+                      const guid = m[1];
+                      const base = String(item.path).split('/').pop() || item.path;
+                      const disp = base.replace(/\.[0-9a-f]{16}\.\S+$/, '').replace(/\.[^.]+$/, '');
+                      this.dict.guidMap.set(guid, { type, display: disp, fullPath: item.path });
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // 2. Data/variables.json -> 变量与开关完整元信息字典 (名称、类型、分组文件夹、备注)
+          const varsPath = path.join(dir, 'Data', 'variables.json');
+          if (fs.existsSync(varsPath)) {
+            const vData = JSON.parse(fs.readFileSync(varsPath, 'utf8'));
+            const walk = (items, folderName = '') => {
+              if (!Array.isArray(items)) return;
+              for (const it of items) {
+                if (it && it.id && it.name) {
+                  this.dict.variables.set(it.id, {
+                    id: it.id,
+                    name: it.name,
+                    type: typeof it.value,
+                    defaultValue: it.value,
+                    folder: folderName || '默认分组',
+                    note: it.note || ''
+                  });
+                }
+                if (it && it.children) {
+                  walk(it.children, it.name || folderName);
+                }
+              }
+            };
+            walk(Array.isArray(vData) ? vData : (vData.list || []));
+          }
+
+          // 3. Data/attribute.json -> 属性名 (包含 aData.keys)
+          const attrPath = path.join(dir, 'Data', 'attribute.json');
+          if (fs.existsSync(attrPath)) {
+            const aData = JSON.parse(fs.readFileSync(attrPath, 'utf8'));
+            const walkAttr = (items) => {
+              if (!Array.isArray(items)) return;
+              for (const it of items) {
+                if (it && it.key && it.name) this.dict.attributes.set(it.key, it.name);
+                if (it && it.id && it.name) this.dict.attributes.set(it.id, it.name);
+                if (it && it.children) walkAttr(it.children);
+              }
+            };
+            walkAttr(Array.isArray(aData) ? aData : (aData.keys || aData.list || []));
+          }
+
+          this.isDictLoaded = true;
+        } catch (e) {
+          console.warn('[SaveLab] 字典加载异常:', e);
+        }
+      },
+
+      scanSaveFiles() {
+        try {
+          if (typeof require === 'undefined') return;
+          const fs = require('fs');
+          const path = require('path');
+          const saveDir = path.join(this.getGameDir(), 'Save');
+          if (!fs.existsSync(saveDir)) {
+            this.saveFiles = [];
+            return;
+          }
+          const files = fs.readdirSync(saveDir);
+
+          // 兼容 .save (Yami 原生真实存档) 与 .json 格式，排除临时与备份文件
+          this.saveFiles = files
+            .filter(f => {
+              if (f.startsWith('.') || f.endsWith('.bak') || f.endsWith('.tmp') || f.endsWith('.meta')) return false;
+              return f.endsWith('.save') || f.endsWith('.json');
+            })
+            .map(name => {
+              const fullPath = path.join(saveDir, name);
+              const stat = fs.statSync(fullPath);
+              const isSaveExt = name.endsWith('.save');
+              return {
+                name,
+                path: fullPath,
+                mtime: stat.mtimeMs,
+                size: stat.size,
+                priority: isSaveExt ? 1 : 0
+              };
+            })
+            .sort((a, b) => {
+              if (b.priority !== a.priority) return b.priority - a.priority;
+              return b.mtime - a.mtime;
+            });
+
+          if (!this.currentSlot || !this.saveFiles.some(f => f.name === this.currentSlot)) {
+            if (this.saveFiles.length > 0) this.currentSlot = this.saveFiles[0].name;
+            else this.currentSlot = '';
+          }
+        } catch (e) {
+          console.warn('[SaveLab] 扫描存档失败:', e);
+        }
+      },
+
+      loadCurrentSave() {
+        if (!this.currentSlot) {
+          this.currentData = null;
+          this.currentMeta = null;
+          return;
+        }
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          const saveDir = path.join(this.getGameDir(), 'Save');
+          const p = path.join(saveDir, this.currentSlot);
+          if (fs.existsSync(p)) {
+            this.currentData = JSON.parse(fs.readFileSync(p, 'utf8'));
+          } else {
+            this.currentData = null;
+          }
+
+          // 尝试读取同名 .meta 文件 (获取时间戳与高清截图)
+          const baseName = this.currentSlot.replace(/\.(save|json)$/i, '');
+          const metaPath = path.join(saveDir, baseName + '.meta');
+          if (fs.existsSync(metaPath)) {
+            this.currentMeta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+          } else {
+            this.currentMeta = null;
+          }
+        } catch (e) {
+          this.currentData = null;
+          this.currentMeta = null;
+        }
+      },
+
+      formatTime(sec) {
+        if (typeof sec !== 'number' || isNaN(sec)) return '--:--:--';
+        const s = Math.floor(sec);
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sc = s % 60;
+        return [h, m, sc].map(v => String(v).padStart(2, '0')).join(':');
+      },
+
+      formatRelativeTime(mtime) {
+        const diff = Math.max(0, Math.floor((Date.now() - mtime) / 1000));
+        if (diff < 60) return '刚刚';
+        if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+        if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+        const d = new Date(mtime);
+        return (d.getMonth() + 1) + '-' + d.getDate();
+      },
+
+      getLeadActor(data) {
+        if (!data || !Array.isArray(data.actors) || data.actors.length === 0) return null;
+        const playerFileId = data.party && data.party.player;
+        if (playerFileId) {
+          const found = data.actors.find(a => a.fileId === playerFileId || a.entityId === playerFileId);
+          if (found) return found;
+        }
+        return data.actors[0];
+      },
+
+      render() {
+        const root = document.getElementById('yami-save-root');
+        if (!root) return;
+
+        // 每次 render 均实时探测当前工程 (跟随用户切换工程)
+        const dir = this.getGameDir();
+        if (dir && this.dict.variables.size === 0) {
+          this.loadDictionaries();
+        }
+        if (!dir) {
+          root.innerHTML = `
+            <div style="text-align: center; color: #808080; padding: 50px 14px;">
+              <div style="font-size: 13px; font-weight: 600; color: #ffffff; margin-bottom: 8px;">[未打开游戏工程]</div>
+              <div style="font-size: 11px; color: #a0a0a0; line-height: 1.6; margin-bottom: 16px;">
+                Open Yami 当前处于欢迎页或未打开工程<br>
+                在编辑器中打开工程后即可自动显示
+              </div>
+              <div class="yami-save-act-btn primary" id="save-btn-rescan" style="display: inline-flex; width: auto; padding: 6px 20px;" role="button">
+                检测并同步当前工程
+              </div>
+            </div>
+          `;
+          const rescanBtn = root.querySelector('#save-btn-rescan');
+          if (rescanBtn) {
+            rescanBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              this.isDictLoaded = false;
+              this.gameDir = '';
+              this.init(this.ctx);
+              if (this.ctx && this.ctx.showToast) {
+                const nowDir = this.getGameDir();
+                if (nowDir) this.ctx.showToast('已成功识别当前工程: ' + nowDir, 2000);
+                else this.ctx.showToast('未检测到已打开的工程，请先打开项目', 2000);
+              }
+            });
+          }
+          return;
+        }
+
+        if (this.saveFiles.length === 0) {
+          root.innerHTML = `
+            <div style="text-align: center; color: #808080; padding: 40px 14px;">
+              <div style="font-size: 13px; font-weight: 600; color: #ffffff; margin-bottom: 6px;">[当前工程暂无存档]</div>
+              <div style="font-size: 11px; color: #888888; margin-bottom: 6px; word-break: break-all;">已连接工程: ${dir}</div>
+              <div style="font-size: 11px; color: #a0a0a0;">请在游戏内执行一次【保存】或【自动存档】</div>
+              <div class="yami-save-act-btn default" id="save-btn-rescan" style="display: inline-flex; width: auto; margin-top: 14px; padding: 5px 16px;" role="button">
+                重新扫描存档
+              </div>
+            </div>
+          `;
+          const rescanBtn = root.querySelector('#save-btn-rescan');
+          if (rescanBtn) {
+            rescanBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              this.refresh();
+              if (this.ctx && this.ctx.showToast) this.ctx.showToast('已重新扫描存档目录', 1500);
+            });
+          }
+          return;
+        }
+
+        const data = this.currentData || {};
+
+        // 1. 顶部槽位条
+        const slotsHtml = this.saveFiles.map(f => {
+          const isActive = f.name === this.currentSlot;
+          let label = f.name.replace(/\.(save|json)$/i, '');
+          if (label.toLowerCase() === 'global') label = '全局 (Global)';
+          else if (label.toLowerCase() === 'autosave') label = '自动存档';
+          else if (/^save\d+$/i.test(label)) label = '存档 ' + label.replace(/[^0-9]/g, '');
+
+          const relTime = this.formatRelativeTime(f.mtime);
+          return `<div class="yami-save-slot-btn ${isActive ? 'active' : ''}" data-slot="${f.name}" role="button" title="${label} (${relTime})">
+            <span class="yami-save-slot-title">${label}</span>
+            <span class="yami-save-slot-time">${relTime}</span>
+          </div>`;
+        }).join('');
+
+        // 2. 便当盒核心数据
+        const playTimeStr = this.formatTime(data.playTime);
+        const lead = this.getLeadActor(data);
+
+        // 金钱 (优先从 lead.inventory.money 读取，其次从 data.gold / data.money)
+        let goldVal = 0;
+        if (lead && lead.inventory && typeof lead.inventory.money === 'number') {
+          goldVal = lead.inventory.money;
+        } else if (typeof data.gold === 'number') {
+          goldVal = data.gold;
+        } else if (typeof data.money === 'number') {
+          goldVal = data.money;
+        }
+
+        // 队伍领队信息
+        let actorDesc = '暂无队伍信息';
+        if (lead) {
+          let actorName = lead.name;
+          if (!actorName && lead.fileId && this.dict.guidMap.has(lead.fileId)) {
+            actorName = this.dict.guidMap.get(lead.fileId).display;
+          }
+          if (!actorName) actorName = '主角';
+          const lv = (lead.attributes && lead.attributes.level !== undefined) ? lead.attributes.level : (lead.level || 1);
+          actorDesc = `Lv.${lv} ${actorName}`;
+        }
+
+        // 地图名称 (优先从 scene.contexts[active].id 解密)
+        let sceneName = '未知区域';
+        if (data.scene) {
+          let sceneGuid = '';
+          if (Array.isArray(data.scene.contexts) && data.scene.contexts.length > 0) {
+            const actIdx = data.scene.active || 0;
+            const ctx = data.scene.contexts[actIdx] || data.scene.contexts[0];
+            if (ctx && ctx.id) sceneGuid = ctx.id;
+          } else if (typeof data.scene === 'string') {
+            sceneGuid = data.scene;
+          } else if (data.scene.id) {
+            sceneGuid = data.scene.id;
+          }
+
+          if (sceneGuid && this.dict.guidMap.has(sceneGuid)) {
+            sceneName = this.dict.guidMap.get(sceneGuid).display;
+          } else if (sceneGuid) {
+            sceneName = '地图 ' + String(sceneGuid).slice(0, 8);
+          }
+        }
+
+        // 截图预览 (若有 meta screenshot)
+        let screenshotHtml = '';
+        if (this.currentMeta && this.currentMeta.screenshot) {
+          screenshotHtml = `
+            <div style="margin-top: 6px; border-radius: 4px; overflow: hidden; max-height: 90px; border: 1px solid #282828;">
+              <img src="${this.currentMeta.screenshot}" style="width: 100%; height: 90px; object-fit: cover; display: block;" />
+            </div>
+          `;
+        }
+
+        // 3. 子模式导航
+        const subNavHtml = `
+          <div class="yami-save-subnav">
+            <div class="yami-save-subnav-btn ${this.currentSubTab === 'quick' ? 'active' : ''}" data-subtab="quick" role="button">常用速改</div>
+            <div class="yami-save-subnav-btn ${this.currentSubTab === 'vars' ? 'active' : ''}" data-subtab="vars" role="button">变量与开关</div>
+            <div class="yami-save-subnav-btn ${this.currentSubTab === 'tree' ? 'active' : ''}" data-subtab="tree" role="button">JSON 树形图</div>
+          </div>
+        `;
+
+        // 4. 当前子面板内容
+        let panelHtml = '';
+        if (this.currentSubTab === 'quick') {
+          panelHtml = this.renderQuickPanel(data, lead, goldVal);
+        } else if (this.currentSubTab === 'vars') {
+          panelHtml = this.renderVarsPanel(data);
+        } else if (this.currentSubTab === 'tree') {
+          panelHtml = this.renderTreePanel(data);
+        }
+
+        root.innerHTML = `
+          <div class="yami-save-slots-wrap">
+            ${slotsHtml}
+          </div>
+
+          <div class="yami-save-bento">
+            <div class="yami-save-bento-cell">
+              <span class="yami-save-bento-label">游玩时长</span>
+              <span class="yami-save-bento-value">${playTimeStr}</span>
+            </div>
+            <div class="yami-save-bento-cell">
+              <span class="yami-save-bento-label">持有金钱</span>
+              <span class="yami-save-bento-value highlight">${goldVal.toLocaleString()} G</span>
+            </div>
+            <div class="yami-save-bento-cell">
+              <span class="yami-save-bento-label">队伍领队</span>
+              <span class="yami-save-bento-value blue">${actorDesc}</span>
+            </div>
+            <div class="yami-save-bento-cell">
+              <span class="yami-save-bento-label">当前位置</span>
+              <span class="yami-save-bento-value">${sceneName}</span>
+            </div>
+          </div>
+          ${screenshotHtml}
+
+          ${subNavHtml}
+
+          <div class="yami-save-panel">
+            ${panelHtml}
+          </div>
+
+          <div class="yami-save-footer-actions">
+            <div class="yami-save-act-btn default" id="save-btn-open-backups" role="button">备份目录</div>
+            <div class="yami-save-act-btn primary" id="save-btn-commit" role="button">保存并写回存档</div>
+          </div>
+        `;
+
+        this.bindEvents(root);
+      },
+
+      renderQuickPanel(data, lead, goldVal) {
+        let hpVal = 100, maxHpVal = 100, mpVal = 50, maxMpVal = 50, lvVal = 1;
+        if (lead) {
+          const attr = lead.attributes || {};
+          lvVal = attr.level !== undefined ? attr.level : (lead.level || 1);
+          hpVal = attr.health !== undefined ? attr.health : (attr.hp !== undefined ? attr.hp : 100);
+          maxHpVal = attr.maxHealth !== undefined ? attr.maxHealth : (attr.maxHp !== undefined ? attr.maxHp : hpVal);
+          mpVal = attr.mana !== undefined ? attr.mana : (attr.mp !== undefined ? attr.mp : 50);
+          maxMpVal = attr.maxMana !== undefined ? attr.maxMana : (attr.maxMp !== undefined ? attr.maxMp : mpVal);
+        }
+
+        return `
+          <div class="yami-save-quick-scroll">
+            <div class="yami-save-section-card">
+              <div class="yami-save-section-head">
+                <span>金钱修改</span>
+                <span style="font-size: 10px; color: #666666;">单位: G</span>
+              </div>
+              <div class="yami-save-form-row">
+                <span class="yami-save-form-label">金钱数量</span>
+                <div class="yami-save-input-group">
+                  <input class="yami-save-input" id="quick-input-gold" type="number" value="${goldVal}" />
+                  <div class="yami-save-mini-btn" data-act="gold-add" data-val="1000" role="button">+1000</div>
+                  <div class="yami-save-mini-btn" data-act="gold-add" data-val="10000" role="button">+1万</div>
+                  <div class="yami-save-mini-btn primary" data-act="gold-set" data-val="999999" role="button">满金币</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="yami-save-section-card">
+              <div class="yami-save-section-head">
+                <span>领队状态调整</span>
+                <div class="yami-save-mini-btn primary" data-act="heal-all" role="button">一键回满</div>
+              </div>
+              <div class="yami-save-form-row">
+                <span class="yami-save-form-label">等级 (Level)</span>
+                <div class="yami-save-input-group">
+                  <input class="yami-save-input" id="quick-input-level" type="number" min="1" max="99" value="${lvVal}" />
+                  <div class="yami-save-mini-btn" data-act="lv-add" data-val="1" role="button">+1级</div>
+                  <div class="yami-save-mini-btn" data-act="lv-set" data-val="99" role="button">满级</div>
+                </div>
+              </div>
+              <div class="yami-save-form-row">
+                <span class="yami-save-form-label">当前生命 (HP)</span>
+                <div class="yami-save-input-group">
+                  <input class="yami-save-input" id="quick-input-hp" type="number" value="${hpVal}" />
+                  <span style="color: #666; font-size: 11px;">/ ${maxHpVal}</span>
+                </div>
+              </div>
+              <div class="yami-save-form-row">
+                <span class="yami-save-form-label">当前魔法 (MP)</span>
+                <div class="yami-save-input-group">
+                  <input class="yami-save-input" id="quick-input-mp" type="number" value="${mpVal}" />
+                  <span style="color: #666; font-size: 11px;">/ ${maxMpVal}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      },
+
+      renderVarsPanel(data) {
+        // 保证字典实时可用
+        if (this.dict.variables.size === 0) {
+          this.loadDictionaries();
+        }
+
+        const varsObj = data.variables || {};
+        const switchesObj = data.switches || {};
+        const allKeys = Array.from(new Set([...Object.keys(varsObj), ...Object.keys(switchesObj), ...this.dict.variables.keys()]));
+
+        const kw = this.varKeyword.toLowerCase().trim();
+        const items = [];
+
+        for (const key of allKeys) {
+          const meta = this.dict.variables.get(key);
+          let name = '';
+          let folder = '未分类';
+          let type = 'number';
+          let note = '';
+
+          if (meta) {
+            if (typeof meta === 'string') {
+              name = meta;
+            } else {
+              name = meta.name || '';
+              folder = meta.folder || '未分类';
+              type = meta.type || 'number';
+              note = meta.note || '';
+            }
+          }
+          if (!name) name = '变量 ' + key;
+
+          // 综合判断是否为布尔开关 (Switch)
+          const currentVal = switchesObj[key] !== undefined ? switchesObj[key] : varsObj[key];
+          const isSwitch = (type === 'boolean') || (typeof currentVal === 'boolean') || (switchesObj[key] !== undefined);
+
+          if (kw) {
+            const matchName = name.toLowerCase().includes(kw);
+            const matchKey = String(key).toLowerCase().includes(kw);
+            const matchFolder = folder.toLowerCase().includes(kw);
+            if (!matchName && !matchKey && !matchFolder) continue;
+          }
+
+          items.push({
+            key,
+            name,
+            folder,
+            type,
+            note,
+            isSwitch,
+            val: currentVal !== undefined ? currentVal : (meta && meta.defaultValue !== undefined ? meta.defaultValue : (isSwitch ? false : 0))
+          });
+        }
+
+        // 优先展示已有存档值的变量，其次按分类和名称排序
+        items.sort((a, b) => {
+          const aHas = (varsObj[a.key] !== undefined || switchesObj[a.key] !== undefined) ? 1 : 0;
+          const bHas = (varsObj[b.key] !== undefined || switchesObj[b.key] !== undefined) ? 1 : 0;
+          if (bHas !== aHas) return bHas - aHas;
+          if (a.folder !== b.folder) return a.folder.localeCompare(b.folder, 'zh-Hans-CN');
+          return a.name.localeCompare(b.name, 'zh-Hans-CN');
+        });
+
+        const listHtml = items.slice(0, 100).map(it => {
+          const typeTag = it.isSwitch ? '[开关]' : (it.type === 'string' ? '[文本]' : '[数值]');
+          const tagColor = it.isSwitch ? '#4ade80' : (it.type === 'string' ? '#38bdf8' : '#eab308');
+
+          if (it.isSwitch) {
+            const checked = Boolean(it.val);
+            return `
+              <div class="yami-save-var-item">
+                <div class="yami-save-var-meta">
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <span class="yami-save-var-name">${it.name}</span>
+                    <span style="font-size: 9px; padding: 1px 4px; border-radius: 2px; background: #141414; color: ${tagColor}; border: 1px solid #282828;">${typeTag}</span>
+                    <span style="font-size: 9px; color: #808080;">${it.folder}</span>
+                  </div>
+                  <span class="yami-save-var-id">ID: ${it.key}${it.note ? (' · ' + it.note) : ''}</span>
+                </div>
+                <label class="yami-save-toggle">
+                  <input type="checkbox" class="var-switch-input" data-key="${it.key}" ${checked ? 'checked' : ''} />
+                  <span class="yami-save-toggle-slider"></span>
+                </label>
+              </div>
+            `;
+          } else {
+            const displayVal = it.val !== undefined ? it.val : '';
+            return `
+              <div class="yami-save-var-item">
+                <div class="yami-save-var-meta">
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <span class="yami-save-var-name">${it.name}</span>
+                    <span style="font-size: 9px; padding: 1px 4px; border-radius: 2px; background: #141414; color: ${tagColor}; border: 1px solid #282828;">${typeTag}</span>
+                    <span style="font-size: 9px; color: #808080;">${it.folder}</span>
+                  </div>
+                  <span class="yami-save-var-id">ID: ${it.key}${it.note ? (' · ' + it.note) : ''}</span>
+                </div>
+                <input class="yami-save-input var-number-input" data-key="${it.key}" type="text" value="${displayVal}" style="width: 110px; text-align: right;" />
+              </div>
+            `;
+          }
+        }).join('');
+
+        return `
+          <div class="yami-save-section-card yami-save-vars-wrapper">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-shrink: 0;">
+              <span class="yami-save-section-title">变量与开关检视 (${items.length} 项)</span>
+              <input class="yami-save-search-input" id="save-vars-search" type="text" placeholder="搜索变量/开关名称或ID..." value="${this.varKeyword}" style="width: 180px;" />
+            </div>
+            <div class="yami-save-var-list">
+              ${listHtml || '<div style="text-align: center; color: #666666; padding: 20px;">未搜索到匹配的变量或开关</div>'}
+            </div>
+          </div>
+        `;
+      },
+
+      renderTreePanel(data) {
+        const jsonStr = JSON.stringify(data, null, 2);
+        return `
+          <div class="yami-save-tree-wrapper">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
+              <span style="font-size: 11px; color: #888888;">原始 JSON 快速检视</span>
+              <div class="yami-save-mini-btn primary" id="save-btn-copy-raw" role="button">复制全量 JSON</div>
+            </div>
+            <div class="yami-save-tree-box">
+              <pre style="margin: 0; white-space: pre-wrap; word-break: break-all; font-family: Consolas, monospace; font-size: 11px; color: #90d4ff;">${jsonStr.slice(0, 25000) + (jsonStr.length > 25000 ? '\n\n... (数据过长已截断预览)' : '')}</pre>
+            </div>
+          </div>
+        `;
+      },
+
+      bindEvents(root) {
+        root.querySelectorAll('.yami-save-slot-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const slot = btn.getAttribute('data-slot');
+            if (slot && slot !== this.currentSlot) {
+              this.currentSlot = slot;
+              this.loadCurrentSave();
+              this.render();
+            }
+          });
+        });
+
+        root.querySelectorAll('.yami-save-subnav-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const subtab = btn.getAttribute('data-subtab');
+            if (subtab) {
+              this.currentSubTab = subtab;
+              this.render();
+            }
+          });
+        });
+
+        const searchInput = root.querySelector('#save-vars-search');
+        if (searchInput) {
+          searchInput.addEventListener('input', (e) => {
+            this.varKeyword = e.target.value;
+            const listEl = root.querySelector('.yami-save-vars-list');
+            if (listEl) {
+              const newHtml = this.renderVarsPanel(this.currentData || {});
+              const temp = document.createElement('div');
+              temp.innerHTML = newHtml;
+              const newList = temp.querySelector('.yami-save-vars-list');
+              if (newList) listEl.innerHTML = newList.innerHTML;
+              this.bindVarInputs(root);
+            }
+          });
+        }
+
+        root.querySelectorAll('[data-act]').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const act = btn.getAttribute('data-act');
+            const val = Number(btn.getAttribute('data-val'));
+            const data = this.currentData;
+            if (!data) return;
+
+            const lead = this.getLeadActor(data);
+
+            if (act === 'gold-add') {
+              let cur = 0;
+              if (lead && lead.inventory && typeof lead.inventory.money === 'number') cur = lead.inventory.money;
+              else if (typeof data.gold === 'number') cur = data.gold;
+              else if (typeof data.money === 'number') cur = data.money;
+
+              const next = cur + val;
+              if (lead && lead.inventory) lead.inventory.money = next;
+              if (data.gold !== undefined) data.gold = next;
+              if (data.money !== undefined) data.money = next;
+
+              const inp = root.querySelector('#quick-input-gold');
+              if (inp) inp.value = next;
+              this.ctx.showToast(`金币已调整为: ${next} G`, 1500);
+            } else if (act === 'gold-set') {
+              if (lead && lead.inventory) lead.inventory.money = val;
+              if (data.gold !== undefined) data.gold = val;
+              if (data.money !== undefined) data.money = val;
+
+              const inp = root.querySelector('#quick-input-gold');
+              if (inp) inp.value = val;
+              this.ctx.showToast(`金币已设置为: ${val} G`, 1500);
+            } else if (act === 'lv-add') {
+              if (lead) {
+                if (!lead.attributes) lead.attributes = {};
+                lead.attributes.level = (lead.attributes.level || lead.level || 1) + val;
+                lead.level = lead.attributes.level;
+                const inp = root.querySelector('#quick-input-level');
+                if (inp) inp.value = lead.attributes.level;
+                this.ctx.showToast(`领队等级调整为: Lv.${lead.attributes.level}`, 1500);
+              }
+            } else if (act === 'lv-set') {
+              if (lead) {
+                if (!lead.attributes) lead.attributes = {};
+                lead.attributes.level = val;
+                lead.level = val;
+                const inp = root.querySelector('#quick-input-level');
+                if (inp) inp.value = val;
+                this.ctx.showToast(`领队等级调整为: Lv.${val}`, 1500);
+              }
+            } else if (act === 'heal-all') {
+              if (Array.isArray(data.actors)) {
+                for (const actor of data.actors) {
+                  const attr = actor.attributes || {};
+                  const maxH = attr.maxHealth || attr.maxHp || 100;
+                  const maxM = attr.maxMana || attr.maxMp || 50;
+                  attr.health = maxH;
+                  attr.mana = maxM;
+                  actor.hp = maxH;
+                  actor.mp = maxM;
+                }
+                this.ctx.showToast('[全员恢复] 队伍全体生命与魔法已回满！', 2000);
+                this.render();
+              }
+            }
+          });
+        });
+
+        this.bindVarInputs(root);
+
+        const copyRawBtn = root.querySelector('#save-btn-copy-raw');
+        if (copyRawBtn) {
+          copyRawBtn.addEventListener('click', () => {
+            const str = JSON.stringify(this.currentData, null, 2);
+            navigator.clipboard.writeText(str).then(() => {
+              this.ctx.showToast('全量存档数据已复制到剪贴板', 2000);
+            });
+          });
+        }
+
+        const openBakBtn = root.querySelector('#save-btn-open-backups');
+        if (openBakBtn) {
+          openBakBtn.addEventListener('click', () => {
+            try {
+              const { shell } = require('electron');
+              const path = require('path');
+              const bakDir = path.join(this.getGameDir(), 'Save', 'Backups');
+              const fs = require('fs');
+              if (!fs.existsSync(bakDir)) fs.mkdirSync(bakDir, { recursive: true });
+              shell.openPath(bakDir);
+            } catch (e) {
+              this.ctx.showToast('无法打开备份目录: ' + e.message, 2500);
+            }
+          });
+        }
+
+        const commitBtn = root.querySelector('#save-btn-commit');
+        if (commitBtn) {
+          commitBtn.addEventListener('click', () => {
+            this.commitChanges();
+          });
+        }
+      },
+
+      bindVarInputs(root) {
+        root.querySelectorAll('.var-switch-input').forEach(sw => {
+          sw.addEventListener('change', (e) => {
+            const key = sw.getAttribute('data-key');
+            const checked = e.target.checked;
+            if (!this.currentData) return;
+            if (!this.currentData.switches) this.currentData.switches = {};
+            this.currentData.switches[key] = checked;
+            if (this.currentData.variables && this.currentData.variables[key] !== undefined) {
+              this.currentData.variables[key] = checked;
+            }
+            this.ctx.showToast(`开关 [${this.dict.variables.get(key) || key}] 切换为: ${checked ? 'ON' : 'OFF'}`, 1500);
+          });
+        });
+
+        root.querySelectorAll('.var-number-input').forEach(inp => {
+          inp.addEventListener('change', (e) => {
+            const key = inp.getAttribute('data-key');
+            let val = e.target.value;
+            if (!isNaN(Number(val)) && val.trim() !== '') val = Number(val);
+            if (!this.currentData) return;
+            if (!this.currentData.variables) this.currentData.variables = {};
+            this.currentData.variables[key] = val;
+            this.ctx.showToast(`变量 [${this.dict.variables.get(key) || key}] 改为: ${val}`, 1500);
+          });
+        });
+      },
+
+      commitChanges() {
+        if (!this.currentSlot || !this.currentData) {
+          this.ctx.showToast('[异常] 没有可写入的有效存档数据', 2000);
+          return;
+        }
+
+        const lead = this.getLeadActor(this.currentData);
+
+        const goldInp = document.getElementById('quick-input-gold');
+        if (goldInp) {
+          const gVal = Number(goldInp.value);
+          if (!isNaN(gVal)) {
+            if (lead && lead.inventory) lead.inventory.money = gVal;
+            if (this.currentData.gold !== undefined) this.currentData.gold = gVal;
+            if (this.currentData.money !== undefined) this.currentData.money = gVal;
+          }
+        }
+        const lvInp = document.getElementById('quick-input-level');
+        if (lvInp && lead) {
+          const lv = Number(lvInp.value);
+          if (!isNaN(lv)) {
+            if (!lead.attributes) lead.attributes = {};
+            lead.attributes.level = lv;
+            lead.level = lv;
+          }
+        }
+        const hpInp = document.getElementById('quick-input-hp');
+        if (hpInp && lead) {
+          const hp = Number(hpInp.value);
+          if (!isNaN(hp)) {
+            if (!lead.attributes) lead.attributes = {};
+            lead.attributes.health = hp;
+            lead.hp = hp;
+          }
+        }
+        const mpInp = document.getElementById('quick-input-mp');
+        if (mpInp && lead) {
+          const mp = Number(mpInp.value);
+          if (!isNaN(mp)) {
+            if (!lead.attributes) lead.attributes = {};
+            lead.attributes.mana = mp;
+            lead.mp = mp;
+          }
+        }
+
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          const saveDir = path.join(this.getGameDir(), 'Save');
+          const filePath = path.join(saveDir, this.currentSlot);
+
+          const bakDir = path.join(saveDir, 'Backups');
+          if (!fs.existsSync(bakDir)) fs.mkdirSync(bakDir, { recursive: true });
+
+          const now = new Date();
+          const ts = now.getFullYear() + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0') + '_' + String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0') + String(now.getSeconds()).padStart(2,'0');
+          const bakFile = path.join(bakDir, `${this.currentSlot.replace(/\.(save|json)$/i, '')}_${ts}.bak`);
+
+          if (fs.existsSync(filePath)) {
+            fs.copyFileSync(filePath, bakFile);
+          }
+
+          fs.writeFileSync(filePath, JSON.stringify(this.currentData, null, 2), 'utf8');
+
+          this.ctx.showToast(`[完成] 存档 ${this.currentSlot} 已成功保存，并生成安全备份！`, 3000);
+          this.refresh();
+        } catch (e) {
+          this.ctx.showToast('[失败] 写入存档失败: ' + e.message, 3500);
+        }
+      },
+
+      init(ctx) {
+        this.ctx = ctx;
+        this.loadDictionaries();
+        this.scanSaveFiles();
+        this.loadCurrentSave();
+        this.render();
+      },
+
+      refresh(ctx) {
+        if (ctx) this.ctx = ctx;
+        this.scanSaveFiles();
+        this.loadCurrentSave();
+        this.render();
+      },
+
+      destroy() {}
+    };
+
+    Views.register('save', {
+      showExportBtns: false,
+      title: '存档管理',
+      showBack: true,
+      showModeSwitch: false,
+      showClearErrors: false,
+      showTabs: false,
+      mount(root, ctx) {
+        SaveLab.init(ctx);
+      },
+      refresh(ctx) {
+        SaveLab.refresh(ctx);
+      },
+      destroy() {
+        SaveLab.destroy();
+      }
+    });
+
     switchView(currentView);
 
 
@@ -1672,6 +3779,7 @@
       if (isDockOpen) {
         // 大盘展开时，彻底隐藏右上角迷你帧数浮窗，防止穿透或半透明时穿帮透出
         if (hud) hud.style.setProperty('display', 'none', 'important');
+        if (errorBubbleEl) errorBubbleEl.classList.remove('show');
         refreshDockData();
       } else {
         // 大盘收起时，恢复右上角迷你帧数浮窗
@@ -1716,7 +3824,7 @@
       } else {
         if (viewSimple) viewSimple.style.setProperty('display', 'none', 'important');
         if (viewPro) viewPro.style.setProperty('display', 'flex', 'important');
-        if (tabsBar) tabsBar.style.setProperty('display', 'flex', 'important');
+        if (tabsBar) tabsBar.style.setProperty('display', (currentView === 'profiler') ? 'flex' : 'none', 'important');
       }
       localStorage.setItem('yami-perf-mode', currentMode);
       refreshDockData();

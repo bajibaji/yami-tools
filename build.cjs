@@ -69,9 +69,10 @@ const requiredAnchors = [
   { name: '主页契约注册', pattern: /Views\.register\('home'/ },
   { name: '错误契约注册', pattern: /Views\.register\('errors'/ },
   { name: '性能契约注册', pattern: /Views\.register\('profiler'/ },
+  { name: '存档契约注册', pattern: /Views\.register\('save'/ },
   { name: 'Remix Icon: ri-pulse-line', pattern: /ri-pulse-line/ },
   { name: 'Remix Icon: ri-bug-line', pattern: /ri-bug-line/ },
-  { name: 'Remix Icon: ri-stack-line', pattern: /ri-stack-line/ },
+  { name: 'Remix Icon: ri-save-3-line', pattern: /ri-save-3-line/ },
   { name: 'Remix Icon: ri-equalizer-line', pattern: /ri-equalizer-line/ },
   { name: '双重物理穿透控制', pattern: /style\.setProperty\('pointer-events', 'none', 'important'\)/ },
   { name: '多层 UI 联动隐身', pattern: /hud\.style\.setProperty\('display', 'none', 'important'\)/ },
@@ -79,7 +80,7 @@ const requiredAnchors = [
   { name: '指标 ID: yami-ms', pattern: /id="yami-ms"/ },
   { name: '指标 ID: yami-dc', pattern: /id="yami-dc"/ },
   { name: '指标 ID: diag-score', pattern: /id="diag-score"/ },
-  { name: '四模块入口占位齐全', pattern: /data-target="profiler"[\s\S]*?data-target="errors"[\s\S]*?场景实体[\s\S]*?变量与开关/ }
+  { name: '四模块入口布局齐全', pattern: /data-target="profiler"[\s\S]*?data-target="errors"[\s\S]*?data-target="save"[\s\S]*?变量与开关/ }
 ];
 
 let failedCount = 0;

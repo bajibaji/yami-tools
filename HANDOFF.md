@@ -1,7 +1,7 @@
 # DanJuan妙妙插件 (DanJuan DevSuite / Extension)
 ## 项目交接、系统架构与核心经验演进全档案 (HANDOFF & ARCHITECTURE)
 
-> **文档定位**：记录本套件的**系统架构剖析、底层工作原理、时间线演进历史、高价值核心经验与防踩坑档案**，作为跨开发者与 AI 协同的唯一技术基线与记忆中枢（SSOT）。当前版本：`v0.2.1`。
+> **文档定位**：记录本套件的**系统架构剖析、底层工作原理、时间线演进历史、高价值核心经验与防踩坑档案**，作为跨开发者与 AI 协同的唯一技术基线与记忆中枢（SSOT）。当前版本：`v0.3.0`。
 
 ---
 
@@ -146,6 +146,19 @@
   - **极速零依赖构建器 `build.cjs`**：原生 Node.js 实现样式注入、语法自检、17 项关键 DOM 与锚点严苛自检，以及 `--deploy` 模式单向同步与 MD5 自动校验对比；
   - **严格零行为与零 UI 变化**：所有类名、ID、文案、事件完全 1:1 保真对齐，实机体验毫厘不爽。
 
+- **2026-09-03 16:20 · 存档台 (Save Lab) 模块原生化移植与工业级 UI/UX 落地**
+  - **降维原生直达**：告别 Web 端繁琐的选择目录与沙盒弹窗，依托 Electron 运行环境毫秒级直达当前游戏 `Save/` 目录与 `Data/` 数据字典；
+  - **GUID 智能中文字典解密**：自动扫描 `manifest.json`、`variables.json`、`attribute.json`，把原本冰冷晦涩的 GUID 翻译为真实游戏名称（如新手村、最大生命值）；
+  - **依据 ui-ux-pro-max 规范排版**：设计槽位分段滚动条（Slot Bar）、2x2 概览便当盒（Bento Grid）、三模切换器（【常用速改】、【变量与开关】、【JSON 树形】）；
+  - **物理级双重安全屏障**：每次保存修改前，Node.js 自动生成带有毫秒级时间戳的 `.bak` 备份文件于 `Save/Backups/` 目录，杜绝任何坏档风险。
+
+- **2026-09-03 16:40 · 全自动活动工程跟随与变量深度解密完善**
+  - **全自动工程追踪**：彻底剔除硬编码路径 fallback，打通 Open Yami 编辑器全局配置（`~/.openyami/config.json` 中的 `project` 字段）与 `window.File.root`，配合 `#home` 欢迎页感知，实现“用户打开什么工程就自动显示什么工程的存档”，未打开工程时友好提示；
+  - **变量全量解密**：适配 Yami 引擎原生 `Data/variables.json` 顶层直接为 `Array` 树形结构（非 `.list`），成功解密游戏中全部变量（如 `赶路进度`、`当前地下城名字` 等）；
+  - **槽位全屏平铺展开**：废除硬编码的矮框高度截断（`max-height: 120px`），根据实际存档卡片数量纵向自适应展开，彻底消除多余滚动条；
+  - **导出按钮路由收敛**：全局底部【复制 JSON】与【保存报告】仅在【性能分析】页面展示，主页与存档页全面隐身；
+  - **色彩层级互换**：卡片与按钮全面采用用户高度认可的工业深灰规范（`#303030` 底色 + `#3d3d3d` 细边框），大盘托底 `#202020`。
+
 ---
 
 ## ⚠️ 4. 核心经验与致命踩坑防踩档案 (Critical Gotchas)
@@ -218,6 +231,11 @@
 - **根因**：`switchView(currentView)` 初次调度写在了中段（第 1558 行），若用户 localStorage 缓存的上次页面是 `profiler`，它会立即触发 `profiler.refresh()` 访问后半段才声明的 `const` DOM 变量，撞上 ES6 暂时性死区（TDZ）；且大盘未展开时空刷 DOM 无意义。
 - **铁律**：初始路由调度 `switchView(currentView)` 必须放置在脚本底部（所有 DOM 与页面函数声明完毕后）；同时 `profiler.refresh` 必须自带 `if (!isDockOpen) return;` 阻断保护。
 
+### ⑭ 子页面专属组件（如专业模式 Tab 条）在首页幽灵现形陷阱
+- **现象**：首次进入插件大厅且当前处于专业模式时，首页大厅正上方会突兀露出原本属于性能分析专用的 4 个 Tab（刷新或跳出回来才消失）。
+- **根因**：双模控制器 `updateModeUI()` 内部只粗暴判断了 `currentMode === 'pro'` 就将 `tabsBar` 设置为 `display: flex !important;`，完全忽视了此时当前页面是不是 `profiler`；且 HTML 骨架与 CSS 规则中未对该组件施加默认隐藏。
+- **铁律**：任何属于特定子页面的专属 UI 组件，其显隐控制必须严格附带当前页面守卫（如 `(currentView === 'profiler' && isPro) ? 'flex' : 'none'`）；且默认 CSS 状态必须锁死为 `display: none !important;`。
+
 ---
 
 ## 🛠️ 5. Git 提交与智能版本自增规范 (Strict Git & Smart SemVer Policy)
@@ -246,3 +264,19 @@
 | `D:\Program Files\Open Yami RPG Editor\extension\yami-perf-extension\` | **编辑器运行时加载路径** | 仅作为本地联调和生产加载目标，由母仓库单向覆盖镜像生成，严禁在此建立独立分支。 |
 | `https://github.com/bajibaji/yami-tools/tree/extension` | **远端分发与热更新源** | 用户一键热更新拉取代码的公共镜像源。 |
 | `D:\Documents\GitHub\2\` | **Open Yami 引擎底层源码参考** | Electron 主进程 `main/main.ts` 与游戏内核模板 `Project/Templates/`。 |
+### 2026-09-03 [里程碑] 变量与开关全量元信息解密与深度 E2E 验证
+- **问题根因**：原先变量字典仅存储名称字符串，且布尔开关由于 Yami 引擎未改动前未写入 save.variables，导致所有布尔变量被误判为 [VAR] 并渲染为输入框；同时若初始化时字典有任何时序延迟，变量名会退化为 GUID。
+- **全量升级**：
+  1. loadDictionaries 升级为加载完整元信息对象：包含中文名称、真实类型（boolean / number / string）、所属文件夹分类（如常用变量、系统变量、地下城、世界地图、用户界面）与备注说明；
+  2. render 与 renderVarsPanel 注入字典零状态自愈逻辑：只要检测到字典为空自动重新装载，杜绝 GUID 形式的变量名展示；
+  3. 变量与开关列表精准呈现工业级分类标签与类型徽章（[开关] 绿色、[数值] 黄色、[文本] 蓝色），布尔型 100% 渲染为 Toggle 开关；
+  4. 编写并全绿通过 17 项深度 E2E 仿真测试与 25 项全流程端到端自动化测试。
+
+### 2026-09-03 [优化] 存档管理三大子面板最大弹窗高度自适应贯通
+- **痛点解决**：此前常用速改、变量与开关、JSON 树形图被死固定的 max-height (如 320px/480px) 截断，且缺少 flex: 1 贯通链路，导致大屏弹窗下高度仅展示一小截，内部双滚动条局促体验糟糕。
+- **方案落地**：
+  1. 宿主弹性链路全面贯通：#page-save 与 .yami-save-container、.yami-save-panel 设置 flex: 1 1 0; min-height: 0; height: 100%; overflow: hidden;
+  2. 变量与开关：移除行内 max-height: 480px 限制，.yami-save-var-list 设置 flex: 1; max-height: none; overflow-y: auto; 垂直吃满全部剩余高度，一屏沉浸式检视；
+  3. JSON 树形图：移除 320px 死限制，.yami-save-tree-box 设置 flex: 1; max-height: none; 满屏展开；
+  4. 常用速改：引入 .yami-save-quick-scroll 弹性容器，垂直自由流动，滚动体验流畅平滑。
+- **测试验证**：编写并通过 14 项三大子面板满高自适应 E2E 自动化测试。
