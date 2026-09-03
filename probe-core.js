@@ -22,7 +22,7 @@
     lastJankTime: 0,
     lastJankEvent: null,
     // 嫌疑开关: 挂起某类对象的真实更新(用于 A/B 实验验证真凶)
-    suspend: { actors: false, animations: false, emitters: false, triggers: false, ui: false, events: false },
+    suspend: { actors: false, animations: false, emitters: false, triggers: false, ui: false, events: false, audio: false },
     // 已包装对象集合(防重复 + 恢复计数)
     objWrapped: { actors: 0, animations: 0, emitters: 0, triggers: 0, ui: 0 },
     frameObjMs: new Map()
@@ -244,6 +244,22 @@
     return s.length > 36 ? s.slice(0, 36) : s;
   }
 
+  
+  // 识别玩家主角/队伍成员(冻结怪物时必须放行主角，保证玩家正常移动与放技能)
+  function isPlayerActor(actor) {
+    if (!actor) return false;
+    try {
+      if (typeof Party !== 'undefined' && Party) {
+        if (Party.player === actor) return true;
+        if (Party.members && Array.isArray(Party.members) && Party.members.indexOf(actor) !== -1) return true;
+      }
+    } catch (e) {}
+    try {
+      if (actor.isPlayer || actor.player) return true;
+    } catch (e) {}
+    return false;
+  }
+
   function resolveObjectName(obj, kind, index) {
     if (!obj) return kind + '#' + index;
     const candidates = [];
@@ -307,7 +323,14 @@
       const orig = obj.update.bind(obj);
       Object.defineProperty(obj, '__yamiPerfObjWrapped__', { value: true, configurable: true });
       obj.update = function () {
-        if (state.suspend[kind] === true) return undefined;
+        if (state.suspend[kind] === true) {
+          // 核心保护: 冻结角色时只冻结非主角(怪物、NPC)，主角保持全速响应
+          if (kind === 'actors' && isPlayerActor(obj)) {
+            // 主角正常放行
+          } else {
+            return undefined;
+          }
+        }
         const t0 = objSampling === 1 ? now() : 0;
         let r;
         try {
@@ -333,7 +356,7 @@
       const orig = mgr.update.bind(mgr);
       Object.defineProperty(mgr, '__yamiPerfMgrWrapped__', { value: true, configurable: true });
       mgr.update = function () {
-        if (state.suspend.actors === true) return undefined;   // 嫌疑开关: 角色系统全停(含碰撞)
+        // 注: 角色过滤在具体的 actor.update 中做细粒度放行，不在此处全停，确保主角不受影响
         const t0 = objSampling === 1 ? now() : 0;
         let r;
         try {
@@ -469,6 +492,121 @@
     Object.defineProperty(G, '__yamiPerfProbeHooked__', { value: true, configurable: true });
   }
 
+  
+  function hookAudio() {
+    try {
+      if (typeof AudioManager === 'undefined' || !AudioManager) return;
+      const se = AudioManager.se;
+      if (se && !se.__yamiPerfAudioHooked__) {
+        se.__yamiPerfAudioHooked__ = true;
+        const origPlay = se.play ? se.play.bind(se) : null;
+        if (origPlay) {
+          se.play = function () {
+            if (state.suspend.audio === true) return undefined;
+            return origPlay.apply(this, arguments);
+          };
+        }
+        const origPlayDist = se.playWithDistance ? se.playWithDistance.bind(se) : null;
+        if (origPlayDist) {
+          se.playWithDistance = function () {
+            if (state.suspend.audio === true) return undefined;
+            return origPlayDist.apply(this, arguments);
+          };
+        }
+      }
+    } catch (e) {}
+  }
+
+  
+  // ============================================================
+  // 内核级原型链挂起拦截器 (100% 绝对生效的嫌疑排除利器)
+  // ============================================================
+  function installKernelSuspendHooks() {
+    // 1. 角色系统: 直接拦截 Actor.prototype.update (老怪、新怪一网打尽，主角严格放行)
+    try {
+      if (typeof Actor !== 'undefined' && Actor.prototype && !Actor.prototype.__yamiPerfSuspendHooked__) {
+        Actor.prototype.__yamiPerfSuspendHooked__ = true;
+        const origActorUpdate = Actor.prototype.update;
+        Actor.prototype.update = function () {
+          if (state.suspend.actors === true) {
+            if (isPlayerActor(this)) {
+              return origActorUpdate.apply(this, arguments);
+            }
+            return undefined; // 场景所有其它怪物、NPC 瞬间原地定格！
+          }
+          return origActorUpdate.apply(this, arguments);
+        };
+      }
+    } catch (e) {}
+
+    // 2. 粒子系统: 直接拦截 SceneParticleEmitterManager.prototype.update
+    try {
+      if (typeof SceneParticleEmitterManager !== 'undefined' && SceneParticleEmitterManager.prototype && !SceneParticleEmitterManager.prototype.__yamiPerfSuspendHooked__) {
+        SceneParticleEmitterManager.prototype.__yamiPerfSuspendHooked__ = true;
+        const origEmitterUpdate = SceneParticleEmitterManager.prototype.update;
+        SceneParticleEmitterManager.prototype.update = function () {
+          if (state.suspend.emitters === true) return undefined; // 全图微粒瞬间静止！
+          return origEmitterUpdate.apply(this, arguments);
+        };
+      }
+    } catch (e) {}
+
+    // 3. 事件系统: 直接拦截 EventHandler.prototype.update
+    try {
+      if (typeof EventHandler !== 'undefined' && EventHandler.prototype && !EventHandler.prototype.__yamiPerfSuspendHooked__) {
+        EventHandler.prototype.__yamiPerfSuspendHooked__ = true;
+        const origEventUpdate = EventHandler.prototype.update;
+        EventHandler.prototype.update = function () {
+          if (state.suspend.events === true) return false; // 所有活跃事件指令立即暂停执行！
+          return origEventUpdate.apply(this, arguments);
+        };
+      }
+    } catch (e) {}
+
+    // 4. 音效音频系统: 拦截 SE 播放器与主增益节点
+    try {
+      if (typeof AudioManager !== 'undefined' && AudioManager && AudioManager.se && !AudioManager.se.__yamiPerfAudioHooked__) {
+        AudioManager.se.__yamiPerfAudioHooked__ = true;
+        const se = AudioManager.se;
+        const origPlay = se.play ? se.play.bind(se) : null;
+        if (origPlay) {
+          se.play = function () {
+            if (state.suspend.audio === true) return undefined;
+            return origPlay.apply(this, arguments);
+          };
+        }
+        const origPlayDist = se.playWithDistance ? se.playWithDistance.bind(se) : null;
+        if (origPlayDist) {
+          se.playWithDistance = function () {
+            if (state.suspend.audio === true) return undefined;
+            return origPlayDist.apply(this, arguments);
+          };
+        }
+      }
+    } catch (e) {}
+
+    // 5. 界面 UI 系统: 直接拦截 UI.render 与 UI.update
+    try {
+      if (typeof UI !== 'undefined' && UI && !UI.__yamiPerfSuspendHooked__) {
+        UI.__yamiPerfSuspendHooked__ = true;
+        const origUiRender = UI.render ? UI.render.bind(UI) : null;
+        if (origUiRender) {
+          UI.render = function () {
+            if (state.suspend.ui === true) return undefined; // 彻底跳过 UI 渲染！画面瞬间隐藏！
+            return origUiRender.apply(this, arguments);
+          };
+        }
+        const origUiUpdate = UI.update ? UI.update.bind(UI) : null;
+        if (origUiUpdate) {
+          UI.update = function () {
+            if (state.suspend.ui === true) return undefined; // 彻底跳过 UI 元素更新！
+            return origUiUpdate.apply(this, arguments);
+          };
+        }
+      }
+    } catch (e) {}
+  }
+
   function refresh() {
     hookGame();
     hookWebGL();
@@ -599,7 +737,7 @@
     if (state.hooked.game) {
       clearInterval(probeInterval);
       requestAnimationFrame(tick);
-      console.log('⚡ [Yami Perf-Lab Auto Bridge] 探针已成功自动注入并开始监控！');
+      console.log('[Yami Perf-Lab Auto Bridge] 探针已成功自动注入并开始监控！');
     }
   }, 100);
 
@@ -854,7 +992,7 @@
       });
 
       server.listen(BRIDGE_PORT, '127.0.0.1', function() {
-        console.log('⚡ [Yami Perf Bridge] 本地实时调试服务已就绪: http://127.0.0.1:' + BRIDGE_PORT);
+        console.log('[Yami Perf Bridge] 本地实时调试服务已就绪: http://127.0.0.1:' + BRIDGE_PORT);
       });
     }
   } catch (e) {
@@ -896,18 +1034,213 @@
     if (channel) channel.postMessage({ type: 'PERF_STREAM_TICK', data: streamPacket });
   }, 200);
 
+  // ============ ③ 普通模式·健康体检与具体文件真凶定位引擎 ============
+  function getDiagnosisReport() {
+    try {
+      const recent = state.samples.slice(-20);
+      const avgCompute = recent.length ? (recent.reduce(function(s, x) { return s + x.compute; }, 0) / recent.length) : 0;
+      const last = recent[recent.length - 1] || {};
+      const fps = (typeof Time !== 'undefined' && Time.fps) || last.fps || 60;
+      const dc = glStats.lastDrawCalls || 0;
+      const scene = getSceneDetails();
+      const eventsData = getActiveEventsDetails();
+
+      // 计算健康分 (0 - 100)
+      let score = 100;
+      if (fps < 30) score -= 35;
+      else if (fps < 50) score -= 18;
+      else if (fps < 58) score -= 8;
+
+      if (avgCompute > 25) score -= 30;
+      else if (avgCompute > 16.7) score -= 18;
+      else if (avgCompute > 10) score -= 8;
+
+      const isSmoothGame = (fps >= 55 && avgCompute < 14);
+      if (!isSmoothGame) {
+        if (dc > 100) score -= 20;
+        else if (dc > 60) score -= 10;
+      } else if (dc > 100) {
+        score -= 5; // 满帧顺畅时仅轻微扣 5 分，依然保持 90+ 绿标！
+      }
+
+      if (scene.particles > 600) score -= 15;
+      else if (scene.particles > 300) score -= 8;
+
+      if (scene.actors > 60) score -= 12;
+
+      score = Math.max(10, Math.min(100, Math.round(score)));
+
+      let status = 'good';
+      let statusText = '丝滑如飞 · 极佳状态';
+      let statusDesc = '各项指标都在预算内，CPU 与显卡毫无压力。';
+
+      if (score < 65 || fps < 35 || avgCompute > 25) {
+        status = 'bad';
+        statusText = '严重卡顿 · 发现瓶颈';
+        statusDesc = '存在严重单帧超载或高频狂跑逻辑，建议根据下方真凶定位排查！';
+      } else if (score < 85 || fps < 55 || avgCompute > 12) {
+        status = 'warn';
+        statusText = '轻微压力 · 偶发负载';
+        statusDesc = '部分指标稍高，在低配设备上可能会出现微小掉帧。';
+      }
+
+      // 实时卡顿真凶归因分析 (Culprits)
+      const culprits = [];
+
+      // 1. 检查事件死循环 / 高频狂跑 (具体到 .event 文件与指令行号)
+      if (eventsData.active && eventsData.active.length > 0) {
+        eventsData.active.forEach(function(ev) {
+          const path = ev.path || 'Assets/Event/Unknown.event';
+          const cmdIdx = (typeof ev.index === 'number' ? ev.index : 0) + 1;
+          const isHeavy = ev.total > 200 || (ev.priority && avgCompute > 10);
+          if (isHeavy || avgCompute > 18) {
+            culprits.push({
+              level: avgCompute > 25 ? 'bad' : 'warn',
+              type: 'event',
+              title: '公共/场景事件高频执行: [' + ev.name + ']',
+              file: path,
+              location: '第 ' + cmdIdx + ' 步指令 (共 ' + ev.total + ' 步)',
+              reason: '事件正在高速连续循环执行，大量占用 CPU 时间片',
+              suggestion: '打开该事件，在循环末尾添加【等待 1 帧】，避免持续抽干主线程。',
+              targetId: ev.path || ev.name
+            });
+          }
+        });
+      }
+
+      // 2. 检查对象级耗时 (具体到角色/怪物 .actor 文件)
+      const topObj = recentObjSnap && recentObjSnap[0];
+      if (topObj && topObj.ms > 4) {
+        if (topObj.kind === 'actors' && topObj.name.indexOf('碰撞') === -1) {
+          culprits.push({
+            level: topObj.ms > 10 ? 'bad' : 'warn',
+            type: 'actor',
+            title: '角色行为计算超时: [' + topObj.name + ']',
+            file: 'Assets/Actor/' + topObj.name + '.actor',
+            location: '场景实体: ' + topObj.name + ' (单怪耗时 ' + topObj.ms + 'ms)',
+            reason: '单个角色实例在当前帧消耗了过多寻路、状态机或脚本逻辑',
+            suggestion: '降低该角色的寻路频率（如改为每 5 帧寻路一次），或缩减其视野感知范围。',
+            targetId: topObj.name
+          });
+        } else if (topObj.name.indexOf('碰撞') !== -1) {
+          culprits.push({
+            level: 'warn',
+            type: 'collision',
+            title: '场景角色物理碰撞密集',
+            file: 'SceneActorCollider (场景网格碰撞系统)',
+            location: '同屏角色总数: ' + scene.actors + ' 个',
+            reason: '多个实体几何包围盒重叠排斥，触发了高密度的物理碰撞解算',
+            suggestion: '将非关键怪物或装饰NPC的碰撞设为【无重量/无碰撞】，减少重叠解算。',
+            targetId: 'actors'
+          });
+        }
+      }
+
+      // 3. 检查渲染批次 (DrawCall) - 智能自适应: 满帧时不瞎恐吓！
+      if (dc > 70) {
+        const isSmooth = (fps >= 55 && avgCompute < 14);
+        culprits.push({
+          level: isSmooth ? 'warn' : (dc > 120 ? 'bad' : 'warn'),
+          type: 'render',
+          title: (isSmooth ? '💡 低配优化建议: 绘制批次偏多' : '画面绘制批次过多') + ' (DrawCall: ' + dc + ' 次)',
+          file: 'WebGL 图块与贴图材质 (Tilesets & Textures)',
+          location: '每帧绘制调用: ' + dc + ' 次 (同屏面数: ' + (glStats.lastTriangles || 0) + ')',
+          reason: isSmooth 
+            ? '当前电脑性能强劲，运行依然丝滑；但存在较多独立碎图打断了合批'
+            : '不同材质、Shader 或碎图打断了引擎合批，造成多次往返提交显卡',
+          suggestion: isSmooth
+            ? '若需兼顾核显与手机等低配设备，建议将散乱的地图图块合并进主图集(Tileset)。'
+            : '尽量将同地图元件整合进主图集（Tileset），避免大量孤立碎图贴在地图上。',
+          targetId: 'render'
+        });
+      }
+
+      // 4. 检查粒子过载
+      if (scene.particles > 350) {
+        culprits.push({
+          level: scene.particles > 600 ? 'bad' : 'warn',
+          type: 'particle',
+          title: '粒子微粒过载 (微粒: ' + scene.particles + ' 个)',
+          file: 'SceneParticleEmitter (场景粒子发射器)',
+          location: '发射器总数: ' + (scene.emitters || 0) + ' / 微粒: ' + scene.particles,
+          reason: '同屏大量微粒正在更新位置与渲染，造成 GPU 填充率与 CPU 遍历压力',
+          suggestion: '调低技能或场景发射器的【每秒生成数量 (Rate)】与【最大微粒上限】。',
+          targetId: 'emitters'
+        });
+      }
+
+      // 5. 检查 UI 元素泄漏
+      if (scene.elements > 200) {
+        culprits.push({
+          level: 'warn',
+          type: 'ui',
+          title: '界面元素过多 (Elements: ' + scene.elements + ' 个)',
+          file: 'UIManager (界面UI管理器)',
+          location: '当前驻留 UI 元素: ' + scene.elements + ' 个',
+          reason: '界面元素堆积过多，疑似战斗飘字、弹窗或提示框未彻底销毁',
+          suggestion: '检查弹窗和临时战斗文本在关闭后是否调用了 destroy() 彻底从内存移除。',
+          targetId: 'ui'
+        });
+      }
+
+      return {
+        score: score,
+        status: status,
+        statusText: statusText,
+        statusDesc: statusDesc,
+        fps: fps,
+        computeAvg: Number(avgCompute.toFixed(1)),
+        drawCalls: dc,
+        actors: scene.actors,
+        particles: scene.particles,
+        elements: scene.elements,
+        culprits: culprits.slice(0, 3)
+      };
+    } catch (e) {
+      return {
+        score: 100,
+        status: 'good',
+        statusText: '运行良好',
+        statusDesc: '探针正常监听中',
+        fps: 60,
+        computeAvg: 0,
+        drawCalls: 0,
+        actors: 0,
+        particles: 0,
+        elements: 0,
+        culprits: []
+      };
+    }
+  }
+
   window.__YAMI_PERF_PROBE__ = {
     version: PROBE_VERSION,
     state: state,
     glStats: glStats,
     getReport: buildReport,
+    getDiagnosisReport: getDiagnosisReport,
     getSceneDetails: getSceneDetails,
     getMemoryInfo: getMemoryInfo,
     getActiveEvents: getActiveEventsDetails,
     // ② 嫌疑开关: 挂起/恢复某类对象的真实更新 (actors/animations/emitters/triggers/ui/events)
-    suspend: function (kind, on) {
+        suspend: function (kind, on) {
       if (!Object.prototype.hasOwnProperty.call(state.suspend, kind)) return false;
       state.suspend[kind] = !!on;
+      installKernelSuspendHooks();
+      
+      // 音频即时静音与还原
+      if (kind === 'audio') {
+        try {
+          if (typeof AudioManager !== 'undefined' && AudioManager && AudioManager.se) {
+            if (state.suspend.audio === true) {
+              if (typeof AudioManager.se.stop === 'function') AudioManager.se.stop();
+              if (AudioManager.se.gain && AudioManager.se.gain.gain) AudioManager.se.gain.gain.value = 0;
+            } else {
+              if (AudioManager.se.gain && AudioManager.se.gain.gain) AudioManager.se.gain.gain.value = 1;
+            }
+          }
+        } catch (e) {}
+      }
       return state.suspend[kind];
     },
     getSuspend: function () {
@@ -915,7 +1248,7 @@
     },
     copy: function () {
       const json = JSON.stringify(buildReport(), null, 2);
-      navigator.clipboard.writeText(json).then(function() { console.log('✅ 性能报告已复制到剪贴板'); });
+      navigator.clipboard.writeText(json).then(function() { console.log('[OK] 性能报告已复制到剪贴板'); });
       return json;
     },
     download: function () {
@@ -940,7 +1273,7 @@
       try {
         localStorage.setItem('yami-perf-lab-latest-report', JSON.stringify(report));
       } catch (e) {}
-      console.log('⚡ [Yami Perf-Lab] 数据已广播至分析台！');
+      console.log('[Yami Perf-Lab] 数据已广播至分析台！');
       return report;
     }
   };

@@ -82,6 +82,35 @@
   1. 插件内部所有可点击项一律弃用原生 `<button>` 标签，全部改用 `<div role="button">`；
   2. 显式声明 `#yami-perf-dock div[role="button"] { position: static !important; }`，彻底免疫编辑器的全局污染！
 
+### ⑦ 视觉与图标规范：全面采用 Yami 原生暗黑工业素材 (No Emoji Policy)
+- **准则**：严禁在插件界面中使用彩色系统 Emoji（如 ⚡, 🎨, 🎬, 📜, 🔥, ⚠️），与 Yami 编辑器专业灰阶风格严重违和。
+- **图标源映射**：
+  - 性能总览：`common_settings.png`（Yami 设置/性能齿轮）
+  - 渲染与DrawCall：`file_cube.png`（Yami 立方体/模型渲染）
+  - 场景实体：`file_scene.png`（Yami 场景地图）
+  - 活跃事件：`file_common.png`（Yami 事件指令文件）
+- **落地实现与色彩反转 (CSS Filter Inversion)**：
+  - 图标资源放置在 `icons/` 目录下，并在 CSS 中通过 Base64 内嵌；
+  - **核心避坑**：Yami 原生 PNG 遮罩图本身为黑色像素，直接渲染在暗黑/深灰背景上会“黑吃黑”完全看不清。必须统一施加 `filter: brightness(0) invert(0.85) !important;` 转化为明亮银白（`#d8d8d8`），在 hover/active 时切换为 `invert(1)` 纯白高亮，呈现高质感银白对比度！
+
+### ⑧ 双模架构与具体文件真凶定位体系 (Dual-Mode & Culprit Locator)
+- **双模设计原则**：
+  - **普通模式（默认，小白/策划专属）**：极简大白话呈现。包含健康度评分圆环（100分制）、卡顿真凶卡片（具体文件路径 + 具体指令/函数 + 产生原因 + 白话建议）、以及 A/B 一键嫌疑排除测试箱。
+  - **专业模式（主程深入分析）**：一键无缝切回原有 4 大硬核 Tab（性能总览、渲染DrawCall、场景实体、活跃事件），保留微秒级火焰图与底层指标排查。
+- **真凶定位能力（精确到工程文件）**：
+  - 事件死循环定位：锁定到 `Assets/Event/xxx.event (第 N 步指令)`，并附带单帧执行次数与一键复制路径；
+  - 角色行为过载定位：锁定到 `Assets/Actor/xxx.actor`，定位到具体角色实例与单怪计算耗时；
+  - 渲染合批打断：指出具体材质图集与 DrawCall 超标原因；
+  - 粒子与界面泄漏：指出粒子发射器数量与 UI Manager 驻留元素数。
+- **A/B 嫌疑快速排查箱机制 (Isolation Testbox - 内核原型链强力拦截)**：
+  - **角色原型拦截**：直接 Hook `Actor.prototype.update`，全图所有怪物/NPC（含动态刷出的新怪）100% 绝对定格，同时通过 `Party.player` 严格放行玩家主角与队伍成员，主角移动放技能完全不受影响；
+  - **粒子系统拦截**：直接 Hook `SceneParticleEmitterManager.prototype.update`，全场景微粒瞬间停更；
+  - **事件指令拦截**：直接 Hook `EventHandler.prototype.update`，全引擎所有活跃事件指令瞬间挂起；
+  - **界面与UI拦截**：直接 Hook `UI.render`（跳过 `UI.root.draw()`）与 `UI.update`，画面上的血条、飘字、UI 瞬间彻底隐藏，真实消除绘制与更新开销；
+  - **音频排查支持**：Hook `AudioManager.se.play` 与 `playWithDistance`，挂起时自动调用 `AudioManager.se.stop()` 并清零 `GainNode`，实现真正 100% 彻底静音，排查并发音频解码和音效事件引发的瞬时掉帧。
+- **智能自适应诊断引擎 (不机械恐吓)**：
+  - 满帧自适应保护：当游戏运行在满帧（>= 55 FPS）且计算流畅时，DrawCall 偏高仅标记为 `💡 低配优化建议`，不扣除大额健康分，严禁将流畅运行的游戏误报恐吓为“严重卡顿”！
+
 ---
 
 ## 4. 当前已交付模块现状 (As-Is)

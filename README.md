@@ -9,9 +9,10 @@
 ```
 .
 ├── manifest.json       # Chrome MV3 扩展清单 (声明 world: "MAIN" 与 document_start 注入)
-├── probe-core.js       # 探针内核 (WebGL DrawCall 拦截 / 逐帧耗时计算 / 本地 5966 HTTP & SSE 微服务)
-├── hud-overlay.js      # 原生暗黑大盘 (完全非阻塞停靠侧栏 / Home 快捷键 / 4 维硬核指标)
-├── HANDOFF.md          # 核心架构交接、引擎底层踩坑防踩档案与未来复合插件演进蓝图
+├── probe-core.js       # 探针内核 (WebGL DrawCall 拦截 / 逐帧耗时计算 / 原型级嫌疑排查 / 5966 微服务)
+├── hud-overlay.js      # 原生暗黑大盘 (普通/专业双模切换 / 真凶定位档案 / 一键快速排查 / Home 快捷键)
+├── icons/              # Yami 原生暗黑风格经典素材图标体系
+├── HANDOFF.md          # 核心架构交接、引擎底层踩坑防踩档案与复合套件演进蓝图
 └── README.md           # 本说明文件
 ```
 
