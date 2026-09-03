@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = 4;
+  const PROBE_VERSION = '0.1.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -732,6 +732,8 @@
     state.frameObjMs = new Map();
   }
 
+  setTimeout(function() { checkUpdate(); }, 3500);
+
   const probeInterval = setInterval(function() {
     refresh();
     if (state.hooked.game) {
@@ -1213,11 +1215,135 @@
     }
   }
 
+  
+  // ============================================================
+  // 自动化版本管理与一键热更新引擎 (依托 GitHub + jsDelivr 免费全球加速生态)
+  // ============================================================
+  const UPDATE_CONFIG = {
+    currentVersion: PROBE_VERSION,
+    repo: 'bajibaji/yami-tools',
+    branch: 'extension',
+    cdnBase: 'https://cdn.jsdelivr.net/gh/bajibaji/yami-tools@extension/',
+    rawBase: 'https://raw.githubusercontent.com/bajibaji/yami-tools/extension/',
+    updateFiles: [
+      'manifest.json',
+      'probe-core.js',
+      'hud-overlay.js',
+      'HANDOFF.md',
+      'README.md'
+    ]
+  };
+
+  // 语义化版本比对: v1 > v2 返回 1, v1 < v2 返回 -1, 相等返回 0
+  function compareVersion(v1, v2) {
+    const s1 = String(v1).replace(/^v/, '').split('.').map(Number);
+    const s2 = String(v2).replace(/^v/, '').split('.').map(Number);
+    for (let i = 0; i < Math.max(s1.length, s2.length); i++) {
+      const n1 = s1[i] || 0;
+      const n2 = s2[i] || 0;
+      if (n1 > n2) return 1;
+      if (n1 < n2) return -1;
+    }
+    return 0;
+  }
+
+  // 安全下载远程文件文本 (主备双通道容灾)
+  async function fetchRemoteText(filename) {
+    const ts = Date.now();
+    const urls = [
+      UPDATE_CONFIG.cdnBase + filename + '?t=' + ts,
+      UPDATE_CONFIG.rawBase + filename + '?t=' + ts
+    ];
+    for (const u of urls) {
+      try {
+        const resp = await fetch(u, { cache: 'no-cache' });
+        if (resp.ok) {
+          return await resp.text();
+        }
+      } catch (e) {}
+    }
+    throw new Error('无法从远端拉取文件: ' + filename);
+  }
+
+  // 检查是否有新版本
+  async function checkUpdate() {
+    try {
+      const remoteManifestText = await fetchRemoteText('manifest.json');
+      const remoteManifest = JSON.parse(remoteManifestText);
+      const remoteVer = remoteManifest.version;
+      const hasUpdate = compareVersion(remoteVer, UPDATE_CONFIG.currentVersion) > 0;
+      const result = {
+        hasUpdate: hasUpdate,
+        currentVersion: UPDATE_CONFIG.currentVersion,
+        latestVersion: remoteVer,
+        description: remoteManifest.description || '发现新版本组件'
+      };
+      if (hasUpdate) {
+        window.dispatchEvent(new CustomEvent('yami-perf-update-found', { detail: result }));
+      }
+      return result;
+    } catch (e) {
+      return { hasUpdate: false, error: e.message };
+    }
+  }
+
+  // 执行一键热更新覆盖本地文件
+  async function performAutoUpdate(onProgress) {
+    if (typeof require !== 'function') {
+      throw new Error('当前运行环境缺失 Node.js 模块权限，无法直接写入文件系统。');
+    }
+    const fs = require('fs');
+    const path = require('path');
+
+    // 智能定位本地插件安装物理目录 (多级探测)
+    const candidateDirs = [
+      'D:/Program Files/Open Yami RPG Editor/extension/yami-perf-extension',
+      path.join(process.cwd(), 'extension/yami-perf-extension')
+    ];
+    try {
+      if (process.resourcesPath) {
+        candidateDirs.push(path.join(process.resourcesPath, '../extension/yami-perf-extension'));
+      }
+    } catch (e) {}
+
+    let localDir = null;
+    for (const d of candidateDirs) {
+      if (fs.existsSync(path.join(d, 'manifest.json'))) {
+        localDir = d;
+        break;
+      }
+    }
+    if (!localDir) {
+      localDir = candidateDirs[0];
+    }
+
+    const files = UPDATE_CONFIG.updateFiles;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (typeof onProgress === 'function') {
+        onProgress(i + 1, files.length, file);
+      }
+      const text = await fetchRemoteText(file);
+      const targetPath = path.join(localDir, file);
+      fs.writeFileSync(targetPath, text, 'utf8');
+    }
+
+    return {
+      success: true,
+      version: UPDATE_CONFIG.currentVersion,
+      updatedFiles: files.length,
+      targetDir: localDir
+    };
+  }
+
   window.__YAMI_PERF_PROBE__ = {
     version: PROBE_VERSION,
     state: state,
     glStats: glStats,
     getReport: buildReport,
+    checkUpdate: checkUpdate,
+    performAutoUpdate: performAutoUpdate,
+    compareVersion: compareVersion,
     getDiagnosisReport: getDiagnosisReport,
     getSceneDetails: getSceneDetails,
     getMemoryInfo: getMemoryInfo,

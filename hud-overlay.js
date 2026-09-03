@@ -421,6 +421,38 @@
         font-weight: 600 !important;
       }
 
+      
+      /* 自动更新提示条 */
+      .yami-update-banner {
+        background: linear-gradient(90deg, #182838, #203040) !important;
+        border: 1px solid #0080c0 !important;
+        border-radius: 3px !important;
+        padding: 8px 10px !important;
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        animation: yami-pulse 2s infinite !important;
+        font-size: 11px !important;
+      }
+      .yami-update-btn {
+        background: #0080c0 !important;
+        color: #ffffff !important;
+        border: none !important;
+        padding: 3px 10px !important;
+        border-radius: 2px !important;
+        cursor: pointer !important;
+        font-weight: 600 !important;
+        font-size: 11px !important;
+        transition: background 0.15s ease !important;
+      }
+      .yami-update-btn:hover {
+        background: #00a0f0 !important;
+      }
+      .yami-update-btn:disabled {
+        background: #405060 !important;
+        cursor: not-allowed !important;
+      }
+
       /* 主体内容容器 */
       .yami-perf-dock-body {
         flex: 1 !important;
@@ -614,6 +646,15 @@
           </div>
           <div class="yami-perf-icon-btn" id="btn-dock-close" role="button" title="收起 (Home / ESC)">×</div>
         </div>
+      </div>
+
+      <!-- 新版本升级提醒条 (有新版时自动浮现) -->
+      <div class="yami-update-banner" id="yami-update-banner" style="display: none; margin: 0 12px 10px 12px;">
+        <div style="display: flex; flex-direction: column; gap: 1px;">
+          <span style="font-weight: 600; color: #ffffff;">🚀 发现新版本 <span id="yami-latest-ver" style="color: #1cff9b;">v0.2.0</span></span>
+          <span style="color: #88a0b0; font-size: 10px;">与 GitHub 最新代码同步</span>
+        </div>
+        <button class="yami-update-btn" id="btn-do-update">一键热更新</button>
       </div>
 
       <div class="yami-perf-tabs" id="yami-tabs-bar">
@@ -839,7 +880,10 @@
       </div>
 
       <div class="yami-perf-dock-footer">
-        <div style="color: #808080;">游戏运行中 · 键盘鼠标自由交互</div>
+        <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
+          <span>运行中</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.1.0 (检查更新)</span>
+        </div>
         <div style="display: flex; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
           <div class="yami-perf-btn" id="dock-btn-dl" role="button">保存报告</div>
@@ -1163,6 +1207,67 @@
       } catch (err) {
         console.error('[YAMI PERF] refreshSimpleDiagnosis error:', err);
       }
+    }
+
+    
+    // ============================================================
+    // 自动更新前端交互绑定
+    // ============================================================
+    const updateBanner = document.getElementById('yami-update-banner');
+    const updateVerSpan = document.getElementById('yami-latest-ver');
+    const updateBtn = document.getElementById('btn-do-update');
+    const versionBadge = document.getElementById('yami-version-badge');
+
+    // 监听发现新版本事件
+    window.addEventListener('yami-perf-update-found', function(e) {
+      const info = e.detail;
+      if (!info) return;
+      if (updateBanner) updateBanner.style.display = 'flex';
+      if (updateVerSpan) updateVerSpan.textContent = 'v' + info.latestVersion;
+      if (versionBadge) versionBadge.textContent = '发现新版 v' + info.latestVersion;
+    });
+
+    // 点击一键热更新按钮
+    if (updateBtn) {
+      updateBtn.addEventListener('click', async function(e) {
+        e.stopPropagation();
+        const probe = window.__YAMI_PERF_PROBE__;
+        if (!probe || !probe.performAutoUpdate) return;
+
+        updateBtn.disabled = true;
+        updateBtn.textContent = '⏳ 连接中...';
+
+        try {
+          const res = await probe.performAutoUpdate(function(cur, total, file) {
+            updateBtn.textContent = '⏳ 更新中 (' + cur + '/' + total + ')...';
+          });
+          updateBtn.textContent = '✅ 更新成功！';
+          showToast('已成功同步 GitHub 最新代码！按 Ctrl + F5 即可生效', 4000);
+          setTimeout(function() {
+            if (updateBanner) updateBanner.style.display = 'none';
+          }, 3500);
+        } catch (err) {
+          updateBtn.disabled = false;
+          updateBtn.textContent = '重试更新';
+          showToast('更新失败: ' + err.message, 3000);
+        }
+      });
+    }
+
+    // 点击版本号手动检查更新
+    if (versionBadge) {
+      versionBadge.addEventListener('click', async function(e) {
+        e.stopPropagation();
+        const probe = window.__YAMI_PERF_PROBE__;
+        if (!probe || !probe.checkUpdate) return;
+        showToast('正在检测 GitHub 仓库最新版本...');
+        const res = await probe.checkUpdate();
+        if (res.hasUpdate) {
+          showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
+        } else {
+          showToast('当前已是最新版本 (v' + (probe.version || '0.1.0') + ')');
+        }
+      });
     }
 
     // Tab 切换逻辑

@@ -111,6 +111,17 @@
 - **智能自适应诊断引擎 (不机械恐吓)**：
   - 满帧自适应保护：当游戏运行在满帧（>= 55 FPS）且计算流畅时，DrawCall 偏高仅标记为 `💡 低配优化建议`，不扣除大额健康分，严禁将流畅运行的游戏误报恐吓为“严重卡顿”！
 
+### ⑨ 版本管理与 0 成本自动化热更新体系 (Version 0.1.0 & Auto-Updater)
+- **基准版本标识**：
+  - `manifest.json` 与 `probe-core.js` 当前统一宣告版本为 `0.1.0`；
+- **0 服务器成本全球加速生态**：
+  - 依托 GitHub 仓库（`bajibaji/yami-tools@extension`）为唯一真实源码源；
+  - 依托 jsDelivr 全球免费开源 CDN（`https://cdn.jsdelivr.net/gh/bajibaji/yami-tools@extension/`）加速分发，免翻墙、免服务器、免维护、免流量费；
+- **全自动热更新机制**：
+  - 游戏启动后后台延时异步请求远程 `manifest.json` 比对语义化版本；
+  - 发现新版时，前端 UI 浮现醒目升级条；
+  - 利用 Yami 编辑器的 Electron 原生 Node.js 模块（`fs`/`path`）直接下载更新文件覆盖本地安装目录，彻底告别手动解压复制。
+
 ---
 
 ## 4. 当前已交付模块现状 (As-Is)
