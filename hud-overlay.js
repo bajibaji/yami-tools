@@ -2344,7 +2344,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.3.0 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.3.1 (检查更新)</span>
         </div>
         <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
@@ -2589,6 +2589,20 @@
     }
 
     // 监听新错误事件 (胶囊红光抖动 + 下方气泡弹窗)
+    // 已见错误 key 记忆: 进入过大盘(已读)或已提示过的同源错误不再重复打扰气泡;
+    // 黑匣子列表、计数与主页徽章仍全量更新, 只有"新类型"错误才弹一次气泡。
+    const seenErrorKeys = new Set();
+    function errKeyOf(r) {
+      return String((r && (r.message || '')) || '') + '|' + String((r && (r.source || '')) || '');
+    }
+    function markSeenExistingErrors() {
+      try {
+        const probe = window.__YAMI_PERF_PROBE__;
+        const list = (probe && probe.getErrors) ? probe.getErrors() : [];
+        for (const r of list) seenErrorKeys.add(errKeyOf(r));
+        if (seenErrorKeys.size > 600) seenErrorKeys.clear();
+      } catch (e) {}
+    }
     let errorBubbleTimer = null;
     const errorBubbleEl = document.getElementById('yami-error-bubble');
     const errorBubbleTitleEl = document.getElementById('yami-error-bubble-title');
@@ -2618,8 +2632,13 @@
         renderErrorsList();
       }
 
+      // 已查看/已提示过的同源错误不再重复弹气泡
+      const detail = e.detail;
+      const freshType = !(detail && seenErrorKeys.has(errKeyOf(detail)));
+      if (detail) seenErrorKeys.add(errKeyOf(detail));
+
       // 如果大盘未展开，触发右上角浮窗抖动 + 在浮窗下方弹窗显示
-      if (!isDockOpen) {
+      if (!isDockOpen && freshType) {
         if (capsuleEl) {
           capsuleEl.classList.remove('shake');
           void capsuleEl.offsetWidth; // 触发 reflow 重置动画
@@ -2627,7 +2646,6 @@
         }
 
         if (errorBubbleEl && errorBubbleTextEl) {
-          const detail = e.detail;
           const analysis = detail && detail.analysis;
           if (errorBubbleTitleEl) {
             errorBubbleTitleEl.textContent = (analysis && analysis.title) ? `[异常] ${analysis.title}` : '[控制台异常]';
@@ -3780,10 +3798,15 @@
         // 大盘展开时，彻底隐藏右上角迷你帧数浮窗，防止穿透或半透明时穿帮透出
         if (hud) hud.style.setProperty('display', 'none', 'important');
         if (errorBubbleEl) errorBubbleEl.classList.remove('show');
+        // 进入大盘即视为已读: 已存在错误类型全部记入 seen, 退出后同源错误不再弹气泡
+        markSeenExistingErrors();
         refreshDockData();
       } else {
         // 大盘收起时，恢复右上角迷你帧数浮窗
         if (hud) hud.style.removeProperty('display');
+        // 收起时防御性清理错误气泡与其计时器, 杜绝任何红框残留
+        if (errorBubbleEl) errorBubbleEl.classList.remove('show');
+        if (errorBubbleTimer) { clearTimeout(errorBubbleTimer); errorBubbleTimer = null; }
         safeRestoreInput();
         if (typeof isThrough !== 'undefined' && isThrough && typeof applyThroughState === 'function') {
           applyThroughState(false);
@@ -4006,7 +4029,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '0.3.0';
+      const cur = (probe && probe.version) ? probe.version : '0.3.1';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -4063,7 +4086,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '0.3.0') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '0.3.1') + ')');
           refreshVersionBadge();
         }
       });

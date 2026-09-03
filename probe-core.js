@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '0.3.0';
+  const PROBE_VERSION = '0.3.1';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -930,6 +930,9 @@
     };
   }
 
+  // 同源错误广播节流表: key=message|source -> 最近广播时间戳 (见 recordError)
+  const errDispatchTs = new Map();
+
   function recordError(item) {
     const analysis = analyzeError(item.message, item.stack, item.source);
     const errRecord = {
@@ -947,8 +950,18 @@
     state.errorHistory.unshift(errRecord);
     if (state.errorHistory.length > 100) state.errorHistory.pop();
     state.errorUnreadCount++;
+
+    // 同源错误广播节流: 同一 message+source 在 3 秒内只派发一次事件,
+    // 防止循环/高频错误风暴反复打扰界面 (黑匣子列表与未读计数仍全量记录)
     try {
-      window.dispatchEvent(new CustomEvent('yami-perf-new-error', { detail: errRecord }));
+      const nowTs = Date.now();
+      const errKey = String(errRecord.message || '') + '|' + String(errRecord.source || '');
+      const lastTs = errDispatchTs.get(errKey) || 0;
+      if (nowTs - lastTs >= 3000) {
+        errDispatchTs.set(errKey, nowTs);
+        if (errDispatchTs.size > 200) errDispatchTs.clear();
+        window.dispatchEvent(new CustomEvent('yami-perf-new-error', { detail: errRecord }));
+      }
     } catch (e) {}
   }
 

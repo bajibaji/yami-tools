@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DanJuan妙妙插件",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "DanJuan妙妙插件 - Open Yami 开发者非侵入式辅助套件 (性能大盘/控制台报错分析)",
   "action": {
     "default_title": "DanJuan妙妙插件"
