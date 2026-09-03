@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '0.2.0';
+  const PROBE_VERSION = '0.2.1';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -547,7 +547,7 @@
         SceneParticleEmitterManager.prototype.__yamiPerfSuspendHooked__ = true;
         const origEmitterUpdate = SceneParticleEmitterManager.prototype.update;
         SceneParticleEmitterManager.prototype.update = function () {
-          if (state.suspend.emitters === true) return undefined; // 全图微粒瞬间静止！
+          if (state.suspend.emitters === true) return undefined; // 全图粒子瞬间静止！
           return origEmitterUpdate.apply(this, arguments);
         };
       }
@@ -601,7 +601,7 @@
         const origUiUpdate = UI.update ? UI.update.bind(UI) : null;
         if (origUiUpdate) {
           UI.update = function () {
-            if (state.suspend.ui === true) return undefined; // 彻底跳过 UI 元素更新！
+            if (state.suspend.ui === true) return undefined; // 彻底跳过界面更新！
             return origUiUpdate.apply(this, arguments);
           };
         }
@@ -1302,23 +1302,23 @@
         culprits.push({
           level: scene.particles > 600 ? 'bad' : 'warn',
           type: 'particle',
-          title: '粒子微粒过载 (微粒: ' + scene.particles + ' 个)',
+          title: '粒子过载 (' + scene.particles + ' 个)',
           file: 'SceneParticleEmitter (场景粒子发射器)',
-          location: '发射器总数: ' + (scene.emitters || 0) + ' / 微粒: ' + scene.particles,
-          reason: '同屏大量微粒正在更新位置与渲染，造成 GPU 填充率与 CPU 遍历压力',
-          suggestion: '调低技能或场景发射器的【每秒生成数量 (Rate)】与【最大微粒上限】。',
+          location: '发射器总数: ' + (scene.emitters || 0) + ' / 粒子总数: ' + scene.particles,
+          reason: '同屏大量粒子正在更新位置与渲染，造成 GPU 填充率与 CPU 遍历压力',
+          suggestion: '调低技能或场景发射器的【每秒生成数量 (Rate)】与【最大粒子上限】。',
           targetId: 'emitters'
         });
       }
 
-      // 5. 检查 UI 元素泄漏
+      // 5. 检查界面元素泄漏
       if (scene.elements > 200) {
         culprits.push({
           level: 'warn',
           type: 'ui',
           title: '界面元素过多 (Elements: ' + scene.elements + ' 个)',
-          file: 'UIManager (界面UI管理器)',
-          location: '当前驻留 UI 元素: ' + scene.elements + ' 个',
+          file: 'UIManager (界面管理器)',
+          location: '当前驻留界面元素: ' + scene.elements + ' 个',
           reason: '界面元素堆积过多，疑似战斗飘字、弹窗或提示框未彻底销毁',
           suggestion: '检查弹窗和临时战斗文本在关闭后是否调用了 destroy() 彻底从内存移除。',
           targetId: 'ui'
@@ -1365,12 +1365,14 @@
     branch: 'extension',
     cdnBase: 'https://cdn.jsdelivr.net/gh/bajibaji/yami-tools@extension/',
     rawBase: 'https://raw.githubusercontent.com/bajibaji/yami-tools/extension/',
+    // 写盘顺序: manifest.json 必须最后落盘——它是版本门闩,
+    // 若中途失败旧 manifest 仍在,下次 checkUpdate 版本判定可继续重试,避免半更新状态。
     updateFiles: [
-      'manifest.json',
       'probe-core.js',
       'hud-overlay.js',
       'HANDOFF.md',
-      'README.md'
+      'README.md',
+      'manifest.json'
     ]
   };
 
@@ -1387,34 +1389,54 @@
     return 0;
   }
 
-  // 安全下载远程文件文本 (主备双通道容灾 + 3.5秒超时兜底)
+  // 单通道安全下载 (3.5 秒超时兜底), 失败返回 null
+  async function tryFetch(url) {
+    try {
+      let signal = undefined;
+      if (typeof AbortController !== 'undefined') {
+        const c = new AbortController();
+        setTimeout(function() { c.abort(); }, 3500);
+        signal = c.signal;
+      }
+      const resp = await fetch(url, { cache: 'no-cache', signal: signal });
+      if (resp.ok) return await resp.text();
+    } catch (e) {}
+    return null;
+  }
+
+  // 下载远端文件文本 (raw 优先串行: 直达 GitHub 无 CDN 缓存, 内容永远最新;
+  // jsDelivr 边缘缓存会滞留旧版本且 ?t= 参数无法绕过, 实测曾长期卡在 v0.1.0, 仅作网络兜底)
   async function fetchRemoteText(filename) {
     const ts = Date.now();
-    const urls = [
-      UPDATE_CONFIG.cdnBase + filename + '?t=' + ts,
-      UPDATE_CONFIG.rawBase + filename + '?t=' + ts
-    ];
-    for (const u of urls) {
-      try {
-        let signal = undefined;
-        if (typeof AbortController !== 'undefined') {
-          const c = new AbortController();
-          setTimeout(function() { c.abort(); }, 3500);
-          signal = c.signal;
-        }
-        const resp = await fetch(u, { cache: 'no-cache', signal: signal });
-        if (resp.ok) {
-          return await resp.text();
-        }
-      } catch (e) {}
+    const text = await tryFetch(UPDATE_CONFIG.rawBase + filename)
+      || await tryFetch(UPDATE_CONFIG.cdnBase + filename + '?t=' + ts);
+    if (text === null) throw new Error('无法从远端拉取文件: ' + filename);
+    return text;
+  }
+
+  // 双通道并行探测远端最新版本: 各自拉取 manifest 后取版本号更高者,
+  // 规避 CDN 陈旧缓存(返回旧版但响应成功)与 raw 单点网络故障两类缺陷。
+  async function fetchLatestManifest() {
+    const ts = Date.now();
+    const [rawText, cdnText] = await Promise.all([
+      tryFetch(UPDATE_CONFIG.rawBase + 'manifest.json'),
+      tryFetch(UPDATE_CONFIG.cdnBase + 'manifest.json?t=' + ts)
+    ]);
+    const parsed = [];
+    if (rawText !== null) { try { parsed.push({ text: rawText, m: JSON.parse(rawText) }); } catch (e) {} }
+    if (cdnText !== null) { try { parsed.push({ text: cdnText, m: JSON.parse(cdnText) }); } catch (e) {} }
+    if (parsed.length === 0) throw new Error('无法从远端拉取文件: manifest.json');
+    parsed.sort(function(a, b) { return compareVersion(b.m.version, a.m.version); });
+    if (parsed.length === 1) {
+      console.warn('[自动更新] 仅单通道可用(可能为 jsDelivr 缓存), 版本判定可能滞后。');
     }
-    throw new Error('无法从远端拉取文件: ' + filename);
+    return parsed[0].text;
   }
 
   // 检查是否有新版本
   async function checkUpdate() {
     try {
-      const remoteManifestText = await fetchRemoteText('manifest.json');
+      const remoteManifestText = await fetchLatestManifest();
       const remoteManifest = JSON.parse(remoteManifestText);
       const remoteVer = remoteManifest.version;
       const hasUpdate = compareVersion(remoteVer, UPDATE_CONFIG.currentVersion) > 0;
@@ -1428,6 +1450,7 @@
         window.dispatchEvent(new CustomEvent('yami-perf-update-found', { detail: result }));
       } else {
         window.dispatchEvent(new CustomEvent('yami-perf-update-none', { detail: result }));
+        console.log('[自动更新] 检查通道正常, 当前已是最新版本 ' + result.currentVersion + '。');
       }
       return result;
     } catch (e) {

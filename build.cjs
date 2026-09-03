@@ -90,12 +90,27 @@ for (const chk of requiredAnchors) {
   }
 }
 
-// 绝对零 Emoji 断言
+// 绝对零 Emoji + 中文术语断言 (覆盖 hud / probe / css 全部产物源)
 const emojiRegex = /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E0}-\u{1F1FF}]/u;
-const emojiCount = (hudContent.match(new RegExp(emojiRegex.source, 'gu')) || []).length;
-if (emojiCount > 0) {
-  console.error(`❌ [断言失败] 检测到违规 Emoji (${emojiCount} 处)，严禁带入界面！`);
-  failedCount++;
+const probeContent = fs.readFileSync(PROBE_JS_PATH, 'utf8');
+const styleCssContent = fs.existsSync(SRC_CSS_PATH) ? fs.readFileSync(SRC_CSS_PATH, 'utf8') : '';
+const artifactFiles = [
+  ['hud-overlay.js', hudContent],
+  ['probe-core.js', probeContent],
+  ['src/style.css', styleCssContent]
+];
+for (const [fname, fcontent] of artifactFiles) {
+  const emojiCount = (fcontent.match(new RegExp(emojiRegex.source, 'gu')) || []).length;
+  if (emojiCount > 0) {
+    console.error(`❌ [断言失败] 检测到违规 Emoji (${fname}: ${emojiCount} 处)，严禁带入界面！`);
+    failedCount++;
+  }
+  const termRegex = /粒子微粒|微粒|UI 元素/g;
+  const termHits = fcontent.match(termRegex) || [];
+  if (termHits.length > 0) {
+    console.error(`❌ [断言失败] 中文术语违规 (${fname}): ${termHits.join(' / ')}`);
+    failedCount++;
+  }
 }
 
 if (failedCount > 0) {
@@ -103,7 +118,7 @@ if (failedCount > 0) {
   process.exit(1);
 }
 
-console.log(`  [断言自检] 全部 ${requiredAnchors.length} 项核心锚点与 0 Emoji 规则校验全绿！`);
+console.log(`  [断言自检] 全部 ${requiredAnchors.length} 项核心锚点 + 0 Emoji + 术语合规校验全绿！`);
 
 // 4. 计算 MD5 函数
 function calcMd5(filePath) {
