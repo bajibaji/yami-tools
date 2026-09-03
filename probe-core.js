@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '0.1.0';
+  const PROBE_VERSION = '0.1.1';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -1247,7 +1247,7 @@
     return 0;
   }
 
-  // 安全下载远程文件文本 (主备双通道容灾)
+  // 安全下载远程文件文本 (主备双通道容灾 + 3.5秒超时兜底)
   async function fetchRemoteText(filename) {
     const ts = Date.now();
     const urls = [
@@ -1256,7 +1256,13 @@
     ];
     for (const u of urls) {
       try {
-        const resp = await fetch(u, { cache: 'no-cache' });
+        let signal = undefined;
+        if (typeof AbortController !== 'undefined') {
+          const c = new AbortController();
+          setTimeout(function() { c.abort(); }, 3500);
+          signal = c.signal;
+        }
+        const resp = await fetch(u, { cache: 'no-cache', signal: signal });
         if (resp.ok) {
           return await resp.text();
         }
@@ -1280,6 +1286,8 @@
       };
       if (hasUpdate) {
         window.dispatchEvent(new CustomEvent('yami-perf-update-found', { detail: result }));
+      } else {
+        window.dispatchEvent(new CustomEvent('yami-perf-update-none', { detail: result }));
       }
       return result;
     } catch (e) {
@@ -1327,6 +1335,18 @@
       const targetPath = path.join(localDir, file);
       fs.writeFileSync(targetPath, text, 'utf8');
     }
+
+    // 成功后同步更新内存中的版本号
+    try {
+      const manifestPath = path.join(localDir, 'manifest.json');
+      if (fs.existsSync(manifestPath)) {
+        const updatedManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        if (updatedManifest && updatedManifest.version) {
+          UPDATE_CONFIG.currentVersion = updatedManifest.version;
+          if (window.__YAMI_PERF_PROBE__) window.__YAMI_PERF_PROBE__.version = updatedManifest.version;
+        }
+      }
+    } catch (e) {}
 
     return {
       success: true,

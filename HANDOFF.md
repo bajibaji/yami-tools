@@ -113,7 +113,7 @@
 
 ### ⑨ 版本管理与 0 成本自动化热更新体系 (Version 0.1.0 & Auto-Updater)
 - **基准版本标识**：
-  - `manifest.json` 与 `probe-core.js` 当前统一宣告版本为 `0.1.0`；
+  - `manifest.json` 与 `probe-core.js` 当前统一宣告版本为 `0.1.1`；
 - **0 服务器成本全球加速生态**：
   - 依托 GitHub 仓库（`bajibaji/yami-tools@extension`）为唯一真实源码源；
   - 依托 jsDelivr 全球免费开源 CDN（`https://cdn.jsdelivr.net/gh/bajibaji/yami-tools@extension/`）加速分发，免翻墙、免服务器、免维护、免流量费；

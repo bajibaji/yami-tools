@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Yami Perf-Lab Auto Bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Open Yami 游戏自动化性能探针与卡顿分析扩展",
   "action": {
     "default_title": "Yami Perf-Lab"

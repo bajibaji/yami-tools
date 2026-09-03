@@ -376,6 +376,8 @@
         font-size: 10px !important;
         border-radius: 2px !important;
         cursor: pointer !important;
+        position: static !important;
+        user-select: none !important;
       }
       .yami-culprit-copy-btn:hover {
         background: #0080c0 !important;
@@ -424,33 +426,54 @@
       
       /* 自动更新提示条 */
       .yami-update-banner {
+        display: none !important;
         background: linear-gradient(90deg, #182838, #203040) !important;
         border: 1px solid #0080c0 !important;
         border-radius: 3px !important;
-        padding: 8px 10px !important;
-        display: flex !important;
+        padding: 8px 12px !important;
         justify-content: space-between !important;
         align-items: center !important;
+        gap: 10px !important;
         animation: yami-pulse 2s infinite !important;
         font-size: 11px !important;
+        box-sizing: border-box !important;
+      }
+      .yami-update-banner.show {
+        display: flex !important;
       }
       .yami-update-btn {
         background: #0080c0 !important;
         color: #ffffff !important;
         border: none !important;
-        padding: 3px 10px !important;
+        padding: 0 10px !important;
+        height: 26px !important;
+        line-height: 26px !important;
         border-radius: 2px !important;
         cursor: pointer !important;
         font-weight: 600 !important;
         font-size: 11px !important;
-        transition: background 0.15s ease !important;
+        position: static !important;
+        user-select: none !important;
+        white-space: nowrap !important;
+        flex-shrink: 0 !important;
+        min-width: 86px !important;
+        text-align: center !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        box-sizing: border-box !important;
+        transition: all 0.15s ease !important;
       }
       .yami-update-btn:hover {
         background: #00a0f0 !important;
       }
-      .yami-update-btn:disabled {
-        background: #405060 !important;
+      .yami-update-btn[disabled],
+      .yami-update-btn.disabled {
+        background: #384858 !important;
+        color: #b0c0d0 !important;
         cursor: not-allowed !important;
+        opacity: 0.8 !important;
+        pointer-events: none !important;
       }
 
       /* 主体内容容器 */
@@ -649,12 +672,12 @@
       </div>
 
       <!-- 新版本升级提醒条 (有新版时自动浮现) -->
-      <div class="yami-update-banner" id="yami-update-banner" style="display: none; margin: 0 12px 10px 12px;">
-        <div style="display: flex; flex-direction: column; gap: 1px;">
-          <span style="font-weight: 600; color: #ffffff;">🚀 发现新版本 <span id="yami-latest-ver" style="color: #1cff9b;">v0.2.0</span></span>
+      <div class="yami-update-banner" id="yami-update-banner" style="margin: 0 12px 10px 12px;">
+        <div style="display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1;">
+          <span style="font-weight: 600; color: #ffffff;">🚀 发现新版本 <span id="yami-latest-ver" style="color: #1cff9b;">--</span></span>
           <span style="color: #88a0b0; font-size: 10px;">与 GitHub 最新代码同步</span>
         </div>
-        <button class="yami-update-btn" id="btn-do-update">一键热更新</button>
+        <div class="yami-update-btn" id="btn-do-update" role="button">一键热更新</div>
       </div>
 
       <div class="yami-perf-tabs" id="yami-tabs-bar">
@@ -882,7 +905,7 @@
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
           <span>运行中</span>
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.1.0 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.1.1 (检查更新)</span>
         </div>
         <div style="display: flex; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
@@ -1182,7 +1205,7 @@
                 + '</div>'
                 + '<div class="yami-culprit-file-box">'
                 + '<span title="' + c.file + '">' + c.file + '</span>'
-                + '<button class="yami-culprit-copy-btn" data-copy="' + c.file + '">复制文件</button>'
+                + '<div class="yami-culprit-copy-btn" data-copy="' + c.file + '" role="button">复制文件</div>'
                 + '</div>'
                 + '<div style="color: #ffffff; font-size: 10px; font-weight: 500;">位置: ' + c.location + '</div>'
                 + '<div class="yami-culprit-reason">诊断原因: ' + c.reason + '</div>'
@@ -1221,10 +1244,15 @@
     // 监听发现新版本事件
     window.addEventListener('yami-perf-update-found', function(e) {
       const info = e.detail;
-      if (!info) return;
-      if (updateBanner) updateBanner.style.display = 'flex';
+      if (!info || !info.hasUpdate) return;
+      if (updateBanner) updateBanner.classList.add('show');
       if (updateVerSpan) updateVerSpan.textContent = 'v' + info.latestVersion;
       if (versionBadge) versionBadge.textContent = '发现新版 v' + info.latestVersion;
+    });
+
+    // 监听无新版本事件 (确保横幅隐匿)
+    window.addEventListener('yami-perf-update-none', function() {
+      if (updateBanner) updateBanner.classList.remove('show');
     });
 
     // 点击一键热更新按钮
@@ -1234,20 +1262,20 @@
         const probe = window.__YAMI_PERF_PROBE__;
         if (!probe || !probe.performAutoUpdate) return;
 
-        updateBtn.disabled = true;
+        updateBtn.classList.add('disabled');
         updateBtn.textContent = '⏳ 连接中...';
 
         try {
           const res = await probe.performAutoUpdate(function(cur, total, file) {
-            updateBtn.textContent = '⏳ 更新中 (' + cur + '/' + total + ')...';
+            updateBtn.textContent = '⏳ 更新 ' + cur + '/' + total;
           });
-          updateBtn.textContent = '✅ 更新成功！';
-          showToast('已成功同步 GitHub 最新代码！按 Ctrl + F5 即可生效', 4000);
+          updateBtn.textContent = '✅ 更新成功';
+          showToast('✅ 已同步 GitHub 最新代码！重启工程即可生效', 4500);
           setTimeout(function() {
-            if (updateBanner) updateBanner.style.display = 'none';
+            if (updateBanner) updateBanner.classList.remove('show');
           }, 3500);
         } catch (err) {
-          updateBtn.disabled = false;
+          updateBtn.classList.remove('disabled');
           updateBtn.textContent = '重试更新';
           showToast('更新失败: ' + err.message, 3000);
         }
@@ -1265,7 +1293,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '0.1.0') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '0.1.1') + ')');
         }
       });
     }
