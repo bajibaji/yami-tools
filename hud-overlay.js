@@ -2524,7 +2524,7 @@
       <div class="yami-perf-tabs" id="yami-tabs-bar" style="display: none !important;">
         <div class="yami-perf-tab active" data-ptab="overview" role="button"><i class="yami-icon yami-icon-settings"></i><span>性能总览</span></div>
         <div class="yami-perf-tab" data-ptab="render" role="button"><i class="yami-icon yami-icon-cube"></i><span>渲染DrawCall</span></div>
-        <div class="yami-perf-tab" data-ptab="scene" role="button"><i class="yami-icon yami-icon-scene"></i><span>场景实体</span></div>
+        <!-- 场景实体统一走主页白话检视页(SceneLab), 专业模式 tab 不再重复暴露入口; ptab-scene 数据块代码保留备用 -->
         <div class="yami-perf-tab" data-ptab="events" role="button"><i class="yami-icon yami-icon-event"></i><span>活跃事件</span></div>
       </div>
 
