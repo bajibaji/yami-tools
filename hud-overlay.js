@@ -3145,20 +3145,21 @@
       });
 
       const filterBarEl = document.getElementById('yami-error-filter-bar');
+      // 分类中文标签 (小白直读, 过滤器按钮与卡片头部共用)
+      const CAT_LABEL = {
+        all: '全部',
+        'high-freq': '高频',
+        NullPointer: '空指针',
+        MissingFunction: '方法丢失',
+        PluginError: '插件指令',
+        SceneError: '场景地形',
+        ResourceNotFound: '资源404',
+        console: '控制台'
+      };
       if (filterBarEl) {
         filterBarEl.querySelectorAll('.yami-error-filter-btn').forEach(function(btn) {
           const f = btn.getAttribute('data-filter');
-          const labelMap = {
-            all: '全部',
-            'high-freq': '高频',
-            NullPointer: '空指针',
-            MissingFunction: '方法丢失',
-            PluginError: '插件指令',
-            SceneError: '场景地形',
-            ResourceNotFound: '资源404',
-            console: '控制台'
-          };
-          btn.textContent = (labelMap[f] || f) + ' (' + (counts[f] || 0) + ')';
+          btn.textContent = (CAT_LABEL[f] || f) + ' (' + (counts[f] || 0) + ')';
           btn.classList.toggle('active', f === errorActiveFilter);
         });
       }
@@ -3232,7 +3233,7 @@
         return '<div class="yami-error-card">'
           + '<div class="yami-error-card-header">'
           + '<div style="display: flex; align-items: center;">'
-          + '<span class="yami-error-type">[异常] ' + (a.category || err.type) + '</span>'
+          + '<span class="yami-error-type">[异常] ' + (CAT_LABEL[a.category] || a.category || err.type) + '</span>'
           + countBadge
           + '</div>'
           + '<span class="yami-error-time">' + timeInfo + '</span>'
@@ -4633,7 +4634,7 @@
         const chips = [
           ['角色', c.actors || 0], ['触发区域', (s.regions || []).length],
           ['动画', c.animations || 0], ['粒子', c.particles || 0],
-          ['弹道', c.triggers || 0], ['光源', c.lights || 0]
+          ['触发器', c.triggers || 0], ['光源', c.lights || 0]
         ];
         const cam = s.camera;
         let size = '';
@@ -4782,7 +4783,7 @@
           ['身份', a.isPlayer ? '玩家主角' : (a.isMember ? '队伍成员' : '普通角色')]
         ];
         if (a.fileId || a.presetId) items.push(['文件', escapeHtml(a.fileId || '—') + (a.presetId ? ' · 预设 ' + escapeHtml(a.presetId) : '')]);
-        if (a.visible === false) items.push(['可见', '隐藏 (visible=false)']);
+        if (a.visible === false) items.push(['可见', '已隐藏']);
         if (typeof a.passage === 'number') items.push(['通行码', a.passage]);
         items.push(['碰撞体', cd
           ? ((cd.shape === 'rect' ? '矩形' : '圆形') + ' 直径 ' + cd.size + ' 图块' + (cd.immovable ? ' · 不可推动' : ' · 可推动') + (cd.moved ? ' · 本帧位移' : ''))
