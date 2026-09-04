@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '0.4.1';
+  const PROBE_VERSION = '0.5.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -873,7 +873,160 @@
     }
   }
 
-  
+  // ============================================================
+  // 场景实体快照 (Scene Inspector): 角色实例/触发区域/场景元信息
+  // ============================================================
+  function getSceneEntities() {
+    const empty = function (partial) {
+      return Object.assign({
+        ok: true, scene: false, error: null,
+        meta: { sceneId: '', path: '', width: 0, height: 0, tileWidth: 0 },
+        counts: {
+          actors: 0, visibleActors: 0, animations: 0, visibleAnimations: 0,
+          triggers: 0, visibleTriggers: 0, lights: 0, emitters: 0, particles: 0
+        },
+        camera: null,
+        actors: { local: [], global: [] },
+        regions: []
+      }, partial || {});
+    };
+
+    try {
+      if (typeof Scene === 'undefined' || !Scene) return empty();
+      const binding = Scene.binding || null;
+      if (!binding) return empty();
+      const sceneData = binding.data || {};
+
+      // 计数与相机直接复用既有诊断源 (100% 对齐引擎原生 F10)
+      const det = getSceneDetails();
+      const counts = {
+        actors: det.actors, visibleActors: det.visibleActors,
+        animations: det.animations, visibleAnimations: det.visibleAnimations,
+        triggers: det.triggers, visibleTriggers: det.visibleTriggers,
+        lights: det.lights, emitters: det.emitters, particles: det.particles
+      };
+
+      function entityName(e, fallback) {
+        try {
+          if (e && e.name) return e.name;
+          if (e && e.data && e.data.name) return e.data.name;
+          if (e && e.presetId) return e.presetId;
+        } catch (err) {}
+        return fallback || '实体';
+      }
+
+      const local = [];
+      const global = [];
+      try {
+        const actors = (Scene.actor && Scene.actor.list) ? Scene.actor.list : [];
+        for (let i = 0; i < actors.length; i++) {
+          const a = actors[i];
+          const row = {
+            name: entityName(a, 'actor#' + i),
+            fileId: (a.data && a.data.id) || null,
+            presetId: a.presetId || null,
+            x: Math.round((a.x || 0) * 10) / 10,
+            y: Math.round((a.y || 0) * 10) / 10,
+            angle: Math.round((a.angle || 0) * 180 / Math.PI),
+            priority: a.priority || 0,
+            visible: a.visible !== false,
+            passage: typeof a.passage === 'number' ? a.passage : null,
+            isPlayer: false,
+            isMember: false,
+            collider: null,
+            nav: null,
+            anim: null
+          };
+          try {
+            if (a.collider) {
+              row.collider = {
+                shape: a.collider.shape || 'circle',
+                size: a.collider.size || 0,
+                immovable: !!a.collider.immovable,
+                moved: !!a.collider.moved
+              };
+            }
+          } catch (e) {}
+          try {
+            if (a.navigator) {
+              const n = a.navigator;
+              row.nav = {
+                mode: n.mode || 'stop',
+                speed: n.movementSpeed || 0,
+                moving: !!(n.mode && n.mode !== 'stop'),
+                hasPath: !!n.movementPath
+              };
+            }
+          } catch (e) {}
+          try {
+            if (a.animation) {
+              row.anim = {
+                visible: a.animation.visible !== false,
+                paused: !!a.animation.paused,
+                ended: !!a.animation.ended,
+                motion: a.animation.motionName || ''
+              };
+            }
+          } catch (e) {}
+          try {
+            if (typeof Party !== 'undefined' && Party) {
+              row.isPlayer = Party.player === a;
+              if (Party.members) {
+                row.isMember = Array.prototype.indexOf.call(Party.members, a) >= 0;
+              }
+            }
+          } catch (e) {}
+
+          let kind = 'local';
+          try {
+            if (typeof GlobalActor !== 'undefined' && a instanceof GlobalActor) kind = 'global';
+          } catch (e) {}
+          // 跨 realm instanceof 兜底: 编辑器场景数据显式标注 global
+          if (kind === 'local' && a.data && a.data.type === 'global') kind = 'global';
+          (kind === 'global' ? global : local).push(row);
+        }
+      } catch (e) {}
+
+      const regions = [];
+      try {
+        const rl = (Scene.region && Scene.region.list) ? Scene.region.list : [];
+        for (let i = 0; i < rl.length; i++) {
+          const r = rl[i];
+          const inside = (r.actors && r.actors.length) ? r.actors : [];
+          regions.push({
+            name: entityName(r, '区域#' + i),
+            presetId: r.presetId || null,
+            x: Math.round((r.x || 0) * 10) / 10,
+            y: Math.round((r.y || 0) * 10) / 10,
+            width: Math.round((r.width || 0) * 10) / 10,
+            height: Math.round((r.height || 0) * 10) / 10,
+            actorCount: inside.length,
+            actors: inside.slice(0, 8).map(function (m) { return entityName(m, '角色'); })
+          });
+        }
+      } catch (e) {}
+
+      return {
+        ok: true,
+        scene: true,
+        error: null,
+        meta: {
+          sceneId: binding.id || '',
+          path: sceneData.path || '',
+          width: sceneData.width || 0,
+          height: sceneData.height || 0,
+          tileWidth: sceneData.tileWidth || 0
+        },
+        counts: counts,
+        camera: det.camera || null,
+        actors: { local: local, global: global },
+        regions: regions
+      };
+    } catch (e) {
+      return empty({ ok: false, scene: false, error: String((e && e.message) || e) });
+    }
+  }
+
   // ============================================================
   // 控制台异常与后台错误黑匣子分析引擎 (Error Analyzer)
   // ============================================================
@@ -1689,6 +1842,7 @@
     getErrorCount: function() { return state.errorHistory.length; },
     clearErrors: function() { state.errorHistory = []; state.errorUnreadCount = 0; return true; },
     getSceneDetails: getSceneDetails,
+    getSceneEntities: getSceneEntities,
     getMemoryInfo: getMemoryInfo,
     getActiveEvents: getActiveEventsDetails,
     // ② 嫌疑开关: 挂起/恢复某类对象的真实更新 (actors/animations/emitters/triggers/ui/events)

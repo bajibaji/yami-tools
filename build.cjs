@@ -89,6 +89,8 @@ const requiredAnchors = [
   { name: '错误契约注册', pattern: /Views\.register\('errors'/ },
   { name: '性能契约注册', pattern: /Views\.register\('profiler'/ },
   { name: '存档契约注册', pattern: /Views\.register\('save'/ },
+  { name: '场景实体契约注册', pattern: /Views\.register\('scene'/ },
+  { name: '场景实体页骨架', pattern: /id="yami-scene-root"/ },
   { name: 'Remix Icon: ri-pulse-line', pattern: /ri-pulse-line/ },
   { name: 'Remix Icon: ri-bug-line', pattern: /ri-bug-line/ },
   { name: 'Remix Icon: ri-save-3-line', pattern: /ri-save-3-line/ },
@@ -99,7 +101,7 @@ const requiredAnchors = [
   { name: '指标 ID: yami-ms', pattern: /id="yami-ms"/ },
   { name: '指标 ID: yami-dc', pattern: /id="yami-dc"/ },
   { name: '指标 ID: diag-score', pattern: /id="diag-score"/ },
-  { name: '四模块入口布局齐全', pattern: /data-target="profiler"[\s\S]*?data-target="errors"[\s\S]*?data-target="save"[\s\S]*?变量与开关/ }
+  { name: '四模块入口布局齐全', pattern: /data-target="profiler"[\s\S]*?data-target="errors"[\s\S]*?data-target="save"[\s\S]*?data-target="scene"/ }
 ];
 
 let failedCount = 0;

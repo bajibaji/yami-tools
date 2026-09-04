@@ -2157,6 +2157,299 @@
       .yami-error-btn.primary:hover {
         background: #0c5b8f !important;
       }
+      /* ============================================================
+         DanJuan妙妙插件 - 场景实体检查台 (Scene Inspector)
+         ============================================================ */
+      #page-scene.yami-suite-page {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+      }
+      .yami-scene-container {
+        display: flex !important;
+        flex-direction: column !important;
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        gap: 8px !important;
+        padding: 2px 2px 4px 2px !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+      }
+      .yami-scene-head {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        flex-shrink: 0 !important;
+        background: #202020 !important;
+        border: 1px solid #3d3d3d !important;
+        border-radius: 3px !important;
+        padding: 8px 10px !important;
+      }
+      .yami-scene-map-name {
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        color: #e8e8e8 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+      }
+      .yami-scene-map-path {
+        font-size: 10px !important;
+        color: #808080 !important;
+        line-height: 1.6 !important;
+        word-break: break-all !important;
+        font-family: Consolas, monospace !important;
+      }
+      .yami-scene-chips {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+      }
+      .yami-scene-chip {
+        display: inline-flex !important;
+        gap: 6px !important;
+        align-items: center !important;
+        font-size: 10px !important;
+        color: #a0a0a0 !important;
+        background: #181818 !important;
+        border: 1px solid #303030 !important;
+        border-radius: 2px !important;
+        padding: 2px 7px !important;
+        user-select: none !important;
+      }
+      .yami-scene-chip b {
+        color: #e0e0e0 !important;
+        font-weight: 600 !important;
+        font-family: Consolas, monospace !important;
+      }
+      .yami-scene-cam {
+        font-size: 10px !important;
+        color: #808080 !important;
+        font-family: Consolas, monospace !important;
+      }
+      .yami-scene-toolbar {
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        flex-shrink: 0 !important;
+        flex-wrap: wrap !important;
+      }
+      .yami-scene-search {
+        flex: 1 1 140px !important;
+        min-width: 120px !important;
+        height: 24px !important;
+        background: #181818 !important;
+        border: 1px solid #3d3d3d !important;
+        border-radius: 2px !important;
+        color: #d8d8d8 !important;
+        font-size: 11px !important;
+        padding: 0 8px !important;
+        outline: none !important;
+        box-sizing: border-box !important;
+      }
+      .yami-scene-search:focus {
+        border-color: #0080c0 !important;
+      }
+      .yami-scene-kinds {
+        display: inline-flex !important;
+        gap: 4px !important;
+      }
+      .yami-scene-kind {
+        font-size: 11px !important;
+        color: #9a9a9a !important;
+        background: #202020 !important;
+        border: 1px solid #3d3d3d !important;
+        padding: 2px 9px !important;
+        border-radius: 2px !important;
+        cursor: pointer !important;
+        white-space: nowrap !important;
+        user-select: none !important;
+      }
+      .yami-scene-kind.on {
+        color: #0aa0d8 !important;
+        border-color: #0080c0 !important;
+        background: #10242c !important;
+      }
+      .yami-scene-vis {
+        font-size: 11px !important;
+        color: #9a9a9a !important;
+        cursor: pointer !important;
+        padding: 2px 4px !important;
+        white-space: nowrap !important;
+        user-select: none !important;
+      }
+      .yami-scene-vis.on {
+        color: #20c080 !important;
+      }
+      .yami-scene-groups {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        overflow-y: auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 10px !important;
+        padding-right: 2px !important;
+      }
+      .yami-scene-groups::-webkit-scrollbar {
+        width: 4px !important;
+      }
+      .yami-scene-groups::-webkit-scrollbar-track {
+        background: #181818 !important;
+      }
+      .yami-scene-groups::-webkit-scrollbar-thumb {
+        background: #383838 !important;
+        border-radius: 2px !important;
+      }
+      .yami-scene-groups::-webkit-scrollbar-thumb:hover {
+        background: #4a4a4a !important;
+      }
+      .yami-scene-group {
+        border: 1px solid #3d3d3d !important;
+        border-radius: 3px !important;
+        background: #1c1c1c !important;
+        overflow: hidden !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-scene-group-title {
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        padding: 7px 10px !important;
+        background: #242424 !important;
+        border-bottom: 1px solid #101010 !important;
+      }
+      .yami-scene-dot {
+        width: 6px !important;
+        height: 6px !important;
+        border-radius: 50% !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-scene-dot.actors { background: #e0a040 !important; }
+      .yami-scene-dot.regions { background: #20a080 !important; }
+      .yami-scene-group-title b {
+        font-size: 12px !important;
+        color: #d8d8d8 !important;
+      }
+      .yami-scene-group-title em {
+        font-style: normal !important;
+        font-size: 10px !important;
+        color: #808080 !important;
+        margin-left: auto !important;
+      }
+      .yami-scene-subgroup-title {
+        display: flex !important;
+        align-items: center !important;
+        padding: 5px 12px !important;
+        font-size: 10px !important;
+        color: #888888 !important;
+        background: #202020 !important;
+        border-bottom: 1px solid #1a1a1a !important;
+      }
+      .yami-scene-subgroup-title span {
+        margin-left: auto !important;
+        color: #666666 !important;
+        font-family: Consolas, monospace !important;
+      }
+      .yami-scene-row {
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        padding: 6px 12px !important;
+        cursor: pointer !important;
+        border-bottom: 1px solid #161616 !important;
+        user-select: none !important;
+        font-size: 12px !important;
+        background: transparent !important;
+        color: #e0e0e0 !important;
+      }
+      .yami-scene-row:hover { background: #262626 !important; }
+      .yami-scene-row.open { background: #232a2e !important; }
+      .yami-scene-arrow {
+        color: #666666 !important;
+        font-size: 10px !important;
+        width: 10px !important;
+        text-align: center !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-scene-name {
+        color: #e0e0e0 !important;
+        min-width: 0 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+      }
+      .yami-scene-tags {
+        display: inline-flex !important;
+        gap: 4px !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-scene-tag {
+        font-style: normal !important;
+        font-size: 9px !important;
+        padding: 1px 5px !important;
+        border-radius: 2px !important;
+        background: #181818 !important;
+        color: #a0a0a0 !important;
+        border: 1px solid #303030 !important;
+        white-space: nowrap !important;
+      }
+      .yami-scene-tag.player { color: #ffd76a !important; border-color: #8a7420 !important; background: #221c08 !important; }
+      .yami-scene-tag.member { color: #7fc8ff !important; border-color: #28506e !important; background: #0d1a24 !important; }
+      .yami-scene-tag.move { color: #8ee6b0 !important; border-color: #1f6b43 !important; background: #0c1e14 !important; }
+      .yami-scene-tag.hide { color: #b0b0b0 !important; border-color: #4a4a4a !important; background: #191919 !important; }
+      .yami-scene-tag.warn { color: #ff9c6a !important; border-color: #8a4a20 !important; background: #241207 !important; }
+      .yami-scene-tag.inside { color: #6ac2c2 !important; border-color: #2a6a6a !important; background: #0b1a1a !important; }
+      .yami-scene-coord {
+        margin-left: auto !important;
+        font-family: Consolas, monospace !important;
+        font-size: 10px !important;
+        color: #9a9a9a !important;
+        flex-shrink: 0 !important;
+        padding-left: 8px !important;
+      }
+      .yami-scene-meta {
+        font-size: 10px !important;
+        color: #707070 !important;
+        flex-shrink: 1 !important;
+        min-width: 0 !important;
+        max-width: 130px !important;
+        text-align: right !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+      }
+      .yami-scene-detail {
+        background: #16181a !important;
+        border-bottom: 1px solid #161616 !important;
+        padding: 8px 12px !important;
+      }
+      .yami-scene-dl {
+        display: grid !important;
+        grid-template-columns: auto 1fr !important;
+        gap: 3px 14px !important;
+        font-size: 11px !important;
+      }
+      .yami-scene-dl span {
+        color: #808080 !important;
+        white-space: nowrap !important;
+      }
+      .yami-scene-dl b {
+        color: #d8d8d8 !important;
+        font-weight: 500 !important;
+        line-height: 1.7 !important;
+        word-break: break-all !important;
+      }
+      .yami-scene-empty {
+        color: #888888 !important;
+        font-size: 11px !important;
+        padding: 10px 12px !important;
+        text-align: center !important;
+        line-height: 1.8 !important;
+      }
     `;
     document.head.appendChild(style);
 
@@ -2293,18 +2586,18 @@
               <div class="yami-home-module-badge yellow">进入</div>
             </div>
 
-            <!-- 模块 4: 变量与开关 (Remix Icon: ri-equalizer-line) -->
-            <div class="yami-home-module-item disabled">
+            <!-- 模块 4: 场景实体 (Scene Inspector) -->
+            <div class="yami-home-module-item" data-target="scene" role="button">
               <div class="yami-home-module-main">
                 <div class="yami-home-module-icon-box" title="RemixIcon: ri-equalizer-line">
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6.17071 18C6.58254 16.8348 7.69378 16 9 16C10.3062 16 11.4175 16.8348 11.8293 18H22V20H11.8293C11.4175 21.1652 10.3062 22 9 22C7.69378 22 6.58254 21.1652 6.17071 20H2V18H6.17071ZM12.1707 11C12.5825 9.83481 13.6938 9 15 9C16.3062 9 17.4175 9.83481 17.8293 11H22V13H17.8293C17.4175 14.1652 16.3062 15 15 15C13.6938 15 12.5825 14.1652 12.1707 13H2V11H12.1707ZM6.17071 4C6.58254 2.83481 7.69378 2 9 2C10.3062 2 11.4175 2.83481 11.8293 4H22V6H11.8293C11.4175 7.16519 10.3062 8 9 8C7.69378 8 6.58254 7.16519 6.17071 6H2V4H6.17071ZM9 6C9.55228 6 10 5.55228 10 5C10 4.44772 9.55228 4 9 4C8.44772 4 8 4.44772 8 5C8 5.55228 8.44772 6 9 6ZM15 13C15.5523 13 16 12.5523 16 12C16 11.4477 15.5523 11 15 11C14.4477 11 14 11.4477 14 12C14 12.5523 14.4477 13 15 13ZM9 20C9.55228 20 10 19.5523 10 19C10 18.4477 9.55228 18 9 18C8.44772 18 8 18.4477 8 19C8 19.5523 8.44772 20 9 20Z"></path></svg>
                 </div>
                 <div>
-                  <div class="yami-home-module-title">变量与开关</div>
-                  <div class="yami-home-module-desc">全局变量与开关调试</div>
+                  <div class="yami-home-module-title">场景实体</div>
+                  <div class="yami-home-module-desc">角色、区域与碰撞体检视</div>
                 </div>
               </div>
-              <div class="yami-home-module-badge">规划中</div>
+              <div class="yami-home-module-badge active">进入</div>
             </div>
           </div>
         </div>
@@ -2563,11 +2856,18 @@
         </div>
       </div>
 
+      <!-- 页面 5: 场景实体检查台 (Scene Inspector) -->
+      <div class="yami-suite-page" id="page-scene" style="display: none !important;">
+        <div class="yami-scene-container" id="yami-scene-root">
+          <!-- 动态装载 SceneLab 视图 -->
+        </div>
+      </div>
+
       </div><!-- end yami-perf-dock-body -->
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.4.1 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.5.0 (检查更新)</span>
         </div>
         <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
@@ -2596,7 +2896,8 @@
       home: document.getElementById('page-home'),
       profiler: document.getElementById('page-profiler'),
       errors: document.getElementById('page-errors'),
-      save: document.getElementById('page-save')
+      save: document.getElementById('page-save'),
+      scene: document.getElementById('page-scene')
     };
 
     // ============================================================
@@ -2750,7 +3051,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v0.4.1 (DanJuan妙妙插件)',
+        '- **插件版本**: v0.5.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -4172,6 +4473,359 @@
       }
     });
 
+    // ============================================================
+    // DanJuan妙妙插件 · 场景实体检查台 (Scene Inspector) 微内核实现
+    // 数据通道: probe.getSceneEntities() 500ms 节流轮询, 快照 JSON 相等则跳过重建
+    // ============================================================
+    const SceneLab = {
+      ctx: null,
+      root: null,
+      kw: '',
+      kind: 'all',          // all | actors | regions
+      onlyVisible: false,
+      open: {},             // 展开行 key 集: 角色 l0/g1, 区域 r0 (key 存源数组索引)
+      limit: 200,
+      lastJson: '',
+      lastPullAt: 0,
+      snap: null,
+
+      init(ctx) {
+        this.ctx = ctx;
+        this._ensureRoot();
+        this.refresh(ctx);
+      },
+
+      _ensureRoot() {
+        if (!this.root) this.root = document.getElementById('yami-scene-root');
+        if (!this._bound && this.root) {
+          this._bound = true;
+          this.root.addEventListener('click', this._onClick.bind(this));
+          this.root.addEventListener('input', this._onInput.bind(this));
+        }
+      },
+
+      refresh(ctx) {
+        if (ctx) this.ctx = ctx;
+        this._ensureRoot();
+        const now = Date.now();
+        if (now - this.lastPullAt < 500) return;   // ponytail: 500ms 轮询节流, 确有更实时需求再降
+        this.lastPullAt = now;
+        let probe = null;
+        if (ctx && typeof ctx.probe === 'function') {
+          try { probe = ctx.probe(); } catch (e) {}
+        }
+        if (!probe && typeof window !== 'undefined') probe = window.__YAMI_PERF_PROBE__;
+        if (!probe || typeof probe.getSceneEntities !== 'function') return;
+        let snap = null;
+        try { snap = probe.getSceneEntities(); } catch (e) { snap = null; }
+        if (!snap) return;
+        const json = JSON.stringify(snap);
+        if (json === this.lastJson && this.root && this.root.innerHTML) return;
+        this.lastJson = json;
+        this.snap = snap;
+        this.render();
+      },
+
+      destroy() {
+        this.open = {};
+        this.lastJson = '';
+        this.snap = null;
+        this.root = null;
+        this._bound = false;
+        this.ctx = null;
+      },
+
+      _onClick(e) {
+        const t = e.target || e;
+        const row = t.closest ? t.closest('[data-open-key]') : null;
+        if (row) { this._toggleDetail(row.getAttribute('data-open-key'), row); return; }
+        const chip = t.closest ? t.closest('[data-kind]') : null;
+        if (chip) { this.kind = chip.getAttribute('data-kind'); this.render(); return; }
+        const vis = t.closest ? t.closest('[data-role="yami-scene-vis"]') : null;
+        if (vis) { this.onlyVisible = !this.onlyVisible; this.render(); }
+      },
+
+      _onInput(e) {
+        const inp = e.target;
+        if (inp && inp.classList && inp.classList.contains('yami-scene-search')) {
+          this.kw = inp.value;
+          this.render();
+        }
+      },
+
+      _toggleDetail(key, rowEl) {
+        const wasOpen = !!this.open[key];
+        let d = rowEl.nextElementSibling;
+        if (d && d.classList && d.classList.contains('yami-scene-detail')) {
+          d.parentNode.removeChild(d);
+        }
+        if (wasOpen) {
+          delete this.open[key];
+          rowEl.classList.remove('open');
+          return;
+        }
+        this.open[key] = 1;
+        rowEl.classList.add('open');
+        const entry = this._entry(key);
+        const html = entry ? (key.charAt(0) === 'r' ? this._regionDetail(entry) : this._actorDetail(entry)) : '';
+        if (!html) return;
+        const div = document.createElement('div');
+        div.className = 'yami-scene-detail';
+        div.innerHTML = html;
+        rowEl.parentNode.insertBefore(div, rowEl.nextSibling);
+      },
+
+      _entry(key) {
+        const s = this.snap;
+        if (!s) return null;
+        const m = /^([lg])(\d+)$/.exec(key);
+        if (m) {
+          const arr = m[1] === 'g' ? s.actors.global : s.actors.local;
+          return (arr && arr[Number(m[2])]) || null;
+        }
+        const rm = /^r(\d+)$/.exec(key);
+        if (rm) return s.regions[Number(rm[1])] || null;
+        return null;
+      },
+
+      _matchesActor(a) {
+        if (a.visible === false && this.onlyVisible) return false;
+        const q = this.kw.trim().toLowerCase();
+        if (!q) return true;
+        return String(a.name || '').toLowerCase().indexOf(q) >= 0
+          || String(a.fileId || a.presetId || '').toLowerCase().indexOf(q) >= 0;
+      },
+
+      _matchesRegion(r) {
+        const q = this.kw.trim().toLowerCase();
+        if (!q) return true;
+        return String(r.name || '').toLowerCase().indexOf(q) >= 0;
+      },
+
+      // ---------- 渲染 ----------
+      render() {
+        const root = this.root;
+        const s = this.snap;
+        if (!root) return;
+        if (!s) { root.innerHTML = ''; return; }
+        if (!s.ok) { this._empty(root, '场景数据读取异常: ' + escapeHtml(s.error || '未知错误')); return; }
+        if (!s.scene) { this._empty(root, '未检测到游戏场景——请进入「试玩」窗口检视'); return; }
+        const localAll = s.actors.local || [];
+        const globalAll = s.actors.global || [];
+        const regionsAll = s.regions || [];
+        let h = this._topHtml(s) + this._toolbarHtml();
+        h += '<div class="yami-scene-groups">';
+        if (this.kind !== 'regions') h += this._actorGroupHtml(localAll, globalAll);
+        if (this.kind !== 'actors') h += this._regionGroupHtml(regionsAll);
+        h += '</div>';
+        root.innerHTML = h;
+      },
+
+      _empty(root, msg) {
+        root.innerHTML = '<div class="yami-scene-empty" style="padding: 28px 12px; text-align: center; color: #888888; font-size: 12px; line-height: 1.8;">' + escapeHtml(msg) + '</div>';
+      },
+
+      _topHtml(s) {
+        const c = s.counts || {};
+        const meta = s.meta || {};
+        const mapPath = meta.path || '';
+        const mapName = mapPath ? String(mapPath).split('/').pop().replace(/\.[^.]*$/, '') : (meta.sceneId || '当前地图');
+        const chips = [
+          ['角色', c.actors || 0], ['触发区域', (s.regions || []).length],
+          ['动画', c.animations || 0], ['粒子', c.particles || 0],
+          ['弹道', c.triggers || 0], ['光源', c.lights || 0]
+        ];
+        const cam = s.camera;
+        let size = '';
+        if (meta.width) size += meta.width + 'x' + meta.height + ' 图块';
+        if (meta.tileWidth) size += (size ? ' · ' : '') + meta.tileWidth + 'px/格';
+        return '<div class="yami-scene-head">'
+          + '<div class="yami-scene-head-map">'
+          + '<div class="yami-scene-map-name">' + escapeHtml(mapName) + '</div>'
+          + '<div class="yami-scene-map-path">' + escapeHtml(mapPath || meta.sceneId || '') + (size ? ' · ' + size : '') + '</div>'
+          + '</div>'
+          + '<div class="yami-scene-chips">'
+          + chips.map(function (k) {
+              return '<span class="yami-scene-chip">' + k[0] + '<b>' + k[1] + '</b></span>';
+            }).join('')
+          + '</div>'
+          + (cam ? '<div class="yami-scene-cam">镜头 (' + Math.round(cam.x) + ', ' + Math.round(cam.y) + ') · ' + Number(cam.zoom).toFixed(2) + 'x · ' + cam.width + 'x' + cam.height + '</div>' : '')
+          + '</div>';
+      },
+
+      _toolbarHtml() {
+        const kinds = [['all', '全部'], ['actors', '角色'], ['regions', '区域']];
+        return '<div class="yami-scene-toolbar">'
+          + '<input class="yami-scene-search" type="text" value="' + escapeHtml(this.kw) + '" placeholder="搜索名称 / 文件ID / 预设ID…" spellcheck="false">'
+          + '<div class="yami-scene-kinds">'
+          + kinds.map(function (k) {
+              return '<span class="yami-scene-kind' + (this.kind === k[0] ? ' on' : '') + '" data-kind="' + k[0] + '" role="button">' + k[1] + '</span>';
+            }.bind(this)).join('')
+          + '</div>'
+          + '<div class="yami-scene-vis' + (this.onlyVisible ? ' on' : '') + '" data-role="yami-scene-vis" role="button">仅可见</div>'
+          + '</div>';
+      },
+
+      _actorGroupHtml(localAll, globalAll) {
+        let h = '<div class="yami-scene-group"><div class="yami-scene-group-title"><span class="yami-scene-dot actors"></span><b>角色</b><em>共 ' + (localAll.length + globalAll.length) + '</em></div>';
+        let hitLocal = 0;
+        let hitGlobal = 0;
+        for (let i = 0; i < localAll.length; i++) if (this._matchesActor(localAll[i])) hitLocal++;
+        for (let i = 0; i < globalAll.length; i++) if (this._matchesActor(globalAll[i])) hitGlobal++;
+        if (hitLocal + hitGlobal === 0 && (this.kw || this.onlyVisible)) {
+          h += '<div class="yami-scene-subgroup"><div class="yami-scene-empty">无匹配实体</div></div>';
+        } else {
+          h += this._actorRowsHtml('l', '场景放置', localAll);
+          h += this._actorRowsHtml('g', '全局角色', globalAll);
+        }
+        return h + '</div>';
+      },
+
+      _actorRowsHtml(prefix, label, arr) {
+        let h = '<div class="yami-scene-subgroup"><div class="yami-scene-subgroup-title">' + label + ' <span>0 / ' + arr.length + '</span></div>';
+        if (arr.length === 0) {
+          h = h.replace('0 / ' + arr.length, '0 / 0');
+          return h + '<div class="yami-scene-empty">无' + label + '</div></div>';
+        }
+        let matched = 0;
+        let rows = '';
+        for (let i = 0; i < arr.length; i++) {
+          if (!this._matchesActor(arr[i])) continue;
+          matched++;
+          if (matched <= this.limit) rows += this._actorRowHtml(prefix + i, arr[i]);
+        }
+        h = '<div class="yami-scene-subgroup"><div class="yami-scene-subgroup-title">' + label + ' <span>' + Math.min(matched, this.limit) + (matched > this.limit ? '+' : '') + ' / ' + arr.length + '</span></div>';
+        if (matched === 0) {
+          h += '<div class="yami-scene-empty">无匹配实体</div>';
+        } else {
+          h += rows;
+          if (matched > this.limit) h += '<div class="yami-scene-empty">…共 ' + matched + ' 条，超出展示上限，请缩小搜索范围</div>';
+        }
+        return h + '</div>';
+      },
+
+      _actorRowHtml(key, a) {
+        const open = !!this.open[key];
+        let h = '<div class="yami-scene-row' + (open ? ' open' : '') + '" data-open-key="' + key + '" role="button">'
+          + '<span class="yami-scene-arrow">' + (open ? '▾' : '▸') + '</span>'
+          + '<span class="yami-scene-name">' + escapeHtml(a.name) + '</span>'
+          + '<span class="yami-scene-tags">';
+        if (a.isPlayer) h += '<i class="yami-scene-tag player">主角</i>';
+        else if (a.isMember) h += '<i class="yami-scene-tag member">队员</i>';
+        if (a.visible === false) h += '<i class="yami-scene-tag hide">隐藏</i>';
+        if (a.nav && a.nav.moving) h += '<i class="yami-scene-tag move">移动</i>';
+        if (a.anim && a.anim.ended) h += '<i class="yami-scene-tag warn">动画结束</i>';
+        h += '</span>'
+          + '<span class="yami-scene-coord">(' + a.x + ', ' + a.y + ')</span>'
+          + '<span class="yami-scene-meta">' + this._colText(a) + '</span>'
+          + '</div>';
+        if (open) h += this._actorDetail(a);
+        return h;
+      },
+
+      _regionGroupHtml(regionsAll) {
+        let h = '<div class="yami-scene-group"><div class="yami-scene-group-title"><span class="yami-scene-dot regions"></span><b>触发区域</b><em>共 ' + regionsAll.length + '</em></div>';
+        if (regionsAll.length === 0) {
+          h += '<div class="yami-scene-subgroup"><div class="yami-scene-empty">当前无触发区域</div></div>';
+        } else {
+          h += '<div class="yami-scene-subgroup"><div class="yami-scene-subgroup-title">矩形区域 <span>' + regionsAll.length + ' / ' + regionsAll.length + '</span></div>';
+          let matched = 0;
+          for (let i = 0; i < regionsAll.length; i++) {
+            if (!this._matchesRegion(regionsAll[i])) continue;
+            matched++;
+            if (matched <= this.limit) h += this._regionRowHtml('r' + i, regionsAll[i]);
+          }
+          if (matched === 0) h += '<div class="yami-scene-empty">无匹配区域</div>';
+          else if (matched > this.limit) h += '<div class="yami-scene-empty">…共 ' + matched + ' 条，超出展示上限，请缩小搜索范围</div>';
+          h += '</div>';
+        }
+        return h + '</div>';
+      },
+
+      _regionRowHtml(key, r) {
+        const open = !!this.open[key];
+        let h = '<div class="yami-scene-row' + (open ? ' open' : '') + '" data-open-key="' + key + '" role="button">'
+          + '<span class="yami-scene-arrow">' + (open ? '▾' : '▸') + '</span>'
+          + '<span class="yami-scene-name">' + escapeHtml(r.name) + '</span>'
+          + '<span class="yami-scene-tags">' + (r.actorCount > 0 ? '<i class="yami-scene-tag inside">区内 ' + r.actorCount + '</i>' : '') + '</span>'
+          + '<span class="yami-scene-coord">(' + r.x + ', ' + r.y + ')</span>'
+          + '<span class="yami-scene-meta">' + this._c(r.width) + 'x' + this._c(r.height) + '</span>'
+          + '</div>';
+        if (open) h += this._regionDetail(r);
+        return h;
+      },
+
+      // ---------- 详情字段 ----------
+      _dl(items) {
+        return '<div class="yami-scene-dl">' + items.map(function (it) {
+          return '<span>' + it[0] + '</span><b>' + it[1] + '</b>';
+        }).join('') + '</div>';
+      },
+
+      _c(v) {
+        return (v == null || isNaN(v)) ? '—' : String(Math.round(v * 100) / 100);
+      },
+
+      _colText(a) {
+        if (!a.collider) return '';
+        const cd = a.collider;
+        return (cd.shape === 'rect' ? '矩形' : '圆形') + ' ' + cd.size + (cd.immovable ? ' · 固定' : '');
+      },
+
+      _actorDetail(a) {
+        const cd = a.collider;
+        const nav = a.nav;
+        const anim = a.anim;
+        const MODE_CN = { stop: '静止', keep: '持续', navigate: '寻路', follow: '跟随' };
+        const items = [
+          ['坐标', '(' + this._c(a.x) + ', ' + this._c(a.y) + ') · 朝向 ' + this._c(a.angle) + '° · 优先级 ' + this._c(a.priority)],
+          ['身份', a.isPlayer ? '玩家主角' : (a.isMember ? '队伍成员' : '普通角色')]
+        ];
+        if (a.fileId || a.presetId) items.push(['文件', escapeHtml(a.fileId || '—') + (a.presetId ? ' · 预设 ' + escapeHtml(a.presetId) : '')]);
+        if (a.visible === false) items.push(['可见', '隐藏 (visible=false)']);
+        if (typeof a.passage === 'number') items.push(['通行码', a.passage]);
+        items.push(['碰撞体', cd
+          ? ((cd.shape === 'rect' ? '矩形' : '圆形') + ' 直径 ' + cd.size + ' 图块' + (cd.immovable ? ' · 不可推动' : ' · 可推动') + (cd.moved ? ' · 本帧位移' : ''))
+          : '无碰撞体']);
+        items.push(['导航', nav
+          ? (MODE_CN[nav.mode] || nav.mode) + (nav.speed ? ' · ' + this._c(nav.speed) + ' 图块/秒' : '') + (nav.hasPath ? ' · 寻路中' : '')
+          : '无导航器']);
+        items.push(['动画', anim
+          ? (anim.motion ? escapeHtml(anim.motion) : '主动画') + (anim.paused ? ' · 暂停' : '') + (anim.ended ? ' · 已播完' : '') + (anim.visible === false ? ' · 不可见' : '')
+          : '无动画播放器']);
+        return this._dl(items);
+      },
+
+      _regionDetail(r) {
+        const items = [
+          ['范围', '中心 (' + this._c(r.x) + ', ' + this._c(r.y) + ') · 宽 ' + this._c(r.width) + ' x 高 ' + this._c(r.height) + ' 图块']
+        ];
+        if (r.presetId) items.push(['预设', escapeHtml(r.presetId)]);
+        items.push(['区内角色', r.actorCount
+          ? (r.actors.join('、') + (r.actorCount > r.actors.length ? ' 等 ' + r.actorCount + ' 个' : ''))
+          : '无 (空区域)']);
+        return this._dl(items);
+      }
+    };
+
+    Views.register('scene', {
+      showExportBtns: false,
+      title: '场景实体',
+      showBack: true,
+      showModeSwitch: false,
+      showClearErrors: false,
+      showTabs: false,
+      mount(root, ctx) {
+        SceneLab.init(ctx);
+      },
+      refresh(ctx) {
+        SceneLab.refresh(ctx);
+      },
+      destroy() {
+        SceneLab.destroy();
+      }
+    });
+
     switchView(currentView);
 
 
@@ -4510,7 +5164,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '0.4.1';
+      const cur = (probe && probe.version) ? probe.version : '0.5.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -4567,7 +5221,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '0.4.1') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '0.5.0') + ')');
           refreshVersionBadge();
         }
       });

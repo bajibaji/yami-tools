@@ -2130,3 +2130,296 @@
       .yami-error-btn.primary:hover {
         background: #0c5b8f !important;
       }
+      /* ============================================================
+         DanJuan妙妙插件 - 场景实体检查台 (Scene Inspector)
+         ============================================================ */
+      #page-scene.yami-suite-page {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+      }
+      .yami-scene-container {
+        display: flex !important;
+        flex-direction: column !important;
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        gap: 8px !important;
+        padding: 2px 2px 4px 2px !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+      }
+      .yami-scene-head {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        flex-shrink: 0 !important;
+        background: #202020 !important;
+        border: 1px solid #3d3d3d !important;
+        border-radius: 3px !important;
+        padding: 8px 10px !important;
+      }
+      .yami-scene-map-name {
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        color: #e8e8e8 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+      }
+      .yami-scene-map-path {
+        font-size: 10px !important;
+        color: #808080 !important;
+        line-height: 1.6 !important;
+        word-break: break-all !important;
+        font-family: Consolas, monospace !important;
+      }
+      .yami-scene-chips {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+      }
+      .yami-scene-chip {
+        display: inline-flex !important;
+        gap: 6px !important;
+        align-items: center !important;
+        font-size: 10px !important;
+        color: #a0a0a0 !important;
+        background: #181818 !important;
+        border: 1px solid #303030 !important;
+        border-radius: 2px !important;
+        padding: 2px 7px !important;
+        user-select: none !important;
+      }
+      .yami-scene-chip b {
+        color: #e0e0e0 !important;
+        font-weight: 600 !important;
+        font-family: Consolas, monospace !important;
+      }
+      .yami-scene-cam {
+        font-size: 10px !important;
+        color: #808080 !important;
+        font-family: Consolas, monospace !important;
+      }
+      .yami-scene-toolbar {
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        flex-shrink: 0 !important;
+        flex-wrap: wrap !important;
+      }
+      .yami-scene-search {
+        flex: 1 1 140px !important;
+        min-width: 120px !important;
+        height: 24px !important;
+        background: #181818 !important;
+        border: 1px solid #3d3d3d !important;
+        border-radius: 2px !important;
+        color: #d8d8d8 !important;
+        font-size: 11px !important;
+        padding: 0 8px !important;
+        outline: none !important;
+        box-sizing: border-box !important;
+      }
+      .yami-scene-search:focus {
+        border-color: #0080c0 !important;
+      }
+      .yami-scene-kinds {
+        display: inline-flex !important;
+        gap: 4px !important;
+      }
+      .yami-scene-kind {
+        font-size: 11px !important;
+        color: #9a9a9a !important;
+        background: #202020 !important;
+        border: 1px solid #3d3d3d !important;
+        padding: 2px 9px !important;
+        border-radius: 2px !important;
+        cursor: pointer !important;
+        white-space: nowrap !important;
+        user-select: none !important;
+      }
+      .yami-scene-kind.on {
+        color: #0aa0d8 !important;
+        border-color: #0080c0 !important;
+        background: #10242c !important;
+      }
+      .yami-scene-vis {
+        font-size: 11px !important;
+        color: #9a9a9a !important;
+        cursor: pointer !important;
+        padding: 2px 4px !important;
+        white-space: nowrap !important;
+        user-select: none !important;
+      }
+      .yami-scene-vis.on {
+        color: #20c080 !important;
+      }
+      .yami-scene-groups {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        overflow-y: auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 10px !important;
+        padding-right: 2px !important;
+      }
+      .yami-scene-groups::-webkit-scrollbar {
+        width: 4px !important;
+      }
+      .yami-scene-groups::-webkit-scrollbar-track {
+        background: #181818 !important;
+      }
+      .yami-scene-groups::-webkit-scrollbar-thumb {
+        background: #383838 !important;
+        border-radius: 2px !important;
+      }
+      .yami-scene-groups::-webkit-scrollbar-thumb:hover {
+        background: #4a4a4a !important;
+      }
+      .yami-scene-group {
+        border: 1px solid #3d3d3d !important;
+        border-radius: 3px !important;
+        background: #1c1c1c !important;
+        overflow: hidden !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-scene-group-title {
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        padding: 7px 10px !important;
+        background: #242424 !important;
+        border-bottom: 1px solid #101010 !important;
+      }
+      .yami-scene-dot {
+        width: 6px !important;
+        height: 6px !important;
+        border-radius: 50% !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-scene-dot.actors { background: #e0a040 !important; }
+      .yami-scene-dot.regions { background: #20a080 !important; }
+      .yami-scene-group-title b {
+        font-size: 12px !important;
+        color: #d8d8d8 !important;
+      }
+      .yami-scene-group-title em {
+        font-style: normal !important;
+        font-size: 10px !important;
+        color: #808080 !important;
+        margin-left: auto !important;
+      }
+      .yami-scene-subgroup-title {
+        display: flex !important;
+        align-items: center !important;
+        padding: 5px 12px !important;
+        font-size: 10px !important;
+        color: #888888 !important;
+        background: #202020 !important;
+        border-bottom: 1px solid #1a1a1a !important;
+      }
+      .yami-scene-subgroup-title span {
+        margin-left: auto !important;
+        color: #666666 !important;
+        font-family: Consolas, monospace !important;
+      }
+      .yami-scene-row {
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        padding: 6px 12px !important;
+        cursor: pointer !important;
+        border-bottom: 1px solid #161616 !important;
+        user-select: none !important;
+        font-size: 12px !important;
+        background: transparent !important;
+        color: #e0e0e0 !important;
+      }
+      .yami-scene-row:hover { background: #262626 !important; }
+      .yami-scene-row.open { background: #232a2e !important; }
+      .yami-scene-arrow {
+        color: #666666 !important;
+        font-size: 10px !important;
+        width: 10px !important;
+        text-align: center !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-scene-name {
+        color: #e0e0e0 !important;
+        min-width: 0 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+      }
+      .yami-scene-tags {
+        display: inline-flex !important;
+        gap: 4px !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-scene-tag {
+        font-style: normal !important;
+        font-size: 9px !important;
+        padding: 1px 5px !important;
+        border-radius: 2px !important;
+        background: #181818 !important;
+        color: #a0a0a0 !important;
+        border: 1px solid #303030 !important;
+        white-space: nowrap !important;
+      }
+      .yami-scene-tag.player { color: #ffd76a !important; border-color: #8a7420 !important; background: #221c08 !important; }
+      .yami-scene-tag.member { color: #7fc8ff !important; border-color: #28506e !important; background: #0d1a24 !important; }
+      .yami-scene-tag.move { color: #8ee6b0 !important; border-color: #1f6b43 !important; background: #0c1e14 !important; }
+      .yami-scene-tag.hide { color: #b0b0b0 !important; border-color: #4a4a4a !important; background: #191919 !important; }
+      .yami-scene-tag.warn { color: #ff9c6a !important; border-color: #8a4a20 !important; background: #241207 !important; }
+      .yami-scene-tag.inside { color: #6ac2c2 !important; border-color: #2a6a6a !important; background: #0b1a1a !important; }
+      .yami-scene-coord {
+        margin-left: auto !important;
+        font-family: Consolas, monospace !important;
+        font-size: 10px !important;
+        color: #9a9a9a !important;
+        flex-shrink: 0 !important;
+        padding-left: 8px !important;
+      }
+      .yami-scene-meta {
+        font-size: 10px !important;
+        color: #707070 !important;
+        flex-shrink: 1 !important;
+        min-width: 0 !important;
+        max-width: 130px !important;
+        text-align: right !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+      }
+      .yami-scene-detail {
+        background: #16181a !important;
+        border-bottom: 1px solid #161616 !important;
+        padding: 8px 12px !important;
+      }
+      .yami-scene-dl {
+        display: grid !important;
+        grid-template-columns: auto 1fr !important;
+        gap: 3px 14px !important;
+        font-size: 11px !important;
+      }
+      .yami-scene-dl span {
+        color: #808080 !important;
+        white-space: nowrap !important;
+      }
+      .yami-scene-dl b {
+        color: #d8d8d8 !important;
+        font-weight: 500 !important;
+        line-height: 1.7 !important;
+        word-break: break-all !important;
+      }
+      .yami-scene-empty {
+        color: #888888 !important;
+        font-size: 11px !important;
+        padding: 10px 12px !important;
+        text-align: center !important;
+        line-height: 1.8 !important;
+      }
