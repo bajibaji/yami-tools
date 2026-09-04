@@ -1,6 +1,6 @@
 # DanJuan妙妙插件 (Open Yami 开发者非侵入式辅助套件)
 
-> **版本**：`v0.5.0`  
+> **版本**：`v0.5.1`  
 > **分支**：`extension`（母仓库单一真实源 SSOT）  
 > **定位**：面向 Open Yami RPG Editor 编辑器的原生非侵入式辅助套件，包含**性能排查大盘（Profiler）**、**控制台报错工作台（Error Debugger）**、**存档管理台（Save Lab）**以及微内核页面契约架构。
 
