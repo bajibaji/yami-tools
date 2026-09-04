@@ -1,6 +1,15 @@
 (() => {
   'use strict';
 
+  // HTML 转义统一工具 (IIFE 顶层公共作用域): 游戏数据/报错信息一律先转义再进 innerHTML
+  // (防 XSS 与 UI 破坏)。esc 与 escapeHtml 是同一函数的两个别名, 全文件唯一事实源。
+  function esc(v) {
+    return String(v == null ? '' : v)
+      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+  }
+  const escapeHtml = esc;
+
   function initHUD() {
     if (!document.body) {
       requestAnimationFrame(initHUD);
@@ -2151,6 +2160,7 @@
     `;
     document.head.appendChild(style);
 
+
     // 迷你 HUD 胶囊
     const hud = document.createElement('div');
     hud.id = 'yami-perf-mini-hud';
@@ -2557,7 +2567,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.4.0 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.4.1 (检查更新)</span>
         </div>
         <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
@@ -2581,7 +2591,6 @@
     const homeStatusTextEl = document.getElementById('yami-home-status-text');
     const homeStatusStatsEl = document.getElementById('yami-home-status-stats');
     const errorsListEl = document.getElementById('yami-errors-list');
-    const errorsCountLabelEl = document.getElementById('yami-errors-count-label');
 
     const pages = {
       home: document.getElementById('page-home'),
@@ -2722,16 +2731,7 @@
     let errorActiveFilter = 'all';
     let errorSearchKeyword = '';
 
-    // 转义 HTML
-    function escapeHtml(str) {
-      if (!str) return '';
-      return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-    }
+// (escapeHtml 已统一提升为模块顶级公共转义函数)
 
     // 导出 Markdown 结构化错误诊断报告
     function exportErrorReport() {
@@ -2750,7 +2750,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v0.4.0 (DanJuan妙妙插件)',
+        '- **插件版本**: v0.4.1 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -4187,12 +4187,6 @@
       setTimeout(() => toast.classList.remove('show'), duration || 2000);
     }
 
-    // HTML 转义: 游戏数据中的对象名/事件名/模块名一律先转义再进 innerHTML (防 XSS 与 UI 破坏)
-    function esc(v) {
-      return String(v == null ? '' : v)
-        .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-    }
 
     // 嫌疑开关 (A/B 实验)：暂停某类对象更新，卡顿消失即真凶
     const SUS_KINDS = [
@@ -4516,7 +4510,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '0.4.0';
+      const cur = (probe && probe.version) ? probe.version : '0.4.1';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -4573,7 +4567,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '0.4.0') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '0.4.1') + ')');
           refreshVersionBadge();
         }
       });

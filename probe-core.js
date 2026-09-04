@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '0.4.0';
+  const PROBE_VERSION = '0.4.1';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -1071,7 +1071,8 @@
         state.errorHistory.splice(idx, 1);
         state.errorHistory.unshift(existing);
       }
-      state.errorUnreadCount++;
+      // 聚合错误发生时未读计数封顶为当前实际条数 (上限 100)，杜绝长时死循环无界爆大数
+      state.errorUnreadCount = Math.min(state.errorHistory.length, (state.errorUnreadCount || 0) + 1);
     } else {
       const errRecord = {
         id: 'err_' + nowTs + '_' + Math.random().toString(36).slice(2, 6),
@@ -1093,7 +1094,7 @@
       };
       state.errorHistory.unshift(errRecord);
       if (state.errorHistory.length > 100) state.errorHistory.pop();
-      state.errorUnreadCount++;
+      state.errorUnreadCount = Math.min(state.errorHistory.length, (state.errorUnreadCount || 0) + 1);
     }
 
     // 同源错误广播节流: 同一指纹在 2 秒内只向外派发一次事件, 防止循环死循环造成事件风暴
