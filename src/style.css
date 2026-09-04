@@ -1935,3 +1935,198 @@
         background: #383838 !important;
         border-radius: 2px !important;
       }
+
+
+      /* ============================================================
+         DanJuan妙妙插件 - 控制台报错 (Error Debugger) 深度增强样式
+         ============================================================ */
+      .yami-errors-container {
+        display: flex !important;
+        flex-direction: column !important;
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        gap: 8px !important;
+        overflow: hidden !important;
+      }
+
+      /* 顶部工具栏 (搜索 + 导出诊断报告 + 清空) */
+      .yami-error-toolbar {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-error-search-box {
+        flex: 1 !important;
+        display: flex !important;
+        align-items: center !important;
+        background: #141414 !important;
+        border: 1px solid #242424 !important;
+        border-radius: 2px !important;
+        padding: 2px 6px !important;
+      }
+      .yami-error-search-input {
+        background: transparent !important;
+        border: none !important;
+        outline: none !important;
+        color: #ffffff !important;
+        font-size: 11px !important;
+        width: 100% !important;
+      }
+
+      /* 分类过滤标签栏 (弹性自动换行，所有分类 100% 完整可见直达) */
+      .yami-error-filter-bar {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        align-items: center !important;
+        gap: 4px 5px !important;
+        flex-shrink: 0 !important;
+        padding: 2px 0 2px 0 !important;
+      }
+      .yami-error-filter-btn {
+        flex-shrink: 0 !important;
+        font-size: 10px !important;
+        padding: 2px 7px !important;
+        background: #242424 !important;
+        border: 1px solid #303030 !important;
+        color: #888888 !important;
+        border-radius: 2px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: all 0.12s ease !important;
+      }
+      .yami-error-filter-btn:hover {
+        background: #303030 !important;
+        color: #ffffff !important;
+      }
+      .yami-error-filter-btn.active {
+        background: #084872 !important;
+        border-color: #0080ff !important;
+        color: #ffffff !important;
+        font-weight: 600 !important;
+      }
+
+      /* 异常列表满高滚动容器 */
+      .yami-errors-scroll-list {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        overflow-y: auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+        padding-right: 4px !important;
+      }
+      .yami-errors-scroll-list::-webkit-scrollbar {
+        width: 4px !important;
+      }
+      .yami-errors-scroll-list::-webkit-scrollbar-thumb {
+        background: #383838 !important;
+        border-radius: 2px !important;
+      }
+
+      /* 频次聚合徽章 */
+      .yami-error-count-badge {
+        font-size: 9px !important;
+        font-weight: 700 !important;
+        font-family: Consolas, monospace !important;
+        padding: 1px 5px !important;
+        background: #451212 !important;
+        border: 1px solid #702020 !important;
+        color: #ff6060 !important;
+        border-radius: 2px !important;
+        margin-left: 6px !important;
+        animation: pulseCount 2s infinite ease-in-out !important;
+      }
+
+      /* 源码上下文就地折叠预览 */
+      .yami-error-code-wrapper {
+        margin-top: 4px !important;
+        background: #141414 !important;
+        border: 1px solid #282828 !important;
+        border-radius: 2px !important;
+        overflow: hidden !important;
+      }
+      .yami-error-code-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding: 3px 8px !important;
+        background: #181818 !important;
+        border-bottom: 1px solid #222222 !important;
+        font-size: 10px !important;
+        color: #888888 !important;
+        cursor: pointer !important;
+        user-select: none !important;
+      }
+      .yami-error-code-header:hover {
+        background: #202020 !important;
+        color: #cccccc !important;
+      }
+      .yami-error-code-box {
+        padding: 4px 6px !important;
+        font-family: Consolas, "Courier New", monospace !important;
+        font-size: 10.5px !important;
+        line-height: 1.45 !important;
+        background: #101010 !important;
+        overflow-x: auto !important;
+      }
+      .yami-error-code-line {
+        display: flex !important;
+        align-items: flex-start !important;
+        gap: 8px !important;
+        white-space: pre !important;
+        color: #aaaaaa !important;
+      }
+      .yami-error-code-line .line-num {
+        color: #555555 !important;
+        width: 32px !important;
+        text-align: right !important;
+        user-select: none !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-error-code-line.target {
+        background: rgba(255, 64, 64, 0.15) !important;
+        color: #ff9999 !important;
+        font-weight: 600 !important;
+        border-left: 2px solid #ff4040 !important;
+        padding-left: 2px !important;
+      }
+      .yami-error-code-line.target .line-num {
+        color: #ff4040 !important;
+        font-weight: 700 !important;
+      }
+
+      /* 操作按钮扩展 */
+      .yami-error-actions {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+        gap: 6px !important;
+        margin-top: 4px !important;
+      }
+      .yami-error-btn {
+        font-size: 10px !important;
+        padding: 2px 7px !important;
+        background: #303030 !important;
+        border: 1px solid #3c3c3c !important;
+        color: #d8d8d8 !important;
+        border-radius: 2px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: all 0.12s ease !important;
+      }
+      .yami-error-btn:hover {
+        background: #3a3a3a !important;
+        color: #ffffff !important;
+        border-color: #4a4a4a !important;
+      }
+      .yami-error-btn.primary {
+        background: #084872 !important;
+        border-color: #0080ff !important;
+        color: #ffffff !important;
+      }
+      .yami-error-btn.primary:hover {
+        background: #0c5b8f !important;
+      }

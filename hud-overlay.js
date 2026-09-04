@@ -1953,6 +1953,201 @@
         background: #383838 !important;
         border-radius: 2px !important;
       }
+
+
+      /* ============================================================
+         DanJuan妙妙插件 - 控制台报错 (Error Debugger) 深度增强样式
+         ============================================================ */
+      .yami-errors-container {
+        display: flex !important;
+        flex-direction: column !important;
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        gap: 8px !important;
+        overflow: hidden !important;
+      }
+
+      /* 顶部工具栏 (搜索 + 导出诊断报告 + 清空) */
+      .yami-error-toolbar {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-error-search-box {
+        flex: 1 !important;
+        display: flex !important;
+        align-items: center !important;
+        background: #141414 !important;
+        border: 1px solid #242424 !important;
+        border-radius: 2px !important;
+        padding: 2px 6px !important;
+      }
+      .yami-error-search-input {
+        background: transparent !important;
+        border: none !important;
+        outline: none !important;
+        color: #ffffff !important;
+        font-size: 11px !important;
+        width: 100% !important;
+      }
+
+      /* 分类过滤标签栏 (弹性自动换行，所有分类 100% 完整可见直达) */
+      .yami-error-filter-bar {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        align-items: center !important;
+        gap: 4px 5px !important;
+        flex-shrink: 0 !important;
+        padding: 2px 0 2px 0 !important;
+      }
+      .yami-error-filter-btn {
+        flex-shrink: 0 !important;
+        font-size: 10px !important;
+        padding: 2px 7px !important;
+        background: #242424 !important;
+        border: 1px solid #303030 !important;
+        color: #888888 !important;
+        border-radius: 2px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: all 0.12s ease !important;
+      }
+      .yami-error-filter-btn:hover {
+        background: #303030 !important;
+        color: #ffffff !important;
+      }
+      .yami-error-filter-btn.active {
+        background: #084872 !important;
+        border-color: #0080ff !important;
+        color: #ffffff !important;
+        font-weight: 600 !important;
+      }
+
+      /* 异常列表满高滚动容器 */
+      .yami-errors-scroll-list {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        overflow-y: auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+        padding-right: 4px !important;
+      }
+      .yami-errors-scroll-list::-webkit-scrollbar {
+        width: 4px !important;
+      }
+      .yami-errors-scroll-list::-webkit-scrollbar-thumb {
+        background: #383838 !important;
+        border-radius: 2px !important;
+      }
+
+      /* 频次聚合徽章 */
+      .yami-error-count-badge {
+        font-size: 9px !important;
+        font-weight: 700 !important;
+        font-family: Consolas, monospace !important;
+        padding: 1px 5px !important;
+        background: #451212 !important;
+        border: 1px solid #702020 !important;
+        color: #ff6060 !important;
+        border-radius: 2px !important;
+        margin-left: 6px !important;
+        animation: pulseCount 2s infinite ease-in-out !important;
+      }
+
+      /* 源码上下文就地折叠预览 */
+      .yami-error-code-wrapper {
+        margin-top: 4px !important;
+        background: #141414 !important;
+        border: 1px solid #282828 !important;
+        border-radius: 2px !important;
+        overflow: hidden !important;
+      }
+      .yami-error-code-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding: 3px 8px !important;
+        background: #181818 !important;
+        border-bottom: 1px solid #222222 !important;
+        font-size: 10px !important;
+        color: #888888 !important;
+        cursor: pointer !important;
+        user-select: none !important;
+      }
+      .yami-error-code-header:hover {
+        background: #202020 !important;
+        color: #cccccc !important;
+      }
+      .yami-error-code-box {
+        padding: 4px 6px !important;
+        font-family: Consolas, "Courier New", monospace !important;
+        font-size: 10.5px !important;
+        line-height: 1.45 !important;
+        background: #101010 !important;
+        overflow-x: auto !important;
+      }
+      .yami-error-code-line {
+        display: flex !important;
+        align-items: flex-start !important;
+        gap: 8px !important;
+        white-space: pre !important;
+        color: #aaaaaa !important;
+      }
+      .yami-error-code-line .line-num {
+        color: #555555 !important;
+        width: 32px !important;
+        text-align: right !important;
+        user-select: none !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-error-code-line.target {
+        background: rgba(255, 64, 64, 0.15) !important;
+        color: #ff9999 !important;
+        font-weight: 600 !important;
+        border-left: 2px solid #ff4040 !important;
+        padding-left: 2px !important;
+      }
+      .yami-error-code-line.target .line-num {
+        color: #ff4040 !important;
+        font-weight: 700 !important;
+      }
+
+      /* 操作按钮扩展 */
+      .yami-error-actions {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+        gap: 6px !important;
+        margin-top: 4px !important;
+      }
+      .yami-error-btn {
+        font-size: 10px !important;
+        padding: 2px 7px !important;
+        background: #303030 !important;
+        border: 1px solid #3c3c3c !important;
+        color: #d8d8d8 !important;
+        border-radius: 2px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: all 0.12s ease !important;
+      }
+      .yami-error-btn:hover {
+        background: #3a3a3a !important;
+        color: #ffffff !important;
+        border-color: #4a4a4a !important;
+      }
+      .yami-error-btn.primary {
+        background: #084872 !important;
+        border-color: #0080ff !important;
+        color: #ffffff !important;
+      }
+      .yami-error-btn.primary:hover {
+        background: #0c5b8f !important;
+      }
     `;
     document.head.appendChild(style);
 
@@ -2105,12 +2300,30 @@
         </div>
 
         <!-- 页面 2: 控制台异常与错误分析 -->
-        <div class="yami-suite-page" id="page-errors" style="display: none;">
-          <div style="display: flex; justify-content: space-between; align-items: center; color: #888888; font-size: 11px;">
-            <span id="yami-errors-count-label">捕获异常记录 (0)</span>
-            <span style="font-size: 10px; color: #666666;">自动拦截 window.onerror 与 console.error</span>
+        <div class="yami-suite-page yami-errors-container" id="page-errors" style="display: none;">
+          <!-- 顶部工具栏 (搜索 + 导出诊断报告 + 清空) -->
+          <div class="yami-error-toolbar">
+            <div class="yami-error-search-box">
+              <input class="yami-error-search-input" id="yami-error-search" type="text" placeholder="搜索报错信息、文件名、调用栈..." />
+            </div>
+            <div class="yami-error-btn primary" id="btn-export-error-report" role="button" title="导出 Markdown 结构化诊断报告">导出报告</div>
+            
           </div>
-          <div id="yami-errors-list" style="display: flex; flex-direction: column; gap: 8px;">
+
+          <!-- 分类筛选器 -->
+          <div class="yami-error-filter-bar" id="yami-error-filter-bar">
+            <div class="yami-error-filter-btn active" data-filter="all">全部 (0)</div>
+            <div class="yami-error-filter-btn" data-filter="high-freq">高频 (0)</div>
+            <div class="yami-error-filter-btn" data-filter="NullPointer">空指针 (0)</div>
+            <div class="yami-error-filter-btn" data-filter="MissingFunction">方法丢失 (0)</div>
+            <div class="yami-error-filter-btn" data-filter="PluginError">插件指令 (0)</div>
+            <div class="yami-error-filter-btn" data-filter="SceneError">场景地形 (0)</div>
+            <div class="yami-error-filter-btn" data-filter="ResourceNotFound">资源404 (0)</div>
+            <div class="yami-error-filter-btn" data-filter="console">控制台 (0)</div>
+          </div>
+
+          <!-- 异常记录列表 (自适应满高独立滚动) -->
+          <div class="yami-errors-scroll-list" id="yami-errors-list">
             <div class="yami-error-empty">
               后台运行健康，未捕获到任何未处理异常。
             </div>
@@ -2344,7 +2557,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.3.1 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.4.0 (检查更新)</span>
         </div>
         <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
@@ -2505,52 +2718,326 @@
     }
 
     // 渲染错误卡片
+    // 控制台报错过滤与搜索状态
+    let errorActiveFilter = 'all';
+    let errorSearchKeyword = '';
+
+    // 转义 HTML
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    // 导出 Markdown 结构化错误诊断报告
+    function exportErrorReport() {
+      const probe = window.__YAMI_PERF_PROBE__;
+      const errors = (probe && probe.getErrors) ? probe.getErrors() : [];
+      if (errors.length === 0) {
+        showToast('当前无异常记录，无需导出报告');
+        return;
+      }
+
+      const now = new Date().toLocaleString('zh-CN', { hour12: false });
+      const snap = probe.state && probe.state.samples && probe.state.samples[probe.state.samples.length - 1];
+      const fps = snap ? snap.fps : 60;
+      const dc = snap ? snap.drawCalls : 0;
+
+      const report = [
+        '# Open Yami 游戏运行期错误诊断报告',
+        '- **生成时间**: ' + now,
+        '- **插件版本**: v0.4.0 (DanJuan妙妙插件)',
+        '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
+        '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
+        '',
+        '---',
+        '',
+        '## 异常诊断清单',
+        ''
+      ];
+
+      errors.forEach(function(err, idx) {
+        const a = err.analysis || {};
+        const countStr = (err.count && err.count > 1) ? ' [累计发生 ' + err.count + ' 次]' : '';
+        report.push('### [' + (idx + 1) + '] [' + (a.category || err.type) + '] ' + (a.title || err.message) + countStr);
+        report.push('- **发生频次**: ' + (err.count || 1) + ' 次 (首次: ' + (err.firstTime || err.time) + ' · 最近: ' + (err.latestTime || err.time) + ')');
+        report.push('- **报错来源**: `' + err.source + '`' + (err.lineno ? ' (第 ' + err.lineno + ' 行)' : ''));
+        report.push('- **诊断原因**: ' + (a.reason || '运行期发生未处理错误'));
+        report.push('- **建议排查**: ' + (a.suggestion || '检查代码上下文与变量状态'));
+
+        if (err.codeContext && Array.isArray(err.codeContext.lines)) {
+          report.push('');
+          report.push('**报错位置源码上下文 (' + err.codeContext.fileName + '):**');
+          report.push('```typescript');
+          err.codeContext.lines.forEach(function(l) {
+            const prefix = l.isTarget ? '>> ' : '   ';
+            const num = String(l.line).padStart(4, ' ');
+            report.push(prefix + num + ' | ' + l.content);
+          });
+          report.push('```');
+        }
+
+        if (err.stack) {
+          report.push('');
+          report.push('<details><summary>点击展开完整调用栈 (Stack Trace)</summary>');
+          report.push('');
+          report.push('```');
+          report.push(err.stack);
+          report.push('```');
+          report.push('</details>');
+        }
+        report.push('');
+        report.push('---');
+        report.push('');
+      });
+
+      const mdContent = report.join('\n');
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(mdContent).then(function() {
+          showToast('诊断报告已生成并复制到剪贴板！');
+        }).catch(function() {
+          showToast('诊断报告已生成');
+        });
+      }
+
+      // 写入本地文件
+      try {
+        if (typeof require === 'function') {
+          const fs = require('fs');
+          const path = require('path');
+          const saveDir = (typeof SaveLab !== 'undefined' && SaveLab.getGameDir && SaveLab.getGameDir()) || process.cwd();
+          const fname = 'error-report-' + Date.now() + '.md';
+          const p = path.join(saveDir, fname);
+          fs.writeFileSync(p, mdContent, 'utf8');
+          showToast('诊断报告已落盘: ' + fname);
+        }
+      } catch (e) {}
+    }
+
+    // 渲染错误卡片与全套过滤器
     function renderErrorsList() {
       if (!errorsListEl) return;
       const probe = window.__YAMI_PERF_PROBE__;
       const errors = (probe && probe.getErrors) ? probe.getErrors() : [];
-      if (errorsCountLabelEl) errorsCountLabelEl.textContent = '捕获异常记录 (' + errors.length + ')';
 
-      if (errors.length === 0) {
-        errorsListEl.innerHTML = '<div class="yami-error-empty">后台运行健康，未捕获到任何未处理异常。</div>';
+      // 1. 动态统计各分类数量并更新 Filter Bar
+      const counts = {
+        all: errors.length,
+        'high-freq': 0,
+        NullPointer: 0,
+        MissingFunction: 0,
+        PluginError: 0,
+        SceneError: 0,
+        ResourceNotFound: 0,
+        console: 0
+      };
+
+      errors.forEach(function(e) {
+        if ((e.count || 1) > 1) counts['high-freq']++;
+        if (e.type === 'console_error') counts['console']++;
+        const cat = e.analysis && e.analysis.category;
+        if (cat && counts[cat] !== undefined) counts[cat]++;
+      });
+
+      const filterBarEl = document.getElementById('yami-error-filter-bar');
+      if (filterBarEl) {
+        filterBarEl.querySelectorAll('.yami-error-filter-btn').forEach(function(btn) {
+          const f = btn.getAttribute('data-filter');
+          const labelMap = {
+            all: '全部',
+            'high-freq': '高频',
+            NullPointer: '空指针',
+            MissingFunction: '方法丢失',
+            PluginError: '插件指令',
+            SceneError: '场景地形',
+            ResourceNotFound: '资源404',
+            console: '控制台'
+          };
+          btn.textContent = (labelMap[f] || f) + ' (' + (counts[f] || 0) + ')';
+          btn.classList.toggle('active', f === errorActiveFilter);
+        });
+      }
+
+      // 2. 根据当前过滤器与搜索词筛选
+      const kw = errorSearchKeyword.toLowerCase().trim();
+      const filtered = errors.filter(function(err) {
+        const a = err.analysis || {};
+        // 分类过滤
+        if (errorActiveFilter === 'high-freq' && (err.count || 1) <= 1) return false;
+        if (errorActiveFilter === 'console' && err.type !== 'console_error') return false;
+        if (errorActiveFilter !== 'all' && errorActiveFilter !== 'high-freq' && errorActiveFilter !== 'console') {
+          if (a.category !== errorActiveFilter) return false;
+        }
+        // 关键字过滤
+        if (kw) {
+          const matchMsg = String(err.message || '').toLowerCase().includes(kw);
+          const matchSrc = String(err.source || '').toLowerCase().includes(kw);
+          const matchTitle = String(a.title || '').toLowerCase().includes(kw);
+          const matchReason = String(a.reason || '').toLowerCase().includes(kw);
+          const matchStack = String(err.stack || '').toLowerCase().includes(kw);
+          if (!matchMsg && !matchSrc && !matchTitle && !matchReason && !matchStack) return false;
+        }
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        errorsListEl.innerHTML = '<div class="yami-error-empty">'
+          + (errors.length === 0 ? '后台运行健康，未捕获到任何未处理异常。' : '未检索到符合筛选条件的异常记录。')
+          + '</div>';
         return;
       }
 
-      errorsListEl.innerHTML = errors.map(function(err) {
+      // 3. 渲染卡片列表
+      errorsListEl.innerHTML = filtered.map(function(err) {
         const a = err.analysis || {};
+        const countBadge = (err.count && err.count > 1)
+          ? '<span class="yami-error-count-badge" title="该错误已累计高频发生 ' + err.count + ' 次">[x' + err.count + '次]</span>'
+          : '';
+
+        const timeInfo = (err.count && err.count > 1)
+          ? '首发 ' + (err.firstTime || err.time) + ' · 最近 ' + (err.latestTime || err.time)
+          : (err.time || '');
+
+        // 源码上下文预览块
+        let codeSnippetHtml = '';
+        if (err.codeContext && Array.isArray(err.codeContext.lines)) {
+          const linesHtml = err.codeContext.lines.map(function(l) {
+            return '<div class="yami-error-code-line ' + (l.isTarget ? 'target' : '') + '">'
+              + '<span class="line-num">' + l.line + '</span>'
+              + '<code>' + escapeHtml(l.content) + '</code>'
+              + '</div>';
+          }).join('');
+
+          codeSnippetHtml = '<div class="yami-error-code-wrapper">'
+            + '<div class="yami-error-code-header" data-toggle-code="' + err.id + '" role="button">'
+            + '<span>[源码上下文] ' + escapeHtml(err.codeContext.fileName) + ' (第 ' + err.codeContext.targetLine + ' 行)</span>'
+            + '<span style="font-size: 9px; color: #0080c0;" class="code-toggle-text">展开源码</span>'
+            + '</div>'
+            + '<div class="yami-error-code-box" id="code-box-' + err.id + '" style="display: none;">'
+            + linesHtml
+            + '</div>'
+            + '</div>';
+        }
+
+        // 文件定位按钮
+        const locateBtnHtml = (err.codeContext && err.codeContext.filePath)
+          ? '<div class="yami-error-btn btn-locate-file" data-path="' + encodeURIComponent(err.codeContext.filePath) + '" role="button" title="在操作系统资源管理器中定位此文件">定位文件</div>'
+          : '';
+
         return '<div class="yami-error-card">'
           + '<div class="yami-error-card-header">'
+          + '<div style="display: flex; align-items: center;">'
           + '<span class="yami-error-type">[异常] ' + (a.category || err.type) + '</span>'
-          + '<span class="yami-error-time">' + err.time + '</span>'
+          + countBadge
           + '</div>'
-          + '<div class="yami-error-msg">' + err.message + '</div>'
-          + '<div class="yami-error-source">来源: ' + err.source + (err.lineno ? ' (第 ' + err.lineno + ' 行)' : '') + '</div>'
+          + '<span class="yami-error-time">' + timeInfo + '</span>'
+          + '</div>'
+          + '<div class="yami-error-msg">' + escapeHtml(err.message) + '</div>'
+          + '<div class="yami-error-source">来源: ' + escapeHtml(err.source) + (err.lineno ? ' (第 ' + err.lineno + ' 行)' : '') + '</div>'
+          + codeSnippetHtml
           + '<div class="yami-error-box">'
-          + '<div style="font-weight: 600; margin-bottom: 2px;">诊断原因: ' + (a.title || '代码异常') + '</div>'
-          + '<div>' + (a.reason || '运行期发生未处理错误') + '</div>'
+          + '<div style="font-weight: 600; margin-bottom: 2px;">诊断原因: ' + escapeHtml(a.title || '代码异常') + '</div>'
+          + '<div>' + escapeHtml(a.reason || '运行期发生未处理错误') + '</div>'
           + '</div>'
           + '<div class="yami-error-tip">'
           + '<div style="font-weight: 600; margin-bottom: 2px;">建议排查:</div>'
-          + '<div>' + (a.suggestion || '检查代码上下文与变量状态') + '</div>'
+          + '<div>' + escapeHtml(a.suggestion || '检查代码上下文与变量状态') + '</div>'
           + '</div>'
-          + '<div style="display: flex; justify-content: flex-end; margin-top: 2px;">'
-          + '<div class="yami-culprit-copy-btn btn-copy-err-stack" data-stack="' + encodeURIComponent(err.stack || err.message) + '" role="button">复制调用栈</div>'
+          + '<div class="yami-error-actions">'
+          + locateBtnHtml
+          + '<div class="yami-error-btn primary btn-copy-err-stack" data-stack="' + encodeURIComponent(err.stack || err.message) + '" role="button">复制调用栈</div>'
           + '</div>'
           + '</div>';
       }).join('');
 
+      // 4. 事件绑定
+      // 4.1 源码折叠展开
+      errorsListEl.querySelectorAll('[data-toggle-code]').forEach(function(header) {
+        header.addEventListener('click', function(e) {
+          e.stopPropagation();
+          const id = header.getAttribute('data-toggle-code');
+          const box = document.getElementById('code-box-' + id);
+          const toggleText = header.querySelector('.code-toggle-text');
+          if (box) {
+            const isHidden = box.style.display === 'none';
+            box.style.display = isHidden ? 'block' : 'none';
+            if (toggleText) toggleText.textContent = isHidden ? '收起源码' : '展开源码';
+          }
+        });
+      });
+
+      // 4.2 复制调用栈
       errorsListEl.querySelectorAll('.btn-copy-err-stack').forEach(function(btn) {
         btn.addEventListener('click', function(e) {
           e.stopPropagation();
           const raw = decodeURIComponent(btn.getAttribute('data-stack') || '');
-          navigator.clipboard.writeText(raw).then(function() {
-            showToast('错误调用栈已复制');
-          });
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(raw).then(function() {
+              showToast('错误调用栈已复制到剪贴板');
+            });
+          }
+        });
+      });
+
+      // 4.3 定位文件
+      errorsListEl.querySelectorAll('.btn-locate-file').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          const filePath = decodeURIComponent(btn.getAttribute('data-path') || '');
+          if (!filePath) return;
+          try {
+            if (typeof require === 'function') {
+              const electron = require('electron');
+              if (electron && electron.shell && electron.shell.showItemInFolder) {
+                electron.shell.showItemInFolder(filePath);
+                showToast('已在文件夹中高亮定位文件');
+                return;
+              }
+            }
+          } catch (err) {}
+          showToast('文件路径: ' + filePath);
         });
       });
     }
 
-    // 更新主页轻量状态
+    // 绑定报错工作台全局交互事件 (过滤器点击 + 搜索输入 + 导出报告 + 清空)
+    function bindErrorsToolbarEvents() {
+      const filterBarEl = document.getElementById('yami-error-filter-bar');
+      if (filterBarEl) {
+        filterBarEl.addEventListener('click', function(e) {
+          const btn = e.target.closest('.yami-error-filter-btn');
+          if (!btn) return;
+          const filter = btn.getAttribute('data-filter');
+          if (filter) {
+            errorActiveFilter = filter;
+            renderErrorsList();
+          }
+        });
+      }
+
+      const searchInput = document.getElementById('yami-error-search');
+      if (searchInput) {
+        searchInput.addEventListener('input', function(e) {
+          errorSearchKeyword = e.target.value || '';
+          renderErrorsList();
+        });
+      }
+
+      const exportBtn = document.getElementById('btn-export-error-report');
+      if (exportBtn) {
+        exportBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          exportErrorReport();
+        });
+      }
+
+}
+        bindErrorsToolbarEvents();
+
     function updateHomeStatus() {
       const probe = window.__YAMI_PERF_PROBE__;
       if (!probe) return;
@@ -4029,7 +4516,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '0.3.1';
+      const cur = (probe && probe.version) ? probe.version : '0.4.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -4086,7 +4573,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '0.3.1') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '0.4.0') + ')');
           refreshVersionBadge();
         }
       });

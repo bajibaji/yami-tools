@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '0.3.1';
+  const PROBE_VERSION = '0.4.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -877,13 +877,81 @@
   // ============================================================
   // 控制台异常与后台错误黑匣子分析引擎 (Error Analyzer)
   // ============================================================
+  
+  // 智能提取本地真实报错源码上下文 (报错行上下各 3 行)
+  function extractCodeContext(source, lineno, stack) {
+    try {
+      if (typeof require !== 'function') return null;
+      const fs = require('fs');
+      const path = require('path');
+
+      let targetPath = '';
+      let targetLine = Number(lineno) || 0;
+
+      // 1. 优先从 source 提取
+      if (typeof source === 'string' && source) {
+        let clean = source.replace(/\?.*$/, ''); // 去除 ?t=... 等查询参数
+        if (clean.startsWith('file:///')) clean = clean.slice(8);
+        if (process.platform === 'win32' && clean.startsWith('/')) clean = clean.slice(1);
+        clean = decodeURIComponent(clean).replace(/\\/g, '/');
+        if (fs.existsSync(clean) && fs.statSync(clean).isFile()) {
+          targetPath = clean;
+        }
+      }
+
+      // 2. 次选从 stack 正则匹配真实物理工程文件
+      if (!targetPath && typeof stack === 'string' && stack) {
+        const lines = stack.split('\n');
+        for (const line of lines) {
+          const match = line.match(/(?:at\s+.*\()?([a-zA-Z]:[/\\][^:?()]+):(\d+)(?::(\d+))?\)?/);
+          if (match) {
+            let candidate = match[1].replace(/\\/g, '/');
+            if (!candidate.includes('node_modules') && fs.existsSync(candidate)) {
+              targetPath = candidate;
+              if (!targetLine) targetLine = Number(match[2]);
+              break;
+            }
+          }
+        }
+      }
+
+      if (!targetPath || !targetLine || targetLine <= 0) return null;
+
+      // 读取文件并提取上下文代码
+      const content = fs.readFileSync(targetPath, 'utf8');
+      const allLines = content.split(/\r?\n/);
+      const startLine = Math.max(1, targetLine - 3);
+      const endLine = Math.min(allLines.length, targetLine + 3);
+
+      const snippetLines = [];
+      for (let i = startLine; i <= endLine; i++) {
+        snippetLines.push({
+          line: i,
+          content: allLines[i - 1] || '',
+          isTarget: i === targetLine
+        });
+      }
+
+      return {
+        filePath: targetPath,
+        fileName: path.basename(targetPath),
+        targetLine: targetLine,
+        lines: snippetLines
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
   function analyzeError(msg, stack, url) {
     const text = String(msg || '');
+    const stackText = String(stack || '');
     let category = 'RuntimeError';
     let title = '脚本运行时未知异常';
     let reason = '代码执行过程中抛出异常，未能正常捕获';
     let suggestion = '检查报错文件所在行号的上下文逻辑';
 
+    // 1. 空指针 / 未定义属性访问
     if (/Cannot read propert/i.test(text) || /is (null|undefined)/i.test(text)) {
       category = 'NullPointer';
       const propMatch = text.match(/reading ['"]?([^'")\s]+)['"]?/i) || text.match(/of (null|undefined)/i);
@@ -891,35 +959,80 @@
       title = '尝试访问空对象的属性 [' + propName + ']';
       reason = '目标对象尚未生成、已被销毁，或变量未被正确初始化，此时直接读取其属性导致引擎崩溃。';
       suggestion = '在访问前添加判空保护: 例如 if (target && target.' + propName + ')，避免对 null 进行解引用。';
-    } else if (/is not a function/i.test(text)) {
+    }
+    // 2. 方法不存在
+    else if (/is not a function/i.test(text)) {
       category = 'MissingFunction';
       const funcMatch = text.match(/['"]?([^'")\s]+)['"]? is not a function/i);
       const funcName = funcMatch ? funcMatch[1] : '方法';
       title = '调用的函数不存在 [' + funcName + '()]';
       reason = '尝试调用一个对象上未定义的方法。通常是因为函数名拼写错误、依赖的前置插件未启用，或引擎版本 API 差异。';
       suggestion = '核对函数名大小写拼写，或在调用前检查: if (typeof target.' + funcName + ' === "function")。';
-    } else if (/is not defined/i.test(text)) {
+    }
+    // 3. 变量未声明
+    else if (/is not defined/i.test(text)) {
       category = 'UndefinedVariable';
       const varMatch = text.match(/['"]?([^'")\s]+)['"]? is not defined/i);
       const varName = varMatch ? varMatch[1] : '变量';
       title = '使用了未声明的变量 [' + varName + ']';
       reason = '直接访问了一个从未声明、或者拼写错误的全局/局部变量。';
       suggestion = '检查变量名拼写，或确认在使用前是否通过 let/const/var 或全局 Variable 进行了初始化。';
-    } else if (/Maximum call stack size exceeded/i.test(text)) {
+    }
+    // 4. 事件死循环 / 堆栈溢出
+    else if (/Maximum call stack size exceeded/i.test(text) || stackText.includes('Event.call') || stackText.includes('Trigger.execute')) {
       category = 'StackOverflow';
-      title = '调用栈溢出 · 疑似逻辑死循环';
-      reason = '函数在极短时间内自我递归调用数万次，通常是因为事件互相调用或递归函数缺少退出边界。';
-      suggestion = '排查涉及的事件或脚本，确认递归退出分支，或在循环事件末尾添加【等待 1 帧】切断同步爆栈。';
-    } else if (/404|not found|ERR_FILE_NOT_FOUND/i.test(text)) {
+      title = '事件死锁或逻辑死循环 (爆栈)';
+      reason = '事件互相调用或递归函数在极短时间内循环触发数万次，导致浏览器调用栈彻底溢出。';
+      suggestion = '排查涉及的公共事件与并行触发器，确认递归退出分支，或在循环事件末尾添加【等待 1 帧】切断同步死锁。';
+    }
+    // 5. 地图场景加载与 Autotile 越界
+    else if (/Scene\.load|Scene\.change|autotile|tilemap|map\.json/i.test(text) || /Scene/i.test(stackText) && /load/i.test(stackText)) {
+      category = 'SceneError';
+      title = '地图场景切换与地形图块加载异常';
+      reason = '引擎尝试加载目标地图或图块数据失败。可能是目标地图文件丢失、Autotile 编号越界或图层索引错误。';
+      suggestion = '检查地图数据表是否包含该地图 ID，核对场景传送指令的目标地图编号与坐标有效性。';
+    }
+    // 6. 插件与自定义指令执行异常
+    else if (/Command|Plugin|Assets[/\\]插件|Custom Commands/i.test(text) || stackText.includes('Command.execute')) {
+      category = 'PluginError';
+      title = '插件自定义指令执行失败';
+      reason = '游戏事件中调用的自定义插件指令抛出异常。常见于指令参数类型不匹配、插件代码未正确编译或缺失前置库。';
+      suggestion = '在编辑器【插件管理器】中检查该插件配置项，核对事件调用的参数是否符合指令定义。';
+    }
+    // 7. WebGL 图形与纹理渲染异常
+    else if (/WebGL|gl\.|bindTexture|createShader|compileShader|drawElements/i.test(text) || stackText.includes('webgl.ts')) {
+      category = 'RenderError';
+      title = 'WebGL 图形渲染管线异常';
+      reason = '图形渲染阶段发生异常，可能是显卡纹理单元丢失、贴图尺寸超限（非 2 的幂或过大）或 Shader 语法错误。';
+      suggestion = '排查最近绘制的大图资源，避免在同一帧大量上传未压缩超大纹理，或排查自定义材质着色器。';
+    }
+    // 8. 游戏资源 404 / 文件丢失
+    else if (/404|not found|ERR_FILE_NOT_FOUND/i.test(text)) {
       category = 'ResourceNotFound';
       title = '游戏素材资源文件丢失 (404)';
       reason = '游戏引擎尝试从硬盘加载贴图、音频或数据文件，但文件在对应路径下不存在。';
-      suggestion = '检查工程对应目录下是否存在该文件，注意文件名拼写或后缀格式。';
-    } else if (/Unexpected token|JSON/i.test(text)) {
+      suggestion = '检查工程对应 Assets 目录下是否存在该文件，核对文件名大小写拼写及后缀扩展名。';
+    }
+    // 9. JSON 存档与配置文件损坏
+    else if (/Unexpected token|JSON/i.test(text)) {
       category = 'JSONParseError';
       title = '数据文件或 JSON 格式损坏';
-      reason = '尝试读取并解析 JSON 存档或配置文件时遇到语法格式错误（如多余逗号、未闭合括号）。';
-      suggestion = '检查对应 .json 文件格式是否规范，或在 JSON.parse 处增加 try...catch 保护。';
+      reason = '尝试读取并解析 JSON 存档或配置文件时遇到语法格式错误（如多余逗号、特殊不可见字符、未闭合括号）。';
+      suggestion = '检查对应 .json 或 .save 文件格式是否规范，或在 JSON.parse 处增加 try...catch 保护。';
+    }
+    // 10. 音频解码与播放异常
+    else if (/Audio|WebAudio|decodeAudioData|Sound/i.test(text)) {
+      category = 'AudioError';
+      title = '音频文件解码或播放受阻';
+      reason = '音频文件格式不兼容、音频通道被占用，或在用户未产生交互前触发了浏览器的自动播放策略。';
+      suggestion = '确认音频为标准 .mp3 或 .ogg 格式，并确保背景音乐在进入游戏有点击交互后再行启动。';
+    }
+    // 11. 数值溢出与无效计算 (NaN / Infinity)
+    else if (/NaN|Infinity|toPrecision|toFixed/i.test(text)) {
+      category = 'NumericError';
+      title = '无效数值计算 (NaN / 溢出)';
+      reason = '未初始化的变量参与了数学运算，或者发生了除以零、未定义属性参与了累加操作。';
+      suggestion = '核对数值公式各入参是否有初值，使用 || 0 进行防御性数值兜底。';
     }
 
     return {
@@ -930,37 +1043,67 @@
     };
   }
 
-  // 同源错误广播节流表: key=message|source -> 最近广播时间戳 (见 recordError)
+  // 同源错误广播节流表: key=fingerprint -> 最近广播时间戳
   const errDispatchTs = new Map();
 
   function recordError(item) {
     const analysis = analyzeError(item.message, item.stack, item.source);
-    const errRecord = {
-      id: 'err_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-      time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
-      timestamp: Date.now(),
-      type: item.type,
-      message: item.message,
-      source: item.source,
-      lineno: item.lineno,
-      colno: item.colno,
-      stack: item.stack,
-      analysis: analysis
-    };
-    state.errorHistory.unshift(errRecord);
-    if (state.errorHistory.length > 100) state.errorHistory.pop();
-    state.errorUnreadCount++;
+    const codeContext = extractCodeContext(item.source, item.lineno, item.stack);
 
-    // 同源错误广播节流: 同一 message+source 在 3 秒内只派发一次事件,
-    // 防止循环/高频错误风暴反复打扰界面 (黑匣子列表与未读计数仍全量记录)
+    // 错误唯一指纹计算 (类型 + 消息 + 来源 + 行号)
+    const fingerprint = (item.type || 'error') + '::' + String(item.message || '').slice(0, 100) + '::' + String(item.source || '') + '::' + String(item.lineno || 0);
+
+    const nowStr = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    const nowTs = Date.now();
+
+    // 检查是否已存在同指纹错误进行智能聚合
+    const existing = state.errorHistory.find(e => e.fingerprint === fingerprint);
+    if (existing) {
+      existing.count = (existing.count || 1) + 1;
+      existing.latestTime = nowStr;
+      existing.latestTimestamp = nowTs;
+      if (item.stack) existing.stack = item.stack;
+      if (codeContext && !existing.codeContext) existing.codeContext = codeContext;
+
+      // 移动至队列最前端 (保持最近发生优先)
+      const idx = state.errorHistory.indexOf(existing);
+      if (idx > 0) {
+        state.errorHistory.splice(idx, 1);
+        state.errorHistory.unshift(existing);
+      }
+      state.errorUnreadCount++;
+    } else {
+      const errRecord = {
+        id: 'err_' + nowTs + '_' + Math.random().toString(36).slice(2, 6),
+        fingerprint: fingerprint,
+        count: 1,
+        time: nowStr,
+        firstTime: nowStr,
+        latestTime: nowStr,
+        timestamp: nowTs,
+        latestTimestamp: nowTs,
+        type: item.type,
+        message: item.message,
+        source: item.source,
+        lineno: item.lineno,
+        colno: item.colno,
+        stack: item.stack,
+        analysis: analysis,
+        codeContext: codeContext
+      };
+      state.errorHistory.unshift(errRecord);
+      if (state.errorHistory.length > 100) state.errorHistory.pop();
+      state.errorUnreadCount++;
+    }
+
+    // 同源错误广播节流: 同一指纹在 2 秒内只向外派发一次事件, 防止循环死循环造成事件风暴
     try {
-      const nowTs = Date.now();
-      const errKey = String(errRecord.message || '') + '|' + String(errRecord.source || '');
-      const lastTs = errDispatchTs.get(errKey) || 0;
-      if (nowTs - lastTs >= 3000) {
-        errDispatchTs.set(errKey, nowTs);
+      const lastTs = errDispatchTs.get(fingerprint) || 0;
+      if (nowTs - lastTs >= 2000) {
+        errDispatchTs.set(fingerprint, nowTs);
         if (errDispatchTs.size > 200) errDispatchTs.clear();
-        window.dispatchEvent(new CustomEvent('yami-perf-new-error', { detail: errRecord }));
+        const activeRecord = existing || state.errorHistory[0];
+        window.dispatchEvent(new CustomEvent('yami-perf-new-error', { detail: activeRecord }));
       }
     } catch (e) {}
   }
