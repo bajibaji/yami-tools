@@ -1796,6 +1796,26 @@
         background: #5c430c !important;
         color: #ffffff !important;
       }
+      .yami-home-module-badge.cyan {
+        background: #0d383b !important;
+        border: 1px solid #0d9488 !important;
+        color: #2dd4bf !important;
+        font-weight: 600 !important;
+      }
+      .yami-home-module-badge.cyan:hover {
+        background: #114e52 !important;
+        color: #ffffff !important;
+      }
+      .yami-home-module-badge.purple {
+        background: #2e1647 !important;
+        border: 1px solid #7e22ce !important;
+        color: #c084fc !important;
+        font-weight: 600 !important;
+      }
+      .yami-home-module-badge.purple:hover {
+        background: #411f63 !important;
+        color: #ffffff !important;
+      }
 
 
       /* 槽位网格：彻底放开高度限制，全量展开展现，告别死矮框与滚动条 */
@@ -2450,6 +2470,215 @@
         text-align: center !important;
         line-height: 1.8 !important;
       }
+
+      /* ============================================================
+       * 作弊插件 (Cheats Lab) 样式
+       * ============================================================ */
+      #page-cheats {
+        flex: 1 1 0;
+        min-height: 0;
+        height: 100%;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        display: none;
+        flex-direction: column;
+        padding: 10px;
+        gap: 10px;
+        background: #181818 !important;
+        box-sizing: border-box !important;
+      }
+      #page-cheats::-webkit-scrollbar {
+        width: 6px;
+      }
+      #page-cheats::-webkit-scrollbar-thumb {
+        background: #333333;
+        border-radius: 3px;
+      }
+      .yami-cheat-grid {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 10px !important;
+      }
+      .yami-cheat-card {
+        background: #242424 !important;
+        border: 1px solid #333333 !important;
+        border-radius: 4px !important;
+        padding: 12px 14px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+      }
+      .yami-cheat-card-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+      }
+      .yami-cheat-title {
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        color: #f0f0f0 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .yami-cheat-desc {
+        font-size: 11px !important;
+        color: #888888 !important;
+        line-height: 1.5 !important;
+      }
+      /* 变速按钮组 */
+      .yami-speed-btns {
+        display: flex !important;
+        gap: 6px !important;
+        margin-top: 4px !important;
+      }
+      .yami-speed-btn {
+        flex: 1 !important;
+        height: 28px !important;
+        background: #1c1c1c !important;
+        border: 1px solid #383838 !important;
+        border-radius: 3px !important;
+        color: #b0b0b0 !important;
+        font-size: 12px !important;
+        font-family: Consolas, monospace !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: all 0.15s ease !important;
+      }
+      .yami-speed-btn:hover {
+        background: #2a2a2a !important;
+        color: #ffffff !important;
+        border-color: #4a4a4a !important;
+      }
+      .yami-speed-btn.active {
+        background: #172554 !important;
+        border-color: #2563eb !important;
+        color: #60a5fa !important;
+        font-weight: 600 !important;
+      }
+      /* 操作按钮 */
+      .yami-cheat-btn {
+        height: 28px !important;
+        background: #2a2a2a !important;
+        border: 1px solid #404040 !important;
+        border-radius: 3px !important;
+        color: #e0e0e0 !important;
+        font-size: 12px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 0 12px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        white-space: nowrap !important;
+        transition: all 0.15s ease !important;
+      }
+      .yami-cheat-btn:hover {
+        background: #363636 !important;
+        border-color: #555555 !important;
+        color: #ffffff !important;
+      }
+      .yami-cheat-btn.danger {
+        background: #2e1515 !important;
+        border-color: #7f1d1d !important;
+        color: #f87171 !important;
+      }
+      .yami-cheat-btn.danger:hover {
+        background: #3f1a1a !important;
+        border-color: #991b1b !important;
+        color: #fca5a5 !important;
+      }
+      .yami-cheat-btn.active {
+        background: #064e3b !important;
+        border-color: #059669 !important;
+        color: #34d399 !important;
+      }
+      /* 后台漂移提示卡片 */
+      .yami-drift-card {
+        background: #1e1e1e !important;
+        border: 1px dashed #3a3a3a !important;
+        border-radius: 4px !important;
+        padding: 10px 12px !important;
+        font-size: 11px !important;
+        color: #888888 !important;
+        line-height: 1.6 !important;
+      }
+
+      /* ============================================================
+       * 变量 Pin 挂件与开关样式
+       * ============================================================ */
+      #yami-pinned-box {
+        margin-top: 6px !important;
+        padding: 6px 10px !important;
+        background: rgba(22, 22, 22, 0.88) !important;
+        border: 1px solid #333333 !important;
+        border-radius: 4px !important;
+        pointer-events: none !important;
+        max-width: 240px !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+        display: none !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+      }
+      #yami-pinned-box.show {
+        display: flex !important;
+      }
+      .yami-pinned-item {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+        font-size: 11px !important;
+        line-height: 1.4 !important;
+      }
+      .yami-pinned-name {
+        color: #999999 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        max-width: 120px !important;
+      }
+      .yami-pinned-val {
+        color: #ffd76a !important;
+        font-family: Consolas, monospace !important;
+        font-weight: 500 !important;
+        white-space: nowrap !important;
+      }
+      .yami-pinned-warn {
+        color: #ff5252 !important;
+        font-size: 10px !important;
+        border: 1px solid #7f1d1d !important;
+        background: #2a1111 !important;
+        padding: 0 4px !important;
+        border-radius: 2px !important;
+      }
+      /* 存档台固定按钮 */
+      .btn-pin-var {
+        font-size: 10px !important;
+        padding: 2px 6px !important;
+        border-radius: 2px !important;
+        border: 1px solid #3d3d3d !important;
+        background: #222222 !important;
+        color: #a0a0a0 !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        white-space: nowrap !important;
+        line-height: 1.4 !important;
+        transition: all 0.15s ease !important;
+      }
+      .btn-pin-var:hover {
+        background: #2e2e2e !important;
+        color: #ffffff !important;
+        border-color: #555555 !important;
+      }
+      .btn-pin-var.pinned {
+        color: #facc15 !important;
+        border-color: #854d0e !important;
+        background: #26210b !important;
+      }
     `;
     document.head.appendChild(style);
 
@@ -2473,6 +2702,7 @@
         </div>
         <div id="yami-error-bubble-text" style="color: #f0f0f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">捕获到未处理错误</div>
       </div>
+      <div id="yami-pinned-box" style="display: none;"></div>
     `;
     document.body.appendChild(hud);
 
@@ -2597,7 +2827,21 @@
                   <div class="yami-home-module-desc">角色、区域与碰撞体检视</div>
                 </div>
               </div>
-              <div class="yami-home-module-badge active">进入</div>
+              <div class="yami-home-module-badge cyan">进入</div>
+            </div>
+
+            <!-- 模块 5: 作弊插件 (Remix Icon: ri-magic-line) -->
+            <div class="yami-home-module-item" data-target="cheats" role="button">
+              <div class="yami-home-module-main">
+                <div class="yami-home-module-icon-box" style="color: #c084fc; border-color: #581c87; background: #24113a;" title="RemixIcon: ri-magic-line">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M5 2V4H2V5H5V7H6V5H9V4H6V2H5ZM16.3787 5.62132L17.7929 7.03553L16.3787 8.44975L14.9645 7.03553L16.3787 5.62132ZM20.6213 9.86396L22.0355 11.2782L20.6213 12.6924L19.2071 11.2782L20.6213 9.86396ZM12.136 9.86396L19.2071 16.935L17.7929 18.3492L10.7218 11.2782L12.136 9.86396ZM14.9645 14.1066L16.3787 15.5208L14.9645 16.935L13.5503 15.5208L14.9645 14.1066ZM8.6005 13.3995L10.0147 14.8137L4.35786 20.4706C3.96734 20.8611 3.33417 20.8611 2.94365 20.4706C2.55313 20.08 2.55313 19.4469 2.94365 19.0563L8.6005 13.3995Z"></path></svg>
+                </div>
+                <div>
+                  <div class="yami-home-module-title">作弊插件</div>
+                  <div class="yami-home-module-desc">变速、穿墙、移速与数值测试</div>
+                </div>
+              </div>
+              <div class="yami-home-module-badge purple">进入</div>
             </div>
           </div>
         </div>
@@ -2863,11 +3107,61 @@
         </div>
       </div>
 
+      <!-- 页面 6: 作弊插件 (Cheats Lab) -->
+      <div class="yami-suite-page" id="page-cheats" style="display: none !important;">
+        <div class="yami-cheat-grid">
+          <!-- 卡片 1: 游戏变速 -->
+          <div class="yami-cheat-card">
+            <div class="yami-cheat-card-header">
+              <div class="yami-cheat-title">游戏变速</div>
+              <span id="cheat-speed-indicator" style="font-family: Consolas, monospace; font-size: 11px; color: #60a5fa;">当前: 1x</span>
+            </div>
+            <div class="yami-cheat-desc">跳过多余渲染，高频驱动逻辑帧推演。适于挂机产出与战斗效率快速测试。</div>
+            <div class="yami-speed-btns">
+              <div class="yami-speed-btn" data-speed="0.5" role="button">0.5x</div>
+              <div class="yami-speed-btn active" data-speed="1" role="button">1x</div>
+              <div class="yami-speed-btn" data-speed="2" role="button">2x</div>
+              <div class="yami-speed-btn" data-speed="5" role="button">5x</div>
+              <div class="yami-speed-btn" data-speed="10" role="button">10x</div>
+            </div>
+          </div>
+
+          <!-- 卡片 2: 移动与穿透 -->
+          <div class="yami-cheat-card">
+            <div class="yami-cheat-card-header">
+              <div class="yami-cheat-title">移动与穿透</div>
+            </div>
+            <div class="yami-cheat-desc">忽略场景障碍与地形碰撞阻挡，提升主角跑图寻路速度。</div>
+            <div style="display: flex; gap: 8px; margin-top: 4px;">
+              <div class="yami-cheat-btn" id="btn-cheat-noclip" role="button">穿墙模式: 关</div>
+              <div class="yami-cheat-btn" id="btn-cheat-speedboost" role="button">加速奔跑: 关</div>
+            </div>
+          </div>
+
+          <!-- 卡片 3: 战斗与生存 -->
+          <div class="yami-cheat-card">
+            <div class="yami-cheat-card-header">
+              <div class="yami-cheat-title">战斗与生存</div>
+            </div>
+            <div class="yami-cheat-desc">每帧刷新主角生命值属性，或一键清除当前全图所有杂兵怪物。</div>
+            <div style="display: flex; gap: 8px; margin-top: 4px;">
+              <div class="yami-cheat-btn" id="btn-cheat-godmode" role="button">无限生命: 关</div>
+              <div class="yami-cheat-btn danger" id="btn-cheat-killall" role="button">秒杀全图怪</div>
+            </div>
+          </div>
+
+          <!-- 卡片 5: 后台时间漂移提示 -->
+          <div class="yami-drift-card" id="cheat-drift-box">
+            后台漂移监测：正常运转中。切出后台时将自动记录真实时间与游戏引擎推进落差。
+          </div>
+        </div>
+      </div>
+
       </div><!-- end yami-perf-dock-body -->
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.5.1 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.6.0 (检查更新)</span>
         </div>
         <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
@@ -2897,7 +3191,8 @@
       profiler: document.getElementById('page-profiler'),
       errors: document.getElementById('page-errors'),
       save: document.getElementById('page-save'),
-      scene: document.getElementById('page-scene')
+      scene: document.getElementById('page-scene'),
+      cheats: document.getElementById('page-cheats')
     };
 
     // ============================================================
@@ -3051,7 +3346,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v0.5.1 (DanJuan妙妙插件)',
+        '- **插件版本**: v0.6.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -3526,6 +3821,129 @@
 
     // 默认激活路由
     
+    // ============================================================
+    // DanJuan妙妙插件 · 变量监视小窗 (Pinned Variables Widget)
+    // 常驻迷你胶囊下方，最多固定 5 个关键变量，实时捕获类型冲突与 NaN 异常
+    // ============================================================
+    const PinnedWidget = {
+      storageKey: 'yami_pinned_vars',
+      el: null,
+
+      getPinnedKeys() {
+        try {
+          const raw = localStorage.getItem(this.storageKey);
+          return raw ? JSON.parse(raw) : [];
+        } catch (e) {
+          return [];
+        }
+      },
+
+      setPinnedKeys(keys) {
+        try {
+          localStorage.setItem(this.storageKey, JSON.stringify(keys));
+        } catch (e) {}
+      },
+
+      isPinned(key) {
+        const keys = this.getPinnedKeys();
+        return keys.indexOf(key) >= 0;
+      },
+
+      togglePin(key, name) {
+        let keys = this.getPinnedKeys();
+        const idx = keys.indexOf(key);
+        if (idx >= 0) {
+          keys.splice(idx, 1);
+          this.setPinnedKeys(keys);
+          showToast(`已取消固定: ${name || key}`);
+        } else {
+          if (keys.length >= 5) {
+            showToast('已达上限 (最多固定 5 个变量)');
+            return false;
+          }
+          keys.push(key);
+          this.setPinnedKeys(keys);
+          showToast(`已固定到监视小窗: ${name || key}`);
+        }
+        this.render();
+        return true;
+      },
+
+      render() {
+        if (!this.el) this.el = document.getElementById('yami-pinned-box');
+        if (!this.el) return;
+
+        const keys = this.getPinnedKeys();
+        if (!keys || keys.length === 0 || isDockOpen) {
+          this.el.classList.remove('show');
+          this.el.style.setProperty('display', 'none', 'important');
+          return;
+        }
+
+        this.el.classList.add('show');
+        this.el.style.setProperty('display', 'flex', 'important');
+
+        // 获取当前变量警告
+        let probe = window.__YAMI_PERF_PROBE__;
+        let warnings = {};
+        if (probe && typeof probe.getVariableWarnings === 'function') {
+          try { warnings = probe.getVariableWarnings() || {}; } catch (e) {}
+        }
+
+        // 获取当前实时变量数据源: 优先 Variable.groups[0] / Variable.map
+        let currentVars = {};
+        if (typeof Variable !== 'undefined' && Variable) {
+          if (Variable.groups && Variable.groups[0]) {
+            currentVars = Variable.groups[0];
+          } else if (Variable.map) {
+            currentVars = Variable.map;
+          }
+        } else if (typeof SaveLab !== 'undefined' && SaveLab && SaveLab.currentData && SaveLab.currentData.variables) {
+          currentVars = SaveLab.currentData.variables;
+        }
+
+        let html = '';
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i];
+          let val = currentVars[k];
+          let metaName = k;
+          if (typeof SaveLab !== 'undefined' && SaveLab && SaveLab.dict && SaveLab.dict.variables) {
+            const meta = SaveLab.dict.variables.get(k);
+            if (meta && meta.name) metaName = meta.name;
+          }
+
+          let isWarn = !!warnings[k];
+          let valStr = '';
+          if (val === undefined) {
+            valStr = '-';
+          } else if (typeof val === 'boolean') {
+            valStr = val ? '[开]' : '[关]';
+          } else if (typeof val === 'number') {
+            if (Number.isNaN(val)) {
+              valStr = 'NaN';
+              isWarn = true;
+            } else {
+              valStr = String(val);
+            }
+          } else {
+            valStr = String(val);
+          }
+
+          html += `
+            <div class="yami-pinned-item">
+              <span class="yami-pinned-name" title="ID: ${k}">${metaName}</span>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                ${isWarn ? '<span class="yami-pinned-warn" title="' + (warnings[k] ? warnings[k].reason : '类型冲突或NaN') + '">[异常]</span>' : ''}
+                <span class="yami-pinned-val">${valStr}</span>
+              </div>
+            </div>
+          `;
+        }
+
+        this.el.innerHTML = html;
+      }
+    };
+
     // ============================================================
     // DanJuan妙妙插件 · 存档台 (Save Lab) 微内核实现
     // ============================================================
@@ -4130,6 +4548,8 @@
         const listHtml = items.slice(0, 100).map(it => {
           const typeTag = it.isSwitch ? '[开关]' : (it.type === 'string' ? '[文本]' : '[数值]');
           const tagColor = it.isSwitch ? '#4ade80' : (it.type === 'string' ? '#38bdf8' : '#eab308');
+          const isPinned = PinnedWidget.isPinned(it.key);
+          const pinBtnHtml = `<button class="btn-pin-var ${isPinned ? 'pinned' : ''}" data-key="${it.key}" title="固定/取消固定到监视小窗">${isPinned ? '[已盯]' : '[盯]'}</button>`;
 
           if (it.isSwitch) {
             const checked = Boolean(it.val);
@@ -4143,10 +4563,13 @@
                   </div>
                   <span class="yami-save-var-id">ID: ${it.key}${it.note ? (' · ' + it.note) : ''}</span>
                 </div>
-                <label class="yami-save-toggle">
-                  <input type="checkbox" class="var-switch-input" data-key="${it.key}" ${checked ? 'checked' : ''} />
-                  <span class="yami-save-toggle-slider"></span>
-                </label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  ${pinBtnHtml}
+                  <label class="yami-save-toggle">
+                    <input type="checkbox" class="var-switch-input" data-key="${it.key}" ${checked ? 'checked' : ''} />
+                    <span class="yami-save-toggle-slider"></span>
+                  </label>
+                </div>
               </div>
             `;
           } else {
@@ -4161,7 +4584,10 @@
                   </div>
                   <span class="yami-save-var-id">ID: ${it.key}${it.note ? (' · ' + it.note) : ''}</span>
                 </div>
-                <input class="yami-save-input var-number-input" data-key="${it.key}" type="text" value="${displayVal}" style="width: 110px; text-align: right;" />
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  ${pinBtnHtml}
+                  <input class="yami-save-input var-number-input" data-key="${it.key}" type="text" value="${displayVal}" style="width: 110px; text-align: right;" />
+                </div>
               </div>
             `;
           }
@@ -4363,6 +4789,19 @@
             if (!this.currentData.variables) this.currentData.variables = {};
             this.currentData.variables[key] = val;
             this.ctx.showToast(`变量 [${this.dict.variables.get(key) || key}] 改为: ${val}`, 1500);
+          });
+        });
+
+        root.querySelectorAll('.btn-pin-var').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const key = btn.getAttribute('data-key');
+            const meta = this.dict.variables.get(key);
+            const name = meta ? meta.name : key;
+            PinnedWidget.togglePin(key, name);
+            const pinned = PinnedWidget.isPinned(key);
+            btn.classList.toggle('pinned', pinned);
+            btn.textContent = pinned ? '[已盯]' : '[盯]';
           });
         });
       },
@@ -4827,6 +5266,195 @@
       }
     });
 
+    // ============================================================
+    // DanJuan妙妙插件 · 作弊插件 (Cheats Lab) 微内核实现
+    // ============================================================
+    const CheatsLab = {
+      ctx: null,
+      root: null,
+      _bound: false,
+
+      init(ctx) {
+        this.ctx = ctx;
+        this._ensureRoot();
+        this.refresh(ctx);
+      },
+
+      _ensureRoot() {
+        if (!this.root) this.root = document.getElementById('page-cheats');
+        if (!this._bound && this.root) {
+          this._bound = true;
+          this._bindEvents();
+        }
+      },
+
+      _getProbe() {
+        let probe = null;
+        if (this.ctx && typeof this.ctx.probe === 'function') {
+          try { probe = this.ctx.probe(); } catch (e) {}
+        }
+        if (!probe && typeof window !== 'undefined') probe = window.__YAMI_PERF_PROBE__;
+        return probe;
+      },
+
+      _bindEvents() {
+        // 1. 游戏变速按钮组
+        const speedBtns = this.root.querySelectorAll('.yami-speed-btn');
+        speedBtns.forEach(btn => {
+          btn.addEventListener('click', () => {
+            const speed = Number(btn.getAttribute('data-speed')) || 1;
+            const probe = this._getProbe();
+            if (probe && typeof probe.setCheat === 'function') {
+              probe.setCheat('speedMultiplier', speed);
+            }
+            this._updateSpeedUI(speed);
+            showToast(`游戏速度已设置为 ${speed}x`);
+          });
+        });
+
+        // 2. 穿墙模式切换
+        const noclipBtn = this.root.querySelector('#btn-cheat-noclip');
+        if (noclipBtn) {
+          noclipBtn.addEventListener('click', () => {
+            const probe = this._getProbe();
+            if (!probe) return;
+            const cheats = probe.getCheats ? probe.getCheats() : {};
+            const next = !cheats.noClip;
+            probe.setCheat('noClip', next);
+            this._updateToggleBtn(noclipBtn, '穿墙模式', next);
+            showToast(next ? '穿墙模式已开启 (忽略场景障碍)' : '穿墙模式已关闭');
+          });
+        }
+
+        // 3. 加速奔跑切换
+        const speedboostBtn = this.root.querySelector('#btn-cheat-speedboost');
+        if (speedboostBtn) {
+          speedboostBtn.addEventListener('click', () => {
+            const probe = this._getProbe();
+            if (!probe) return;
+            const cheats = probe.getCheats ? probe.getCheats() : {};
+            const next = !cheats.speedBoost;
+            probe.setCheat('speedBoost', next);
+            this._updateToggleBtn(speedboostBtn, '加速奔跑', next);
+            showToast(next ? '加速奔跑已开启 (主角移速大幅提升)' : '加速奔跑已关闭');
+          });
+        }
+
+        // 4. 无限生命 (锁血) 切换
+        const godmodeBtn = this.root.querySelector('#btn-cheat-godmode');
+        if (godmodeBtn) {
+          godmodeBtn.addEventListener('click', () => {
+            const probe = this._getProbe();
+            if (!probe) return;
+            const cheats = probe.getCheats ? probe.getCheats() : {};
+            const next = !cheats.godMode;
+            probe.setCheat('godMode', next);
+            this._updateToggleBtn(godmodeBtn, '无限生命', next);
+            showToast(next ? '无限生命已开启 (每帧锁定主角满血)' : '无限生命已关闭');
+          });
+        }
+
+        // 5. 秒杀全图怪 (一次性触发)
+        const killallBtn = this.root.querySelector('#btn-cheat-killall');
+        if (killallBtn) {
+          killallBtn.addEventListener('click', () => {
+            const probe = this._getProbe();
+            if (!probe) return;
+            const count = probe.killAllMonsters ? probe.killAllMonsters() : 0;
+            showToast(`已秒杀清除全图敌对目标: ${count} 只`);
+          });
+        }
+
+      },
+
+      _updateToggleBtn(btn, title, active) {
+        if (!btn) return;
+        btn.textContent = `${title}: ${active ? '开' : '关'}`;
+        if (active) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      },
+
+      _updateSpeedUI(speed) {
+        if (!this.root) return;
+        const ind = this.root.querySelector('#cheat-speed-indicator');
+        if (ind) ind.textContent = `当前: ${speed}x`;
+
+        const speedBtns = this.root.querySelectorAll('.yami-speed-btn');
+        speedBtns.forEach(b => {
+          const s = Number(b.getAttribute('data-speed'));
+          if (s === speed) {
+            b.classList.add('active');
+          } else {
+            b.classList.remove('active');
+          }
+        });
+      },
+
+      refresh(ctx) {
+        if (ctx) this.ctx = ctx;
+        this._ensureRoot();
+        if (!this.root) return;
+
+        const probe = this._getProbe();
+        if (!probe) return;
+
+        const cheats = probe.getCheats ? probe.getCheats() : {};
+
+        // 1. 同步变速 UI
+        if (cheats.speedMultiplier !== undefined) {
+          this._updateSpeedUI(cheats.speedMultiplier);
+        }
+
+        // 2. 同步穿墙
+        const noclipBtn = this.root.querySelector('#btn-cheat-noclip');
+        this._updateToggleBtn(noclipBtn, '穿墙模式', !!cheats.noClip);
+
+        // 3. 同步加速
+        const speedboostBtn = this.root.querySelector('#btn-cheat-speedboost');
+        this._updateToggleBtn(speedboostBtn, '加速奔跑', !!cheats.speedBoost);
+
+        // 4. 同步无限生命
+        const godmodeBtn = this.root.querySelector('#btn-cheat-godmode');
+        this._updateToggleBtn(godmodeBtn, '无限生命', !!cheats.godMode);
+
+        // 5. 同步后台时间漂移
+        const driftEl = this.root.querySelector('#cheat-drift-box');
+        if (driftEl) {
+          const drift = cheats.backgroundDrift;
+          if (drift && drift.count > 0) {
+            const totalSec = (drift.totalDriftMs / 1000).toFixed(1);
+            const lastSec = (drift.lastDriftMs / 1000).toFixed(1);
+            driftEl.innerHTML = `<strong>后台漂移监测</strong>: 累计切出 ${drift.count} 次，总漂移 ${totalSec}s (最近一次 ${lastSec}s)。<br><span style="color: #888888; font-size: 11px;">切出后台时引擎逻辑被浏览器节流，挂机收益计算应依赖绝对时间差而非引擎帧。</span>`;
+          } else {
+            driftEl.innerHTML = `<strong>后台漂移监测</strong>: 正常运转中。切出后台时将自动记录真实时间与游戏引擎推进落差。`;
+          }
+        }
+      },
+
+      destroy() {}
+    };
+
+    Views.register('cheats', {
+      showExportBtns: false,
+      title: '作弊插件',
+      showBack: true,
+      showModeSwitch: false,
+      showClearErrors: false,
+      showTabs: false,
+      mount(root, ctx) {
+        CheatsLab.init(ctx);
+      },
+      refresh(ctx) {
+        CheatsLab.refresh(ctx);
+      },
+      destroy() {
+        CheatsLab.destroy();
+      }
+    });
+
     switchView(currentView);
 
 
@@ -5165,7 +5793,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '0.5.1';
+      const cur = (probe && probe.version) ? probe.version : '0.6.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -5222,7 +5850,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '0.5.1') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '0.6.0') + ')');
           refreshVersionBadge();
         }
       });
@@ -5606,8 +6234,17 @@
       if (isDockOpen) refreshDockData();
     });
 
+    if (typeof PinnedWidget !== 'undefined' && PinnedWidget.render) {
+      PinnedWidget.render();
+    }
+
     setInterval(() => {
       try {
+        // 变量监视小窗实时刷新 (不依赖 probe 采样)
+        if (typeof PinnedWidget !== 'undefined' && PinnedWidget.render) {
+          PinnedWidget.render();
+        }
+
         const probe = window.__YAMI_PERF_PROBE__;
         if (!probe || !probe.state.samples.length) return;
         const last = probe.state.samples[probe.state.samples.length - 1];

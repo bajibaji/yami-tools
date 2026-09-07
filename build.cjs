@@ -101,7 +101,11 @@ const requiredAnchors = [
   { name: '指标 ID: yami-ms', pattern: /id="yami-ms"/ },
   { name: '指标 ID: yami-dc', pattern: /id="yami-dc"/ },
   { name: '指标 ID: diag-score', pattern: /id="diag-score"/ },
-  { name: '四模块入口布局齐全', pattern: /data-target="profiler"[\s\S]*?data-target="errors"[\s\S]*?data-target="save"[\s\S]*?data-target="scene"/ }
+  { name: '五模块入口布局齐全', pattern: /data-target="profiler"[\s\S]*?data-target="errors"[\s\S]*?data-target="save"[\s\S]*?data-target="scene"[\s\S]*?data-target="cheats"/ },
+  { name: '作弊插件契约注册', pattern: /Views\.register\('cheats'/ },
+  { name: '作弊插件页骨架', pattern: /id="page-cheats"/ },
+  { name: '固定变量浮窗骨架', pattern: /id="yami-pinned-box"/ },
+  { name: 'Remix Icon: ri-magic-line', pattern: /ri-magic-line/ }
 ];
 
 let failedCount = 0;

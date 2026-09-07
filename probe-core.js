@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '0.5.1';
+  const PROBE_VERSION = '0.6.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -23,6 +23,17 @@
     lastJankEvent: null,
     // 嫌疑开关: 挂起某类对象的真实更新(用于 A/B 实验验证真凶)
     suspend: { actors: false, animations: false, emitters: false, triggers: false, ui: false, events: false, audio: false },
+    // 调试与作弊控制状态
+    cheats: {
+      speedMultiplier: 1,
+      noClip: false,
+      speedBoost: false,
+      godMode: false,
+      origPlayerPassage: null,
+      origPlayerSpeed: null
+    },
+    variableWarnings: {},
+    backgroundDrift: null,
     // 已包装对象集合(防重复 + 恢复计数)
     objWrapped: { actors: 0, animations: 0, emitters: 0, triggers: 0, ui: 0 },
     frameObjMs: new Map(),
@@ -467,6 +478,114 @@
     } catch (e) {}
   }
 
+  function applyCheatsPerFrame() {
+    if (!state.cheats) return;
+    const c = state.cheats;
+    try {
+      const player = (typeof Party !== 'undefined' && Party) ? Party.player : null;
+      if (player) {
+        // 1. 穿墙维持
+        if (c.noClip) {
+          if (c.origPlayerPassage === null) c.origPlayerPassage = player.passage ?? 0;
+          player.passage = -1;
+        } else if (c.origPlayerPassage !== null) {
+          player.passage = c.origPlayerPassage;
+          c.origPlayerPassage = null;
+        }
+
+        // 2. 移速加成维持
+        if (c.speedBoost && player.navigator) {
+          if (c.origPlayerSpeed === null) c.origPlayerSpeed = player.navigator.movementSpeed ?? 4;
+          player.navigator.movementSpeed = 12;
+        } else if (!c.speedBoost && c.origPlayerSpeed !== null && player.navigator) {
+          player.navigator.movementSpeed = c.origPlayerSpeed;
+          c.origPlayerSpeed = null;
+        }
+
+        // 3. 锁血 (无限生命)
+        if (c.godMode && player.attributes) {
+          const attrs = player.attributes;
+          for (const k of Object.keys(attrs)) {
+            const lk = k.toLowerCase();
+            if (lk === 'health' || lk === 'hp' || k === '生命值') {
+              const maxVal = attrs['maxHealth'] || attrs['maxHp'] || attrs['最大生命值'] || 999999;
+              attrs[k] = maxVal;
+            }
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  function hookVariableSet() {
+    try {
+      if (typeof Variable !== 'undefined' && Variable && !Variable.__yamiCheatsHooked__) {
+        Variable.__yamiCheatsHooked__ = true;
+        const origSet = Variable.set;
+        Variable.set = function (key, value) {
+          try {
+            const currentVal = (Variable.map && typeof Variable.map === 'object') ? Variable.map[key] : undefined;
+            const targetType = typeof currentVal;
+            const incomingType = typeof value;
+            let isRejected = false;
+            let isNaNVal = false;
+
+            if (incomingType === 'number' && Number.isNaN(value)) {
+              isNaNVal = true;
+            }
+
+            if (currentVal !== undefined) {
+              if (targetType !== incomingType) {
+                if (!(incomingType === 'object' && targetType === 'undefined') &&
+                    !(incomingType === 'undefined' && targetType === 'object')) {
+                  isRejected = true;
+                }
+              }
+            }
+
+            if (isRejected || isNaNVal) {
+              state.variableWarnings[key] = {
+                time: Date.now(),
+                key: key,
+                currentVal: currentVal,
+                attemptedVal: value,
+                reason: isRejected ? '类型冲突丢弃' : '计算结果为NaN'
+              };
+            }
+          } catch (err) {}
+          return origSet.apply(this, arguments);
+        };
+      }
+    } catch (e) {}
+  }
+
+  // 监听后台失焦与时间漂移提示
+  let hideRealTime = 0;
+  let hideGameTime = 0;
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('visibilitychange', function () {
+      try {
+        if (document.hidden) {
+          hideRealTime = performance.now();
+          hideGameTime = (typeof Time !== 'undefined' && Time && typeof Time.elapsed === 'number') ? Time.elapsed : 0;
+        } else if (hideRealTime > 0) {
+          const realElapsed = (performance.now() - hideRealTime) / 1000;
+          const gameElapsed = (typeof Time !== 'undefined' && Time && typeof Time.elapsed === 'number') ? (Time.elapsed - hideGameTime) / 1000 : 0;
+          hideRealTime = 0;
+          if (realElapsed > 3 && (realElapsed - gameElapsed) > 1.5) {
+            const realMin = Math.floor(realElapsed / 60);
+            const realSec = Math.round(realElapsed % 60);
+            const gameMin = Math.floor(gameElapsed / 60);
+            const gameSec = Math.round(gameElapsed % 60);
+            const realStr = realMin > 0 ? (realMin + '分' + realSec + '秒') : (realSec + '秒');
+            const gameStr = gameMin > 0 ? (gameMin + '分' + gameSec + '秒') : (gameSec + '秒');
+            state.backgroundDrift = '本次切入后台 ' + realStr + '，游戏内推进仅 ' + gameStr + ' (受限于引擎节流)';
+          }
+        }
+      } catch (e) {}
+    });
+  }
+
   function hookGame() {
     const G = typeof Game !== 'undefined' ? Game : null;
     if (!G || typeof G.update !== 'function' || G.__yamiPerfProbeHooked__) return;
@@ -475,7 +594,20 @@
     G.update = function () {
       const t0 = now();
       try {
-        return u.apply(this, arguments);
+        applyCheatsPerFrame();
+        const res = u.apply(this, arguments);
+        if (state.cheats && state.cheats.speedMultiplier > 1 && !state.cheats.__inSpeedLoop) {
+          state.cheats.__inSpeedLoop = true;
+          try {
+            const extraSteps = Math.min(9, Math.floor(state.cheats.speedMultiplier) - 1);
+            for (let s = 0; s < extraSteps; s++) {
+              u.apply(this, arguments);
+            }
+          } finally {
+            state.cheats.__inSpeedLoop = false;
+          }
+        }
+        return res;
       } finally {
         frameUpdate += now() - t0;
       }
@@ -612,6 +744,7 @@
   function refresh() {
     hookGame();
     hookWebGL();
+    hookVariableSet();
     if (typeof Game !== 'undefined') {
       wrapModules(Game.updaters, 'update', state.updaterTotal, 'Updater');
       wrapModules(Game.renderers, 'render', state.rendererTotal, 'Renderer');
@@ -1868,6 +2001,74 @@
     },
     getSuspend: function () {
       return Object.assign({}, state.suspend);
+    },
+    getCheats: function () {
+      return {
+        speedMultiplier: (state.cheats && state.cheats.speedMultiplier) || 1,
+        noClip: !!(state.cheats && state.cheats.noClip),
+        speedBoost: !!(state.cheats && state.cheats.speedBoost),
+        godMode: !!(state.cheats && state.cheats.godMode),
+        backgroundDrift: state.backgroundDrift
+      };
+    },
+    setCheat: function (key, value) {
+      if (!state.cheats) return;
+      if (key === 'speedMultiplier') {
+        const num = Number(value) || 1;
+        state.cheats.speedMultiplier = num;
+        if (typeof Time !== 'undefined' && Time) {
+          if (num === 0.5) {
+            Time.timeScale = 0.5;
+          } else {
+            Time.timeScale = 1;
+          }
+        }
+      } else if (key in state.cheats) {
+        state.cheats[key] = !!value;
+      }
+      applyCheatsPerFrame();
+      return state.cheats[key];
+    },
+    killAllMonsters: function () {
+      let count = 0;
+      try {
+        if (typeof Scene !== 'undefined' && Scene.binding && Scene.actor && Scene.actor.list) {
+          const list = Scene.actor.list;
+          const player = (typeof Party !== 'undefined' && Party) ? Party.player : null;
+          const members = (typeof Party !== 'undefined' && Party && Party.members) ? Party.members : [];
+          for (let i = 0; i < list.length; i++) {
+            const actor = list[i];
+            if (!actor || actor === player || (members && members.indexOf(actor) >= 0)) continue;
+            if (actor.attributes) {
+              let killed = false;
+              for (const k of Object.keys(actor.attributes)) {
+                const lk = k.toLowerCase();
+                if (lk === 'health' || lk === 'hp' || k === '生命值') {
+                  actor.attributes[k] = 0;
+                  killed = true;
+                }
+              }
+              if (killed) {
+                count++;
+                if (typeof actor.emit === 'function') {
+                  try { actor.emit('destroy'); } catch (e) {}
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {}
+      return count;
+    },
+    getVariableWarnings: function () {
+      return Object.assign({}, state.variableWarnings);
+    },
+    clearVariableWarning: function (key) {
+      if (key) {
+        delete state.variableWarnings[key];
+      } else {
+        state.variableWarnings = {};
+      }
     },
     copy: function () {
       const json = JSON.stringify(buildReport(), null, 2);

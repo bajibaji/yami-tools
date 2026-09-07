@@ -1769,6 +1769,26 @@
         background: #5c430c !important;
         color: #ffffff !important;
       }
+      .yami-home-module-badge.cyan {
+        background: #0d383b !important;
+        border: 1px solid #0d9488 !important;
+        color: #2dd4bf !important;
+        font-weight: 600 !important;
+      }
+      .yami-home-module-badge.cyan:hover {
+        background: #114e52 !important;
+        color: #ffffff !important;
+      }
+      .yami-home-module-badge.purple {
+        background: #2e1647 !important;
+        border: 1px solid #7e22ce !important;
+        color: #c084fc !important;
+        font-weight: 600 !important;
+      }
+      .yami-home-module-badge.purple:hover {
+        background: #411f63 !important;
+        color: #ffffff !important;
+      }
 
 
       /* 槽位网格：彻底放开高度限制，全量展开展现，告别死矮框与滚动条 */
@@ -2422,4 +2442,213 @@
         padding: 10px 12px !important;
         text-align: center !important;
         line-height: 1.8 !important;
+      }
+
+      /* ============================================================
+       * 作弊插件 (Cheats Lab) 样式
+       * ============================================================ */
+      #page-cheats {
+        flex: 1 1 0;
+        min-height: 0;
+        height: 100%;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        display: none;
+        flex-direction: column;
+        padding: 10px;
+        gap: 10px;
+        background: #181818 !important;
+        box-sizing: border-box !important;
+      }
+      #page-cheats::-webkit-scrollbar {
+        width: 6px;
+      }
+      #page-cheats::-webkit-scrollbar-thumb {
+        background: #333333;
+        border-radius: 3px;
+      }
+      .yami-cheat-grid {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 10px !important;
+      }
+      .yami-cheat-card {
+        background: #242424 !important;
+        border: 1px solid #333333 !important;
+        border-radius: 4px !important;
+        padding: 12px 14px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+      }
+      .yami-cheat-card-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+      }
+      .yami-cheat-title {
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        color: #f0f0f0 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .yami-cheat-desc {
+        font-size: 11px !important;
+        color: #888888 !important;
+        line-height: 1.5 !important;
+      }
+      /* 变速按钮组 */
+      .yami-speed-btns {
+        display: flex !important;
+        gap: 6px !important;
+        margin-top: 4px !important;
+      }
+      .yami-speed-btn {
+        flex: 1 !important;
+        height: 28px !important;
+        background: #1c1c1c !important;
+        border: 1px solid #383838 !important;
+        border-radius: 3px !important;
+        color: #b0b0b0 !important;
+        font-size: 12px !important;
+        font-family: Consolas, monospace !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: all 0.15s ease !important;
+      }
+      .yami-speed-btn:hover {
+        background: #2a2a2a !important;
+        color: #ffffff !important;
+        border-color: #4a4a4a !important;
+      }
+      .yami-speed-btn.active {
+        background: #172554 !important;
+        border-color: #2563eb !important;
+        color: #60a5fa !important;
+        font-weight: 600 !important;
+      }
+      /* 操作按钮 */
+      .yami-cheat-btn {
+        height: 28px !important;
+        background: #2a2a2a !important;
+        border: 1px solid #404040 !important;
+        border-radius: 3px !important;
+        color: #e0e0e0 !important;
+        font-size: 12px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 0 12px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        white-space: nowrap !important;
+        transition: all 0.15s ease !important;
+      }
+      .yami-cheat-btn:hover {
+        background: #363636 !important;
+        border-color: #555555 !important;
+        color: #ffffff !important;
+      }
+      .yami-cheat-btn.danger {
+        background: #2e1515 !important;
+        border-color: #7f1d1d !important;
+        color: #f87171 !important;
+      }
+      .yami-cheat-btn.danger:hover {
+        background: #3f1a1a !important;
+        border-color: #991b1b !important;
+        color: #fca5a5 !important;
+      }
+      .yami-cheat-btn.active {
+        background: #064e3b !important;
+        border-color: #059669 !important;
+        color: #34d399 !important;
+      }
+      /* 后台漂移提示卡片 */
+      .yami-drift-card {
+        background: #1e1e1e !important;
+        border: 1px dashed #3a3a3a !important;
+        border-radius: 4px !important;
+        padding: 10px 12px !important;
+        font-size: 11px !important;
+        color: #888888 !important;
+        line-height: 1.6 !important;
+      }
+
+      /* ============================================================
+       * 变量 Pin 挂件与开关样式
+       * ============================================================ */
+      #yami-pinned-box {
+        margin-top: 6px !important;
+        padding: 6px 10px !important;
+        background: rgba(22, 22, 22, 0.88) !important;
+        border: 1px solid #333333 !important;
+        border-radius: 4px !important;
+        pointer-events: none !important;
+        max-width: 240px !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+        display: none !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+      }
+      #yami-pinned-box.show {
+        display: flex !important;
+      }
+      .yami-pinned-item {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+        font-size: 11px !important;
+        line-height: 1.4 !important;
+      }
+      .yami-pinned-name {
+        color: #999999 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        max-width: 120px !important;
+      }
+      .yami-pinned-val {
+        color: #ffd76a !important;
+        font-family: Consolas, monospace !important;
+        font-weight: 500 !important;
+        white-space: nowrap !important;
+      }
+      .yami-pinned-warn {
+        color: #ff5252 !important;
+        font-size: 10px !important;
+        border: 1px solid #7f1d1d !important;
+        background: #2a1111 !important;
+        padding: 0 4px !important;
+        border-radius: 2px !important;
+      }
+      /* 存档台固定按钮 */
+      .btn-pin-var {
+        font-size: 10px !important;
+        padding: 2px 6px !important;
+        border-radius: 2px !important;
+        border: 1px solid #3d3d3d !important;
+        background: #222222 !important;
+        color: #a0a0a0 !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        white-space: nowrap !important;
+        line-height: 1.4 !important;
+        transition: all 0.15s ease !important;
+      }
+      .btn-pin-var:hover {
+        background: #2e2e2e !important;
+        color: #ffffff !important;
+        border-color: #555555 !important;
+      }
+      .btn-pin-var.pinned {
+        color: #facc15 !important;
+        border-color: #854d0e !important;
+        background: #26210b !important;
       }
