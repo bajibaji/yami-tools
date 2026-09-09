@@ -13,6 +13,7 @@ const SUITE = [
   ['test-scene-lab.mjs',    '场景实体快照与渲染集成'],
   ['test-cheats-reset.mjs', '作弊台全部还原与状态复原'],
   ['test-fix-regressions.mjs', '缺陷修复回归 (引擎假设/数据语义/文案映射)'],
+  ['test-project-audit.mjs', '工程体检(断链+死事件)与报错事件级定位'],
   ['test-autoupdate.mjs',   '热更新端到端 (需联网)'],
 ];
 

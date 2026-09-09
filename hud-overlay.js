@@ -2716,6 +2716,201 @@
         border-color: #854d0e !important;
         background: #26210b !important;
       }
+
+      /* ============================================================
+       * 工程体检 (Project Audit) 样式
+       * ============================================================ */
+      .yami-audit-panel {
+        background: #202020 !important;
+        border: 1px solid #333333 !important;
+        border-radius: 4px !important;
+        padding: 10px 12px !important;
+        margin-bottom: 8px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+        box-sizing: border-box !important;
+      }
+      .yami-audit-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+      }
+      .yami-audit-title-box {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        flex-wrap: wrap !important;
+      }
+      .yami-audit-title {
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        color: #f0f0f0 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .yami-audit-badge {
+        font-size: 10px !important;
+        padding: 1px 5px !important;
+        border-radius: 2px !important;
+        font-weight: 500 !important;
+        white-space: nowrap !important;
+      }
+      .yami-audit-badge.idle {
+        background: #2a2a2a !important;
+        border: 1px solid #444444 !important;
+        color: #999999 !important;
+      }
+      .yami-audit-badge.scanning {
+        background: #172554 !important;
+        border: 1px solid #2563eb !important;
+        color: #60a5fa !important;
+      }
+      .yami-audit-badge.ok {
+        background: #064e3b !important;
+        border: 1px solid #059669 !important;
+        color: #34d399 !important;
+      }
+      .yami-audit-badge.warn {
+        background: #451a03 !important;
+        border: 1px solid #d97706 !important;
+        color: #fbbf24 !important;
+      }
+      .yami-audit-badge.error {
+        background: #450a0a !important;
+        border: 1px solid #dc2626 !important;
+        color: #f87171 !important;
+      }
+      .yami-audit-actions {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .yami-audit-summary {
+        font-size: 11px !important;
+        color: #888888 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        line-height: 1.4 !important;
+      }
+      .yami-audit-list {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        max-height: 240px !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        padding-right: 4px !important;
+      }
+      .yami-audit-list::-webkit-scrollbar {
+        width: 4px;
+      }
+      .yami-audit-list::-webkit-scrollbar-thumb {
+        background: #383838;
+        border-radius: 2px;
+      }
+      .yami-audit-item {
+        background: #181818 !important;
+        border-radius: 3px !important;
+        padding: 8px 10px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+        font-size: 11px !important;
+      }
+      .yami-audit-item.broken {
+        border-left: 3px solid #ef4444 !important;
+        border-top: 1px solid #2d1818 !important;
+        border-right: 1px solid #2d1818 !important;
+        border-bottom: 1px solid #2d1818 !important;
+      }
+      .yami-audit-item.dead {
+        border-left: 3px solid #f59e0b !important;
+        border-top: 1px solid #2d2418 !important;
+        border-right: 1px solid #2d2418 !important;
+        border-bottom: 1px solid #2d2418 !important;
+      }
+      .yami-audit-item-top {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+      }
+      .yami-audit-item-title {
+        font-weight: 600 !important;
+        color: #e2e2e2 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .yami-audit-item-file {
+        color: #787878 !important;
+        font-family: Consolas, monospace !important;
+        font-size: 10px !important;
+        word-break: break-all !important;
+      }
+      .yami-audit-item-desc {
+        color: #b0b0b0 !important;
+        line-height: 1.4 !important;
+      }
+      .yami-audit-item-actions {
+        display: flex !important;
+        justify-content: flex-end !important;
+        gap: 6px !important;
+        margin-top: 2px !important;
+      }
+      .yami-audit-btn-mini {
+        position: static !important;
+        box-sizing: border-box !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        height: 20px !important;
+        padding: 0 8px !important;
+        font-size: 10px !important;
+        background: #252525 !important;
+        border: 1px solid #3d3d3d !important;
+        border-radius: 2px !important;
+        color: #a0a0a0 !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: all 0.12s ease !important;
+      }
+      .yami-audit-btn-mini:hover {
+        background: #333333 !important;
+        color: #ffffff !important;
+        border-color: #555555 !important;
+      }
+
+      /* ============================================================
+       * 报错卡片事件级定位样式
+       * ============================================================ */
+      .yami-error-event-ctx {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        background: #112233 !important;
+        border: 1px solid #1d4060 !important;
+        border-radius: 3px !important;
+        padding: 4px 8px !important;
+        margin: 4px 0 2px 0 !important;
+        font-size: 11px !important;
+        color: #7ec0ee !important;
+        line-height: 1.4 !important;
+        box-sizing: border-box !important;
+      }
+      .yami-error-event-ctx-badge {
+        background: #1d4060 !important;
+        color: #aae0ff !important;
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        padding: 1px 4px !important;
+        border-radius: 2px !important;
+        flex-shrink: 0 !important;
+      }
     `;
     document.head.appendChild(style);
 
@@ -2892,6 +3087,26 @@
             </div>
             <div class="yami-error-btn primary" id="btn-export-error-report" role="button" title="导出 Markdown 结构化诊断报告">导出报告</div>
             
+          </div>
+
+          <!-- 工程体检卡片 (断链检测 + 死事件检测) -->
+          <div class="yami-audit-panel" id="yami-audit-panel">
+            <div class="yami-audit-header">
+              <div class="yami-audit-title-box">
+                <span class="yami-audit-title">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 2L4 5V11C4 16.52 7.41 21.62 12 22.85C16.59 21.62 20 16.52 20 11V5L12 2ZM12 4.18L18 6.43V11C18 15.35 15.44 19.38 12 20.73C8.56 19.38 6 15.35 6 11V6.43L12 4.18ZM11 7V9H13V7H11ZM11 11V17H13V11H11Z"/></svg>
+                  工程体检
+                </span>
+                <span class="yami-audit-badge idle" id="yami-audit-status">[未体检]</span>
+              </div>
+              <div class="yami-audit-actions">
+                <div class="yami-error-btn primary" id="btn-run-project-audit" role="button" title="纯静态扫描工程所有资产，检查断链引用与死事件">一键体检</div>
+              </div>
+            </div>
+            <div class="yami-audit-summary" id="yami-audit-summary">
+              未执行体检。点击【一键体检】静态检测断链与死事件。
+            </div>
+            <div class="yami-audit-list" id="yami-audit-list" style="display: none;"></div>
           </div>
 
           <!-- 分类筛选器 -->
@@ -3415,6 +3630,11 @@
         report.push('- **报错来源**: `' + err.source + '`' + (err.lineno ? ' (第 ' + err.lineno + ' 行)' : ''));
         report.push('- **诊断原因**: ' + (a.reason || '运行期发生未处理错误'));
         report.push('- **建议排查**: ' + (a.suggestion || '检查代码上下文与变量状态'));
+        if (err.eventContext && err.eventContext.eventName) {
+          const stepStr = '第 ' + (err.eventContext.step + 1) + ' 步';
+          const sceneStr = err.eventContext.sceneName ? (' · 【' + err.eventContext.sceneName + '】') : '';
+          report.push('- **事件定位**: 发生在【' + err.eventContext.eventName + '】' + stepStr + sceneStr);
+        }
 
         if (err.codeContext && Array.isArray(err.codeContext.lines)) {
           report.push('');
@@ -3442,6 +3662,22 @@
         report.push('');
       });
 
+      if (auditResult && auditResult.ok) {
+        report.push('## 工程静态体检结果');
+        report.push('- **体检时间**: ' + new Date(auditResult.scannedAt).toLocaleString('zh-CN', { hour12: false }));
+        report.push('- **扫描统计**: ' + (auditResult.stats ? (auditResult.stats.files + ' 个文件 · ' + auditResult.stats.refs + ' 处引用') : ''));
+        if (!auditResult.issues || auditResult.issues.length === 0) {
+          report.push('- **健康状态**: [健康] 未发现任何断链引用或死事件');
+        } else {
+          report.push('- **发现问题**: ' + auditResult.issues.length + ' 项');
+          auditResult.issues.forEach(function(iss, i) {
+            const k = iss.kind === 'broken' ? '[断链引用]' : '[死事件]';
+            report.push('  ' + (i + 1) + '. ' + k + ' ' + (iss.desc || '') + ' (' + (iss.file || '') + ')');
+          });
+        }
+        report.push('');
+      }
+
       const mdContent = report.join('\n');
       if (navigator.clipboard) {
         navigator.clipboard.writeText(mdContent).then(function() {
@@ -3463,6 +3699,204 @@
           showToast('诊断报告已落盘: ' + fname);
         }
       } catch (e) {}
+    }
+
+    // ============================================================
+    // 工程体检 (Project Audit) 控制器
+    // 纯静态扫描断链引用与死事件，用户点击触发，绝不进入心跳轮询
+    // ============================================================
+    let auditScanning = false;
+    let auditResult = null;
+
+    function renderAuditPanel() {
+      const panelEl = document.getElementById('yami-audit-panel');
+      if (!panelEl) return;
+      const statusBadge = document.getElementById('yami-audit-status');
+      const summaryEl = document.getElementById('yami-audit-summary');
+      const listEl = document.getElementById('yami-audit-list');
+      const runBtn = document.getElementById('btn-run-project-audit');
+
+      if (auditScanning) {
+        if (statusBadge) {
+          statusBadge.className = 'yami-audit-badge scanning';
+          statusBadge.textContent = '[扫描中...]';
+        }
+        if (summaryEl) {
+          summaryEl.textContent = '正在全量扫描工程资产与引用关系，请稍候...';
+        }
+        if (runBtn) {
+          runBtn.style.pointerEvents = 'none';
+          runBtn.style.opacity = '0.6';
+        }
+        if (listEl) listEl.style.display = 'none';
+        return;
+      }
+
+      if (runBtn) {
+        runBtn.style.pointerEvents = 'auto';
+        runBtn.style.opacity = '1';
+      }
+
+      if (!auditResult) {
+        const probe = window.__YAMI_PERF_PROBE__;
+        if (probe && probe.getAuditResult) {
+          const prev = probe.getAuditResult();
+          if (prev) auditResult = prev;
+        }
+      }
+
+      if (!auditResult) {
+        if (statusBadge) {
+          statusBadge.className = 'yami-audit-badge idle';
+          statusBadge.textContent = '[未体检]';
+        }
+        if (summaryEl) {
+          summaryEl.textContent = '尚未执行静态体检。点击【一键体检】静态检测全工程断链与死事件。';
+        }
+        if (listEl) {
+          listEl.style.display = 'none';
+          listEl.innerHTML = '';
+        }
+        return;
+      }
+
+      if (!auditResult.ok) {
+        if (statusBadge) {
+          statusBadge.className = 'yami-audit-badge warn';
+          statusBadge.textContent = '[体检未就绪]';
+        }
+        if (summaryEl) {
+          const reason = auditResult.reason === 'no-project' ? '未识别到活动游戏工程目录' : (auditResult.error || '扫描遇到异常');
+          summaryEl.textContent = '无法完成工程体检: ' + reason;
+        }
+        if (listEl) {
+          listEl.style.display = 'none';
+          listEl.innerHTML = '';
+        }
+        return;
+      }
+
+      const stats = auditResult.stats || { files: 0, refs: 0 };
+      const issues = auditResult.issues || [];
+      const brokenList = issues.filter(function(i) { return i.kind === 'broken'; });
+      const deadList = issues.filter(function(i) { return i.kind === 'dead'; });
+
+      if (issues.length === 0) {
+        if (statusBadge) {
+          statusBadge.className = 'yami-audit-badge ok';
+          statusBadge.textContent = '[健康]';
+        }
+        if (summaryEl) {
+          summaryEl.textContent = '已扫描 ' + stats.files + ' 个资产文件、' + stats.refs + ' 处引用，未发现任何断链或死事件。';
+        }
+        if (listEl) {
+          listEl.style.display = 'none';
+          listEl.innerHTML = '';
+        }
+      } else {
+        const isError = brokenList.length > 0;
+        if (statusBadge) {
+          statusBadge.className = 'yami-audit-badge ' + (isError ? 'error' : 'warn');
+          statusBadge.textContent = '[发现 ' + issues.length + ' 项异常]';
+        }
+        if (summaryEl) {
+          summaryEl.textContent = '扫描 ' + stats.files + ' 个文件 · 发现 ' + brokenList.length + ' 处断链引用，' + deadList.length + ' 个死事件';
+        }
+        if (listEl) {
+          listEl.style.display = 'flex';
+          listEl.innerHTML = issues.map(function(iss) {
+            const isBroken = iss.kind === 'broken';
+            const kindTag = isBroken ? '[断链引用]' : '[死事件]';
+            const itemClass = isBroken ? 'broken' : 'dead';
+            const title = isBroken
+              ? (kindTag + ' ' + (iss.cmdIndex >= 0 ? '第 ' + (iss.cmdIndex + 1) + ' 步指令' : '资产属性引用'))
+              : (kindTag + ' 【' + escapeHtml(iss.name || '公共事件') + '】');
+            const fileRel = escapeHtml(iss.file || '');
+            const desc = isBroken
+              ? ('引用了已不存在的 ID: ' + escapeHtml(iss.guid) + (iss.field ? ' (字段: ' + escapeHtml(iss.field) + ')' : ''))
+              : ('类型为 `' + escapeHtml(iss.type || 'common') + '` 的公共事件，从未被任何指令或资产调用。');
+
+            const copyInfo = isBroken
+              ? ('[断链引用] 文件: ' + iss.file + (iss.cmdIndex >= 0 ? ' 第 ' + (iss.cmdIndex + 1) + ' 步' : '') + ' 引用丢失 GUID: ' + iss.guid)
+              : ('[死事件] 事件: ' + (iss.name || '') + ' (' + iss.file + ') 未被任何地方调用');
+
+            return '<div class="yami-audit-item ' + itemClass + '">'
+              + '<div class="yami-audit-item-top">'
+              + '<span class="yami-audit-item-title">' + title + '</span>'
+              + '<span class="yami-audit-item-file" title="' + fileRel + '">' + fileRel + '</span>'
+              + '</div>'
+              + '<div class="yami-audit-item-desc">' + desc + '</div>'
+              + '<div class="yami-audit-item-actions">'
+              + '<div class="yami-audit-btn-mini btn-copy-audit-item" data-copy="' + encodeURIComponent(copyInfo) + '" role="button">复制信息</div>'
+              + '<div class="yami-audit-btn-mini btn-locate-audit-file" data-file="' + encodeURIComponent(iss.file || '') + '" role="button">定位文件</div>'
+              + '</div>'
+              + '</div>';
+          }).join('');
+
+          listEl.querySelectorAll('.btn-copy-audit-item').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+              e.stopPropagation();
+              const text = decodeURIComponent(btn.getAttribute('data-copy') || '');
+              if (navigator.clipboard) {
+                navigator.clipboard.writeText(text).then(function() {
+                  showToast('体检条目已复制');
+                });
+              }
+            });
+          });
+
+          listEl.querySelectorAll('.btn-locate-audit-file').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+              e.stopPropagation();
+              const rel = decodeURIComponent(btn.getAttribute('data-file') || '');
+              if (!rel) return;
+              try {
+                if (typeof require === 'function') {
+                  const path = require('path');
+                  const electron = require('electron');
+                  const probe = window.__YAMI_PERF_PROBE__;
+                  const root = (auditResult && auditResult.root) || (probe && probe.state && probe.state.projectRoot) || '';
+                  const full = root ? path.join(root, rel) : rel;
+                  if (electron && electron.shell && electron.shell.showItemInFolder) {
+                    electron.shell.showItemInFolder(full);
+                    showToast('已在文件夹中高亮定位文件');
+                    return;
+                  }
+                }
+              } catch (err) {}
+              showToast('文件路径: ' + rel);
+            });
+          });
+        }
+      }
+    }
+
+    function runProjectAuditUI() {
+      if (auditScanning) return;
+      const probe = window.__YAMI_PERF_PROBE__;
+      if (!probe || !probe.runProjectAudit) {
+        showToast('探针未就绪，无法执行工程体检');
+        return;
+      }
+      auditScanning = true;
+      renderAuditPanel();
+      setTimeout(function() {
+        try {
+          auditResult = probe.runProjectAudit();
+          if (auditResult && auditResult.ok) {
+            const count = (auditResult.issues && auditResult.issues.length) || 0;
+            showToast(count === 0 ? '工程体检完毕，全部健康！' : '工程体检完毕，发现 ' + count + ' 项问题');
+          } else {
+            showToast('工程体检未完成: ' + ((auditResult && auditResult.reason) || '未知错误'));
+          }
+        } catch (e) {
+          auditResult = { ok: false, reason: 'error', error: String(e), issues: [] };
+          showToast('工程体检执行异常');
+        } finally {
+          auditScanning = false;
+          renderAuditPanel();
+        }
+      }, 30);
     }
 
     // 渲染错误卡片与全套过滤器
@@ -3573,6 +4007,17 @@
           ? '<div class="yami-error-btn btn-locate-file" data-path="' + encodeURIComponent(err.codeContext.filePath) + '" role="button" title="在操作系统资源管理器中定位此文件">定位文件</div>'
           : '';
 
+        // 事件执行定位徽标
+        let eventContextHtml = '';
+        if (err.eventContext && err.eventContext.eventName) {
+          const stepStr = '第 ' + (err.eventContext.step + 1) + ' 步';
+          const sceneStr = err.eventContext.sceneName ? (' · 【' + escapeHtml(err.eventContext.sceneName) + '】') : '';
+          eventContextHtml = '<div class="yami-error-event-ctx">'
+            + '<span class="yami-error-event-ctx-badge">[事件定位]</span>'
+            + '<span>发生在【' + escapeHtml(err.eventContext.eventName) + '】' + stepStr + sceneStr + '</span>'
+            + '</div>';
+        }
+
         return '<div class="yami-error-card">'
           + '<div class="yami-error-card-header">'
           + '<div style="display: flex; align-items: center;">'
@@ -3581,6 +4026,7 @@
           + '</div>'
           + '<span class="yami-error-time">' + timeInfo + '</span>'
           + '</div>'
+          + eventContextHtml
           + '<div class="yami-error-msg">' + escapeHtml(err.message) + '</div>'
           + '<div class="yami-error-source">来源: ' + escapeHtml(err.source) + (err.lineno ? ' (第 ' + err.lineno + ' 行)' : '') + '</div>'
           + codeSnippetHtml
@@ -3677,6 +4123,14 @@
         exportBtn.addEventListener('click', function(e) {
           e.stopPropagation();
           exportErrorReport();
+        });
+      }
+
+      const runAuditBtn = document.getElementById('btn-run-project-audit');
+      if (runAuditBtn) {
+        runAuditBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          runProjectAuditUI();
         });
       }
 
@@ -3835,6 +4289,7 @@
       showClearErrors: true,
       showTabs: false,
       mount(root, ctx) {
+        renderAuditPanel();
         renderErrorsList();
       },
       refresh(ctx) {

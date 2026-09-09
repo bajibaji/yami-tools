@@ -121,7 +121,11 @@ const requiredAnchors = [
   { name: '固定变量浮窗骨架', pattern: /id="yami-pinned-box"/ },
   { name: 'Remix Icon: ri-magic-line', pattern: /ri-magic-line/ },
   { name: '作弊台全部还原按钮', pattern: /id="btn-cheat-reset-all"/ },
-  { name: '全部还原接线 probe API', pattern: /probe\.resetAllCheats\(\)/ }
+  { name: '全部还原接线 probe API', pattern: /probe\.resetAllCheats\(\)/ },
+  { name: '工程体检面板骨架', pattern: /id="yami-audit-panel"/ },
+  { name: '一键体检按钮', pattern: /id="btn-run-project-audit"/ },
+  { name: '工程体检接线 probe API', pattern: /probe\.runProjectAudit/ },
+  { name: '报错事件执行定位渲染', pattern: /yami-error-event-ctx/ }
 ];
 
 let failedCount = 0;

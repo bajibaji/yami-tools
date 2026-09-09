@@ -2660,3 +2660,198 @@
         border-color: #854d0e !important;
         background: #26210b !important;
       }
+
+      /* ============================================================
+       * 工程体检 (Project Audit) 样式
+       * ============================================================ */
+      .yami-audit-panel {
+        background: #202020 !important;
+        border: 1px solid #333333 !important;
+        border-radius: 4px !important;
+        padding: 10px 12px !important;
+        margin-bottom: 8px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+        box-sizing: border-box !important;
+      }
+      .yami-audit-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+      }
+      .yami-audit-title-box {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        flex-wrap: wrap !important;
+      }
+      .yami-audit-title {
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        color: #f0f0f0 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .yami-audit-badge {
+        font-size: 10px !important;
+        padding: 1px 5px !important;
+        border-radius: 2px !important;
+        font-weight: 500 !important;
+        white-space: nowrap !important;
+      }
+      .yami-audit-badge.idle {
+        background: #2a2a2a !important;
+        border: 1px solid #444444 !important;
+        color: #999999 !important;
+      }
+      .yami-audit-badge.scanning {
+        background: #172554 !important;
+        border: 1px solid #2563eb !important;
+        color: #60a5fa !important;
+      }
+      .yami-audit-badge.ok {
+        background: #064e3b !important;
+        border: 1px solid #059669 !important;
+        color: #34d399 !important;
+      }
+      .yami-audit-badge.warn {
+        background: #451a03 !important;
+        border: 1px solid #d97706 !important;
+        color: #fbbf24 !important;
+      }
+      .yami-audit-badge.error {
+        background: #450a0a !important;
+        border: 1px solid #dc2626 !important;
+        color: #f87171 !important;
+      }
+      .yami-audit-actions {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .yami-audit-summary {
+        font-size: 11px !important;
+        color: #888888 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        line-height: 1.4 !important;
+      }
+      .yami-audit-list {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        max-height: 240px !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        padding-right: 4px !important;
+      }
+      .yami-audit-list::-webkit-scrollbar {
+        width: 4px;
+      }
+      .yami-audit-list::-webkit-scrollbar-thumb {
+        background: #383838;
+        border-radius: 2px;
+      }
+      .yami-audit-item {
+        background: #181818 !important;
+        border-radius: 3px !important;
+        padding: 8px 10px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+        font-size: 11px !important;
+      }
+      .yami-audit-item.broken {
+        border-left: 3px solid #ef4444 !important;
+        border-top: 1px solid #2d1818 !important;
+        border-right: 1px solid #2d1818 !important;
+        border-bottom: 1px solid #2d1818 !important;
+      }
+      .yami-audit-item.dead {
+        border-left: 3px solid #f59e0b !important;
+        border-top: 1px solid #2d2418 !important;
+        border-right: 1px solid #2d2418 !important;
+        border-bottom: 1px solid #2d2418 !important;
+      }
+      .yami-audit-item-top {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+      }
+      .yami-audit-item-title {
+        font-weight: 600 !important;
+        color: #e2e2e2 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .yami-audit-item-file {
+        color: #787878 !important;
+        font-family: Consolas, monospace !important;
+        font-size: 10px !important;
+        word-break: break-all !important;
+      }
+      .yami-audit-item-desc {
+        color: #b0b0b0 !important;
+        line-height: 1.4 !important;
+      }
+      .yami-audit-item-actions {
+        display: flex !important;
+        justify-content: flex-end !important;
+        gap: 6px !important;
+        margin-top: 2px !important;
+      }
+      .yami-audit-btn-mini {
+        position: static !important;
+        box-sizing: border-box !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        height: 20px !important;
+        padding: 0 8px !important;
+        font-size: 10px !important;
+        background: #252525 !important;
+        border: 1px solid #3d3d3d !important;
+        border-radius: 2px !important;
+        color: #a0a0a0 !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: all 0.12s ease !important;
+      }
+      .yami-audit-btn-mini:hover {
+        background: #333333 !important;
+        color: #ffffff !important;
+        border-color: #555555 !important;
+      }
+
+      /* ============================================================
+       * 报错卡片事件级定位样式
+       * ============================================================ */
+      .yami-error-event-ctx {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        background: #112233 !important;
+        border: 1px solid #1d4060 !important;
+        border-radius: 3px !important;
+        padding: 4px 8px !important;
+        margin: 4px 0 2px 0 !important;
+        font-size: 11px !important;
+        color: #7ec0ee !important;
+        line-height: 1.4 !important;
+        box-sizing: border-box !important;
+      }
+      .yami-error-event-ctx-badge {
+        background: #1d4060 !important;
+        color: #aae0ff !important;
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        padding: 1px 4px !important;
+        border-radius: 2px !important;
+        flex-shrink: 0 !important;
+      }

@@ -417,3 +417,24 @@
   4. `README.md` 事实对齐：版本 `v0.5.1`→`v0.7.0`、断言 `20`→`26`、铁律 `17`→`19`、补 `tests/` 目录与作弊台/变量监视模块说明。
 - **回归资产**：新增 `tests/test-fix-regressions.mjs`（20 断言：timeScale 还原、`destroy()` 真移除、`guidMap` 计数、缺失键告警、循环引用代理不抛错、分类标签全覆盖 + 4 项接线契约）；`tests/run-all.cjs` 扩为 **6 套**。
 - **验证凭证**：`node build.cjs` 26 项全绿；`node tests/run-all.cjs` **6/6 套通过**（verify 30 / errflow 13 / scene-lab 25 / cheats-reset 19 / fix-regressions 20 / autoupdate 25）；真机 E2E 五页全渲染、无插件侧新增异常。
+
+### 2026-09-09 · 工程体检（断链+死事件）与报错事件级定位全链路落地
+- **工程体检内核 `projectAudit` (`probe-core.js`)**：
+  1. 纯静态只读扫描 `Data/*.json` 与 `Assets/` 资产目录，建立全局名称与 GUID 字典表（文件名直接解析 + manifest 权威映射 + variables/attribute/teams/easings/autotiles/enumeration 通用树形提取）；
+  2. 结合节点自注册 ID 集合（`presetId`、`prefabId`、`sprites[].id`）与全局字典双表判别，递归排查非法断链引用；
+  3. **死事件白名单实锤**：严格对齐 `event.ts:49-76` 22 类引擎系统保留事件白名单（startup/autorun/loadscene/touch/mouse/gamepad 等）永不判死；仅将无任何 `callEvent` 入边的公共事件判为死事件；
+  4. **真实工程验证凭据**：在 `d:\new-game` 仅 1.5 秒扫完数十万字符资产，实锤揪出 21 种怪物与强化事件中残留的已删除属性 GUID `0def781ddbf542fc`！
+- **控制台报错页 (运行日志) 整合体检面板 (`hud-overlay.js` + `src/style.css`)**：
+  1. `#page-errors` 顶部工具栏下方集成「工程体检」独立卡片（带官方 Remix Icon 矢量路径、状态徽标与【一键体检】按钮）；
+  2. 扫描过程展示 `[扫描中...]` 状态，完成后展示健康度评价与文件/引用统计概览；
+  3. 异常清单展开检视：断链卡片（红标）标注文件、第几步指令、丢失 GUID 与字段；死事件卡片（橙标）标注事件名与类型；支持【复制信息】与【定位文件】（调起系统资源管理器）；
+  4. 遵从铁律⑲：体检纯由用户点击触发，绝不进入 150ms 心跳轮询，零运行时性能负担。
+- **报错定位事件级升级**：
+  1. `probe-core.js` 原型链拦截 `EventHandler.prototype.update` 维护事件执行栈 `eventExecStack`；
+  2. 捕获未处理异常时调用 `currentEventContext()` 获取顶层事件名、执行步数（`ev.index + 1` 步）以及当前场景名（从 `Scene.binding` / `Data.scenes` 反查中文名称）；
+  3. 报错卡片醒目呈现 `[事件定位] 发生在【某事件】第 N 步 · 【场景名】` 工业徽标，且 Markdown 结构化报告同步输出。
+- **门禁与自动化回归**：
+  1. `build.cjs` 锚点扩充至 **30 项**，0 Emoji 与 0 原生 `<button>` 铁律机器检查全绿；
+  2. 新增 `tests/test-project-audit.mjs`（21 项全绿断言：字典构建、断链精确捕获、死事件白名单豁免、事件执行定位捕获、DOM 接线静态契约与零原生 button）；
+  3. `tests/run-all.cjs` 测试套件扩至 **7 套**。
+

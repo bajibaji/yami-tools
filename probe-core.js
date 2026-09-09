@@ -473,9 +473,17 @@
           if (state.suspend.events === true) return undefined;
           const t0 = now();
           let r;
+          let stackEntry = null;
           try {
+            // 报错定位: 入栈记录当前事件, 异常捕获时反查「哪个事件第几步」
+            stackEntry = { ev: event };
+            if (eventExecStack.length < 40) eventExecStack.push(stackEntry);
             r = orig.apply(this, arguments);
           } finally {
+            if (stackEntry) {
+              const si = eventExecStack.lastIndexOf(stackEntry);
+              if (si >= 0) eventExecStack.splice(si, 1);
+            }
             const ms = now() - t0;
             rec(state.eventTotal, name, ms);
             addFrame(frameEventMs, name, ms);
@@ -1188,6 +1196,450 @@
   }
 
   // ============================================================
+  // 工程体检内核 (Project Audit): 断链引用 + 废弃事件 纯静态扫描
+  // 用户点击触发, 不进入任何心跳; 只读工程文件, 绝不写盘
+  // ============================================================
+  const projectAudit = {
+    root: '',
+    ready: false,
+    names: new Map(),      // guid -> { name, kind, path }
+    eventFiles: [],        // { guid, name, type, path }
+    lastResult: null,
+    scanning: false,
+
+    // 引擎自动触发的保留事件类型白名单 (event.ts typeMap + 各 emit 点, 永不判为废弃)
+    reservedTypes: new Set([
+      'preload', 'startup', 'autorun', 'createscene', 'loadscene', 'loadsave',
+      'showtext', 'showchoices', 'equipmentgain', 'itemgain', 'moneygain',
+      'keydown', 'keyup', 'mousedown', 'mouseup', 'mousemove', 'doubleclick', 'wheel',
+      'touchstart', 'touchmove', 'touchend',
+      'gamepadbuttonpress', 'gamepadbuttonrelease', 'gamepadleftstickchange', 'gamepadrightstickchange'
+    ]),
+
+    // 扫描文件扩展名白名单 (与引擎资产类型对齐)
+    scanExts: new Set(['.json', '.event', '.scene', '.actor', '.item', '.skill', '.state', '.equipment', '.animation', '.particle', '.ui', '.trigger', '.region']),
+
+    findRoot() {
+      try {
+        if (typeof require !== 'function') return '';
+        const fs = require('fs');
+        const path = require('path');
+        const os = require('os');
+
+        // 1. 试玩运行时窗口: window.location 即游戏工程真实位置
+        if (typeof window !== 'undefined' && window.location && window.location.pathname) {
+          let p = decodeURIComponent(window.location.pathname);
+          if (process.platform === 'win32' && p.startsWith('/')) p = p.slice(1);
+          if (!p.includes('resources/app') && !p.includes('resources\\app')) {
+            let dir = path.dirname(p);
+            for (let i = 0; i < 5; i++) {
+              if (fs.existsSync(path.join(dir, 'Data', 'manifest.json')) || fs.existsSync(path.join(dir, 'Save'))) {
+                return dir.replace(/\\/g, '/');
+              }
+              const parent = path.dirname(dir);
+              if (parent === dir) break;
+              dir = parent;
+            }
+          }
+        }
+        // 2. 编辑器宿主: window.File.root
+        if (typeof window !== 'undefined' && window.File && typeof window.File.root === 'string' && window.File.root) {
+          const root = window.File.root.replace(/[\\/]+$/, '').replace(/\\/g, '/');
+          if (fs.existsSync(root) && (fs.existsSync(path.join(root, 'Data')) || fs.existsSync(path.join(root, 'Save')))) {
+            return root;
+          }
+        }
+        // 3. ~/.openyami/config.json 当前工程
+        try {
+          const cfgPath = path.join(os.homedir(), '.openyami', 'config.json');
+          if (fs.existsSync(cfgPath)) {
+            const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+            if (cfg && typeof cfg.project === 'string' && cfg.project) {
+              const pDir = path.dirname(cfg.project).replace(/\\/g, '/');
+              if (fs.existsSync(pDir) && (fs.existsSync(path.join(pDir, 'Data')) || fs.existsSync(path.join(pDir, 'Save')))) {
+                return pDir;
+              }
+            }
+          }
+        } catch (errCfg) {}
+        // 4. 进程工作目录
+        if (typeof process !== 'undefined' && process.cwd) {
+          const cwd = process.cwd().replace(/\\/g, '/');
+          if (!cwd.includes('Open Yami RPG Editor') && (fs.existsSync(path.join(cwd, 'Data')) || fs.existsSync(path.join(cwd, 'Save')))) {
+            return cwd;
+          }
+        }
+      } catch (e) {}
+      return '';
+    },
+
+    setProjectRoot(dir) {
+      if (typeof dir === 'string' && dir && dir !== this.root) {
+        this.root = dir.replace(/\\/g, '/');
+        this.ready = false;
+        this.names.clear();
+        this.eventFiles = [];
+        this.lastResult = null;
+      }
+    },
+
+    // 递归收集 {id(16hex) + name} 数据字典条目 (变量/属性/队伍/缓动/自动图块 通用)
+    collectIdNamePairs(obj, kind, relPath, out) {
+      if (!obj || typeof obj !== 'object') return;
+      if (Array.isArray(obj)) {
+        for (const v of obj) this.collectIdNamePairs(v, kind, relPath, out);
+        return;
+      }
+      if (typeof obj.id === 'string' && /^[0-9a-f]{16}$/.test(obj.id) && typeof obj.name === 'string') {
+        if (!out.has(obj.id)) out.set(obj.id, { name: obj.name, kind: kind, path: relPath });
+      }
+      for (const k of Object.keys(obj)) {
+        if (k === 'code') continue; // 瓦片 code 巨型字符串, 跳过
+        this.collectIdNamePairs(obj[k], kind, relPath, out);
+      }
+    },
+
+    ensureDictionaries() {
+      try {
+        if (this.ready && this.root) return true;
+        if (typeof require !== 'function') return false;
+        const fs = require('fs');
+        const path = require('path');
+        if (!this.root) this.root = this.findRoot();
+        if (!this.root || !fs.existsSync(this.root)) return false;
+
+        const names = new Map();
+        // 扩展名 -> 中文资产分类 (manifest 数组键 + 文件名递归双路共用)
+        const kindByExt = {
+          event: '事件', scene: '场景', actor: '角色', item: '物品', skill: '技能', state: '状态',
+          equipment: '装备', animation: '动画', anim: '动画', particle: '粒子', tile: '图块', tileset: '图块',
+          ui: '界面', audio: '音频', ogg: '音频', mp3: '音频', wav: '音频', flac: '音频',
+          image: '图片', png: '图片', jpg: '图片', jpeg: '图片', gif: '图片', webp: '图片',
+          video: '视频', mp4: '视频', webm: '视频', font: '字体', ttf: '字体', otf: '字体', woff: '字体', woff2: '字体',
+          script: '脚本', ts: '脚本', js: '脚本'
+        };
+        const kindByManifest = {
+          actors: '角色', skills: '技能', triggers: '触发器', items: '物品', equipments: '装备',
+          states: '状态', events: '事件', scenes: '场景', tilesets: '图块', ui: '界面',
+          animations: '动画', particles: '粒子', images: '图片', audio: '音频', videos: '视频',
+          fonts: '字体', script: '脚本', others: '其他'
+        };
+        const nameRe = /^(.*)\.([0-9a-f]{16})\.([\w]+)$/;
+        // 1. 全路径递归: 文件名「名字.guid.ext」直接解析入字典
+        // (不读文件内容, 零开销; 兜底 manifest.json 未刷新导致的遗漏)
+        const allPaths = [];
+        this.collectAllPaths(this.root, allPaths);
+        for (const fp of allPaths) {
+          const base = fp.split('/').pop() || '';
+          const m = base.match(nameRe);
+          if (m) {
+            const kind = kindByExt[m[3]] || m[3];
+            const rel = fp.slice(this.root.length).replace(/^[\/]+/, '').replace(/\\/g, '/');
+            if (!names.has(m[2])) names.set(m[2], { name: m[1], kind: kind, path: rel });
+          }
+        }
+        // 2. manifest.json: 按数组键确定权威分类 (修正扩展名歧义如 .png 同属图片)
+        const manifestPath = path.join(this.root, 'Data', 'manifest.json');
+        if (fs.existsSync(manifestPath)) {
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          for (const key of Object.keys(manifest || {})) {
+            const list = manifest[key];
+            if (!Array.isArray(list)) continue;
+            const kind = kindByManifest[key] || key;
+            for (const entry of list) {
+              const p = entry && entry.path;
+              if (typeof p !== 'string') continue;
+              const base = p.split('/').pop() || '';
+              const m = base.match(nameRe);
+              if (m && names.has(m[2])) {
+                const prev = names.get(m[2]);
+                if (prev.kind !== '事件' && prev.kind !== '变量') names.set(m[2], { name: prev.name, kind: kind, path: p });
+              }
+            }
+          }
+        }
+        // 2. variables.json: 树形变量/开关字典
+        const varPath = path.join(this.root, 'Data', 'variables.json');
+        if (fs.existsSync(varPath)) {
+          this.collectIdNamePairs(JSON.parse(fs.readFileSync(varPath, 'utf8')), '变量', 'Data/variables.json', names);
+        }
+        // 3. 其余数据字典: 通用 id+name 提取 (枚举字典含快捷键/槽位/字符串枚举等引用源)
+        ['attribute.json', 'teams.json', 'easings.json', 'autotiles.json', 'enumeration.json'].forEach(function(f) {
+          const fp = path.join(this.root, 'Data', f);
+          if (fs.existsSync(fp)) {
+            this.collectIdNamePairs(JSON.parse(fs.readFileSync(fp, 'utf8')), f.replace('.json', ''), 'Data/' + f, names);
+          }
+        }, this);
+
+        // 4. 事件文件清单 (读 type 用于废弃判定)
+        const eventFiles = [];
+        names.forEach(function(meta, guid) {
+          if (meta.kind !== '事件') return;
+          const item = { guid: guid, name: meta.name, type: '', path: meta.path };
+          try {
+            const fp = path.join(this.root, meta.path);
+            if (fs.existsSync(fp)) {
+              const j = JSON.parse(fs.readFileSync(fp, 'utf8'));
+              item.type = (j && j.type) || '';
+            }
+          } catch (e) {}
+          eventFiles.push(item);
+        }, this);
+
+        this.names = names;
+        this.eventFiles = eventFiles;
+        this.ready = true;
+        return true;
+      } catch (e) {
+        this.ready = false;
+        return false;
+      }
+    },
+
+    // 递归收集工程全部文件路径 (仅路径字符串, 零文件读取; 用于文件名字典解析)
+    collectAllPaths(rootDir, out) {
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const walk = function(dir, depth) {
+          if (depth > 12) return;
+          let entries;
+          try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+          for (const ent of entries) {
+            if (ent.name.startsWith('.')) continue;
+            const fp = path.join(dir, ent.name);
+            if (ent.isDirectory()) {
+              const low = ent.name.toLowerCase();
+              if (low === 'save' || low === 'node_modules' || low === 'dist' || low === '.git') continue;
+              walk(fp, depth + 1);
+            } else if (ent.isFile()) {
+              out.push(fp.replace(/\\/g, '/'));
+            }
+          }
+        };
+        walk(rootDir, 0);
+      } catch (e) {}
+    },
+
+    // 递归收集工程资产文件列表 (按扩展名白名单, 跳过 Save/依赖/隐藏目录)
+    collectAssetFiles(rootDir, out) {
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const walk = function(dir, depth) {
+          if (depth > 12) return;
+          let entries;
+          try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+          for (const ent of entries) {
+            if (ent.name.startsWith('.')) continue;
+            const fp = path.join(dir, ent.name);
+            if (ent.isDirectory()) {
+              const low = ent.name.toLowerCase();
+              if (low === 'save' || low === 'node_modules' || low === 'dist' || low === '.git') continue;
+              walk(fp, depth + 1);
+            } else if (ent.isFile() && this.scanExts.has(path.extname(ent.name).toLowerCase())) {
+              out.push(fp);
+            }
+          }
+        }.bind(this);
+        walk(rootDir, 0);
+      } catch (e) {}
+    },
+
+    run() {
+      if (this.scanning) return this.lastResult;
+      try {
+        this.scanning = true;
+        if (typeof require !== 'function') {
+          return { ok: false, reason: 'no-node', issues: [] };
+        }
+        if (!this.ensureDictionaries()) {
+          return { ok: false, reason: 'no-project', issues: [] };
+        }
+        const fs = require('fs');
+        const path = require('path');
+        const GUID_RE = /^[0-9a-f]{16}$/;
+
+        const files = [];
+        this.collectAssetFiles(this.root, files);
+
+        // 节点自注册 ID 集合: 引擎把资产文件内的节点/元素以自身 ID 注册为预设
+        // (ui.ts:105 UI.presets / scene 对象预设 / 角色 sprites[].id 精灵库),
+        // 跨文件指令引用这些 ID 时, 合法值 = 该集合 ∪ 全局资产注册表
+        const nodePresets = new Set();
+        const collectPresets = function(obj) {
+          if (!obj || typeof obj !== 'object') return;
+          if (Array.isArray(obj)) { for (const v of obj) collectPresets(v); return; }
+          if (typeof obj.presetId === 'string' && GUID_RE.test(obj.presetId)) nodePresets.add(obj.presetId);
+          if (typeof obj.prefabId === 'string' && GUID_RE.test(obj.prefabId)) nodePresets.add(obj.prefabId);
+          if (Array.isArray(obj.sprites)) {
+            for (const sp of obj.sprites) {
+              if (sp && typeof sp.id === 'string' && GUID_RE.test(sp.id)) nodePresets.add(sp.id);
+            }
+          }
+          for (const k of Object.keys(obj)) {
+            if (k === 'code' || k === 'sprites') continue;
+            collectPresets(obj[k]);
+          }
+        };
+        for (const fp of files) {
+          try { collectPresets(JSON.parse(fs.readFileSync(fp, 'utf8'))); } catch (e) {}
+        }
+
+        const broken = [];
+        const brokenSeen = new Set();
+        const callEventRefs = new Set();
+        let refCount = 0;
+
+        // 递归扫描单个 JSON 树: 提取所有 16 位 hex GUID 引用
+        const scanTree = function(obj, chain, cmdId, cmdIndex, fileRel) {
+          if (obj === null || obj === undefined) return;
+          if (Array.isArray(obj)) {
+            for (let i = 0; i < obj.length; i++) {
+              const nextCmdIndex = (chain[chain.length - 1] === 'commands') ? i : cmdIndex;
+              scanTree(obj[i], chain, cmdId, nextCmdIndex, fileRel);
+            }
+            return;
+          }
+          if (typeof obj === 'object') {
+            let nextCmdId = cmdId;
+            if (typeof obj.id === 'string' && obj.id) nextCmdId = obj.id;
+            for (const k of Object.keys(obj)) {
+              if (k === 'code') continue;
+              scanTree(obj[k], chain.concat([k]), nextCmdId, cmdIndex, fileRel);
+            }
+            return;
+          }
+          if (typeof obj === 'string' && GUID_RE.test(obj)) {
+            refCount++;
+            const field = nextOf(chain);
+            // 事件入边: 任意指令的 eventId 参数均视为调用 (callEvent / 自定义指令 @file eventId)
+            if (field === 'eventId') callEventRefs.add(obj);
+            const reg = this.names.get(obj);
+            // 全局字典(names) ∪ 节点自注册预设(nodePresets) 双表判定:
+            // presetId/prefabId/spriteId/sprites[].id 等引擎运行期自注册的 ID 一律视为合法定义
+            if (!reg && !nodePresets.has(obj)) {
+              const key = obj + '::' + fileRel + '::' + (cmdIndex >= 0 ? cmdIndex : '') + '::' + chain.join('.');
+              if (!brokenSeen.has(key) && broken.length < 200) {
+                brokenSeen.add(key);
+                broken.push({
+                  guid: obj,
+                  file: fileRel,
+                  cmdId: cmdId || '',
+                  cmdIndex: cmdIndex,
+                  field: chain[chain.length - 1] || ''
+                });
+              }
+            }
+          }
+        }.bind(this);
+        function nextOf(chain) { return chain[chain.length - 1] || ''; }
+
+        for (const fp of files) {
+          let rel = fp;
+          try { rel = path.relative(this.root, fp).split(path.sep).join('/'); } catch (e) {}
+          if (rel === 'Data/config.json') continue; // 编辑器工程配置, 无游戏资产语义
+          let j;
+          try { j = JSON.parse(fs.readFileSync(fp, 'utf8')); } catch (e) { continue; }
+          try { scanTree(j, [], '', -1, rel); } catch (e) {}
+        }
+
+        // 废弃事件: type 非保留白名单 且 无 callEvent 入边
+        const dead = [];
+        for (const ev of this.eventFiles) {
+          if (this.reservedTypes.has(ev.type)) continue;
+          if (callEventRefs.has(ev.guid)) continue;
+          dead.push({ guid: ev.guid, name: ev.name, type: ev.type, path: ev.path });
+        }
+
+        this.lastResult = {
+          ok: true,
+          root: this.root,
+          stats: { files: files.length, refs: refCount, variables: this.names.size, events: this.eventFiles.length },
+          issues: broken.map(function(b) {
+            const stepText = b.cmdIndex >= 0 ? ('第 ' + (b.cmdIndex + 1) + ' 步指令 ') : '';
+            return {
+              kind: 'broken',
+              guid: b.guid,
+              file: b.file,
+              cmdId: b.cmdId,
+              cmdIndex: b.cmdIndex,
+              field: b.field,
+              desc: stepText + '引用了已不存在的 ID (' + b.guid + ')'
+            };
+          }).concat(dead.map(function(d) {
+            return {
+              kind: 'dead',
+              guid: d.guid,
+              name: d.name,
+              type: d.type,
+              file: d.path,
+              desc: '公共事件从未被任何指令或资产调用'
+            };
+          })),
+          scannedAt: Date.now()
+        };
+        return this.lastResult;
+      } catch (e) {
+        return { ok: false, reason: 'error', error: String((e && e.message) || e), issues: [] };
+      } finally {
+        this.scanning = false;
+      }
+    }
+  };
+
+  // ============================================================
+  // 当前事件执行栈 (报错定位: 捕获异常时反查「哪个事件第几步」)
+  // ============================================================
+  const eventExecStack = [];
+
+  function currentEventContext() {
+    try {
+      const top = eventExecStack[eventExecStack.length - 1];
+      if (!top || !top.ev) return null;
+      const ev = top.ev;
+      const initial = ev.initial || ev.commands || {};
+      const p = ev.path || initial.path || '';
+      const file = String(p || '').split('/').pop() || '';
+      const idx = typeof ev.index === 'number' ? ev.index : 0;
+      let eventName = '';
+      const guidMatch = file.match(/\.([0-9a-f]{16})\.event$/);
+      if (guidMatch && projectAudit.names && projectAudit.names.has(guidMatch[1])) {
+        eventName = projectAudit.names.get(guidMatch[1]).name;
+      }
+      if (!eventName) {
+        eventName = file.replace(/\.event$/, '').replace(/\.([0-9a-f]{16})$/, '') || '未知事件';
+      }
+
+      // 获取当前场景名称 (从 Scene.binding 反查中文场景名)
+      let sceneName = '';
+      try {
+        if (typeof Scene !== 'undefined' && Scene && Scene.binding) {
+          const sId = Scene.binding.id;
+          if (sId && projectAudit.names && projectAudit.names.has(sId)) {
+            sceneName = projectAudit.names.get(sId).name;
+          }
+          if (!sceneName && Scene.binding.data) {
+            const sPath = Scene.binding.data.path || '';
+            const sFile = String(sPath).split('/').pop() || '';
+            sceneName = sFile.replace(/\.([0-9a-f]{16})\.scene$/, '').replace(/\.scene$/, '');
+          }
+        }
+      } catch (eScene) {}
+
+      return {
+        eventName: eventName,
+        eventFile: file,
+        eventType: ev.type || initial.type || '',
+        step: idx,
+        sceneName: sceneName || ''
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // ============================================================
   // 控制台异常与后台错误黑匣子分析引擎 (Error Analyzer)
   // ============================================================
   
@@ -1392,6 +1844,7 @@
       if (item.stack) existing.stack = item.stack;
       // 仅在该指纹首次缺失上下文时补算一次: 死循环报错每秒 60 次也只会读盘一次
       if (!existing.codeContext) existing.codeContext = extractCodeContext(item.source, item.lineno, item.stack);
+      if (!existing.eventContext) existing.eventContext = currentEventContext();
 
       // 移动至队列最前端 (保持最近发生优先)
       const idx = state.errorHistory.indexOf(existing);
@@ -1418,7 +1871,8 @@
         colno: item.colno,
         stack: item.stack,
         analysis: analysis,
-        codeContext: extractCodeContext(item.source, item.lineno, item.stack)
+        codeContext: extractCodeContext(item.source, item.lineno, item.stack),
+        eventContext: currentEventContext()
       };
       state.errorHistory.unshift(errRecord);
       if (state.errorHistory.length > 100) state.errorHistory.pop();
@@ -2031,6 +2485,9 @@
     getSceneEntities: getSceneEntities,
     getMemoryInfo: getMemoryInfo,
     getActiveEvents: getActiveEventsDetails,
+    runProjectAudit: function () { return projectAudit.run(); },
+    getAuditResult: function () { return projectAudit.lastResult; },
+    setProjectRoot: function (dir) { projectAudit.setProjectRoot(dir); },
     // ② 嫌疑开关: 挂起/恢复某类对象的真实更新 (actors/animations/emitters/triggers/ui/events)
         suspend: function (kind, on) {
       if (!Object.prototype.hasOwnProperty.call(state.suspend, kind)) return false;
