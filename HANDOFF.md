@@ -1,7 +1,7 @@
 # DanJuan妙妙插件 (DanJuan DevSuite / Extension)
 ## 项目交接、系统架构与核心经验演进全档案 (HANDOFF & ARCHITECTURE)
 
-> **文档定位**：记录本套件的**系统架构剖析、底层工作原理、时间线演进历史、高价值核心经验与防踩坑档案**，作为跨开发者与 AI 协同的唯一技术基线与记忆中枢（SSOT）。当前版本：`v0.7.0`。
+> **文档定位**：记录本套件的**系统架构剖析、底层工作原理、时间线演进历史、高价值核心经验与防踩坑档案**，作为跨开发者与 AI 协同的唯一技术基线与记忆中枢（SSOT）。当前版本：`v0.7.1`。
 
 ---
 
@@ -300,6 +300,7 @@
 | :--- | :--- | :--- |
 | `d:\Documents\GitHub\yami-tools\` (branch: `extension`) | **唯一真实源码源 (Single Source of Truth)** | 插件的母仓库，所有代码编写、版本管理和 Git 提交必须在此进行。 |
 | `D:\Program Files\Open Yami RPG Editor\extension\yami-perf-extension\` | **编辑器运行时加载路径** | 仅作为本地联调和生产加载目标，由母仓库单向覆盖镜像生成，严禁在此建立独立分支。 |
+| 加载机制（引擎侧事实） | `main.ts:330-341` | 引擎启动时遍历 `<编辑器>/extension/` 下**每个子目录**并 `loadExtension(dir, { allowFileAccess: true })`；故目录名可任意、多插件可共存，且**改完必须重启工程**（Electron 无 Ctrl+F5，见铁律④）。日常开发推荐 `node build.cjs --watch`：保存源文件即自动重建+镜像，免手动敲 `--deploy`。 |
 | `https://github.com/bajibaji/yami-tools/tree/extension` | **远端分发与热更新源** | 用户一键热更新拉取代码的公共镜像源。 |
 | `D:\Documents\GitHub\2\` | **Open Yami 引擎底层源码参考** | Electron 主进程 `main/main.ts` 与游戏内核模板 `Project/Templates/`。 |
 ### 2026-09-03 [里程碑] 变量与开关全量元信息解密与深度 E2E 验证
@@ -384,7 +385,7 @@
 - **修复测试自身缺陷（非产品回归）**：`test-autoupdate.mjs` 的「远端版本」预言机原为裸 `fetch` 单通道，网络抖动时退化成 `'0.0.0'` 导致 5 条断言对着未知值误报失败；改为 raw + jsDelivr 双通道兜底，两条均不可达时显式 `SKIP` 并打日志（**预言机可用时断言一条不减**）。
 - **门禁与凭证**：SSOT 三源同步 v0.7.0；build.cjs 锚点扩至 **26 项** + 原生 button 负向断言 + 0 Emoji + 术语自检全绿；回归 **verify 30 / errflow 13 / scene-lab 25 / cheats-reset 19** 全绿（autoupdate 依赖公网，节点受限时第 4 节按环境跳过）。
 
-### 2026-09-09 · 全量缺陷排查与修复（工作区改动，随下一版发布）
+### 2026-09-09 · 全量缺陷排查与修复 (v0.7.1)
 - **排查方法**：5 路并行静态审计（`probe-core` / `hud-overlay` 三段 / 样式构建文档）+ **引擎源码交叉核验**（`D:\Documents\GitHub\2\Project\Templates\arpg-ts-chinese`）+ **真机 E2E**（Playwright 驱动真实 Chrome，把仓库源码以 `world:MAIN` 等价方式注入真实游戏工程并逐页走查）。
 - **P0 功能失效修复**：
   1. **存档台编辑被 150ms 心跳冲掉**（`SaveLab.refresh` 无守卫 → 每 150ms 重读磁盘并整体重建 DOM）：新增 `dirty` 脏标记 + 焦点守卫，速改/变量/开关输入即置脏，写盘与切槽位后清除；**真机实测：输入 `999999` → 500ms 后仍为 `999999`，失焦 600ms 后仍未被回读覆盖**（修复前为 `999999 → 100` 且失焦）。

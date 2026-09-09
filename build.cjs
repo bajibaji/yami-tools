@@ -26,7 +26,8 @@ const HUD_JS_PATH = path.join(ROOT_DIR, 'hud-overlay.js');
 const PROBE_JS_PATH = path.join(ROOT_DIR, 'probe-core.js');
 const DEPLOY_DIR = 'D:\\Program Files\\Open Yami RPG Editor\\extension\\yami-perf-extension';
 
-const isDeploy = process.argv.includes('--deploy');
+const isWatch = process.argv.includes('--watch');
+const isDeploy = process.argv.includes('--deploy') || isWatch;   // --watch 内含首次部署
 
 console.log('🚀 [DanJuan Builder] 开始执行构建自检流程...');
 
@@ -204,4 +205,34 @@ if (isDeploy) {
   console.log('✨ [部署完毕] 生产文件与母仓库完全一致，重启工程试玩即可生效！\n');
 } else {
   console.log('\n💡 提示：运行 `node build.cjs --deploy` 可一键完成“自检 + 生产镜像 + MD5报告”。');
+}
+
+// 6. --watch: 源文件保存即自动重建并部署, 免手动敲 --deploy
+if (isWatch) {
+  const WATCH_FILES = [SRC_CSS_PATH, PROBE_JS_PATH, HUD_JS_PATH, path.join(ROOT_DIR, 'manifest.json')];
+  let lastBuildAt = Date.now();
+  let timer = null;
+  console.log('👀 [--watch] 已开始监听源文件，保存即自动构建并部署到编辑器目录（Ctrl+C 退出）');
+  console.log('   监听: ' + WATCH_FILES.map((f) => path.basename(f)).join(' / '));
+  WATCH_FILES.forEach(function (file) {
+    try {
+      fs.watch(file, function () {
+        // ponytail: 2s 静默窗口规避「构建自身重写 hud-overlay.js」的自触发循环；2s 内的连续保存会被合并
+        if (Date.now() - lastBuildAt < 2000) return;
+        clearTimeout(timer);
+        timer = setTimeout(function () {
+          lastBuildAt = Date.now();
+          console.log('\n[变更] ' + path.basename(file) + ' → 重新构建并部署');
+          try {
+            execSync('node "' + __filename + '" --deploy', { stdio: 'inherit' });
+          } catch (e) {
+            console.error('❌ 本次构建失败，修正后保存即可重试');
+          }
+          lastBuildAt = Date.now();
+        }, 250);
+      });
+    } catch (e) {
+      console.warn('  [watch] 无法监听 ' + path.basename(file) + ': ' + e.message);
+    }
+  });
 }

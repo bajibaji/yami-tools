@@ -1,6 +1,6 @@
 # DanJuan妙妙插件 (Open Yami 开发者非侵入式辅助套件)
 
-> **版本**：`v0.7.0`  
+> **版本**：`v0.7.1`  
 > **分支**：`extension`（母仓库单一真实源 SSOT）  
 > **定位**：面向 Open Yami RPG Editor 编辑器的原生非侵入式辅助套件，包含**性能排查大盘（Profiler）**、**控制台报错工作台（Error Debugger）**、**存档管理台（Save Lab）**、**场景实体检查台（Scene Inspector）**、**作弊与调试控制台（Cheats）**、**变量监视挂件（Pin）**以及微内核页面契约架构。
 
@@ -80,6 +80,7 @@
   node build.cjs          # 执行语法校验、样式注入与 26 项核心锚点严苛自检
   node tests/run-all.cjs  # 执行回归套件 (5 套: 热更新/作弊还原/报错链路/场景台/性能探针)
   node build.cjs --deploy # 自检 + 自动单向安全镜像至编辑器目录 + 输出 MD5 对齐报告
+  node build.cjs --watch  # 推荐日常: 先部署一次, 之后源文件一保存就自动重建+部署
   ```
 - **唯一发布铁律**：平时严禁擅自 Git 提交，仅在明确下达发布指令时触发智能版本号自增并推送到 GitHub `extension` 分支。
 
