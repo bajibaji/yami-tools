@@ -1,7 +1,7 @@
 # DanJuan妙妙插件 (DanJuan DevSuite / Extension)
 ## 项目交接、系统架构与核心经验演进全档案 (HANDOFF & ARCHITECTURE)
 
-> **文档定位**：记录本套件的**系统架构剖析、底层工作原理、时间线演进历史、高价值核心经验与防踩坑档案**，作为跨开发者与 AI 协同的唯一技术基线与记忆中枢（SSOT）。当前版本：`v0.7.1`。
+> **文档定位**：记录本套件的**系统架构剖析、底层工作原理、时间线演进历史、高价值核心经验与防踩坑档案**，作为跨开发者与 AI 协同的唯一技术基线与记忆中枢（SSOT）。当前版本：`v0.8.0`。
 
 ---
 
@@ -418,7 +418,7 @@
 - **回归资产**：新增 `tests/test-fix-regressions.mjs`（20 断言：timeScale 还原、`destroy()` 真移除、`guidMap` 计数、缺失键告警、循环引用代理不抛错、分类标签全覆盖 + 4 项接线契约）；`tests/run-all.cjs` 扩为 **6 套**。
 - **验证凭证**：`node build.cjs` 26 项全绿；`node tests/run-all.cjs` **6/6 套通过**（verify 30 / errflow 13 / scene-lab 25 / cheats-reset 19 / fix-regressions 20 / autoupdate 25）；真机 E2E 五页全渲染、无插件侧新增异常。
 
-### 2026-09-09 · 工程体检（断链+死事件）与报错事件级定位全链路落地
+### 2026-09-09 · 工程体检（断链+死事件）与报错事件级定位全链路落地 (v0.8.0)
 - **工程体检内核 `projectAudit` (`probe-core.js`)**：
   1. 纯静态只读扫描 `Data/*.json` 与 `Assets/` 资产目录，建立全局名称与 GUID 字典表（文件名直接解析 + manifest 权威映射 + variables/attribute/teams/easings/autotiles/enumeration 通用树形提取）；
   2. 结合节点自注册 ID 集合（`presetId`、`prefabId`、`sprites[].id`）与全局字典双表判别，递归排查非法断链引用；
