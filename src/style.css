@@ -2630,6 +2630,14 @@
       }
       /* 存档台固定按钮 */
       .btn-pin-var {
+        /* 铁律②: 抵御编辑器全局 button{position:absolute;width:88px;height:20px} 粗暴定位 */
+        position: static !important;
+        box-sizing: border-box !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        min-width: 46px !important;
+        flex-shrink: 0 !important;
         font-size: 10px !important;
         padding: 2px 6px !important;
         border-radius: 2px !important;

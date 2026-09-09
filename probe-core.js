@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '0.6.0';
+  const PROBE_VERSION = '0.7.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -2028,6 +2028,22 @@
       }
       applyCheatsPerFrame();
       return state.cheats[key];
+    },
+    // 一键全部还原: 关闭所有作弊开关并复原主角原本属性 (发布前防状态残留)
+    resetAllCheats: function () {
+      if (!state.cheats) return false;
+      const c = state.cheats;
+      c.speedMultiplier = 1;
+      c.noClip = false;
+      c.speedBoost = false;
+      c.godMode = false;
+      c.__inSpeedLoop = false;
+      try {
+        if (typeof Time !== 'undefined' && Time) Time.timeScale = 1;
+      } catch (e) {}
+      // 立即复原一次, 不等下一帧; 原值还原后 applyCheatsPerFrame 会清空 orig*
+      applyCheatsPerFrame();
+      return true;
     },
     killAllMonsters: function () {
       let count = 0;

@@ -105,7 +105,9 @@ const requiredAnchors = [
   { name: '作弊插件契约注册', pattern: /Views\.register\('cheats'/ },
   { name: '作弊插件页骨架', pattern: /id="page-cheats"/ },
   { name: '固定变量浮窗骨架', pattern: /id="yami-pinned-box"/ },
-  { name: 'Remix Icon: ri-magic-line', pattern: /ri-magic-line/ }
+  { name: 'Remix Icon: ri-magic-line', pattern: /ri-magic-line/ },
+  { name: '作弊台全部还原按钮', pattern: /id="btn-cheat-reset-all"/ },
+  { name: '全部还原接线 probe API', pattern: /probe\.resetAllCheats\(\)/ }
 ];
 
 let failedCount = 0;
@@ -137,6 +139,13 @@ for (const [fname, fcontent] of artifactFiles) {
     console.error(`❌ [断言失败] 中文术语违规 (${fname}): ${termHits.join(' / ')}`);
     failedCount++;
   }
+}
+
+// 铁律②: 严禁原生 <button> 标签 (编辑器全局 button{position:absolute;width:88px;height:20px} 会打歪)
+const nativeBtnHits = hudContent.match(/<button[\s>]/g) || [];
+if (nativeBtnHits.length > 0) {
+  console.error(`❌ [断言失败] 检测到 ${nativeBtnHits.length} 处原生 <button> 标签，违反铁律②，请改用 <div role="button">！`);
+  failedCount++;
 }
 
 if (failedCount > 0) {

@@ -2657,6 +2657,14 @@
       }
       /* 存档台固定按钮 */
       .btn-pin-var {
+        /* 铁律②: 抵御编辑器全局 button{position:absolute;width:88px;height:20px} 粗暴定位 */
+        position: static !important;
+        box-sizing: border-box !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        min-width: 46px !important;
+        flex-shrink: 0 !important;
         font-size: 10px !important;
         padding: 2px 6px !important;
         border-radius: 2px !important;
@@ -3150,6 +3158,18 @@
             </div>
           </div>
 
+          <!-- 卡片 4: 一键全部还原 (发布前防试玩状态残留) -->
+          <div class="yami-cheat-card">
+            <div class="yami-cheat-card-header">
+              <div class="yami-cheat-title">全部还原</div>
+              <span id="cheat-reset-indicator" style="font-family: Consolas, monospace; font-size: 11px; color: #4ade80;">状态干净</span>
+            </div>
+            <div class="yami-cheat-desc">一键关闭上面所有作弊并复原主角原本能力。测试结束或发布前点一次，避免穿墙、锁血等状态残留。</div>
+            <div style="display: flex; gap: 8px; margin-top: 4px;">
+              <div class="yami-cheat-btn" id="btn-cheat-reset-all" role="button">全部还原</div>
+            </div>
+          </div>
+
           <!-- 卡片 5: 后台时间漂移提示 -->
           <div class="yami-drift-card" id="cheat-drift-box">
             后台漂移监测：正常运转中。切出后台时将自动记录真实时间与游戏引擎推进落差。
@@ -3161,7 +3181,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.6.0 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.7.0 (检查更新)</span>
         </div>
         <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
@@ -3346,7 +3366,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v0.6.0 (DanJuan妙妙插件)',
+        '- **插件版本**: v0.7.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -4549,7 +4569,7 @@
           const typeTag = it.isSwitch ? '[开关]' : (it.type === 'string' ? '[文本]' : '[数值]');
           const tagColor = it.isSwitch ? '#4ade80' : (it.type === 'string' ? '#38bdf8' : '#eab308');
           const isPinned = PinnedWidget.isPinned(it.key);
-          const pinBtnHtml = `<button class="btn-pin-var ${isPinned ? 'pinned' : ''}" data-key="${it.key}" title="固定/取消固定到监视小窗">${isPinned ? '[已盯]' : '[盯]'}</button>`;
+          const pinBtnHtml = `<div class="btn-pin-var ${isPinned ? 'pinned' : ''}" data-key="${it.key}" role="button" title="固定/取消固定到监视小窗">${isPinned ? '[已盯]' : '[盯]'}</div>`;
 
           if (it.isSwitch) {
             const checked = Boolean(it.val);
@@ -5365,6 +5385,18 @@
           });
         }
 
+        // 6. 全部还原 (关闭所有作弊 + 复原主角原本能力)
+        const resetAllBtn = this.root.querySelector('#btn-cheat-reset-all');
+        if (resetAllBtn) {
+          resetAllBtn.addEventListener('click', () => {
+            const probe = this._getProbe();
+            if (!probe || typeof probe.resetAllCheats !== 'function') return;
+            probe.resetAllCheats();
+            this.refresh();
+            showToast('已全部还原：作弊全部关闭，主角属性已复原', 2400);
+          });
+        }
+
       },
 
       _updateToggleBtn(btn, title, active) {
@@ -5420,7 +5452,15 @@
         const godmodeBtn = this.root.querySelector('#btn-cheat-godmode');
         this._updateToggleBtn(godmodeBtn, '无限生命', !!cheats.godMode);
 
-        // 5. 同步后台时间漂移
+        // 5. 同步「全部还原」状态指示 (任一作弊开启即提示未还原)
+        const resetInd = this.root.querySelector('#cheat-reset-indicator');
+        if (resetInd) {
+          const anyOn = (Number(cheats.speedMultiplier) || 1) !== 1 || !!cheats.noClip || !!cheats.speedBoost || !!cheats.godMode;
+          resetInd.textContent = anyOn ? '有作弊开启' : '状态干净';
+          resetInd.style.color = anyOn ? '#facc15' : '#4ade80';
+        }
+
+        // 6. 同步后台时间漂移
         const driftEl = this.root.querySelector('#cheat-drift-box');
         if (driftEl) {
           const drift = cheats.backgroundDrift;
@@ -5793,7 +5833,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '0.6.0';
+      const cur = (probe && probe.version) ? probe.version : '0.7.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -5850,7 +5890,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '0.6.0') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '0.7.0') + ')');
           refreshVersionBadge();
         }
       });
