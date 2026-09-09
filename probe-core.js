@@ -30,7 +30,8 @@
       speedBoost: false,
       godMode: false,
       origPlayerPassage: null,
-      origPlayerSpeed: null
+      origPlayerSpeed: null,
+      origTimeScale: null
     },
     variableWarnings: {},
     backgroundDrift: null,
@@ -248,6 +249,13 @@
       const lang = (typeof Local.active === 'string' && Local.active) ? Local.active : 'zh-CN';
       const content = item.contents[lang];
       if (typeof content === 'string' && content.length > 0) return content;
+      // 含 <global:xxx> 的文本被引擎编译成闭包函数 (local.ts)，需调用后取值，否则界面会露出 GUID
+      if (typeof content === 'function') {
+        try {
+          const text = content();
+          if (typeof text === 'string' && text.length > 0) return text;
+        } catch (e) {}
+      }
     } catch (e) {}
     return null;
   }
@@ -447,7 +455,10 @@
     try {
       const list = typeof EventManager !== 'undefined' && EventManager.activeEvents ? EventManager.activeEvents : [];
       for (const event of Array.from(list)) {
-        if (!event || typeof event.update !== 'function' || event.__yamiPerfProbeEventWrapped__) continue;
+        if (!event || typeof event.update !== 'function') continue;
+        // 引擎在「等待/暂停/继续」时会整体替换 event.update (event.ts set/continue/pause 分别换成 tick/wait/complete)，
+        // 此时旧包装器已被顶掉 → 必须允许重新包装当前实现，否则该事件耗时从此永久丢失
+        if (event.__yamiPerfProbeEventWrapped__ && event.update === event.__yamiPerfProbeWrapper__) continue;
         let name = 'event';
         try {
           const initial = event.initial || event.commands || {};
@@ -458,8 +469,7 @@
           name = (eventType || 'event') + ' :: ' + (file || parentName || 'unknown');
         } catch (e) {}
         const orig = event.update.bind(event);
-        Object.defineProperty(event, '__yamiPerfProbeEventWrapped__', { value: true, configurable: true });
-        event.update = function () {
+        const wrapper = function () {
           if (state.suspend.events === true) return undefined;
           const t0 = now();
           let r;
@@ -474,6 +484,9 @@
           }
           return r;
         };
+        Object.defineProperty(event, '__yamiPerfProbeEventWrapped__', { value: true, configurable: true });
+        event.__yamiPerfProbeWrapper__ = wrapper;
+        event.update = wrapper;
       }
     } catch (e) {}
   }
@@ -527,6 +540,8 @@
             const currentVal = (Variable.map && typeof Variable.map === 'object') ? Variable.map[key] : undefined;
             const targetType = typeof currentVal;
             const incomingType = typeof value;
+            // 键未声明时引擎 set() 会静默丢弃本次写入 (variable.ts:117-133 的 switch 无匹配分支)
+            const keyMissing = !(Variable.map && typeof Variable.map === 'object' && (key in Variable.map));
             let isRejected = false;
             let isNaNVal = false;
 
@@ -534,7 +549,9 @@
               isNaNVal = true;
             }
 
-            if (currentVal !== undefined) {
+            if (keyMissing) {
+              isRejected = true;
+            } else if (currentVal !== undefined) {
               if (targetType !== incomingType) {
                 if (!(incomingType === 'object' && targetType === 'undefined') &&
                     !(incomingType === 'undefined' && targetType === 'object')) {
@@ -549,7 +566,7 @@
                 key: key,
                 currentVal: currentVal,
                 attemptedVal: value,
-                reason: isRejected ? '类型冲突丢弃' : '计算结果为NaN'
+                reason: isNaNVal ? '计算结果为NaN' : (keyMissing ? '变量不存在(写入被引擎丢弃)' : '类型冲突丢弃')
               };
             }
           } catch (err) {}
@@ -760,12 +777,18 @@
   }
 
   let lastTick = now();
+  // 首帧间隔 = 注入时刻 → 游戏启动完成的等待时间(常达 1-3 秒)，会永久污染报告里的 frame.max
+  let firstTickSkipped = false;
   function tick() {
     requestAnimationFrame(tick);
     const t = now();
     const interval = t - lastTick;
     lastTick = t;
     if (!state.running) return;
+    if (!firstTickSkipped) {
+      firstTickSkipped = true;
+      if (interval > 500) return;
+    }
     
     objSampling = (state.frameSeq % 3 === 0) ? 1 : 0;
     if (state.frameSeq % 60 === 0) refresh();
@@ -812,7 +835,9 @@
 
     recentUpdaterSnap = top(frameUpdaterMs);
     recentEventSnap = top(frameEventMs);
-    recentObjSnap = topObjects(state.frameObjMs, 8);
+    // 对象耗时每 3 帧才采样一次 → 非采样帧保留上一份快照，避免真凶卡片/胶囊以 4Hz 闪烁
+    const objSnap = topObjects(state.frameObjMs, 8);
+    if (objSnap.length > 0) recentObjSnap = objSnap;
 
     if (compute > BUDGET) {
       const updaterItems = recentUpdaterSnap;
@@ -988,10 +1013,12 @@
         };
       });
 
-      // 统计全局注册事件总数
+      // 统计全局注册事件总数 (引擎初始化读完即 delete Data.events，真实来源是 EventManager.guidMap)
       let totalRegistered = 0;
       try {
-        if (typeof Data !== 'undefined' && Data.events) {
+        if (typeof EventManager !== 'undefined' && EventManager && EventManager.guidMap) {
+          totalRegistered = Object.keys(EventManager.guidMap).length;
+        } else if (typeof Data !== 'undefined' && Data.events) {
           totalRegistered = Object.keys(Data.events).length;
         }
       } catch (e) {}
@@ -1164,6 +1191,9 @@
   // 控制台异常与后台错误黑匣子分析引擎 (Error Analyzer)
   // ============================================================
   
+  // 源码上下文缓存: 同一 文件+行号 只读盘一次 (死循环报错场景下的同步 I/O 防护)
+  const codeContextCache = new Map();
+
   // 智能提取本地真实报错源码上下文 (报错行上下各 3 行)
   function extractCodeContext(source, lineno, stack) {
     try {
@@ -1203,6 +1233,9 @@
 
       if (!targetPath || !targetLine || targetLine <= 0) return null;
 
+      const cacheKey = targetPath + ':' + targetLine;
+      if (codeContextCache.has(cacheKey)) return codeContextCache.get(cacheKey);
+
       // 读取文件并提取上下文代码
       const content = fs.readFileSync(targetPath, 'utf8');
       const allLines = content.split(/\r?\n/);
@@ -1218,12 +1251,21 @@
         });
       }
 
-      return {
+      // 行号越界 (磁盘文件与报错产物不一致时) → 返回 null，避免 UI 出现「有按钮但展开是空白」
+      if (snippetLines.length === 0) {
+        codeContextCache.set(cacheKey, null);
+        return null;
+      }
+
+      const result = {
         filePath: targetPath,
         fileName: path.basename(targetPath),
         targetLine: targetLine,
         lines: snippetLines
       };
+      if (codeContextCache.size > 50) codeContextCache.clear();
+      codeContextCache.set(cacheKey, result);
+      return result;
     } catch (e) {
       return null;
     }
@@ -1334,7 +1376,6 @@
 
   function recordError(item) {
     const analysis = analyzeError(item.message, item.stack, item.source);
-    const codeContext = extractCodeContext(item.source, item.lineno, item.stack);
 
     // 错误唯一指纹计算 (类型 + 消息 + 来源 + 行号)
     const fingerprint = (item.type || 'error') + '::' + String(item.message || '').slice(0, 100) + '::' + String(item.source || '') + '::' + String(item.lineno || 0);
@@ -1349,7 +1390,8 @@
       existing.latestTime = nowStr;
       existing.latestTimestamp = nowTs;
       if (item.stack) existing.stack = item.stack;
-      if (codeContext && !existing.codeContext) existing.codeContext = codeContext;
+      // 仅在该指纹首次缺失上下文时补算一次: 死循环报错每秒 60 次也只会读盘一次
+      if (!existing.codeContext) existing.codeContext = extractCodeContext(item.source, item.lineno, item.stack);
 
       // 移动至队列最前端 (保持最近发生优先)
       const idx = state.errorHistory.indexOf(existing);
@@ -1376,7 +1418,7 @@
         colno: item.colno,
         stack: item.stack,
         analysis: analysis,
-        codeContext: codeContext
+        codeContext: extractCodeContext(item.source, item.lineno, item.stack)
       };
       state.errorHistory.unshift(errRecord);
       if (state.errorHistory.length > 100) state.errorHistory.pop();
@@ -1433,11 +1475,22 @@
       if (console && console.error) {
         const origConsoleError = console.error.bind(console);
         console.error = function() {
-          const args = Array.prototype.slice.call(arguments);
-          const text = args.map(function(a) {
-            return (typeof a === 'object' && a !== null) ? (a.message || a.stack || JSON.stringify(a)) : String(a);
-          }).join(' ');
-          if (!text.includes('[Yami Perf]')) {
+          let text = '';
+          // 代理体绝不可向调用方抛异常: 游戏里 console.error(循环引用对象) 曾会反噬业务逻辑
+          try {
+            const args = Array.prototype.slice.call(arguments);
+            text = args.map(function(a) {
+              if (typeof a === 'object' && a !== null) {
+                if (a.message) return String(a.message);
+                if (a.stack) return String(a.stack);
+                try { return JSON.stringify(a); } catch (err) { return '[对象: 无法序列化]'; }
+              }
+              return String(a);
+            }).join(' ');
+          } catch (err) {
+            text = '[日志参数解析失败]';
+          }
+          if (!/\[yami perf\]/i.test(text)) {
             recordError({
               type: 'console_error',
               message: text,
@@ -1990,9 +2043,16 @@
           if (typeof AudioManager !== 'undefined' && AudioManager && AudioManager.se) {
             if (state.suspend.audio === true) {
               if (typeof AudioManager.se.stop === 'function') AudioManager.se.stop();
-              if (AudioManager.se.gain && AudioManager.se.gain.gain) AudioManager.se.gain.gain.value = 0;
+              if (AudioManager.se.gain && AudioManager.se.gain.gain) {
+                // 记下玩家/游戏原有音量，还原时不能用硬编码 1 顶掉
+                if (typeof state.origSeGain !== 'number') state.origSeGain = AudioManager.se.gain.gain.value;
+                AudioManager.se.gain.gain.value = 0;
+              }
             } else {
-              if (AudioManager.se.gain && AudioManager.se.gain.gain) AudioManager.se.gain.gain.value = 1;
+              if (AudioManager.se.gain && AudioManager.se.gain.gain) {
+                AudioManager.se.gain.gain.value = (typeof state.origSeGain === 'number') ? state.origSeGain : 1;
+                state.origSeGain = null;
+              }
             }
           }
         } catch (e) {}
@@ -2017,8 +2077,15 @@
         const num = Number(value) || 1;
         state.cheats.speedMultiplier = num;
         if (typeof Time !== 'undefined' && Time) {
+          // 首次改动前记下游戏自身的 timeScale (子弹时间等)，否则「全部还原」会把游戏永久锁在 1x
+          if (state.cheats.origTimeScale === null || state.cheats.origTimeScale === undefined) {
+            state.cheats.origTimeScale = (typeof Time.timeScale === 'number') ? Time.timeScale : 1;
+          }
           if (num === 0.5) {
             Time.timeScale = 0.5;
+          } else if (num === 1) {
+            Time.timeScale = state.cheats.origTimeScale;
+            state.cheats.origTimeScale = null;
           } else {
             Time.timeScale = 1;
           }
@@ -2039,7 +2106,12 @@
       c.godMode = false;
       c.__inSpeedLoop = false;
       try {
-        if (typeof Time !== 'undefined' && Time) Time.timeScale = 1;
+        if (typeof Time !== 'undefined' && Time) {
+          // 还原游戏自身 timeScale，而不是硬写 1 (否则游戏原本的慢动作/加速被永久覆盖)
+          const orig = (typeof c.origTimeScale === 'number') ? c.origTimeScale : 1;
+          Time.timeScale = orig;
+        }
+        c.origTimeScale = null;
       } catch (e) {}
       // 立即复原一次, 不等下一帧; 原值还原后 applyCheatsPerFrame 会清空 orig*
       applyCheatsPerFrame();
@@ -2066,9 +2138,12 @@
               }
               if (killed) {
                 count++;
-                if (typeof actor.emit === 'function') {
-                  try { actor.emit('destroy'); } catch (e) {}
-                }
+                // 真正移除必须走 destroy(): 它内部会 emit('destroy') + GlobalEntityManager.remove + parent.remove
+                // (引擎 actor.ts destroy())。只 emit('destroy') 角色仍留在 Scene.actor.list 里继续寻路/占碰撞
+                try {
+                  if (typeof actor.destroy === 'function') actor.destroy();
+                  else if (typeof actor.emit === 'function') actor.emit('destroy');
+                } catch (e) {}
               }
             }
           }

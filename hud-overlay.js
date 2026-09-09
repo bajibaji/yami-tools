@@ -10,6 +10,35 @@
   }
   const escapeHtml = esc;
 
+  // 报错分类中文标签 (IIFE 顶层公共作用域): 过滤器按钮 / 错误卡片头部 / 导出报告三处共用同一事实源
+  // 必须覆盖 probe-core 的 analyzeError 能产出的全部分类，否则界面与报告会露出英文枚举
+  const CAT_LABEL = {
+    all: '全部',
+    'high-freq': '高频',
+    NullPointer: '空指针',
+    MissingFunction: '方法丢失',
+    PluginError: '插件指令',
+    SceneError: '场景地形',
+    ResourceNotFound: '资源404',
+    console: '控制台',
+    UndefinedVariable: '变量未定义',
+    StackOverflow: '死循环/爆栈',
+    RenderError: '图形渲染',
+    JSONParseError: '数据损坏',
+    AudioError: '音频',
+    NumericError: '无效数值',
+    RuntimeError: '未知异常'
+  };
+  // 内部类型/分类 → 中文展示标签 (err.type 兜底也要过映射)
+  const TYPE_LABEL = {
+    error: '未知异常',
+    console_error: '控制台',
+    unhandled_rejection: '未处理的异步错误'
+  };
+  function catLabel(cat, type) {
+    return CAT_LABEL[cat] || TYPE_LABEL[type] || '未知异常';
+  }
+
   function initHUD() {
     if (!document.body) {
       requestAnimationFrame(initHUD);
@@ -148,7 +177,7 @@
         flex: 1;
       }
       .yami-nav-back-btn {
-        display: none;
+        display: none !important;
         background: #222222 !important;
         border: 1px solid #161616 !important;
         color: #d8d8d8 !important;
@@ -2084,7 +2113,7 @@
         color: #ff6060 !important;
         border-radius: 2px !important;
         margin-left: 6px !important;
-        animation: pulseCount 2s infinite ease-in-out !important;
+        animation: yami-pulse 2s infinite ease-in-out !important;
       }
 
       /* 源码上下文就地折叠预览 */
@@ -2480,7 +2509,7 @@
         height: 100%;
         overflow-y: auto !important;
         overflow-x: hidden !important;
-        display: none;
+        display: none !important;
         flex-direction: column;
         padding: 10px;
         gap: 10px;
@@ -3205,6 +3234,8 @@
     const homeStatusTextEl = document.getElementById('yami-home-status-text');
     const homeStatusStatsEl = document.getElementById('yami-home-status-stats');
     const errorsListEl = document.getElementById('yami-errors-list');
+    // 报错列表重建签名: 内容未变时跳过重建 (心跳每 150ms 调用一次)
+    let errorsRenderSig = '';
 
     const pages = {
       home: document.getElementById('page-home'),
@@ -3379,7 +3410,7 @@
       errors.forEach(function(err, idx) {
         const a = err.analysis || {};
         const countStr = (err.count && err.count > 1) ? ' [累计发生 ' + err.count + ' 次]' : '';
-        report.push('### [' + (idx + 1) + '] [' + (a.category || err.type) + '] ' + (a.title || err.message) + countStr);
+        report.push('### [' + (idx + 1) + '] [' + catLabel(a.category, err.type) + '] ' + (a.title || err.message) + countStr);
         report.push('- **发生频次**: ' + (err.count || 1) + ' 次 (首次: ' + (err.firstTime || err.time) + ' · 最近: ' + (err.latestTime || err.time) + ')');
         report.push('- **报错来源**: `' + err.source + '`' + (err.lineno ? ' (第 ' + err.lineno + ' 行)' : ''));
         report.push('- **诊断原因**: ' + (a.reason || '运行期发生未处理错误'));
@@ -3440,6 +3471,13 @@
       const probe = window.__YAMI_PERF_PROBE__;
       const errors = (probe && probe.getErrors) ? probe.getErrors() : [];
 
+      // 心跳每 150ms 调用一次本函数: 列表内容未变时跳过重建，
+      // 否则「展开的源码」「滚动位置」会被反复重置
+      const renderSig = errorActiveFilter + '::' + errorSearchKeyword + '::'
+        + errors.map(function (e) { return (e.id || '') + ':' + (e.count || 1); }).join('|');
+      if (renderSig === errorsRenderSig && errorsListEl.innerHTML) return;
+      errorsRenderSig = renderSig;
+
       // 1. 动态统计各分类数量并更新 Filter Bar
       const counts = {
         all: errors.length,
@@ -3460,17 +3498,7 @@
       });
 
       const filterBarEl = document.getElementById('yami-error-filter-bar');
-      // 分类中文标签 (小白直读, 过滤器按钮与卡片头部共用)
-      const CAT_LABEL = {
-        all: '全部',
-        'high-freq': '高频',
-        NullPointer: '空指针',
-        MissingFunction: '方法丢失',
-        PluginError: '插件指令',
-        SceneError: '场景地形',
-        ResourceNotFound: '资源404',
-        console: '控制台'
-      };
+      // 分类中文标签: 统一取自 IIFE 顶层 CAT_LABEL (过滤器按钮/卡片头部/导出报告共用同一事实源)
       if (filterBarEl) {
         filterBarEl.querySelectorAll('.yami-error-filter-btn').forEach(function(btn) {
           const f = btn.getAttribute('data-filter');
@@ -3548,7 +3576,7 @@
         return '<div class="yami-error-card">'
           + '<div class="yami-error-card-header">'
           + '<div style="display: flex; align-items: center;">'
-          + '<span class="yami-error-type">[异常] ' + (CAT_LABEL[a.category] || a.category || err.type) + '</span>'
+          + '<span class="yami-error-type">[异常] ' + catLabel(a.category, err.type) + '</span>'
           + countBadge
           + '</div>'
           + '<span class="yami-error-time">' + timeInfo + '</span>'
@@ -3910,13 +3938,14 @@
           try { warnings = probe.getVariableWarnings() || {}; } catch (e) {}
         }
 
-        // 获取当前实时变量数据源: 优先 Variable.groups[0] / Variable.map
+        // 获取当前实时变量数据源: 引擎的键→值映射表是 Variable.map
+        // (Variable.groups 是 [[],[],[]] 的分组数组，按 GUID 取值恒为 undefined)
         let currentVars = {};
         if (typeof Variable !== 'undefined' && Variable) {
-          if (Variable.groups && Variable.groups[0]) {
-            currentVars = Variable.groups[0];
-          } else if (Variable.map) {
+          if (Variable.map && typeof Variable.map === 'object') {
             currentVars = Variable.map;
+          } else if (Variable.groups && Variable.groups[0] && !Array.isArray(Variable.groups[0])) {
+            currentVars = Variable.groups[0];
           }
         } else if (typeof SaveLab !== 'undefined' && SaveLab && SaveLab.currentData && SaveLab.currentData.variables) {
           currentVars = SaveLab.currentData.variables;
@@ -3951,10 +3980,10 @@
 
           html += `
             <div class="yami-pinned-item">
-              <span class="yami-pinned-name" title="ID: ${k}">${metaName}</span>
+              <span class="yami-pinned-name" title="ID: ${escapeHtml(k)}">${escapeHtml(metaName)}</span>
               <div style="display: flex; align-items: center; gap: 4px;">
-                ${isWarn ? '<span class="yami-pinned-warn" title="' + (warnings[k] ? warnings[k].reason : '类型冲突或NaN') + '">[异常]</span>' : ''}
-                <span class="yami-pinned-val">${valStr}</span>
+                ${isWarn ? '<span class="yami-pinned-warn" title="' + escapeHtml(warnings[k] ? warnings[k].reason : '类型冲突或NaN') + '">[异常]</span>' : ''}
+                <span class="yami-pinned-val">${escapeHtml(valStr)}</span>
               </div>
             </div>
           `;
@@ -3971,6 +4000,8 @@
       ctx: null,
       gameDir: '',
       saveFiles: [],
+      // 未保存改动标记: 置位后 150ms 心跳不得从磁盘回读覆盖用户编辑
+      dirty: false,
       currentSlot: '',
       currentData: null,
       currentMeta: null,
@@ -4417,11 +4448,11 @@
             </div>
             <div class="yami-save-bento-cell">
               <span class="yami-save-bento-label">队伍领队</span>
-              <span class="yami-save-bento-value blue">${actorDesc}</span>
+              <span class="yami-save-bento-value blue">${escapeHtml(actorDesc)}</span>
             </div>
             <div class="yami-save-bento-cell">
               <span class="yami-save-bento-label">当前位置</span>
-              <span class="yami-save-bento-value">${sceneName}</span>
+              <span class="yami-save-bento-value">${escapeHtml(sceneName)}</span>
             </div>
           </div>
           ${screenshotHtml}
@@ -4606,7 +4637,7 @@
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px;">
                   ${pinBtnHtml}
-                  <input class="yami-save-input var-number-input" data-key="${it.key}" type="text" value="${displayVal}" style="width: 110px; text-align: right;" />
+                  <input class="yami-save-input var-number-input" data-key="${it.key}" type="text" value="${escapeHtml(displayVal)}" style="width: 110px; text-align: right;" />
                 </div>
               </div>
             `;
@@ -4635,7 +4666,7 @@
               <div class="yami-save-mini-btn primary" id="save-btn-copy-raw" role="button">复制全量 JSON</div>
             </div>
             <div class="yami-save-tree-box">
-              <pre style="margin: 0; white-space: pre-wrap; word-break: break-all; font-family: Consolas, monospace; font-size: 11px; color: #90d4ff;">${jsonStr.slice(0, 25000) + (jsonStr.length > 25000 ? '\n\n... (数据过长已截断预览)' : '')}</pre>
+              <pre style="margin: 0; white-space: pre-wrap; word-break: break-all; font-family: Consolas, monospace; font-size: 11px; color: #90d4ff;">${escapeHtml(jsonStr.slice(0, 25000) + (jsonStr.length > 25000 ? '\n\n... (数据过长已截断预览)' : ''))}</pre>
             </div>
           </div>
         `;
@@ -4648,6 +4679,7 @@
             const slot = btn.getAttribute('data-slot');
             if (slot && slot !== this.currentSlot) {
               this.currentSlot = slot;
+              this.dirty = false;
               this.loadCurrentSave();
               this.render();
             }
@@ -4669,12 +4701,12 @@
         if (searchInput) {
           searchInput.addEventListener('input', (e) => {
             this.varKeyword = e.target.value;
-            const listEl = root.querySelector('.yami-save-vars-list');
+            const listEl = root.querySelector('.yami-save-var-list');
             if (listEl) {
               const newHtml = this.renderVarsPanel(this.currentData || {});
               const temp = document.createElement('div');
               temp.innerHTML = newHtml;
-              const newList = temp.querySelector('.yami-save-vars-list');
+              const newList = temp.querySelector('.yami-save-var-list');
               if (newList) listEl.innerHTML = newList.innerHTML;
               this.bindVarInputs(root);
             }
@@ -4783,6 +4815,12 @@
             this.commitChanges();
           });
         }
+
+        // 速改输入框: 一旦手动输入即置脏，防止 150ms 心跳从磁盘回读覆盖
+        ['#quick-input-gold', '#quick-input-level', '#quick-input-hp', '#quick-input-mp'].forEach((sel) => {
+          const inp = root.querySelector(sel);
+          if (inp) inp.addEventListener('input', () => { this.dirty = true; });
+        });
       },
 
       bindVarInputs(root) {
@@ -4791,24 +4829,31 @@
             const key = sw.getAttribute('data-key');
             const checked = e.target.checked;
             if (!this.currentData) return;
-            if (!this.currentData.switches) this.currentData.switches = {};
-            this.currentData.switches[key] = checked;
+            this.dirty = true;
+            // 引擎读档只认存档的 variables 键（开关就是其中的布尔值）；
+            // 旧版自造的顶层 switches 字段引擎完全不读，属存档污染，已移除
+            const varName = (this.dict.variables.get(key) || {}).name || key;
             if (this.currentData.variables && this.currentData.variables[key] !== undefined) {
               this.currentData.variables[key] = checked;
+              this.ctx.showToast(`开关 [${varName}] 切换为: ${checked ? '开' : '关'}`, 1500);
+            } else {
+              this.ctx.showToast(`[提示] 开关 [${varName}] 不在本存档中，改动无法写回`, 2500);
             }
-            this.ctx.showToast(`开关 [${this.dict.variables.get(key) || key}] 切换为: ${checked ? 'ON' : 'OFF'}`, 1500);
           });
         });
 
         root.querySelectorAll('.var-number-input').forEach(inp => {
           inp.addEventListener('change', (e) => {
             const key = inp.getAttribute('data-key');
-            let val = e.target.value;
-            if (!isNaN(Number(val)) && val.trim() !== '') val = Number(val);
             if (!this.currentData) return;
+            let val = e.target.value;
+            // 仅当存档里原本就是数值时才转数字：文本变量写数字会被引擎按类型静默丢弃 (variable.ts loadData)
+            const curVal = this.currentData.variables ? this.currentData.variables[key] : undefined;
+            if (typeof curVal === 'number' && val.trim() !== '' && !isNaN(Number(val))) val = Number(val);
+            this.dirty = true;
             if (!this.currentData.variables) this.currentData.variables = {};
             this.currentData.variables[key] = val;
-            this.ctx.showToast(`变量 [${this.dict.variables.get(key) || key}] 改为: ${val}`, 1500);
+            this.ctx.showToast(`变量 [${(this.dict.variables.get(key) || {}).name || key}] 改为: ${val}`, 1500);
           });
         });
 
@@ -4834,41 +4879,39 @@
 
         const lead = this.getLeadActor(this.currentData);
 
-        const goldInp = document.getElementById('quick-input-gold');
-        if (goldInp) {
-          const gVal = Number(goldInp.value);
-          if (!isNaN(gVal)) {
-            if (lead && lead.inventory) lead.inventory.money = gVal;
-            if (this.currentData.gold !== undefined) this.currentData.gold = gVal;
-            if (this.currentData.money !== undefined) this.currentData.money = gVal;
-          }
+        // 空输入框 Number('') === 0，曾会把金币/等级/HP/MP 直接写成 0 → 统一按「未填写」跳过
+        const readNum = (id) => {
+          const el = document.getElementById(id);
+          if (!el) return null;
+          const raw = String(el.value).trim();
+          if (raw === '') return null;
+          const n = Number(raw);
+          return isNaN(n) ? null : n;
+        };
+
+        const gVal = readNum('quick-input-gold');
+        if (gVal !== null) {
+          if (lead && lead.inventory) lead.inventory.money = gVal;
+          if (this.currentData.gold !== undefined) this.currentData.gold = gVal;
+          if (this.currentData.money !== undefined) this.currentData.money = gVal;
         }
-        const lvInp = document.getElementById('quick-input-level');
-        if (lvInp && lead) {
-          const lv = Number(lvInp.value);
-          if (!isNaN(lv)) {
-            if (!lead.attributes) lead.attributes = {};
-            lead.attributes.level = lv;
-            lead.level = lv;
-          }
+        const lv = readNum('quick-input-level');
+        if (lv !== null && lead) {
+          if (!lead.attributes) lead.attributes = {};
+          lead.attributes.level = lv;
+          lead.level = lv;
         }
-        const hpInp = document.getElementById('quick-input-hp');
-        if (hpInp && lead) {
-          const hp = Number(hpInp.value);
-          if (!isNaN(hp)) {
-            if (!lead.attributes) lead.attributes = {};
-            lead.attributes.health = hp;
-            lead.hp = hp;
-          }
+        const hp = readNum('quick-input-hp');
+        if (hp !== null && lead) {
+          if (!lead.attributes) lead.attributes = {};
+          lead.attributes.health = hp;
+          lead.hp = hp;
         }
-        const mpInp = document.getElementById('quick-input-mp');
-        if (mpInp && lead) {
-          const mp = Number(mpInp.value);
-          if (!isNaN(mp)) {
-            if (!lead.attributes) lead.attributes = {};
-            lead.attributes.mana = mp;
-            lead.mp = mp;
-          }
+        const mp = readNum('quick-input-mp');
+        if (mp !== null && lead) {
+          if (!lead.attributes) lead.attributes = {};
+          lead.attributes.mana = mp;
+          lead.mp = mp;
         }
 
         try {
@@ -4890,8 +4933,9 @@
 
           fs.writeFileSync(filePath, JSON.stringify(this.currentData, null, 2), 'utf8');
 
+          this.dirty = false;
           this.ctx.showToast(`[完成] 存档 ${this.currentSlot} 已成功保存，并生成安全备份！`, 3000);
-          this.refresh();
+          this.refresh(null, true);
         } catch (e) {
           this.ctx.showToast('[失败] 写入存档失败: ' + e.message, 3500);
         }
@@ -4899,14 +4943,22 @@
 
       init(ctx) {
         this.ctx = ctx;
+        this.dirty = false;
         this.loadDictionaries();
         this.scanSaveFiles();
         this.loadCurrentSave();
         this.render();
       },
 
-      refresh(ctx) {
+      refresh(ctx, force) {
         if (ctx) this.ctx = ctx;
+        // 150ms 心跳会无条件调用本方法：有未保存改动、或用户正在面板内输入时跳过，
+        // 否则磁盘旧值会在 150ms 内覆盖编辑并把输入框整个重建掉（失焦）
+        if (!force) {
+          if (this.dirty) return;
+          const root = document.getElementById('yami-save-root');
+          if (root && root.contains(document.activeElement) && document.activeElement !== root) return;
+        }
         this.scanSaveFiles();
         this.loadCurrentSave();
         this.render();
@@ -4959,14 +5011,19 @@
         if (!this.root) this.root = document.getElementById('yami-scene-root');
         if (!this._bound && this.root) {
           this._bound = true;
-          this.root.addEventListener('click', this._onClick.bind(this));
-          this.root.addEventListener('input', this._onInput.bind(this));
+          // 保存绑定引用供 destroy 解绑: 容器常驻 DOM，重复绑定会让同一次点击被多个 handler 互相抵消
+          this._onClickBound = this._onClick.bind(this);
+          this._onInputBound = this._onInput.bind(this);
+          this.root.addEventListener('click', this._onClickBound);
+          this.root.addEventListener('input', this._onInputBound);
         }
       },
 
       refresh(ctx) {
         if (ctx) this.ctx = ctx;
         this._ensureRoot();
+        // 用户正在搜索框输入时不要重建（重建会替换输入框 → 失焦）
+        if (document.activeElement && document.activeElement.classList && document.activeElement.classList.contains('yami-scene-search')) return;
         const now = Date.now();
         if (now - this.lastPullAt < 500) return;   // ponytail: 500ms 轮询节流, 确有更实时需求再降
         this.lastPullAt = now;
@@ -4987,6 +5044,13 @@
       },
 
       destroy() {
+        // 容器 #yami-scene-root 只是被隐藏、从不销毁 → 必须显式解绑，否则重入会叠加监听
+        if (this.root && this._bound) {
+          if (this._onClickBound) this.root.removeEventListener('click', this._onClickBound);
+          if (this._onInputBound) this.root.removeEventListener('input', this._onInputBound);
+        }
+        this._onClickBound = null;
+        this._onInputBound = null;
         this.open = {};
         this.lastJson = '';
         this.snap = null;
@@ -5009,7 +5073,14 @@
         const inp = e.target;
         if (inp && inp.classList && inp.classList.contains('yami-scene-search')) {
           this.kw = inp.value;
+          const caret = inp.selectionStart;
           this.render();
+          // render 会重建整个工具条（含搜索框本身）→ 手动把焦点与光标位置还回去，否则每敲一个字就失焦
+          const next = this.root && this.root.querySelector('.yami-scene-search');
+          if (next) {
+            next.focus();
+            try { next.setSelectionRange(caret, caret); } catch (err) {}
+          }
         }
       },
 
@@ -6000,8 +6071,10 @@
 
         // 卡顿记录
         if (jankList && jankCount) {
-          const janks = (report.overBudgetFrames || []).filter(f => f.compute > 33.3).slice(-6).reverse();
-          jankCount.textContent = `${janks.length} 次`;
+          const severeAll = (report.overBudgetFrames || []).filter(f => f.compute > 33.3);
+          const janks = severeAll.slice(-6).reverse();   // 列表只展示最近 6 条
+          // 次数必须用真实总数，否则永远显示「6 次」
+          jankCount.textContent = `${severeAll.length} 次`;
           if (janks.length) {
             jankList.innerHTML = janks.map(j => {
               const topObj = j.objects && j.objects[0];

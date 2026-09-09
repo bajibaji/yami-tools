@@ -268,6 +268,14 @@
   2. 同一功能的重复入口收敛为一条小白路径（如场景实体只保留主页白话检视页，专业模式 tab 不重复暴露）；
   3. 专业术语默认藏在专业模式，普通模式禁止出现英文键名与代码残留。高频重复错误不虚增未读数，彻底杜绝计数器无界溢出。
 
+### ⑲ 全局心跳/轮询刷新必须带守卫（Heartbeat Guard）
+- **现象**：存档台手动输入数值 150ms 后被磁盘旧值覆盖、输入框失焦；报错页展开的源码自动收起、滚动位置反复回顶；场景实体台二次进入后行展开失效、搜索框每敲一个字就失焦。
+- **根因**：`setInterval(..., 150)` 统一心跳对当前激活页面无条件调用 `refresh(ctx)`，而 `SaveLab.refresh` 每次都「重读磁盘 + 整体重建 `innerHTML`」、`renderErrorsList` 每次都重建列表——输入元素被销毁即失焦，未提交的编辑被覆盖，DOM 态（展开/滚动）被重置；`SceneLab.destroy` 又只清引用不解绑监听。
+- **铁律**：
+  1. 任何被心跳/轮询反复调用的 `refresh` 必须自带守卫，三选一或组合：**焦点守卫**（面板内输入元素持有焦点时跳过）、**脏标记**（有未保存改动时跳过，提交后清除）、**快照签名**（数据未变时跳过重建）；
+  2. 常驻容器（如 `#yami-scene-root`）上的事件监听，`destroy()` 必须用保存的引用 `removeEventListener`，禁止 `bind()` 后就地丢弃引用；
+  3. 需要重建包含输入框的 DOM 时，重建后必须回填焦点与光标位置。
+
 ## 5. Git 提交与智能版本自增规范 (Strict Git & Smart SemVer Policy)
 
 1. **绝对禁止主动 Git (No Autonomous Git)**：
@@ -375,3 +383,36 @@
   3. 新增 `tests/run-all.cjs` 零依赖总入口，发布前跑 `node build.cjs && node tests/run-all.cjs`。
 - **修复测试自身缺陷（非产品回归）**：`test-autoupdate.mjs` 的「远端版本」预言机原为裸 `fetch` 单通道，网络抖动时退化成 `'0.0.0'` 导致 5 条断言对着未知值误报失败；改为 raw + jsDelivr 双通道兜底，两条均不可达时显式 `SKIP` 并打日志（**预言机可用时断言一条不减**）。
 - **门禁与凭证**：SSOT 三源同步 v0.7.0；build.cjs 锚点扩至 **26 项** + 原生 button 负向断言 + 0 Emoji + 术语自检全绿；回归 **verify 30 / errflow 13 / scene-lab 25 / cheats-reset 19** 全绿（autoupdate 依赖公网，节点受限时第 4 节按环境跳过）。
+
+### 2026-09-09 · 全量缺陷排查与修复（工作区改动，随下一版发布）
+- **排查方法**：5 路并行静态审计（`probe-core` / `hud-overlay` 三段 / 样式构建文档）+ **引擎源码交叉核验**（`D:\Documents\GitHub\2\Project\Templates\arpg-ts-chinese`）+ **真机 E2E**（Playwright 驱动真实 Chrome，把仓库源码以 `world:MAIN` 等价方式注入真实游戏工程并逐页走查）。
+- **P0 功能失效修复**：
+  1. **存档台编辑被 150ms 心跳冲掉**（`SaveLab.refresh` 无守卫 → 每 150ms 重读磁盘并整体重建 DOM）：新增 `dirty` 脏标记 + 焦点守卫，速改/变量/开关输入即置脏，写盘与切槽位后清除；**真机实测：输入 `999999` → 500ms 后仍为 `999999`，失焦 600ms 后仍未被回读覆盖**（修复前为 `999999 → 100` 且失焦）。
+  2. **变量监视小窗恒显示 `-`**：取数源由 `Variable.groups[0]`（引擎实为 `[[],[],[]]` 数组）改为 `Variable.map`（`variable.ts:58/98`）。
+  3. **报错页每 150ms 整体重建**（展开的源码 150ms 内自动收起、滚动回顶）：`renderErrorsList` 增加重建签名比对，无变化即跳过；**实测 DOM 变更 8 次/1.2s → 0 次**。
+  4. **场景实体台二次进入后行展开失效**：`destroy()` 未解绑常驻容器上的监听 → 重入叠加，同一次点击被多个 handler 抵消；改为保存绑定引用并在 `destroy` 中 `removeEventListener`。
+  5. **场景实体台搜索框每敲一个字就失焦**：重建后回填焦点与光标，且用户聚焦搜索框时跳过重建。
+- **引擎 API 错配修复**（均以引擎源码为准）：
+  1. `killAllMonsters` 原用 `emit('destroy')`（只派发事件、不移除实例）→ 改为 `actor.destroy()`（`GlobalEntityManager.remove` + `parent.remove`）；
+  2. 「全局注册事件总数」恒为 0：引擎初始化后 `delete Data.events` → 改取 `EventManager.guidMap`（`event.ts:45/88`）；
+  3. 事件耗时包装器被引擎「等待/暂停/继续」整体替换 `update` 后永久失效 → 记录包装器引用，被顶掉即重新包装；
+  4. `Variable.set` 告警漏报「键不存在」（引擎静默丢弃）→ 补判并给出中文原因；
+  5. `Local.textMap[].contents[lang]` 为闭包函数时本地化反查失败 → 调用取值，避免界面露 GUID。
+- **数据与健壮性修复**：
+  1. 空输入框 `Number('') === 0` 会把金币/等级/HP/MP 写成 0 → 统一按「未填写」跳过；
+  2. 文本变量被强制转数值（引擎按类型丢弃）→ 仅原值为数值时才转换；
+  3. 自造顶层 `switches` 字段（引擎完全不读，属存档污染）移除，键不在存档时改为明确提示；
+  4. `console.error` 代理遇循环引用对象会 `JSON.stringify` 抛错并反噬游戏 → 代理体整体 try/catch + 安全降级；
+  5. 错误源码上下文在指纹去重前无条件同步读盘（死循环报错每秒 60 次 I/O）→ 移到去重判定之后 + 加缓存 + 行号越界返回 null；
+  6. 自身日志前缀 `[Yami Perf]` 大小写不匹配，导致插件自身异常被当成游戏错误计入黑匣子 → 改为大小写不敏感匹配；
+  7. 对象级真凶快照 2/3 帧为空导致卡片 4Hz 闪烁 → 保留上一份非空快照；
+  8. 首帧 interval（注入 → 游戏启动的空闲期）污染报告 `frame.max` → 首帧超过 500ms 直接丢弃；
+  9. 静音还原硬写 `gain=1` → 记录并还原玩家原有音量；「全部还原」硬写 `Time.timeScale=1` → 记录并还原游戏原有 timeScale（子弹时间等不再被永久覆盖）；
+  10. 卡顿次数被 `slice(-6)` 截断 → 列表仍取最近 6 条，计数改用真实总数。
+- **文案与门禁**：
+  1. `CAT_LABEL` 提升至 IIFE 顶层并补齐 7 个缺失分类（`UndefinedVariable`/`StackOverflow`/`RenderError`/`JSONParseError`/`AudioError`/`NumericError`/`RuntimeError`），导出报告复用同一映射（铁律⑱）——真机实测卡片头部已由 `[RuntimeError]` 变为 `[异常] 未知异常`；
+  2. `src/style.css`：`.yami-error-count-badge` 引用的不存在动画 `pulseCount` → 复用既有 `yami-pulse`；`#page-cheats` 与 `.yami-nav-back-btn` 默认隐藏补 `!important`（铁律⑭）；
+  3. `build.cjs`：样式注入标记缺失/源文件缺失由静默跳过改为 `exit 1`；版本 SSOT 的 hud 侧校验由条件式改为「兜底版本字面量必须存在且全部等于 manifest 版本」；
+  4. `README.md` 事实对齐：版本 `v0.5.1`→`v0.7.0`、断言 `20`→`26`、铁律 `17`→`19`、补 `tests/` 目录与作弊台/变量监视模块说明。
+- **回归资产**：新增 `tests/test-fix-regressions.mjs`（20 断言：timeScale 还原、`destroy()` 真移除、`guidMap` 计数、缺失键告警、循环引用代理不抛错、分类标签全覆盖 + 4 项接线契约）；`tests/run-all.cjs` 扩为 **6 套**。
+- **验证凭证**：`node build.cjs` 26 项全绿；`node tests/run-all.cjs` **6/6 套通过**（verify 30 / errflow 13 / scene-lab 25 / cheats-reset 19 / fix-regressions 20 / autoupdate 25）；真机 E2E 五页全渲染、无插件侧新增异常。

@@ -12,6 +12,7 @@ const SUITE = [
   ['test-errflow.mjs',      '错误黑匣子指纹聚合与广播节流'],
   ['test-scene-lab.mjs',    '场景实体快照与渲染集成'],
   ['test-cheats-reset.mjs', '作弊台全部还原与状态复原'],
+  ['test-fix-regressions.mjs', '缺陷修复回归 (引擎假设/数据语义/文案映射)'],
   ['test-autoupdate.mjs',   '热更新端到端 (需联网)'],
 ];
 

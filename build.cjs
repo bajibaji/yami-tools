@@ -40,13 +40,19 @@ if (fs.existsSync(SRC_CSS_PATH)) {
   const sIdx = hudJs.indexOf(sMarker);
   const eIdx = hudJs.indexOf(eMarker);
 
-  if (sIdx !== -1 && eIdx !== -1) {
-    const before = hudJs.slice(0, sIdx + sMarker.length);
-    const after = hudJs.slice(eIdx);
-    hudJs = before + '\n' + css + '\n    `;\n    ' + after;
-    fs.writeFileSync(HUD_JS_PATH, hudJs, 'utf8');
-    console.log('  [CSS 注入] src/style.css 已成功注入 hud-overlay.js');
+  if (sIdx === -1 || eIdx === -1) {
+    // 静默跳过会让样式源与产物悄悄漂移 → 必须显式失败
+    console.error('❌ [CSS 注入失败] hud-overlay.js 中未找到样式注入标记 (style.textContent = ` / document.head.appendChild(style);)');
+    process.exit(1);
   }
+  const before = hudJs.slice(0, sIdx + sMarker.length);
+  const after = hudJs.slice(eIdx);
+  hudJs = before + '\n' + css + '\n    `;\n    ' + after;
+  fs.writeFileSync(HUD_JS_PATH, hudJs, 'utf8');
+  console.log('  [CSS 注入] src/style.css 已成功注入 hud-overlay.js');
+} else {
+  console.error('❌ [CSS 注入失败] 缺少样式源文件: ' + SRC_CSS_PATH);
+  process.exit(1);
 }
 
 // 1.5 版本号单一事实源强校验 (SSOT Version Consistency)
@@ -62,8 +68,15 @@ if (!probeVerMatch || probeVerMatch[1] !== manifestVer) {
 }
 
 const hudRaw = fs.readFileSync(HUD_JS_PATH, 'utf8');
-if (hudRaw.includes("probe.version : '") && !hudRaw.includes(`probe.version : '${manifestVer}'`)) {
-  console.error(`❌ [版本号不一致] hud-overlay.js 兜底版本号与 manifest.json (${manifestVer}) 不一致`);
+// 兜底版本号字面量必须存在且全部等于 manifest 版本：条件式检查在改写兜底写法后会静默失效
+const hudVerLits = hudRaw.match(/'\d+\.\d+\.\d+'/g) || [];
+if (hudVerLits.length === 0) {
+  console.error('❌ [版本号校验失效] hud-overlay.js 中未找到任何兜底版本号字面量，SSOT 校验形同虚设');
+  process.exit(1);
+}
+const badVerLits = hudVerLits.filter((lit) => lit !== `'${manifestVer}'`);
+if (badVerLits.length > 0) {
+  console.error(`❌ [版本号不一致] hud-overlay.js 兜底版本号 ${badVerLits.join(', ')} 与 manifest.json (${manifestVer}) 不一致`);
   process.exit(1);
 }
 console.log(`  [版本核验] 组件全线单一事实源版本号已完全对齐为: v${manifestVer}`);

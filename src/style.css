@@ -121,7 +121,7 @@
         flex: 1;
       }
       .yami-nav-back-btn {
-        display: none;
+        display: none !important;
         background: #222222 !important;
         border: 1px solid #161616 !important;
         color: #d8d8d8 !important;
@@ -2057,7 +2057,7 @@
         color: #ff6060 !important;
         border-radius: 2px !important;
         margin-left: 6px !important;
-        animation: pulseCount 2s infinite ease-in-out !important;
+        animation: yami-pulse 2s infinite ease-in-out !important;
       }
 
       /* 源码上下文就地折叠预览 */
@@ -2453,7 +2453,7 @@
         height: 100%;
         overflow-y: auto !important;
         overflow-x: hidden !important;
-        display: none;
+        display: none !important;
         flex-direction: column;
         padding: 10px;
         gap: 10px;
