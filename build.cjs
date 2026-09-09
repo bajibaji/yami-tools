@@ -7,12 +7,15 @@
  * 
  * 核心职责：
  * 1. 自动同步 src/style.css 至发布产物 hud-overlay.js (保证 SSOT 单文件免构建秒开)；
- * 2. 产物质量与锚点自动化严苛自检 (语法检查 + 8大核心ID + 4大模块 + 0 Emoji)；
- * 3. 传入 --deploy 时，单向安全镜像至编辑器生产目录，并输出 MD5 对齐报告。
+ * 2. SSOT 单一事实源版本级联同步 (支持 --bump patch/minor/major 或仅改 manifest.json 自动全量推流)；
+ * 3. 产物质量与锚点自动化严苛自检 (语法检查 + 30大核心锚点 + 0 原生 button + 0 Emoji)；
+ * 4. 传入 --deploy 时，单向安全镜像至编辑器生产目录，并输出 MD5 对齐报告。
  * 
  * 用法：
- *   node build.cjs          # 本地自检与样式注入
- *   node build.cjs --deploy # 本地自检 + 自动单向同步到编辑器目录 + MD5校验
+ *   node build.cjs                        # 本地自检 + 样式注入 + SSOT 级联同步
+ *   node build.cjs --bump patch/minor     # 自动自增版本并一键级联对齐全部文件
+ *   node build.cjs --deploy               # 本地自检 + 自动单向同步到编辑器目录 + MD5校验
+ *   node build.cjs --bump minor --deploy  # 一键升级大版本并全量同步+部署
  */
 
 const fs = require('fs');
@@ -56,26 +59,120 @@ if (fs.existsSync(SRC_CSS_PATH)) {
   process.exit(1);
 }
 
-// 1.5 版本号单一事实源强校验 (SSOT Version Consistency)
+// 1.5 SSOT 智能版本管理与全量级联自动同步 (One-Source Cascade Sync)
+// 规则：以 manifest.json 的 version 为唯一权威输入源；支持 --bump 自增参数；自动级联同步所有源码与文档
 const manifestPath = path.join(ROOT_DIR, 'manifest.json');
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+
+// A. 命令行 --bump 智能自增支持 (node build.cjs --bump [patch|minor|major|<ver>])
+const bumpIdx = process.argv.indexOf('--bump');
+if (bumpIdx !== -1) {
+  let bumpType = process.argv[bumpIdx + 1];
+  if (!bumpType || bumpType.startsWith('-')) bumpType = 'patch';
+  const oldVer = manifest.version;
+  const parts = oldVer.split('.').map(Number);
+  if (parts.length === 3 && !parts.some(isNaN)) {
+    if (bumpType === 'major') manifest.version = `${parts[0] + 1}.0.0`;
+    else if (bumpType === 'minor') manifest.version = `${parts[0]}.${parts[1] + 1}.0`;
+    else if (bumpType === 'patch') manifest.version = `${parts[0]}.${parts[1]}.${parts[2] + 1}`;
+    else if (/^\d+\.\d+\.\d+$/.test(bumpType)) manifest.version = bumpType;
+    else {
+      console.error(`❌ [版本自增失败] 未知 bump 类型: ${bumpType}，可用: patch | minor | major | 具体版本号`);
+      process.exit(1);
+    }
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+    console.log(`  [版本自增] manifest.json: v${oldVer} -> v${manifest.version} (--bump ${bumpType})`);
+  }
+}
+
 const manifestVer = manifest.version;
+const syncedList = [];
 
-const probeRaw = fs.readFileSync(PROBE_JS_PATH, 'utf8');
+// B. 级联同步 probe-core.js
+let probeRaw = fs.readFileSync(PROBE_JS_PATH, 'utf8');
 const probeVerMatch = probeRaw.match(/const\s+PROBE_VERSION\s*=\s*['"]([^'"]+)['"]/);
-if (!probeVerMatch || probeVerMatch[1] !== manifestVer) {
-  console.error(`❌ [版本号不一致] manifest.json 为 ${manifestVer}, 但 probe-core.js PROBE_VERSION 为 ${probeVerMatch ? probeVerMatch[1] : 'null'}`);
-  process.exit(1);
+const oldProbeVer = probeVerMatch ? probeVerMatch[1] : null;
+if (oldProbeVer !== manifestVer) {
+  probeRaw = probeRaw.replace(/const\s+PROBE_VERSION\s*=\s*['"][^'"]+['"]/, `const PROBE_VERSION = '${manifestVer}'`);
+  fs.writeFileSync(PROBE_JS_PATH, probeRaw, 'utf8');
+  syncedList.push('probe-core.js');
 }
 
-const hudRaw = fs.readFileSync(HUD_JS_PATH, 'utf8');
-// 兜底版本号字面量必须存在且全部等于 manifest 版本：条件式检查在改写兜底写法后会静默失效
+// C. 级联同步 hud-overlay.js (兜底版本号字面量全部自动对齐)
+let hudRaw = fs.readFileSync(HUD_JS_PATH, 'utf8');
+let hudChanged = false;
+if (oldProbeVer && oldProbeVer !== manifestVer) {
+  const oldVerLitRe = new RegExp(`'${oldProbeVer.replace(/\\./g, '\\.')}'`, 'g');
+  if (oldVerLitRe.test(hudRaw)) {
+    hudRaw = hudRaw.replace(oldVerLitRe, `'${manifestVer}'`);
+    hudChanged = true;
+  }
+}
+// 兜底扫描并对齐所有孤立的不匹配字面量
 const hudVerLits = hudRaw.match(/'\d+\.\d+\.\d+'/g) || [];
-if (hudVerLits.length === 0) {
-  console.error('❌ [版本号校验失效] hud-overlay.js 中未找到任何兜底版本号字面量，SSOT 校验形同虚设');
+hudVerLits.forEach((lit) => {
+  if (lit !== `'${manifestVer}'`) {
+    hudRaw = hudRaw.replaceAll(lit, `'${manifestVer}'`);
+    hudChanged = true;
+  }
+});
+const badgeRe = /(<span\s+id="yami-version-badge"[^>]*>v)\d+\.\d+\.\d+([^<]*<\/span>)/g;
+if (badgeRe.test(hudRaw)) {
+  hudRaw = hudRaw.replace(badgeRe, `$1${manifestVer}$2`);
+  hudChanged = true;
+}
+const reportVerRe = /(- \*\*插件版本\*\*: v)\d+\.\d+\.\d+/g;
+if (reportVerRe.test(hudRaw)) {
+  hudRaw = hudRaw.replace(reportVerRe, `$1${manifestVer}`);
+  hudChanged = true;
+}
+if (hudChanged) {
+  fs.writeFileSync(HUD_JS_PATH, hudRaw, 'utf8');
+  syncedList.push('hud-overlay.js');
+}
+
+// D. 级联同步 README.md
+const readmePath = path.join(ROOT_DIR, 'README.md');
+if (fs.existsSync(readmePath)) {
+  let readmeRaw = fs.readFileSync(readmePath, 'utf8');
+  const readmeVerRe = /(> \*\*版本\*\*：`v)\d+\.\d+\.\d+(`)/;
+  if (readmeVerRe.test(readmeRaw)) {
+    const curReadmeVer = readmeRaw.match(readmeVerRe)[0];
+    if (!curReadmeVer.includes(`v${manifestVer}`)) {
+      readmeRaw = readmeRaw.replace(readmeVerRe, `$1${manifestVer}$2`);
+      fs.writeFileSync(readmePath, readmeRaw, 'utf8');
+      syncedList.push('README.md');
+    }
+  }
+}
+
+// E. 级联同步 HANDOFF.md
+const handoffPath = path.join(ROOT_DIR, 'HANDOFF.md');
+if (fs.existsSync(handoffPath)) {
+  let handoffRaw = fs.readFileSync(handoffPath, 'utf8');
+  const handoffVerRe = /(当前版本：`v)\d+\.\d+\.\d+(`)/;
+  if (handoffVerRe.test(handoffRaw)) {
+    const curHandoffVer = handoffRaw.match(handoffVerRe)[0];
+    if (!curHandoffVer.includes(`v${manifestVer}`)) {
+      handoffRaw = handoffRaw.replace(handoffVerRe, `$1${manifestVer}$2`);
+      fs.writeFileSync(handoffPath, handoffRaw, 'utf8');
+      syncedList.push('HANDOFF.md');
+    }
+  }
+}
+
+if (syncedList.length > 0) {
+  console.log(`  [SSOT 级联同步] 单一事实源生效，已自动对齐 ${syncedList.length} 个文件: ${syncedList.join(', ')}`);
+}
+
+// F. 最终一致性安全门禁 (SSOT Final Consistency Assertion)
+const finalProbeVerMatch = probeRaw.match(/const\s+PROBE_VERSION\s*=\s*['"]([^'"]+)['"]/);
+if (!finalProbeVerMatch || finalProbeVerMatch[1] !== manifestVer) {
+  console.error(`❌ [版本号校验失败] probe-core.js 未对齐到 ${manifestVer}`);
   process.exit(1);
 }
-const badVerLits = hudVerLits.filter((lit) => lit !== `'${manifestVer}'`);
+const finalHudVerLits = hudRaw.match(/'\d+\.\d+\.\d+'/g) || [];
+const badVerLits = finalHudVerLits.filter((lit) => lit !== `'${manifestVer}'`);
 if (badVerLits.length > 0) {
   console.error(`❌ [版本号不一致] hud-overlay.js 兜底版本号 ${badVerLits.join(', ')} 与 manifest.json (${manifestVer}) 不一致`);
   process.exit(1);

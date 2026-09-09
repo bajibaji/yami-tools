@@ -1,7 +1,7 @@
 # DanJuan妙妙插件 (DanJuan DevSuite / Extension)
 ## 项目交接、系统架构与核心经验演进全档案 (HANDOFF & ARCHITECTURE)
 
-> **文档定位**：记录本套件的**系统架构剖析、底层工作原理、时间线演进历史、高价值核心经验与防踩坑档案**，作为跨开发者与 AI 协同的唯一技术基线与记忆中枢（SSOT）。当前版本：`v0.8.0`。
+> **文档定位**：记录本套件的**系统架构剖析、底层工作原理、时间线演进历史、高价值核心经验与防踩坑档案**，作为跨开发者与 AI 协同的唯一技术基线与记忆中枢（SSOT）。当前版本：`v0.8.1`。
 
 ---
 
@@ -287,10 +287,10 @@
    - **Patch (`x.y.Z + 1`)**：中小型 Bug 修复、文案优化、CSS 样式微调（小改动）；
    - **Minor (`x.Y + 1.0`)**：新增功能模块（如新增排查项、新增诊断算法、开发作弊器/变量监视器等新功能）；
    - **Major (`X + 1.0.0`)**：跨模块核心架构重构、不兼容底层变更，或正式发布 1.0 里程碑；
-4. **自动化闭环**：
-   - 自动自增 `manifest.json` 与 `probe-core.js` 版本；
-   - 生成规范 Commit 说明并推送至 `origin/extension`；
-   - 最终单向覆盖镜像至编辑器扩展目录。
+4. **全自动 SSOT 级联版本同步 (One-Source Cascade Sync)**：
+   - 彻底废除多文件手工查找替换的低效模式！以 `manifest.json` 为**唯一绝对权威输入源**；
+   - 支持 `node build.cjs --bump [patch|minor|major|<ver>]` 命令行秒级自增；
+   - `build.cjs` 自动将权威版本单向级联注入 `probe-core.js`、`hud-overlay.js`、`README.md` 与 `HANDOFF.md`，实现改一处、秒级全量自动对齐并完成生产镜像部署。
 
 ---
 
@@ -437,4 +437,12 @@
   1. `build.cjs` 锚点扩充至 **30 项**，0 Emoji 与 0 原生 `<button>` 铁律机器检查全绿；
   2. 新增 `tests/test-project-audit.mjs`（21 项全绿断言：字典构建、断链精确捕获、死事件白名单豁免、事件执行定位捕获、DOM 接线静态契约与零原生 button）；
   3. `tests/run-all.cjs` 测试套件扩至 **7 套**。
+
+### 2026-09-09 · SSOT 智能级联版本管理与一键驱动落地 (v0.8.1)
+- **痛点彻底根除**：此前版本号散落在 `manifest.json`、`probe-core.js`、`hud-overlay.js` 多处字面量、`README.md` 与 `HANDOFF.md`，每次升级需人工逐文件核对修改，效率低下且容易被门禁拦截；
+- **全自动 SSOT 级联同步架构**：
+  1. 确立 `manifest.json` 为**唯一绝对权威输入源**；
+  2. 升级 `build.cjs` 支持 `--bump [patch|minor|major|<ver>]` 参数（默认 `patch`）；
+  3. 构建时自动比对基线版本，将权威版本号秒级单向级联注入 `probe-core.js`、`hud-overlay.js`、`README.md` 与 `HANDOFF.md`；
+  4. 新增根目录极简原生批处理脚本 `bump.cmd`（封装 `node build.cjs --bump %* --deploy`），支持终端一行命令 `.\bump` 或 `.\bump minor` 瞬间完成「版本自增 + 级联对齐 + 30 项门禁自检 + 生产目录镜像部署」。
 
