@@ -103,7 +103,12 @@ const catKeys = new Set();
 const catBlock = hudSrc.slice(hudSrc.indexOf('const CAT_LABEL = {'), hudSrc.indexOf('};', hudSrc.indexOf('const CAT_LABEL = {')));
 for (const m of catBlock.matchAll(/(?:'([^']+)'|([A-Za-z][A-Za-z0-9]*))\s*:/g)) catKeys.add(m[1] || m[2]);
 const probeCats = new Set();
-for (const m of probeSrc.matchAll(/category\s*[:=]\s*'([A-Za-z][A-Za-z0-9]*)'/g)) probeCats.add(m[1]);
+// 只扫 analyzeError 函数体内的分类: 工程体检用的是另一套「引用丢失性质」分类域,
+// 全库通扫会把它的 category 也当成报错分类, 属测试自身的跨域误匹配 (v0.11.0 修)
+const analyzeStart = probeSrc.indexOf('function analyzeError');
+const analyzeNext = analyzeStart >= 0 ? probeSrc.indexOf('\n  function ', analyzeStart + 10) : -1;
+const analyzeBody = analyzeStart >= 0 ? probeSrc.slice(analyzeStart, analyzeNext > 0 ? analyzeNext : probeSrc.length) : '';
+for (const m of analyzeBody.matchAll(/category\s*[:=]\s*'([A-Za-z][A-Za-z0-9]*)'/g)) probeCats.add(m[1]);
 const missing = [...probeCats].filter((c) => !catKeys.has(c));
 check('analyzeError 全部分类都有中文标签', missing.length === 0, '缺: ' + (missing.join(',') || '无'));
 check('hud 卡片头部走统一映射函数', hudSrc.includes('catLabel(a.category, err.type)'));

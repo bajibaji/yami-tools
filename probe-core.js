@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '0.9.1';
+  const PROBE_VERSION = '0.11.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -601,12 +601,25 @@
             }
 
             if (isRejected || isNaNVal) {
+              const reason = isNaNVal ? '计算结果为NaN' : (keyMissing ? '变量不存在(写入被引擎丢弃)' : '类型冲突丢弃');
+              // 关键: 只报「写不进去」对小白毫无用处, 必须同时告诉他「是谁写的」——
+              // 复用事件执行栈 + 编译期指令映射, 直接落到「哪条事件第几步·什么指令·哪个场景」
+              const loc = currentEventLocation();
+              const prev = state.variableWarnings[key];
+              const repeated = prev && prev.reason === reason && (Date.now() - Number(prev.time || 0)) < 10000;
               state.variableWarnings[key] = {
                 time: Date.now(),
                 key: key,
                 currentVal: currentVal,
                 attemptedVal: value,
-                reason: isNaNVal ? '计算结果为NaN' : (keyMissing ? '变量不存在(写入被引擎丢弃)' : '类型冲突丢弃')
+                reason: reason,
+                count: repeated ? (Number(prev.count) || 1) + 1 : 1,
+                eventName: loc.eventName,
+                sceneName: loc.sceneName,
+                step: loc.step,
+                total: loc.total,
+                cmdDesc: loc.desc,
+                located: loc.located === true
               };
             }
           } catch (err) {}
@@ -975,6 +988,118 @@
       }
     } catch (e) {}
     return { used: 0, total: 0 };
+  }
+
+  // ============================================================
+  // 资源缓存与内存 (对标引擎盲点: loader.ts:19-23 的三张缓存表只增不减, 长时试玩内存持续爬升)
+  // ------------------------------------------------------------
+  // 引擎事实依据 (arpg-ts-chinese Script/loader.ts):
+  //   · cachedImages[key] 既可能是「加载中的 Promise」也可能是「已加载的 <img>」—— 清理必须跳过 Promise,
+  //     否则会把半途的图片清掉 (getImage 返回 null / loadImage 重入)
+  //   · cachedUrls[path] 是 objectURL; 引擎在图片 onload/onerror 时若 save=false 就会 revoke 掉它
+  //     (loader.ts:254-256) —— 所以清图片时**必须同步清掉 cachedUrls**, 否则下次重新加载会拿到失效 URL
+  //   · cachedBlobs[url] 才是真正的二进制内存, 由 revokeBlobUrl 释放 (loader.ts:302-307)
+  //   安全闸门: 只在 loader.complete !== false (没有正在进行的加载) 时才允许清理。
+  //   注意(真机实测): 不同引擎构建暴露的全局词法绑定不一样 —— Command/EventHandler/Data 可达,
+  //   但部分构建里 `typeof Loader` 直接 ReferenceError。故不能硬依赖名字, 见 findAssetLoader()。
+  // ============================================================
+  function findAssetLoader() {
+    const looksLikeLoader = function (obj) {
+      return !!obj && typeof obj === 'object' && !!obj.cachedImages && typeof obj.cachedImages === 'object';
+    };
+    const names = ['Loader', 'FileLoader', 'ResourceLoader', 'AssetLoader'];
+    for (let i = 0; i < names.length; i++) {
+      try {
+        const cand = eval(names[i]);   // 全局词法绑定无法枚举, 只能按名字取
+        if (looksLikeLoader(cand)) return cand;
+      } catch (e) {}
+    }
+    // 兜底: 在可达的引擎对象上找「身上挂着 cachedImages 的 loader」
+    const holders = ['Data', 'Scene', 'Game', 'Callback', 'UI', 'EventManager', 'Codec', 'IDB'];
+    for (let i = 0; i < holders.length; i++) {
+      try {
+        const holder = eval(holders[i]);
+        if (!holder || typeof holder !== 'object') continue;
+        const keys = Object.keys(holder);
+        for (let k = 0; k < keys.length; k++) {
+          try {
+            if (looksLikeLoader(holder[keys[k]])) return holder[keys[k]];
+          } catch (e) {}
+        }
+      } catch (e) {}
+    }
+    return null;
+  }
+
+  function getCacheInfo() {
+    const info = {
+      ok: false, available: false, images: 0, loading: 0, urls: 0, blobs: 0, blobKB: 0,
+      heapUsedMB: 0, heapTotalMB: 0, loaderBusy: false
+    };
+    try {
+      const mem = getMemoryInfo();
+      info.heapUsedMB = mem.used;
+      info.heapTotalMB = mem.total;
+      const loader = findAssetLoader();
+      if (!loader) return info;   // 内存信息依旧可用, 只是资源缓存读不到
+      info.ok = true;
+      info.available = true;
+      info.loaderBusy = loader.complete === false;
+      const images = loader.cachedImages || {};
+      for (const key in images) {
+        const v = images[key];
+        if (typeof Promise !== 'undefined' && v instanceof Promise) info.loading++;
+        else info.images++;
+      }
+      info.urls = Object.keys(loader.cachedUrls || {}).length;
+      const blobs = loader.cachedBlobs || {};
+      for (const url in blobs) {
+        info.blobs++;
+        const blob = blobs[url];
+        if (blob && typeof blob.size === 'number') info.blobKB += blob.size / 1024;
+      }
+      info.blobKB = Math.round(info.blobKB);
+      return info;
+    } catch (e) {
+      return info;
+    }
+  }
+
+  // 一键清理资源缓存: 只动 Loader 的三张表, 保守但彻底 —— 界面上的画面不会立刻变化
+  // (GPU 上已上传的贴图由引擎 TextureManager 持有, 这里释放的是 JS 侧的图片元素/Blob 缓存)
+  function clearAssetCache() {
+    try {
+      const loader = findAssetLoader();
+      if (!loader) return { ok: false, reason: 'no-loader' };
+      // 安全闸门: 正在加载资源时绝不动缓存
+      if (loader.complete === false) return { ok: false, reason: 'loading' };
+      const before = getCacheInfo();
+      const images = loader.cachedImages || {};
+      const urls = loader.cachedUrls || {};
+      let clearedImages = 0;
+      for (const key of Object.keys(images)) {
+        const value = images[key];
+        if (typeof Promise !== 'undefined' && value instanceof Promise) continue; // 半途加载中的条目绝不动
+        delete images[key];
+        clearedImages++;
+        const url = urls[key];
+        if (typeof url === 'string') {
+          if (typeof loader.revokeBlobUrl === 'function') loader.revokeBlobUrl(url);
+          delete urls[key];
+        }
+      }
+      // 顺手释放没有对应图片条目的孤儿 Blob
+      const blobs = loader.cachedBlobs || {};
+      let clearedBlobs = 0;
+      for (const url of Object.keys(blobs)) {
+        if (typeof loader.revokeBlobUrl === 'function') loader.revokeBlobUrl(url);
+        else delete blobs[url];
+        clearedBlobs++;
+      }
+      return { ok: true, clearedImages: clearedImages, clearedBlobs: clearedBlobs, before: before, after: getCacheInfo() };
+    } catch (e) {
+      return { ok: false, reason: 'error', error: String((e && e.message) || e) };
+    }
   }
 
   function getSceneDetails() {
@@ -1499,35 +1624,16 @@
         const files = [];
         this.collectAssetFiles(this.root, files);
 
-        // 节点自注册 ID 集合: 引擎把资产文件内的节点/元素以自身 ID 注册为预设
-        // (ui.ts:105 UI.presets / scene 对象预设 / 角色 sprites[].id 精灵库),
-        // 跨文件指令引用这些 ID 时, 合法值 = 该集合 ∪ 全局资产注册表
-        const nodePresets = new Set();
-        const collectPresets = function(obj) {
-          if (!obj || typeof obj !== 'object') return;
-          if (Array.isArray(obj)) { for (const v of obj) collectPresets(v); return; }
-          if (typeof obj.presetId === 'string' && GUID_RE.test(obj.presetId)) nodePresets.add(obj.presetId);
-          if (typeof obj.prefabId === 'string' && GUID_RE.test(obj.prefabId)) nodePresets.add(obj.prefabId);
-          if (Array.isArray(obj.sprites)) {
-            for (const sp of obj.sprites) {
-              if (sp && typeof sp.id === 'string' && GUID_RE.test(sp.id)) nodePresets.add(sp.id);
-            }
-          }
-          for (const k of Object.keys(obj)) {
-            if (k === 'code' || k === 'sprites') continue;
-            collectPresets(obj[k]);
-          }
-        };
-        for (const fp of files) {
-          try { collectPresets(JSON.parse(fs.readFileSync(fp, 'utf8'))); } catch (e) {}
-        }
-
-        const broken = [];
-        const brokenSeen = new Set();
+        // ---- 单趟扫描: 同时收集「定义」与「引用」, 再判定 ----
+        // 字典(names)只覆盖「文件名 + Data/*.json」, 而资产文件内部还会定义大量 id
+        // (界面元素的属性键、场景节点、动画帧…), 它们同样是被跨文件引用的合法目标
+        // —— 旧版漏了这一类, 于是在真机上把大量合法引用误报成断链。
+        const refMap = new Map();        // guid -> { guid, count, files: Map, samples: [] }
+        const definedIds = new Set();    // 资产文件内部以 "id" 定义的 GUID
+        const nodePresets = new Set();   // 节点自注册预设 (presetId/prefabId/sprites[].id)
         const callEventRefs = new Set();
         let refCount = 0;
 
-        // 递归扫描单个 JSON 树: 提取所有 16 位 hex GUID 引用
         const scanTree = function(obj, chain, cmdId, cmdIndex, fileRel) {
           if (obj === null || obj === undefined) return;
           if (Array.isArray(obj)) {
@@ -1538,6 +1644,15 @@
             return;
           }
           if (typeof obj === 'object') {
+            // 定义侧: 资产/节点/预设以 "id" 声明自身 (指令对象的 id 是指令名, GUID_RE 会滤掉)
+            if (typeof obj.id === 'string' && GUID_RE.test(obj.id)) definedIds.add(obj.id);
+            if (typeof obj.presetId === 'string' && GUID_RE.test(obj.presetId)) nodePresets.add(obj.presetId);
+            if (typeof obj.prefabId === 'string' && GUID_RE.test(obj.prefabId)) nodePresets.add(obj.prefabId);
+            if (Array.isArray(obj.sprites)) {
+              for (const sp of obj.sprites) {
+                if (sp && typeof sp.id === 'string' && GUID_RE.test(sp.id)) nodePresets.add(sp.id);
+              }
+            }
             let nextCmdId = cmdId;
             if (typeof obj.id === 'string' && obj.id) nextCmdId = obj.id;
             for (const k of Object.keys(obj)) {
@@ -1549,23 +1664,22 @@
           if (typeof obj === 'string' && GUID_RE.test(obj)) {
             refCount++;
             const field = nextOf(chain);
-            // 事件入边: 任意指令的 eventId 参数均视为调用 (callEvent / 自定义指令 @file eventId)
             if (field === 'eventId') callEventRefs.add(obj);
-            const reg = this.names.get(obj);
-            // 全局字典(names) ∪ 节点自注册预设(nodePresets) 双表判定:
-            // presetId/prefabId/spriteId/sprites[].id 等引擎运行期自注册的 ID 一律视为合法定义
-            if (!reg && !nodePresets.has(obj)) {
-              const key = obj + '::' + fileRel + '::' + (cmdIndex >= 0 ? cmdIndex : '') + '::' + chain.join('.');
-              if (!brokenSeen.has(key) && broken.length < 200) {
-                brokenSeen.add(key);
-                broken.push({
-                  guid: obj,
-                  file: fileRel,
-                  cmdId: cmdId || '',
-                  cmdIndex: cmdIndex,
-                  field: chain[chain.length - 1] || ''
-                });
-              }
+            let rec = refMap.get(obj);
+            if (!rec) {
+              rec = { guid: obj, count: 0, files: new Map(), samples: [] };
+              refMap.set(obj, rec);
+            }
+            rec.count++;
+            rec.files.set(fileRel, (rec.files.get(fileRel) || 0) + 1);
+            if (rec.samples.length < 8) {
+              rec.samples.push({
+                file: fileRel,
+                cmdId: cmdId || '',
+                cmdIndex: cmdIndex,
+                field: field,
+                inCommand: cmdIndex >= 0 || !!cmdId
+              });
             }
           }
         }.bind(this);
@@ -1575,41 +1689,137 @@
           let rel = fp;
           try { rel = path.relative(this.root, fp).split(path.sep).join('/'); } catch (e) {}
           if (rel === 'Data/config.json') continue; // 编辑器工程配置, 无游戏资产语义
+          // 资产清单是「目录」而不是「引用」: 它列出全部资产 GUID, 计入会让死事件判定全部失效
+          if (rel === 'Data/manifest.json') continue;
           let j;
           try { j = JSON.parse(fs.readFileSync(fp, 'utf8')); } catch (e) { continue; }
           try { scanTree(j, [], '', -1, rel); } catch (e) {}
         }
 
-        // 废弃事件: type 非保留白名单 且 无 callEvent 入边
+        // 脚本侧入边: 事件可能被工程脚本按 GUID 调用 (EventManager.call/emit/get)
+        const scriptRefs = new Set();
+        let scriptText = '';
+        try {
+          const scriptFiles = [];
+          const walkScripts = function(dir, depth) {
+            if (depth > 6 || scriptFiles.length > 600) return;
+            let ents = [];
+            try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+            for (const ent of ents) {
+              if (ent.name === 'node_modules' || ent.name === '.git' || ent.name === 'Dist') continue;
+              const fp = path.join(dir, ent.name);
+              if (ent.isDirectory()) { walkScripts(fp, depth + 1); continue; }
+              if (/\.(ts|js)$/i.test(ent.name)) scriptFiles.push(fp);
+            }
+          };
+          walkScripts(this.root, 0);
+          for (const fp of scriptFiles) {
+            let txt = '';
+            try { txt = fs.readFileSync(fp, 'utf8'); } catch (e) { continue; }
+            if (txt.length > 512 * 1024) txt = txt.slice(0, 512 * 1024);
+            scriptText += txt + '\n';
+            const re = /EventManager\s*\.\s*(?:call|emit|get)\s*\(\s*['"]([0-9a-f]{16})['"]/g;
+            let m;
+            while ((m = re.exec(txt))) scriptRefs.add(m[1]);
+          }
+        } catch (e) {}
+
+        // 引用丢失的分级 + 白话影响 (铁律⑱: 说清"这意味着什么、要不要管")
+        const RESOURCE_FIELDS = { portrait: 1, image: 1, avatar: 1, icon: 1, picture: 1, face: 1, texture: 1, font: 1, video: 1, tile: 1 };
+        const IMPACT_TEXT = {
+          resource: '这个图片或素材已经不在工程里了 —— 游戏里会显示不出来。',
+          propertyRuntime: '这个属性已经从工程里删掉了，但事件指令还在给它赋值 —— 这条指令会静默失效（不报错也不生效）。',
+          propertyAsset: '这个属性已经从属性表删掉了，角色或资产里还留着它的初始值 —— 引擎载入时会默默忽略，不影响正常运行。',
+          commandUnknown: '事件指令里引用的对象在工程里已经不存在了 —— 这条指令可能静默失效。',
+          assetUnknown: '这个 ID 在工程里找不到定义，可能已被删除或改名。'
+        };
+
+        const brokenList = [];
+        for (const rec of refMap.values()) {
+          if (brokenList.length >= 300) break;
+          // 合法目标的三个来源: 资产注册表(文件名+Data 字典) ∪ 资产文件内部定义的 id ∪ 节点自注册预设
+          if (this.names.has(rec.guid) || definedIds.has(rec.guid) || nodePresets.has(rec.guid)) continue;
+          let hasResource = false;
+          let hasKeyField = false;
+          let hasCommand = false;
+          for (const s of rec.samples) {
+            if (RESOURCE_FIELDS[s.field]) hasResource = true;
+            if (s.field === 'key') hasKeyField = true;
+            if (s.inCommand) hasCommand = true;
+          }
+          let category, level, impact;
+          if (hasResource) {
+            category = 'resource'; level = 'high'; impact = IMPACT_TEXT.resource;
+          } else if (hasKeyField) {
+            category = 'property';
+            level = hasCommand ? 'mid' : 'low';
+            impact = hasCommand ? IMPACT_TEXT.propertyRuntime : IMPACT_TEXT.propertyAsset;
+          } else {
+            category = 'unknown';
+            level = hasCommand ? 'mid' : 'low';
+            impact = hasCommand ? IMPACT_TEXT.commandUnknown : IMPACT_TEXT.assetUnknown;
+          }
+          const first = rec.samples[0] || { file: '', cmdId: '', cmdIndex: -1, field: '' };
+          const fileList = Array.from(rec.files.keys());
+          const stepText = first.cmdIndex >= 0 ? ('第 ' + (first.cmdIndex + 1) + ' 步指令 ') : '';
+          brokenList.push({
+            kind: 'broken',
+            guid: rec.guid,
+            file: first.file,
+            cmdId: first.cmdId,
+            cmdIndex: first.cmdIndex,
+            field: first.field,
+            count: rec.count,
+            fileCount: fileList.length,
+            files: fileList.slice(0, 10),
+            category: category,
+            level: level,
+            impact: impact,
+            desc: stepText + '引用了已不存在的 ID (' + rec.guid + ')'
+          });
+        }
+        brokenList.sort(function(a, b) { return (b.count - a.count) || a.guid.localeCompare(b.guid); });
+
+        // 废弃事件: type 非保留白名单, 且「全工程任何位置 + 脚本按 GUID/按名字」都找不到引用
         const dead = [];
         for (const ev of this.eventFiles) {
           if (this.reservedTypes.has(ev.type)) continue;
           if (callEventRefs.has(ev.guid)) continue;
+          if (refMap.has(ev.guid)) continue;      // 资产/指令/界面绑定里出现过它的 GUID
+          if (definedIds.has(ev.guid)) continue;  // 被某处当作 id 定义过 (例如界面元素事件绑定)
+          if (scriptRefs.has(ev.guid)) continue;
+          if (scriptText && ev.name && scriptText.indexOf(ev.name) >= 0) continue;   // 脚本按名字调用
           dead.push({ guid: ev.guid, name: ev.name, type: ev.type, path: ev.path });
         }
+
+        const levelCount = { high: 0, mid: 0, low: 0 };
+        for (const b of brokenList) levelCount[b.level] = (levelCount[b.level] || 0) + 1;
 
         this.lastResult = {
           ok: true,
           root: this.root,
-          stats: { files: files.length, refs: refCount, variables: this.names.size, events: this.eventFiles.length },
-          issues: broken.map(function(b) {
-            const stepText = b.cmdIndex >= 0 ? ('第 ' + (b.cmdIndex + 1) + ' 步指令 ') : '';
-            return {
-              kind: 'broken',
-              guid: b.guid,
-              file: b.file,
-              cmdId: b.cmdId,
-              cmdIndex: b.cmdIndex,
-              field: b.field,
-              desc: stepText + '引用了已不存在的 ID (' + b.guid + ')'
-            };
-          }).concat(dead.map(function(d) {
+          stats: {
+            files: files.length,
+            refs: refCount,
+            variables: this.names.size,
+            events: this.eventFiles.length,
+            missingIds: brokenList.length,   // 折叠后的「有多少种 ID 丢了」
+            missingRefs: brokenList.reduce(function(a, b) { return a + b.count; }, 0),
+            levels: levelCount
+          },
+          issues: brokenList.concat(dead.map(function(d) {
             return {
               kind: 'dead',
               guid: d.guid,
               name: d.name,
               type: d.type,
               file: d.path,
+              count: 1,
+              fileCount: 1,
+              files: [d.path],
+              category: 'dead',
+              level: 'low',
+              impact: '这个公共事件没有被任何地方引用（指令、界面绑定、脚本都找不到它）—— 留着不影响运行，可以放心删。',
               desc: '公共事件从未被任何指令或资产调用'
             };
           })),
@@ -1629,6 +1839,24 @@
   // ============================================================
   const eventExecStack = [];
 
+  // 当前场景中文名 (报错定位与变量告警共用, 从 Scene.binding 反查)
+  function currentSceneName() {
+    try {
+      if (typeof Scene !== 'undefined' && Scene && Scene.binding) {
+        const sId = Scene.binding.id;
+        if (sId && projectAudit.names && projectAudit.names.has(sId)) {
+          return projectAudit.names.get(sId).name;
+        }
+        if (Scene.binding.data) {
+          const sPath = Scene.binding.data.path || '';
+          const sFile = String(sPath).split('/').pop() || '';
+          return sFile.replace(/\.([0-9a-f]{16})\.scene$/, '').replace(/\.scene$/, '');
+        }
+      }
+    } catch (e) {}
+    return '';
+  }
+
   function currentEventContext() {
     try {
       const top = eventExecStack[eventExecStack.length - 1];
@@ -1640,28 +1868,12 @@
       const idx = typeof ev.index === 'number' ? ev.index : 0;
       const eventName = resolveEventNameFromPath(file) || '未知事件';
 
-      // 获取当前场景名称 (从 Scene.binding 反查中文场景名)
-      let sceneName = '';
-      try {
-        if (typeof Scene !== 'undefined' && Scene && Scene.binding) {
-          const sId = Scene.binding.id;
-          if (sId && projectAudit.names && projectAudit.names.has(sId)) {
-            sceneName = projectAudit.names.get(sId).name;
-          }
-          if (!sceneName && Scene.binding.data) {
-            const sPath = Scene.binding.data.path || '';
-            const sFile = String(sPath).split('/').pop() || '';
-            sceneName = sFile.replace(/\.([0-9a-f]{16})\.scene$/, '').replace(/\.scene$/, '');
-          }
-        }
-      } catch (eScene) {}
-
       return {
         eventName: eventName,
         eventFile: file,
         eventType: ev.type || initial.type || '',
         step: idx,
-        sceneName: sceneName || ''
+        sceneName: currentSceneName()
       };
     } catch (e) {
       return null;
@@ -2049,6 +2261,21 @@
   }
 
   // event.index 指向「下一条」, 故当前那条 = index - 1; 再经编译映射翻译回原始指令下标
+  // 编译槽位 → 原始指令下标 (惰性建表缓存; 一条指令可占多槽, 空槽位返回 undefined)
+  function eventTraceSlotToRaw(info, slot) {
+    if (!info || slot < 0) return undefined;
+    if (!info.slotToRaw) {
+      const table = [];
+      for (let i = 0; i < info.map.length; i++) {
+        const m = info.map[i];
+        if (!m || m.count <= 0) continue;
+        for (let s = 0; s < m.count; s++) table[m.slot + s] = i;
+      }
+      info.slotToRaw = table;
+    }
+    return info.slotToRaw[slot];
+  }
+
   function eventStepInfo(ev) {
     const out = { step: 0, total: 0, desc: '', varKey: '', traced: false };
     try {
@@ -2063,16 +2290,7 @@
       }
       out.traced = true;
       out.total = info.raw ? info.raw.length : 0;
-      if (!info.slotToRaw) {
-        const table = [];
-        for (let i = 0; i < info.map.length; i++) {
-          const m = info.map[i];
-          if (!m || m.count <= 0) continue;
-          for (let s = 0; s < m.count; s++) table[m.slot + s] = i;
-        }
-        info.slotToRaw = table;
-      }
-      const rawIndex = info.slotToRaw[slot];
+      const rawIndex = eventTraceSlotToRaw(info, slot);
       if (typeof rawIndex !== 'number') {
         out.step = slot + 1;
         return out;
@@ -2081,6 +2299,47 @@
       const described = describeEventCommand(info.raw[rawIndex]);
       out.desc = described.text;
       out.varKey = described.varKey;
+      return out;
+    } catch (e) {
+      return out;
+    }
+  }
+
+  // 「这件事是谁干的」 —— 供变量告警等诊断复用:
+  // 引擎的 while (CommandList[CommandIndex++]?.()) 会把游标推过当前这条指令, 故当前指令槽 = CommandIndex - 1;
+  // 再经编译期映射表翻译成原始第几步 + 白话指令。取不到引擎游标时, 回退到事件实例上的 index。
+  function currentEventLocation() {
+    const out = { eventName: '', sceneName: '', step: 0, total: 0, desc: '', varKey: '', located: false };
+    try {
+      const top = eventExecStack.length ? eventExecStack[eventExecStack.length - 1] : null;
+      const ev = top ? top.ev : null;
+      let list = null;
+      let slot = -1;
+      try {
+        if (typeof CommandList !== 'undefined' && CommandList && typeof CommandIndex === 'number') {
+          list = CommandList;
+          slot = CommandIndex - 1;
+        }
+      } catch (eGlobal) { list = null; }
+      if (!list && ev) {
+        list = ev.commands || ev.initial;
+        slot = (typeof ev.index === 'number' ? ev.index : 0) - 1;
+      }
+      if (ev) {
+        out.eventName = eventNameOf(ev);
+        out.sceneName = currentSceneName();
+      }
+      if (!list || slot < 0) return out;
+      const info = eventTrace.byList.get(list);
+      if (!info) return out;
+      out.total = info.raw ? info.raw.length : 0;
+      const rawIndex = eventTraceSlotToRaw(info, slot);
+      if (typeof rawIndex !== 'number') return out;
+      out.step = rawIndex + 1;
+      const described = describeEventCommand(info.raw[rawIndex]);
+      out.desc = described.text;
+      out.varKey = described.varKey;
+      out.located = out.step > 0;
       return out;
     } catch (e) {
       return out;
@@ -3163,6 +3422,9 @@
     getSceneDetails: getSceneDetails,
     getSceneEntities: getSceneEntities,
     getMemoryInfo: getMemoryInfo,
+    // 资源缓存与内存: 只增不减的 Loader 三张表 (统计 + 安全一键清理)
+    getCacheInfo: getCacheInfo,
+    clearAssetCache: clearAssetCache,
     getActiveEvents: getActiveEventsDetails,
     // 事件黑匣子: 指令级时间线 + 幽灵事件侦探 (读一次即扫描一次)
     getEventBlackbox: getEventBlackbox,

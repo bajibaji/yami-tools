@@ -39,6 +39,20 @@
     return CAT_LABEL[cat] || TYPE_LABEL[type] || '未知异常';
   }
 
+  // 官方 Remix Icon (v4) 矢量路径 —— 全站唯一图标来源，禁止再用 ⏸/▶/▸ 等文本字形充图标
+  // 路径数据取自 Remix-Design/RemixIcon 官方仓库 icons/Media|Arrows|System/*.svg，未做任何改动
+  const ICON_PATH = {
+    pause: 'M6 5H8V19H6V5ZM16 5H18V19H16V5Z',
+    play: 'M16.3944 12.0001L10 7.7371V16.263L16.3944 12.0001ZM19.376 12.4161L8.77735 19.4818C8.54759 19.635 8.23715 19.5729 8.08397 19.3432C8.02922 19.261 8 19.1645 8 19.0658V4.93433C8 4.65818 8.22386 4.43433 8.5 4.43433C8.59871 4.43433 8.69522 4.46355 8.77735 4.5183L19.376 11.584C19.6057 11.7372 19.6678 12.0477 19.5146 12.2774C19.478 12.3323 19.4309 12.3795 19.376 12.4161Z',
+    chevronRight: 'M13.1717 12.0007L8.22192 7.05093L9.63614 5.63672L16.0001 12.0007L9.63614 18.3646L8.22192 16.9504L13.1717 12.0007Z',
+    chevronDown: 'M11.9999 13.1714L16.9497 8.22168L18.3639 9.63589L11.9999 15.9999L5.63599 9.63589L7.0502 8.22168L11.9999 13.1714Z',
+    upload: 'M3 19H21V21H3V19ZM13 5.82843V17H11V5.82843L4.92893 11.8995L3.51472 10.4853L12 2L20.4853 10.4853L19.0711 11.8995L13 5.82843Z'
+  };
+  // 尺寸与光学对齐统一交给 CSS (.yami-btn-ico / .yami-scene-arrow svg)，此处只出几何
+  function ico(name) {
+    return '<svg class="yami-btn-ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="' + ICON_PATH[name] + '"></path></svg>';
+  }
+
   function initHUD() {
     if (!document.body) {
       requestAnimationFrame(initHUD);
@@ -132,7 +146,8 @@
         opacity: 0 !important;
         transform: translateX(105%) !important;
         pointer-events: none !important;
-        transition: transform 0.2s cubic-bezier(0.1, 0.9, 0.2, 1), opacity 0.15s ease !important;
+        /* 出场(移除 .show 时走这条): 比进场更短更柔 */
+        transition: transform 0.16s cubic-bezier(0.2, 0, 0, 1), opacity 0.12s ease !important;
       }
             /* 穿透模式：最高优先级物理穿透到游戏 Canvas，顶栏保留操作 */
       .yami-perf-dock.show.through {
@@ -156,7 +171,7 @@
         cursor: pointer !important;
         user-select: none !important;
         line-height: 16px !important;
-        transition: all 0.15s ease !important;
+        transition: color, background-color, border-color, scale 0.15s ease !important;
       }
       .yami-pin-btn:hover {
         color: #ffffff !important;
@@ -173,7 +188,8 @@
       .yami-suite-page {
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        /* 组间间距: 需 ≥ 组内(6~8px) 的 2 倍，否则分组读起来是噪声 (better-layout) */
+        gap: 16px;
         flex: 1;
       }
       .yami-nav-back-btn {
@@ -187,7 +203,7 @@
         cursor: pointer !important;
         align-items: center !important;
         gap: 4px !important;
-        transition: all 0.15s ease !important;
+        transition: color, background-color, border-color, scale 0.15s ease !important;
         user-select: none !important;
         line-height: 18px !important;
       }
@@ -240,7 +256,7 @@
         align-items: center !important;
         justify-content: space-between !important;
         cursor: pointer !important;
-        transition: all 0.15s ease !important;
+        transition: color, background-color, border-color, transform, opacity, scale 0.15s ease !important;
         user-select: none !important;
       }
       .yami-home-module-item:hover {
@@ -352,6 +368,7 @@
         color: #ff8888 !important;
         font-family: Consolas, monospace !important;
         font-size: 11px !important;
+        overflow-wrap: anywhere !important;
         word-break: break-all !important;
         line-height: 15px !important;
       }
@@ -359,6 +376,8 @@
         color: #1cff9b !important;
         font-family: Consolas, monospace !important;
         font-size: 10px !important;
+        /* 长 URL / 长路径是不可断行 token，不强制断词就会撑破卡片 */
+        overflow-wrap: anywhere !important;
       }
       .yami-error-box {
         background: rgba(255, 144, 96, 0.08) !important;
@@ -383,6 +402,8 @@
         opacity: 1 !important;
         transform: translateX(0) !important;
         pointer-events: auto !important;
+        /* 进场(加上 .show 时走这条) */
+        transition: transform 0.2s cubic-bezier(0.1, 0.9, 0.2, 1), opacity 0.15s ease !important;
       }
 
       .yami-perf-dock-header {
@@ -438,7 +459,7 @@
         background-position: center !important;
         vertical-align: middle !important;
         flex-shrink: 0 !important;
-        margin-right: 5px !important;
+        margin-inline-end: 5px !important;
         /* 核心反转：纯黑原图转为明亮银白 (#d8d8d8)，暗黑背景上清晰高对比 */
         filter: brightness(0) invert(0.85) !important;
         transition: filter 0.12s ease !important;
@@ -496,7 +517,7 @@
         cursor: pointer !important;
         white-space: nowrap !important;
         padding: 0 4px !important;
-        transition: all 0.12s ease !important;
+        transition: color, background-color, border-bottom-color, filter, scale 0.12s ease !important;
       }
       .yami-perf-tab:hover {
         color: #ffffff !important;
@@ -529,7 +550,7 @@
         border-radius: 10px !important;
         cursor: pointer !important;
         color: #888888 !important;
-        transition: all 0.15s ease !important;
+        transition: color, background-color, box-shadow, scale 0.15s ease !important;
         line-height: 16px !important;
       }
       .yami-mode-btn:hover {
@@ -682,7 +703,28 @@
       .yami-quick-toggles {
         display: grid !important;
         grid-template-columns: 1fr 1fr !important;
-        gap: 6px !important;
+        gap: 8px !important;
+      }
+      /* 官方 Remix 矢量图标: 统一尺寸与光学对齐 (better-ui: 图标描边需匹配文字字重) */
+      .yami-btn-ico {
+        width: 12px !important;
+        height: 12px !important;
+        vertical-align: -2px !important;
+        margin-inline-end: 4px !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-scene-arrow > .yami-btn-ico {
+        display: block !important;
+        width: 10px !important;
+        height: 10px !important;
+        margin: 0 auto !important;
+        vertical-align: baseline !important;
+      }
+      .yami-perf-jank-item .yami-btn-ico {
+        width: 10px !important;
+        height: 10px !important;
+        vertical-align: -1px !important;
+        margin-inline-end: 2px !important;
       }
       .yami-quick-btn {
         background: #222222 !important;
@@ -693,7 +735,7 @@
         color: #a0a0a0 !important;
         cursor: pointer !important;
         text-align: center !important;
-        transition: all 0.12s ease !important;
+        transition: color, background-color, border-color, scale 0.12s ease !important;
       }
       .yami-quick-btn:hover {
         background: #282828 !important;
@@ -745,7 +787,7 @@
         align-items: center !important;
         justify-content: center !important;
         box-sizing: border-box !important;
-        transition: all 0.15s ease !important;
+        transition: color, background-color, opacity, scale 0.15s ease !important;
       }
       .yami-update-btn:hover {
         background: #00a0f0 !important;
@@ -880,7 +922,7 @@
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6) !important;
         opacity: 0 !important;
         transform: translateY(6px) !important;
-        transition: all 0.15s ease !important;
+        transition: transform, opacity 0.15s ease !important;
         pointer-events: none !important;
       }
       .yami-perf-toast.show { opacity: 1 !important; transform: translateY(0) !important; }
@@ -904,7 +946,7 @@
       .yami-perf-wave { width: 100% !important; height: 64px !important; background: #141414 !important; border: 1px solid #262626 !important; border-radius: 2px !important; display: block !important; }
       .yami-perf-objrow { display: flex !important; justify-content: space-between !important; align-items: center !important; padding: 2px 6px !important; border-radius: 2px !important; }
       .yami-perf-objrow:nth-child(odd) { background: rgba(255,255,255,0.03) !important; }
-      .yami-perf-kind { color: #909090 !important; margin-right: 6px !important; font-size: 10px !important; }
+      .yami-perf-kind { color: #909090 !important; margin-inline-end: 6px !important; font-size: 10px !important; }
 
       /* 胶囊异常红光抖动动画 */
       .yami-perf-capsule.shake {
@@ -991,7 +1033,7 @@
         color: #aaaaaa;
         font-size: 11px;
         cursor: pointer;
-        transition: all 0.15s ease;
+        transition: color, background-color, border-color, scale 0.15s ease;
         user-select: none;
       }
       .yami-save-slot-btn:hover {
@@ -1067,7 +1109,7 @@
         color: #888888;
         cursor: pointer;
         border-radius: 3px;
-        transition: all 0.12s ease;
+        transition: color, background-color, box-shadow, scale 0.12s ease;
         user-select: none;
       }
       .yami-save-subnav-btn:hover {
@@ -1135,7 +1177,7 @@
         font-size: 12px;
         font-family: Consolas, monospace;
         width: 90px;
-        text-align: right;
+        text-align: end;
         box-sizing: border-box;
       }
       .yami-save-input:focus {
@@ -1150,7 +1192,7 @@
         font-size: 10px;
         padding: 4px 8px;
         cursor: pointer;
-        transition: all 0.12s;
+        transition: color, background-color, border-color, scale 0.12s;
         white-space: nowrap;
         user-select: none;
       }
@@ -1190,7 +1232,7 @@
         gap: 6px;
         max-height: 280px;
         overflow-y: auto;
-        padding-right: 4px;
+        padding-inline-end: 4px;
       }
       .yami-save-vars-list::-webkit-scrollbar {
         width: 4px;
@@ -1282,7 +1324,7 @@
         color: #cccccc;
       }
       .yami-save-tree-node {
-        margin-left: 12px;
+        margin-inline-start: 12px;
         line-height: 1.6;
       }
       .yami-save-tree-key {
@@ -1294,7 +1336,7 @@
       .yami-save-tree-val-null { color: #94a3b8; }
       .yami-save-tree-annotate {
         color: #f97316;
-        margin-left: 6px;
+        margin-inline-start: 6px;
         font-size: 10px;
         font-style: italic;
       }
@@ -1321,7 +1363,7 @@
         border-radius: 4px;
         cursor: pointer;
         user-select: none;
-        transition: all 0.15s ease;
+        transition: color, background-color, border-color, box-shadow, scale 0.15s ease;
       }
       .yami-save-act-btn.default {
         background: #202020;
@@ -1595,7 +1637,7 @@
         max-height: 120px !important;
         overflow-y: auto !important;
         overflow-x: hidden !important;
-        padding-right: 2px !important;
+        padding-inline-end: 2px !important;
       }
       .yami-save-slots-wrap::-webkit-scrollbar {
         width: 4px !important;
@@ -1655,7 +1697,7 @@
         border-radius: 2px !important;
         cursor: pointer !important;
         color: #888888 !important;
-        transition: all 0.12s ease !important;
+        transition: color, background-color, box-shadow, scale 0.12s ease !important;
       }
       .yami-mode-btn.active {
         background: #0080c0 !important; /* 恢复原版专业高亮蓝 */
@@ -1714,7 +1756,7 @@
         background: #303030 !important; /* 彻底告别死黑，采用正统深灰 */
         border: 1px solid #3c3c3c !important;
         border-radius: 3px !important;
-        transition: all 0.12s ease !important;
+        transition: color, background-color, border-color, transform, opacity, scale 0.12s ease !important;
       }
       .yami-home-module-item:hover {
         background: #3a3a3a !important; /* 悬浮高亮反馈 */
@@ -1855,7 +1897,7 @@
         max-height: none !important;
         height: auto !important;
         overflow: visible !important;
-        padding-right: 0 !important;
+        padding-inline-end: 0 !important;
       }
 
       /* 普通/专业模式切换按钮：2px 硬朗微圆角 + 原版高亮蓝 (#0080c0) */
@@ -1875,7 +1917,7 @@
         border-radius: 2px !important;
         cursor: pointer !important;
         color: #888888 !important;
-        transition: all 0.12s ease !important;
+        transition: color, background-color, box-shadow, scale 0.12s ease !important;
       }
       .yami-mode-btn:hover {
         color: #ffffff !important;
@@ -1907,7 +1949,7 @@
         flex: 1 1 0 !important;
         min-height: 0 !important;
         height: 100% !important;
-        gap: 8px !important;
+        gap: 16px !important;
         padding: 2px 2px 4px 2px !important;
         box-sizing: border-box !important;
         overflow: hidden !important;
@@ -1938,7 +1980,7 @@
         display: flex !important;
         flex-direction: column !important;
         gap: 8px !important;
-        padding-right: 3px !important;
+        padding-inline-end: 3px !important;
       }
       .yami-save-quick-scroll::-webkit-scrollbar {
         width: 4px !important;
@@ -1969,7 +2011,7 @@
         display: flex !important;
         flex-direction: column !important;
         gap: 6px !important;
-        padding-right: 4px !important;
+        padding-inline-end: 4px !important;
       }
       .yami-save-var-list::-webkit-scrollbar {
         width: 4px !important;
@@ -2022,7 +2064,7 @@
         flex: 1 1 0 !important;
         min-height: 0 !important;
         height: 100% !important;
-        gap: 8px !important;
+        gap: 16px !important;
         overflow: hidden !important;
       }
 
@@ -2057,7 +2099,7 @@
         display: flex !important;
         flex-wrap: wrap !important;
         align-items: center !important;
-        gap: 4px 5px !important;
+        gap: 6px 8px !important;
         flex-shrink: 0 !important;
         padding: 2px 0 2px 0 !important;
       }
@@ -2071,7 +2113,7 @@
         border-radius: 2px !important;
         cursor: pointer !important;
         user-select: none !important;
-        transition: all 0.12s ease !important;
+        transition: color, background-color, border-color, scale 0.12s ease !important;
       }
       .yami-error-filter-btn:hover {
         background: #303030 !important;
@@ -2092,7 +2134,7 @@
         display: flex !important;
         flex-direction: column !important;
         gap: 8px !important;
-        padding-right: 4px !important;
+        padding-inline-end: 4px !important;
       }
       .yami-errors-scroll-list::-webkit-scrollbar {
         width: 4px !important;
@@ -2112,7 +2154,7 @@
         border: 1px solid #702020 !important;
         color: #ff6060 !important;
         border-radius: 2px !important;
-        margin-left: 6px !important;
+        margin-inline-start: 6px !important;
         animation: yami-pulse 2s infinite ease-in-out !important;
       }
 
@@ -2158,7 +2200,7 @@
       .yami-error-code-line .line-num {
         color: #555555 !important;
         width: 32px !important;
-        text-align: right !important;
+        text-align: end !important;
         user-select: none !important;
         flex-shrink: 0 !important;
       }
@@ -2167,7 +2209,7 @@
         color: #ff9999 !important;
         font-weight: 600 !important;
         border-left: 2px solid #ff4040 !important;
-        padding-left: 2px !important;
+        padding-inline-start: 2px !important;
       }
       .yami-error-code-line.target .line-num {
         color: #ff4040 !important;
@@ -2191,7 +2233,7 @@
         border-radius: 2px !important;
         cursor: pointer !important;
         user-select: none !important;
-        transition: all 0.12s ease !important;
+        transition: color, background-color, border-color, scale 0.12s ease !important;
       }
       .yami-error-btn:hover {
         background: #3a3a3a !important;
@@ -2223,7 +2265,7 @@
         flex: 1 1 0 !important;
         min-height: 0 !important;
         height: 100% !important;
-        gap: 8px !important;
+        gap: 16px !important;
         padding: 2px 2px 4px 2px !important;
         box-sizing: border-box !important;
         overflow: hidden !important;
@@ -2341,7 +2383,7 @@
         display: flex !important;
         flex-direction: column !important;
         gap: 10px !important;
-        padding-right: 2px !important;
+        padding-inline-end: 2px !important;
       }
       .yami-scene-groups::-webkit-scrollbar {
         width: 4px !important;
@@ -2387,7 +2429,7 @@
         font-style: normal !important;
         font-size: 10px !important;
         color: #808080 !important;
-        margin-left: auto !important;
+        margin-inline-start: auto !important;
       }
       .yami-scene-subgroup-title {
         display: flex !important;
@@ -2399,7 +2441,7 @@
         border-bottom: 1px solid #1a1a1a !important;
       }
       .yami-scene-subgroup-title span {
-        margin-left: auto !important;
+        margin-inline-start: auto !important;
         color: #666666 !important;
         font-family: Consolas, monospace !important;
       }
@@ -2453,12 +2495,12 @@
       .yami-scene-tag.warn { color: #ff9c6a !important; border-color: #8a4a20 !important; background: #241207 !important; }
       .yami-scene-tag.inside { color: #6ac2c2 !important; border-color: #2a6a6a !important; background: #0b1a1a !important; }
       .yami-scene-coord {
-        margin-left: auto !important;
+        margin-inline-start: auto !important;
         font-family: Consolas, monospace !important;
         font-size: 10px !important;
         color: #9a9a9a !important;
         flex-shrink: 0 !important;
-        padding-left: 8px !important;
+        padding-inline-start: 8px !important;
       }
       .yami-scene-meta {
         font-size: 10px !important;
@@ -2466,7 +2508,7 @@
         flex-shrink: 1 !important;
         min-width: 0 !important;
         max-width: 130px !important;
-        text-align: right !important;
+        text-align: end !important;
         white-space: nowrap !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
@@ -2526,7 +2568,7 @@
       .yami-cheat-grid {
         display: flex !important;
         flex-direction: column !important;
-        gap: 10px !important;
+        gap: 16px !important;   /* 卡片间 = 组间，需 ≥ 组内(.yami-cheat-card 8px) 的 2 倍 */
       }
       .yami-cheat-card {
         background: #242424 !important;
@@ -2558,11 +2600,14 @@
       /* 变速按钮组 */
       .yami-speed-btns {
         display: flex !important;
-        gap: 6px !important;
+        flex-wrap: wrap !important;   /* 极窄容器下换行，而不是撑破卡片 */
+        gap: 8px !important;
         margin-top: 4px !important;
       }
       .yami-speed-btn {
-        flex: 1 !important;
+        flex: 1 1 auto !important;
+        /* 最小宽度给 flex 一个换行阈值: 没有它，flex-basis:0 的项永远不会换行，只会撑破父级 */
+        min-width: 44px !important;
         height: 28px !important;
         background: #1c1c1c !important;
         border: 1px solid #383838 !important;
@@ -2575,7 +2620,7 @@
         justify-content: center !important;
         cursor: pointer !important;
         user-select: none !important;
-        transition: all 0.15s ease !important;
+        transition: color, background-color, border-color, scale 0.15s ease !important;
       }
       .yami-speed-btn:hover {
         background: #2a2a2a !important;
@@ -2603,7 +2648,7 @@
         cursor: pointer !important;
         user-select: none !important;
         white-space: nowrap !important;
-        transition: all 0.15s ease !important;
+        transition: color, background-color, border-color, scale 0.15s ease !important;
       }
       .yami-cheat-btn:hover {
         background: #363636 !important;
@@ -2704,7 +2749,7 @@
         user-select: none !important;
         white-space: nowrap !important;
         line-height: 1.4 !important;
-        transition: all 0.15s ease !important;
+        transition: color, background-color, border-color, scale 0.15s ease !important;
       }
       .btn-pin-var:hover {
         background: #2e2e2e !important;
@@ -2803,7 +2848,7 @@
         max-height: 240px !important;
         overflow-y: auto !important;
         overflow-x: hidden !important;
-        padding-right: 4px !important;
+        padding-inline-end: 4px !important;
       }
       .yami-audit-list::-webkit-scrollbar {
         width: 4px;
@@ -2877,7 +2922,7 @@
         color: #a0a0a0 !important;
         cursor: pointer !important;
         user-select: none !important;
-        transition: all 0.12s ease !important;
+        transition: color, background-color, border-color, scale 0.12s ease !important;
       }
       .yami-audit-btn-mini:hover {
         background: #333333 !important;
@@ -3073,7 +3118,7 @@
         word-break: break-all !important;
       }
       .yami-eventflow-extra {
-        margin-left: 6px !important;
+        margin-inline-start: 6px !important;
         font-size: 10px !important;
         color: #fbbf24 !important;
       }
@@ -3162,6 +3207,205 @@
         font-size: 10px !important;
         color: #777777 !important;
         padding: 2px 0 !important;
+      }
+      /* ============ 内存与缓存 (性能分析·普通模式) ============ */
+      .yami-cache-badge {
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        padding: 1px 5px !important;
+        border-radius: 2px !important;
+        white-space: nowrap !important;
+        flex-shrink: 0 !important;
+        background: #303030 !important;
+        color: #999999 !important;
+        border: 1px solid #3d3d3d !important;
+      }
+      .yami-cache-badge.ok {
+        background: #064e3b !important;
+        color: #1cff9b !important;
+        border-color: #059669 !important;
+      }
+      .yami-cache-badge.warn {
+        background: #451a03 !important;
+        color: #fbbf24 !important;
+        border-color: #d97706 !important;
+      }
+      .yami-cache-badge.danger {
+        background: #450a0a !important;
+        color: #ff8888 !important;
+        border-color: #dc2626 !important;
+      }
+      .yami-cache-summary {
+        font-size: 11px !important;
+        color: #d8d8d8 !important;
+        line-height: 1.5 !important;
+        word-break: break-all !important;
+      }
+      .yami-cache-actions {
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        flex-wrap: wrap !important;
+        margin-top: 6px !important;
+      }
+      .yami-cache-btn {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        position: static !important;
+        box-sizing: border-box !important;
+        user-select: none !important;
+        min-width: 84px !important;
+        height: 24px !important;
+        line-height: 24px !important;
+        padding: 0 10px !important;
+        font-size: 11px !important;
+        font-weight: 600 !important;
+        white-space: nowrap !important;
+        flex-shrink: 0 !important;
+        background: #303030 !important;
+        color: #ffffff !important;
+        border: 1px solid #3d3d3d !important;
+        border-radius: 2px !important;
+        cursor: pointer !important;
+      }
+      .yami-cache-btn:hover {
+        background: #3d3d3d !important;
+        border-color: #555555 !important;
+      }
+      .yami-cache-hint {
+        font-size: 10px !important;
+        color: #888888 !important;
+        line-height: 1.5 !important;
+      }
+      /* ============ 变量写入被丢弃的定位提示 ============ */
+      .yami-save-var-warn {
+        font-size: 10px !important;
+        line-height: 1.5 !important;
+        color: #ff8888 !important;
+        background: #241c1c !important;
+        border: 1px solid #3c1e1e !important;
+        border-left: 3px solid #ff4040 !important;
+        border-radius: 2px !important;
+        padding: 3px 6px !important;
+        margin: 4px 0 !important;
+        word-break: break-all !important;
+      }
+      .yami-pinned-warn-line {
+        font-size: 9px !important;
+        line-height: 1.4 !important;
+        color: #ff8888 !important;
+        margin-top: 2px !important;
+        word-break: break-all !important;
+      }
+      /* ============ 工程体检: 折叠计数 + 涉及范围 ============ */
+      .yami-audit-count {
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        color: #ff9060 !important;
+        margin-inline-start: 2px !important;
+      }
+      .yami-audit-item-scope {
+        font-size: 10px !important;
+        line-height: 1.5 !important;
+        color: #999999 !important;
+        word-break: break-all !important;
+      }
+      /* ============================================================
+         滚动条单一事实源 (颜色只在这里定义)
+         ------------------------------------------------------------
+         历史教训: 滚动条样式此前是「谁新加滚动容器谁自己补一条」, 于是每加一个模块
+         就漏一个 —— 运行日志页的「事件流水 / 幽灵事件侦探」两个列表就漏了,
+         在暗黑大盘里露出系统默认亮色滚动条。
+         现在: 颜色统一在本组; 任何声明了 overflow: auto/scroll 的容器都必须出现在
+         下面的选择器组里 —— build.cjs 有机器门禁强制这一点, 漏一个直接构建失败。
+         (宽度不走统一组: 各容器按设计分档 3/4/5/6px, 新容器需自带宽度)
+         ============================================================ */
+      .yami-perf-dock-body::-webkit-scrollbar-track,
+      .yami-save-container::-webkit-scrollbar-track,
+      .yami-save-vars-list::-webkit-scrollbar-track,
+      .yami-save-tree-box::-webkit-scrollbar-track,
+      .yami-save-slots-wrap::-webkit-scrollbar-track,
+      .yami-save-quick-scroll::-webkit-scrollbar-track,
+      .yami-save-var-list::-webkit-scrollbar-track,
+      .yami-errors-scroll-list::-webkit-scrollbar-track,
+      .yami-scene-groups::-webkit-scrollbar-track,
+      #page-cheats::-webkit-scrollbar-track,
+      .yami-audit-list::-webkit-scrollbar-track,
+      .yami-eventflow-list::-webkit-scrollbar-track,
+      .yami-ghost-list::-webkit-scrollbar-track {
+        background: #181818 !important;
+      }
+      .yami-perf-dock-body::-webkit-scrollbar-thumb,
+      .yami-save-container::-webkit-scrollbar-thumb,
+      .yami-save-vars-list::-webkit-scrollbar-thumb,
+      .yami-save-tree-box::-webkit-scrollbar-thumb,
+      .yami-save-slots-wrap::-webkit-scrollbar-thumb,
+      .yami-save-quick-scroll::-webkit-scrollbar-thumb,
+      .yami-save-var-list::-webkit-scrollbar-thumb,
+      .yami-errors-scroll-list::-webkit-scrollbar-thumb,
+      .yami-scene-groups::-webkit-scrollbar-thumb,
+      #page-cheats::-webkit-scrollbar-thumb,
+      .yami-audit-list::-webkit-scrollbar-thumb,
+      .yami-eventflow-list::-webkit-scrollbar-thumb,
+      .yami-ghost-list::-webkit-scrollbar-thumb {
+        background: #383838 !important;
+        border-radius: 2px !important;
+      }
+      .yami-perf-dock-body::-webkit-scrollbar-thumb:hover,
+      .yami-save-container::-webkit-scrollbar-thumb:hover,
+      .yami-save-vars-list::-webkit-scrollbar-thumb:hover,
+      .yami-save-tree-box::-webkit-scrollbar-thumb:hover,
+      .yami-save-slots-wrap::-webkit-scrollbar-thumb:hover,
+      .yami-save-quick-scroll::-webkit-scrollbar-thumb:hover,
+      .yami-save-var-list::-webkit-scrollbar-thumb:hover,
+      .yami-errors-scroll-list::-webkit-scrollbar-thumb:hover,
+      .yami-scene-groups::-webkit-scrollbar-thumb:hover,
+      #page-cheats::-webkit-scrollbar-thumb:hover,
+      .yami-audit-list::-webkit-scrollbar-thumb:hover,
+      .yami-eventflow-list::-webkit-scrollbar-thumb:hover,
+      .yami-ghost-list::-webkit-scrollbar-thumb:hover {
+        background: #4a4a4a !important;
+      }
+      .yami-perf-dock-body::-webkit-scrollbar-corner,
+      .yami-save-container::-webkit-scrollbar-corner,
+      .yami-save-tree-box::-webkit-scrollbar-corner,
+      .yami-save-var-list::-webkit-scrollbar-corner,
+      .yami-errors-scroll-list::-webkit-scrollbar-corner,
+      .yami-audit-list::-webkit-scrollbar-corner,
+      .yami-eventflow-list::-webkit-scrollbar-corner,
+      .yami-ghost-list::-webkit-scrollbar-corner {
+        background: #181818 !important;
+      }
+      /* 新增容器自带宽度 (老容器的宽度分档保持不变) */
+      .yami-eventflow-list::-webkit-scrollbar,
+      .yami-ghost-list::-webkit-scrollbar {
+        width: 4px !important;
+        height: 4px !important;
+      }
+
+      /* 按压缩放触感 (better-ui: scale on press，恒为 0.96) */
+.btn-pin-var {
+        transition: scale 0.12s ease !important;
+      }
+.yami-pin-btn:active,
+      .yami-nav-back-btn:active,
+      .yami-perf-tab:active,
+      .yami-mode-btn:active,
+      .yami-quick-btn:active,
+      .yami-update-btn:active,
+      .yami-save-slot-btn:active,
+      .yami-save-subnav-btn:active,
+      .yami-save-mini-btn:active,
+      .yami-save-act-btn:active,
+      .yami-error-filter-btn:active,
+      .yami-error-btn:active,
+      .yami-speed-btn:active,
+      .yami-cheat-btn:active,
+      .btn-pin-var:active,
+      .yami-audit-btn-mini:active,
+      .yami-home-module-item:active {
+        scale: 0.96 !important;
       }
     `;
     document.head.appendChild(style);
@@ -3455,11 +3699,24 @@
               <span style="color: #808080; font-size: 10px;">不影响真实工程与存档</span>
             </div>
             <div class="yami-quick-toggles">
-              <div class="yami-quick-btn" id="btn-quick-mute-actors" role="button">⏸ 冻结怪物与NPC (主角正常)</div>
-              <div class="yami-quick-btn" id="btn-quick-mute-particles" role="button">⏸ 临时关闭粒子</div>
-              <div class="yami-quick-btn" id="btn-quick-mute-events" role="button">⏸ 临时暂停公共事件</div>
-              <div class="yami-quick-btn" id="btn-quick-mute-audio" role="button">⏸ 临时静音音效SE (排查音频)</div>
-              <div class="yami-quick-btn" id="btn-quick-mute-ui" role="button" style="grid-column: span 2;">⏸ 临时隐藏界面与飘字UI</div>
+              <div class="yami-quick-btn" id="btn-quick-mute-actors" role="button">${ico('pause')}冻结怪物与NPC (主角正常)</div>
+              <div class="yami-quick-btn" id="btn-quick-mute-particles" role="button">${ico('pause')}临时关闭粒子</div>
+              <div class="yami-quick-btn" id="btn-quick-mute-events" role="button">${ico('pause')}临时暂停公共事件</div>
+              <div class="yami-quick-btn" id="btn-quick-mute-audio" role="button">${ico('pause')}临时静音音效SE (排查音频)</div>
+              <div class="yami-quick-btn" id="btn-quick-mute-ui" role="button" style="grid-column: span 2;">${ico('pause')}临时隐藏界面与飘字UI</div>
+            </div>
+          </div>
+
+          <!-- 内存与缓存 (对标引擎盲点: 资源缓存只增不减 → 玩久了越来越卡) -->
+          <div class="yami-perf-box" id="yami-cache-panel">
+            <div class="yami-perf-box-title">
+              <span>内存与缓存</span>
+              <span class="yami-cache-badge idle" id="yami-cache-status">[读取中]</span>
+            </div>
+            <div class="yami-cache-summary" id="yami-cache-summary">正在读取缓存与内存占用…</div>
+            <div class="yami-cache-actions">
+              <div class="yami-cache-btn" id="btn-clear-asset-cache" role="button" title="释放已经用不到的图片与临时数据，正在显示的画面上不会变化">清理缓存</div>
+              <span class="yami-cache-hint" id="yami-cache-hint">玩久了变卡时点一下，之后再用到的图片会自动重新加载。</span>
             </div>
           </div>
         </div>
@@ -3674,7 +3931,7 @@
               <div class="yami-cheat-title">移动与穿透</div>
             </div>
             <div class="yami-cheat-desc">忽略场景障碍与地形碰撞阻挡，提升主角跑图寻路速度。</div>
-            <div style="display: flex; gap: 8px; margin-top: 4px;">
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px;">
               <div class="yami-cheat-btn" id="btn-cheat-noclip" role="button">穿墙模式: 关</div>
               <div class="yami-cheat-btn" id="btn-cheat-speedboost" role="button">加速奔跑: 关</div>
             </div>
@@ -3686,7 +3943,7 @@
               <div class="yami-cheat-title">战斗与生存</div>
             </div>
             <div class="yami-cheat-desc">每帧刷新主角生命值属性，或一键清除当前全图所有杂兵怪物。</div>
-            <div style="display: flex; gap: 8px; margin-top: 4px;">
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px;">
               <div class="yami-cheat-btn" id="btn-cheat-godmode" role="button">无限生命: 关</div>
               <div class="yami-cheat-btn danger" id="btn-cheat-killall" role="button">秒杀全图怪</div>
             </div>
@@ -3699,7 +3956,7 @@
               <span id="cheat-reset-indicator" style="font-family: Consolas, monospace; font-size: 11px; color: #4ade80;">状态干净</span>
             </div>
             <div class="yami-cheat-desc">一键关闭上面所有作弊并复原主角原本能力。测试结束或发布前点一次，避免穿墙、锁血等状态残留。</div>
-            <div style="display: flex; gap: 8px; margin-top: 4px;">
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px;">
               <div class="yami-cheat-btn" id="btn-cheat-reset-all" role="button">全部还原</div>
             </div>
           </div>
@@ -3715,7 +3972,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.9.1 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.11.0 (检查更新)</span>
         </div>
         <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
@@ -3902,7 +4159,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v0.9.1 (DanJuan妙妙插件)',
+        '- **插件版本**: v0.11.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -3997,6 +4254,115 @@
     // ============================================================
     let auditScanning = false;
     let auditResult = null;
+
+    // 变量写入被丢弃时, 把「是谁写的」讲成一句人话 (铁律⑱):
+    // 「事件《新手村剧情》· 第 2 / 3 步 · 设置文本 · 场景：新手村」
+    function varWarningLocation(w) {
+      try {
+        if (!w || w.located !== true) return '';
+        const parts = [];
+        if (w.eventName) parts.push('事件《' + w.eventName + '》');
+        if (w.step > 0) parts.push('第 ' + w.step + (w.total > 0 ? ' / ' + w.total : '') + ' 步');
+        if (w.cmdDesc) parts.push(w.cmdDesc);
+        if (w.sceneName) parts.push('场景：' + w.sceneName);
+        return parts.join(' · ');
+      } catch (e) { return ''; }
+    }
+
+    // ============================================================
+    // 内存与缓存 (对标引擎盲点: loader.ts:19-23 三张缓存表只增不减, 长时试玩内存持续爬升)
+    // ------------------------------------------------------------
+    // 数据源 probe.getCacheInfo() / probe.clearAssetCache()。
+    // 清理只由用户点击触发, 绝不进入心跳轮询 (铁律⑲); 渲染走快照签名, 内容未变不重建。
+    // ============================================================
+    let cachePanelSig = '';
+    let cachePanelBound = false;
+
+    function cachePanelText(info) {
+      const parts = [];
+      parts.push('图片缓存 ' + (info.images || 0) + ' 张');
+      if (info.loading > 0) parts.push('正在加载 ' + info.loading + ' 张');
+      if (info.blobKB > 0) {
+        parts.push('临时数据 ' + (info.blobKB >= 1024 ? (info.blobKB / 1024).toFixed(1) + ' MB' : info.blobKB + ' KB'));
+      }
+      if (info.heapUsedMB > 0) parts.push('已用内存 ' + info.heapUsedMB + ' MB');
+      return parts.join(' · ');
+    }
+
+    function bindCachePanelEvents() {
+      if (cachePanelBound) return;
+      const btn = document.getElementById('btn-clear-asset-cache');
+      if (!btn) return;
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const probe = window.__YAMI_PERF_PROBE__;
+        if (!probe || typeof probe.clearAssetCache !== 'function') return;
+        const result = probe.clearAssetCache();
+        const hintEl = document.getElementById('yami-cache-hint');
+        if (hintEl) {
+          if (result && result.ok === true) {
+            hintEl.textContent = '已清理 ' + (result.clearedImages || 0) + ' 张图片缓存、'
+              + (result.clearedBlobs || 0) + ' 份临时数据。';
+          } else if (result && result.reason === 'loading') {
+            hintEl.textContent = '正在加载资源，等画面稳定后再点一次。';
+          } else {
+            hintEl.textContent = '这次没清理成功，稍后再试。';
+          }
+        }
+        cachePanelSig = ''; // 强制下一帧重绘统计
+        renderCachePanel();
+      });
+      cachePanelBound = true;
+    }
+
+    function renderCachePanel() {
+      try {
+        const panelEl = document.getElementById('yami-cache-panel');
+        if (!panelEl) return;
+        bindCachePanelEvents();
+        const probe = window.__YAMI_PERF_PROBE__;
+        if (!probe || typeof probe.getCacheInfo !== 'function') return;
+        const info = probe.getCacheInfo();
+        if (!info) return;
+        const statusEl = document.getElementById('yami-cache-status');
+        const summaryEl = document.getElementById('yami-cache-summary');
+        const btnEl = document.getElementById('btn-clear-asset-cache');
+        const hintEl = document.getElementById('yami-cache-hint');
+        // 引擎构建差异兜底: 部分构建读不到资源加载器 → 只报内存, 并直说这里帮不上忙
+        if (info.available !== true) {
+          const unSig = 'unavailable|' + info.heapUsedMB;
+          if (unSig === cachePanelSig) return;
+          cachePanelSig = unSig;
+          if (statusEl) { statusEl.className = 'yami-cache-badge idle'; statusEl.textContent = '[仅内存]'; }
+          if (summaryEl) {
+            summaryEl.textContent = info.heapUsedMB > 0
+              ? ('已用内存 ' + info.heapUsedMB + ' MB（当前引擎版本读不到图片缓存）')
+              : '当前引擎版本读不到图片缓存。';
+          }
+          if (btnEl) btnEl.style.setProperty('display', 'none', 'important');
+          if (hintEl) hintEl.textContent = '变卡时先重启工程试玩一次，通常就能恢复流畅。';
+          return;
+        }
+        if (btnEl) btnEl.style.removeProperty('display');
+        // 快照签名 (铁律⑲): 统计没变就绝不重建, 也不打断用户阅读
+        const sig = [info.images, info.loading, info.blobKB, info.heapUsedMB, info.heapTotalMB, info.loaderBusy ? 1 : 0].join('|');
+        if (sig === cachePanelSig) return;
+        cachePanelSig = sig;
+        if (statusEl) {
+          if (info.loaderBusy) {
+            statusEl.className = 'yami-cache-badge warn';
+            statusEl.textContent = '[加载中]';
+          } else if (info.images > 300 || info.heapUsedMB > 800) {
+            statusEl.className = 'yami-cache-badge danger';
+            statusEl.textContent = '[偏多]';
+          } else {
+            statusEl.className = 'yami-cache-badge ok';
+            statusEl.textContent = '[正常]';
+          }
+        }
+        if (summaryEl) summaryEl.textContent = cachePanelText(info);
+      } catch (e) {}
+    }
 
     // ============================================================
     // 事件黑匣子 (运行日志): 事件指令级流水 + 幽灵事件侦探
@@ -4276,6 +4642,11 @@
       const issues = auditResult.issues || [];
       const brokenList = issues.filter(function(i) { return i.kind === 'broken'; });
       const deadList = issues.filter(function(i) { return i.kind === 'dead'; });
+      const levels = stats.levels || { high: 0, mid: 0, low: 0 };
+      const missingRefs = stats.missingRefs || brokenList.reduce(function(a, b) { return a + (b.count || 1); }, 0);
+      // 分级徽标: 会影响运行 > 可能影响 > 历史遗留
+      const levelTag = { high: '[会影响运行]', mid: '[可能失效]', low: '[历史遗留]' };
+      const levelClass = { high: 'broken', mid: 'broken', low: 'dead' };
 
       if (issues.length === 0) {
         if (statusBadge) {
@@ -4290,38 +4661,59 @@
           listEl.innerHTML = '';
         }
       } else {
-        const isError = brokenList.length > 0;
+        const criticalCount = levels.high || 0;
         if (statusBadge) {
-          statusBadge.className = 'yami-audit-badge ' + (isError ? 'error' : 'warn');
-          statusBadge.textContent = '[发现 ' + issues.length + ' 项异常]';
+          statusBadge.className = 'yami-audit-badge ' + (criticalCount > 0 ? 'error' : 'warn');
+          statusBadge.textContent = criticalCount > 0
+            ? ('[' + criticalCount + ' 处会影响运行]')
+            : ('[' + issues.length + ' 项待清理]');
         }
         if (summaryEl) {
-          summaryEl.textContent = '扫描 ' + stats.files + ' 个文件 · 发现 ' + brokenList.length + ' 处断链引用，' + deadList.length + ' 个死事件';
+          const parts = ['扫描 ' + stats.files + ' 个文件'];
+          if (brokenList.length > 0) {
+            parts.push('引用丢失 ' + brokenList.length + ' 类（共 ' + missingRefs + ' 处）');
+          }
+          if (levels.high > 0) parts.push('其中 ' + levels.high + ' 类会影响运行');
+          if (levels.mid > 0) parts.push(levels.mid + ' 类可能失效');
+          if (levels.low > 0) parts.push(levels.low + ' 类不影响运行');
+          if (deadList.length > 0) parts.push('死事件 ' + deadList.length + ' 个');
+          summaryEl.textContent = parts.join(' · ');
         }
         if (listEl) {
           listEl.style.display = 'flex';
           listEl.innerHTML = issues.map(function(iss) {
             const isBroken = iss.kind === 'broken';
-            const kindTag = isBroken ? '[断链引用]' : '[死事件]';
-            const itemClass = isBroken ? 'broken' : 'dead';
+            const tag = isBroken ? (levelTag[iss.level] || '[引用丢失]') : '[死事件]';
+            const itemClass = isBroken ? (levelClass[iss.level] || 'broken') : 'dead';
+            const countBadge = (iss.count > 1) ? (' <span class="yami-audit-count">x' + iss.count + '</span>') : '';
             const title = isBroken
-              ? (kindTag + ' ' + (iss.cmdIndex >= 0 ? '第 ' + (iss.cmdIndex + 1) + ' 步指令' : '资产属性引用'))
-              : (kindTag + ' 【' + escapeHtml(iss.name || '公共事件') + '】');
+              ? (tag + ' 引用的 ID 在工程里找不到' + countBadge)
+              : (tag + ' 【' + escapeHtml(iss.name || '公共事件') + '】');
             const fileRel = escapeHtml(iss.file || '');
+            // 涉及范围 (比裸 GUID 有用得多): 前 3 个文件 + "还有 N 个"
+            const files = iss.files || (iss.file ? [iss.file] : []);
+            const scopeLine = files.length > 0
+              ? ('涉及 ' + (iss.fileCount || files.length) + ' 个文件：' + files.slice(0, 3).map(function(f) { return escapeHtml(String(f).split('/').pop()); }).join('、')
+                + ((iss.fileCount || files.length) > 3 ? (' 等 ' + (iss.fileCount || files.length) + ' 个') : ''))
+              : '';
             const desc = isBroken
-              ? ('引用了已不存在的 ID: ' + escapeHtml(iss.guid) + (iss.field ? ' (字段: ' + escapeHtml(iss.field) + ')' : ''))
-              : ('类型为 `' + escapeHtml(iss.type || 'common') + '` 的公共事件，从未被任何指令或资产调用。');
+              ? escapeHtml(iss.impact || '引用了已不存在的 ID。')
+              : escapeHtml(iss.impact || '这个公共事件没有被任何地方引用。');
 
             const copyInfo = isBroken
-              ? ('[断链引用] 文件: ' + iss.file + (iss.cmdIndex >= 0 ? ' 第 ' + (iss.cmdIndex + 1) + ' 步' : '') + ' 引用丢失 GUID: ' + iss.guid)
+              ? ('[引用丢失] ' + (iss.count || 1) + ' 处引用 · 丢失 ID: ' + iss.guid
+                + '\n影响: ' + (iss.impact || '')
+                + '\n涉及文件:\n' + files.map(function(f) { return '  - ' + f; }).join('\n')
+                + (iss.cmdIndex >= 0 ? ('\n首个位置: ' + iss.file + ' 第 ' + (iss.cmdIndex + 1) + ' 步') : ''))
               : ('[死事件] 事件: ' + (iss.name || '') + ' (' + iss.file + ') 未被任何地方调用');
 
             return '<div class="yami-audit-item ' + itemClass + '">'
               + '<div class="yami-audit-item-top">'
-              + '<span class="yami-audit-item-title">' + title + '</span>'
+              + '<span class="yami-audit-item-title" title="ID: ' + escapeHtml(iss.guid || '') + '">' + title + '</span>'
               + '<span class="yami-audit-item-file" title="' + fileRel + '">' + fileRel + '</span>'
               + '</div>'
               + '<div class="yami-audit-item-desc">' + desc + '</div>'
+              + (scopeLine ? ('<div class="yami-audit-item-scope">' + scopeLine + '</div>') : '')
               + '<div class="yami-audit-item-actions">'
               + '<div class="yami-audit-btn-mini btn-copy-audit-item" data-copy="' + encodeURIComponent(copyInfo) + '" role="button">复制信息</div>'
               + '<div class="yami-audit-btn-mini btn-locate-audit-file" data-file="' + encodeURIComponent(iss.file || '') + '" role="button">定位文件</div>'
@@ -4811,6 +5203,8 @@
         try {
           if (currentMode === 'simple') {
             if (typeof refreshSimpleDiagnosis === 'function') refreshSimpleDiagnosis();
+            // 内存与缓存卡片 (自带快照签名守卫, 统计未变不重建)
+            if (typeof renderCachePanel === 'function') renderCachePanel();
           } else {
             if (typeof refreshDockData === 'function') refreshDockData();
           }
@@ -4932,13 +5326,18 @@
             valStr = String(val);
           }
 
+          const pinWarnLoc = isWarn ? varWarningLocation(warnings[k]) : '';
+          const pinWarnTitle = isWarn
+            ? ((warnings[k] && warnings[k].reason ? warnings[k].reason : '类型冲突或NaN') + (pinWarnLoc ? (' · ' + pinWarnLoc) : ''))
+            : '';
           html += `
             <div class="yami-pinned-item">
               <span class="yami-pinned-name" title="ID: ${escapeHtml(k)}">${escapeHtml(metaName)}</span>
               <div style="display: flex; align-items: center; gap: 4px;">
-                ${isWarn ? '<span class="yami-pinned-warn" title="' + escapeHtml(warnings[k] ? warnings[k].reason : '类型冲突或NaN') + '">[异常]</span>' : ''}
+                ${isWarn ? '<span class="yami-pinned-warn" title="' + escapeHtml(pinWarnTitle) + '">[异常]</span>' : ''}
                 <span class="yami-pinned-val">${escapeHtml(valStr)}</span>
               </div>
+              ${pinWarnLoc ? ('<div class="yami-pinned-warn-line">' + escapeHtml(pinWarnLoc) + '</div>') : ''}
             </div>
           `;
         }
@@ -5497,6 +5896,15 @@
         const switchesObj = data.switches || {};
         const allKeys = Array.from(new Set([...Object.keys(varsObj), ...Object.keys(switchesObj), ...this.dict.variables.keys()]));
 
+        // 变量写入被丢弃的告警 (探针侧记录了「哪条事件第几步写的」)
+        let varWarnings = {};
+        try {
+          const probe = window.__YAMI_PERF_PROBE__;
+          if (probe && typeof probe.getVariableWarnings === 'function') {
+            varWarnings = probe.getVariableWarnings() || {};
+          }
+        } catch (e) {}
+
         const kw = this.varKeyword.toLowerCase().trim();
         const items = [];
 
@@ -5555,6 +5963,12 @@
           const tagColor = it.isSwitch ? '#4ade80' : (it.type === 'string' ? '#38bdf8' : '#eab308');
           const isPinned = PinnedWidget.isPinned(it.key);
           const pinBtnHtml = `<div class="btn-pin-var ${isPinned ? 'pinned' : ''}" data-key="${it.key}" role="button" title="固定/取消固定到监视小窗">${isPinned ? '[已盯]' : '[盯]'}</div>`;
+          // 写入被引擎静默丢弃时, 直接把「是谁写的」摆在这一行下面 (而不是只报一个症状)
+          const warnInfo = varWarnings[it.key];
+          const warnLoc = warnInfo ? varWarningLocation(warnInfo) : '';
+          const warnLine = warnInfo
+            ? `<div class="yami-save-var-warn">[写入被丢弃] ${escapeHtml(warnInfo.reason || '')}${warnLoc ? (' · ' + escapeHtml(warnLoc)) : ''}${(warnInfo.count > 1) ? (' · 已发生 ' + warnInfo.count + ' 次') : ''}</div>`
+            : '';
 
           if (it.isSwitch) {
             const checked = Boolean(it.val);
@@ -5568,6 +5982,7 @@
                   </div>
                   <span class="yami-save-var-id">ID: ${it.key}${it.note ? (' · ' + it.note) : ''}</span>
                 </div>
+                ${warnLine}
                 <div style="display: flex; align-items: center; gap: 8px;">
                   ${pinBtnHtml}
                   <label class="yami-save-toggle">
@@ -5589,9 +6004,10 @@
                   </div>
                   <span class="yami-save-var-id">ID: ${it.key}${it.note ? (' · ' + it.note) : ''}</span>
                 </div>
+                ${warnLine}
                 <div style="display: flex; align-items: center; gap: 8px;">
                   ${pinBtnHtml}
-                  <input class="yami-save-input var-number-input" data-key="${it.key}" type="text" value="${escapeHtml(displayVal)}" style="width: 110px; text-align: right;" />
+                  <input class="yami-save-input var-number-input" data-key="${it.key}" type="text" value="${escapeHtml(displayVal)}" style="width: 110px; text-align: end;" />
                 </div>
               </div>
             `;
@@ -6192,7 +6608,7 @@
       _actorRowHtml(key, a) {
         const open = !!this.open[key];
         let h = '<div class="yami-scene-row' + (open ? ' open' : '') + '" data-open-key="' + key + '" role="button">'
-          + '<span class="yami-scene-arrow">' + (open ? '▾' : '▸') + '</span>'
+          + '<span class="yami-scene-arrow">' + ico(open ? 'chevronDown' : 'chevronRight') + '</span>'
           + '<span class="yami-scene-name">' + escapeHtml(a.name) + '</span>'
           + '<span class="yami-scene-tags">';
         if (a.isPlayer) h += '<i class="yami-scene-tag player">主角</i>';
@@ -6230,7 +6646,7 @@
       _regionRowHtml(key, r) {
         const open = !!this.open[key];
         let h = '<div class="yami-scene-row' + (open ? ' open' : '') + '" data-open-key="' + key + '" role="button">'
-          + '<span class="yami-scene-arrow">' + (open ? '▾' : '▸') + '</span>'
+          + '<span class="yami-scene-arrow">' + ico(open ? 'chevronDown' : 'chevronRight') + '</span>'
           + '<span class="yami-scene-name">' + escapeHtml(r.name) + '</span>'
           + '<span class="yami-scene-tags">' + (r.actorCount > 0 ? '<i class="yami-scene-tag inside">区内 ' + r.actorCount + '</i>' : '') + '</span>'
           + '<span class="yami-scene-coord">(' + r.x + ', ' + r.y + ')</span>'
@@ -6701,26 +7117,17 @@
       const probe = window.__YAMI_PERF_PROBE__;
       if (!probe || !probe.getSuspend) return;
       const s = probe.getSuspend();
-      if (quickMuteActors) {
-        quickMuteActors.classList.toggle('active', s.actors === true);
-        quickMuteActors.textContent = s.actors ? '▶ 恢复怪物与NPC (已冻结)' : '⏸ 冻结怪物与NPC (主角正常)';
-      }
-      if (quickMuteParticles) {
-        quickMuteParticles.classList.toggle('active', s.emitters === true);
-        quickMuteParticles.textContent = s.emitters ? '▶ 恢复粒子 (已关闭)' : '⏸ 临时关闭粒子';
-      }
-      if (quickMuteEvents) {
-        quickMuteEvents.classList.toggle('active', s.events === true);
-        quickMuteEvents.textContent = s.events ? '▶ 恢复公共事件 (已暂停)' : '⏸ 临时暂停公共事件';
-      }
-      if (quickMuteAudio) {
-        quickMuteAudio.classList.toggle('active', s.audio === true);
-        quickMuteAudio.textContent = s.audio ? '▶ 恢复音效播放 (已静音)' : '⏸ 临时静音音效SE (排查音频)';
-      }
-      if (quickMuteUI) {
-        quickMuteUI.classList.toggle('active', s.ui === true);
-        quickMuteUI.textContent = s.ui ? '▶ 恢复界面UI (已隐藏)' : '⏸ 临时隐藏界面与飘字UI';
-      }
+      // 图标 + 文案一次组装: 图标取官方 Remix 矢量(ico), 状态色由 .active 的 CSS currentColor 决定
+      const setQuickBtn = (el, on, onText, offText) => {
+        if (!el) return;
+        el.classList.toggle('active', on === true);
+        el.innerHTML = ico(on ? 'play' : 'pause') + (on ? onText : offText);
+      };
+      setQuickBtn(quickMuteActors, s.actors, '恢复怪物与NPC (已冻结)', '冻结怪物与NPC (主角正常)');
+      setQuickBtn(quickMuteParticles, s.emitters, '恢复粒子 (已关闭)', '临时关闭粒子');
+      setQuickBtn(quickMuteEvents, s.events, '恢复公共事件 (已暂停)', '临时暂停公共事件');
+      setQuickBtn(quickMuteAudio, s.audio, '恢复音效播放 (已静音)', '临时静音音效SE (排查音频)');
+      setQuickBtn(quickMuteUI, s.ui, '恢复界面UI (已隐藏)', '临时隐藏界面与飘字UI');
     }
 
     if (quickMuteActors) {
@@ -6858,7 +7265,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '0.9.1';
+      const cur = (probe && probe.version) ? probe.version : '0.11.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -6915,7 +7322,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '0.9.1') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '0.11.0') + ')');
           refreshVersionBadge();
         }
       });
@@ -7034,11 +7441,11 @@
               const topObj = j.objects && j.objects[0];
               const topMod = (j.updaters && j.updaters[0] && j.updaters[0].name) || 'Game Update';
               const who = esc(topObj ? ('' + (OBJ_KIND_LABEL[topObj.kind] || topObj.kind) + '·' + topObj.name) : topMod);
-              const upInfo = (j.textureUploadKB || 0) > 0 ? ('⤴ ' + j.textureUploadKB + 'KB ') : '';
+              const upInfo = (j.textureUploadKB || 0) > 0 ? (ico('upload') + j.textureUploadKB + 'KB ') : '';
               return `
                 <div class="yami-perf-jank-item" data-jframe="${j.frame}" role="button" style="display: flex; justify-content: space-between; align-items: center; padding: 3px 6px; background: #2e2020; border: 1px solid #482020; border-radius: 2px; font-size: 10px;">
                   <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><b>#${j.frame}</b> <b style="color: #ff4040;">${j.compute}ms</b> <span style="color: #c8a050; font-size: 10px;">${who}</span></span>
-                  <span style="color: #808080; font-family: Consolas, monospace; flex-shrink: 0; margin-left: 6px;">${upInfo}+${j.elapsedMs}ms</span>
+                  <span style="color: #808080; font-family: Consolas, monospace; flex-shrink: 0; margin-inline-start: 6px;">${upInfo}+${j.elapsedMs}ms</span>
                 </div>
               `;
             }).join('');
@@ -7121,7 +7528,7 @@
               const k = OBJ_KIND_LABEL[item.kind] || item.kind;
               return '<div class="yami-perf-objrow">'
                 + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span class="yami-perf-kind">' + esc(k) + '</span><span style="color:#ffffff;">' + esc(item.name) + '</span></span>'
-                + '<span style="font-family: Consolas, monospace; color: ' + (isBad ? '#f06000' : '#808080') + '; flex-shrink: 0; margin-left: 8px;">总 ' + item.total + 'ms | 均 ' + item.avg + 'ms | 峰 ' + item.max + 'ms</span>'
+                + '<span style="font-family: Consolas, monospace; color: ' + (isBad ? '#f06000' : '#808080') + '; flex-shrink: 0; margin-inline-start: 8px;">总 ' + item.total + 'ms | 均 ' + item.avg + 'ms | 峰 ' + item.max + 'ms</span>'
                 + '</div>'
                 + '<div class="yami-perf-bar-track"><div class="yami-perf-bar-fill' + (isBad ? ' bad' : '') + '" style="width:' + Math.min(100, Math.round(item.total / maxTotal * 100)) + '%;"></div></div>';
             }).join('');
@@ -7220,7 +7627,7 @@
       return arr.slice(0, 6).map(function (x) {
         return '<div class="yami-perf-objrow">'
           + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span class="yami-perf-kind">' + esc(OBJ_KIND_LABEL[x.kind] || x.kind || '') + '</span><span style="color:#e8e8e8;">' + esc(x.name || '') + '</span></span>'
-          + '<span style="font-family: Consolas, monospace; color: #ff9060; flex-shrink: 0; margin-left: 8px;">' + x.ms + 'ms</span>'
+          + '<span style="font-family: Consolas, monospace; color: #ff9060; flex-shrink: 0; margin-inline-start: 8px;">' + x.ms + 'ms</span>'
           + '</div>';
       }).join('');
     }
@@ -7228,7 +7635,7 @@
       if (!arr || !arr.length) return '<div style="color: #707070;">—</div>';
       return arr.slice(0, 6).map(function (x) {
         return '<div class="yami-perf-objrow"><span style="color:#e8e8e8;">' + esc(x.name || '') + '</span>'
-          + '<span style="font-family: Consolas, monospace; color: #a0a0a0; flex-shrink: 0; margin-left: 8px;">' + x.ms + 'ms</span></div>';
+          + '<span style="font-family: Consolas, monospace; color: #a0a0a0; flex-shrink: 0; margin-inline-start: 8px;">' + x.ms + 'ms</span></div>';
       }).join('');
     }
 

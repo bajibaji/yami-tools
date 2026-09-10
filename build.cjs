@@ -227,7 +227,16 @@ const requiredAnchors = [
   { name: '幽灵事件侦探面板骨架', pattern: /id="yami-ghost-list"/ },
   { name: '事件黑匣子渲染函数', pattern: /function renderEventBlackbox\(\)/ },
   { name: '事件黑匣子接线 probe API', pattern: /probe\.getEventBlackbox\(\)/ },
-  { name: '滞留事件一键结束接线', pattern: /probe\.finishEvent\(/ }
+  { name: '滞留事件一键结束接线', pattern: /probe\.finishEvent\(/ },
+  { name: '内存与缓存卡片骨架', pattern: /id="yami-cache-panel"/ },
+  { name: '一键清理缓存按钮', pattern: /id="btn-clear-asset-cache"/ },
+  { name: '缓存统计接线 probe API', pattern: /probe\.getCacheInfo\(\)/ },
+  { name: '缓存清理接线 probe API', pattern: /probe\.clearAssetCache\(\)/ },
+  { name: '变量告警事件定位渲染', pattern: /function varWarningLocation\(/ },
+  { name: '体检折叠计数渲染', pattern: /yami-audit-count/ },
+  { name: '体检涉及范围渲染', pattern: /yami-audit-item-scope/ },
+  { name: '体检按级别汇总', pattern: /stats\.levels/ },
+  { name: '滚动条单一事实源', pattern: /滚动条单一事实源/ }
 ];
 
 let failedCount = 0;
@@ -266,6 +275,40 @@ const nativeBtnHits = hudContent.match(/<button[\s>]/g) || [];
 if (nativeBtnHits.length > 0) {
   console.error(`❌ [断言失败] 检测到 ${nativeBtnHits.length} 处原生 <button> 标签，违反铁律②，请改用 <div role="button">！`);
   failedCount++;
+}
+
+// 铁律㉑: 任何声明了 overflow auto/scroll 的容器都必须被滚动条样式覆盖
+// (历史教训: 滚动条样式一直是「谁新加容器谁自己补」, 于是每加一个模块就漏一个,
+//  运行日志页的事件流水/幽灵侦探两个列表就漏了, 在暗黑大盘里露出系统亮色滚动条)
+if (styleCssContent) {
+  const cssNoComment = styleCssContent.replace(/\/\*[\s\S]*?\*\//g, '');
+  const scrollSelectors = new Set();
+  const barSelectors = new Set();
+  const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
+  let rm;
+  while ((rm = ruleRe.exec(cssNoComment))) {
+    const selList = rm[1].trim();
+    const body = rm[2];
+    if (selList.includes('::-webkit-scrollbar')) {
+      for (const one of selList.split(',')) {
+        const base = one.trim().split('::-webkit-scrollbar')[0].trim();
+        if (base) barSelectors.add(base);
+      }
+      continue;
+    }
+    if (/overflow(-y)?\s*:\s*(auto|scroll)/.test(body)) {
+      for (const one of selList.split(',')) {
+        const base = one.trim();
+        if (base) scrollSelectors.add(base);
+      }
+    }
+  }
+  const uncovered = [...scrollSelectors].filter((s) => !barSelectors.has(s));
+  if (uncovered.length > 0) {
+    console.error(`❌ [断言失败] 以下滚动容器没有滚动条样式 (会在暗黑大盘里露出系统亮色滚动条): ${uncovered.join(' / ')}`);
+    console.error('   修法: 把选择器加进 src/style.css 末尾「滚动条单一事实源」选择器组 (新容器还需自带宽度)');
+    failedCount++;
+  }
 }
 
 if (failedCount > 0) {

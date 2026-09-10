@@ -35,8 +35,10 @@ const vfs = {
       { id: 'setNumber', params: { variable: { type: 'global', key: 'aaaa1111bbbb2222' }, value: 100 } },
       // 引用合法存在的公共事件C
       { id: 'callEvent', params: { eventId: '7777888899990000' } },
-      // 故意引用不存在的幽灵变量 GUID (断链)
-      { id: 'setNumber', params: { variable: { type: 'global', key: 'deadbeefdeadbeef' }, value: 1 } }
+      // 故意引用不存在的幽灵变量 GUID (断链) —— 出现在指令里, 属"可能失效"级
+      { id: 'setNumber', params: { variable: { type: 'global', key: 'deadbeefdeadbeef' }, value: 1 } },
+      // 引用「界面元素内部定义的 id」(资产文件里定义的键) —— 不是断链
+      { id: 'setObject', params: { variable: { type: 'element', element: { type: 'by-id', presetId: 'cafebabe00001111' }, key: 'cafebabe00001111' }, operand: { type: 'constant', value: 1 } } }
     ]
   }),
 
@@ -50,6 +52,33 @@ const vfs = {
   'C:/mock-game/Assets/事件/公共奖励.7777888899990000.event': JSON.stringify({
     type: 'common',
     commands: []
+  }),
+
+  // 事件D: 被界面资产引用 (不是 callEvent 入边) → 旧版会误判为死事件
+  'C:/mock-game/Assets/事件/血条刷新.aaaa3333bbbb4444.event': JSON.stringify({
+    type: 'common',
+    commands: []
+  }),
+
+  // 事件E: 被工程脚本按 GUID 调用 → 旧版会误判为死事件
+  'C:/mock-game/Assets/事件/脚本调用.bbbb5555cccc6666.event': JSON.stringify({
+    type: 'common',
+    commands: []
+  }),
+
+  // 脚本: 按 GUID 调用事件E
+  'C:/mock-game/DANJUAN TOOLS/桥接工具.ts': "export function go() { EventManager.call('bbbb5555cccc6666') }\n",
+
+  // 界面资产: 内部定义了元素 id (cafebabe00001111), 并引用事件D
+  'C:/mock-game/Assets/UI/主界面.9999000011112222.ui': JSON.stringify({
+    nodes: [{ id: 'cafebabe00001111', name: '血条' }],
+    events: [{ type: 'update', boundEvent: 'aaaa3333bbbb4444' }]
+  }),
+
+  // 角色资产: portrait 指向一张已被删除的图片 → "会影响运行"级
+  'C:/mock-game/Assets/角色/勇者.1212121212121212.actor': JSON.stringify({
+    portrait: 'ffff777788889999',
+    sprites: []
   }),
 
   // 场景文件
@@ -149,19 +178,38 @@ check('体检扫描成功', result && result.ok === true);
 check('统计资产文件数', result.stats && result.stats.files >= 4, 'files=' + result.stats.files);
 check('统计注册变量数', result.stats && result.stats.variables >= 3, 'vars=' + result.stats.variables);
 
-// 检查断链
+// 检查断链 (v0.11.0 起按 GUID 折叠 + 分级 + 白话影响)
 const broken = result.issues.filter(i => i.kind === 'broken');
-check('精准捕获到 1 处断链引用', broken.length === 1, 'broken=' + broken.length);
+check('精准捕获到 2 类引用丢失 (变量键 + 立绘)', broken.length === 2, 'broken=' + broken.length);
 check('断链包含丢失 GUID deadbeefdeadbeef', broken[0] && broken[0].guid === 'deadbeefdeadbeef');
 check('断链定位到具体文件与步骤', broken[0] && broken[0].cmdIndex === 2);
 check('断链包含白话描述 desc', broken[0] && String(broken[0].desc).includes('第 3 步指令'));
+check('折叠字段: 引用次数与涉及文件', broken[0] && broken[0].count === 1 && Array.isArray(broken[0].files) && broken[0].fileCount === 1,
+  JSON.stringify({ count: broken[0] && broken[0].count, fileCount: broken[0] && broken[0].fileCount }));
+check('分级: 指令里写已删属性 → 可能失效(mid)', broken[0] && broken[0].category === 'property' && broken[0].level === 'mid',
+  broken[0] && (broken[0].category + '/' + broken[0].level));
+check('白话影响: 说明"指令会静默失效"', broken[0] && String(broken[0].impact).includes('静默失效'));
+const resourceIssue = broken.filter(b => b.category === 'resource')[0];
+check('分级: 立绘/图片丢失 → 会影响运行(high)', !!resourceIssue && resourceIssue.level === 'high',
+  resourceIssue && resourceIssue.level);
+check('白话影响: 说明"游戏里会显示不出来"', !!resourceIssue && String(resourceIssue.impact).includes('显示不出来'));
+check('汇总统计: 折叠后的类数与处数', result.stats.missingIds === 2 && result.stats.missingRefs === 2,
+  JSON.stringify({ ids: result.stats.missingIds, refs: result.stats.missingRefs }));
+check('汇总统计: 按级别计数', result.stats.levels && result.stats.levels.high === 1 && result.stats.levels.mid === 1,
+  JSON.stringify(result.stats.levels));
 
-// 检查死事件
+// 字典补全: 资产文件内部定义的 id 不算断链
+check('界面元素内部定义的 id 未被误报', !broken.some(b => b.guid === 'cafebabe00001111'));
+
+// 检查死事件 (入边补全: 界面绑定 / 脚本按 GUID 调用)
 const dead = result.issues.filter(i => i.kind === 'dead');
 check('精准捕获到 1 个死事件', dead.length === 1, 'dead=' + dead.length);
 check('死事件定位到未使用的分支.event', dead[0] && dead[0].name === '未使用的分支');
 check('startup 事件未被误判为死事件', !dead.some(d => d.name.includes('启动游戏')));
 check('被 callEvent 引用的公共奖励事件未被误判为死事件', !dead.some(d => d.name.includes('公共奖励')));
+check('被界面资产引用的事件未被误判为死事件', !dead.some(d => d.name.includes('血条刷新')));
+check('被脚本按 GUID 调用的事件未被误判为死事件', !dead.some(d => d.name.includes('脚本调用')));
+check('死事件带白话影响说明', dead[0] && String(dead[0].impact).includes('可以放心删'));
 
 console.log('=== 2. HUD 接线静态契约与门禁断言 ===');
 check('HUD 模板包含工程体检面板骨架', hudSrc.includes('id="yami-audit-panel"'));
