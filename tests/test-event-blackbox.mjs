@@ -406,15 +406,15 @@ try {
   check('流水含中文事件名', flowHtml.indexOf('主线剧情') >= 0);
   check('流水含白话指令与步号', flowHtml.indexOf('等待 4321 毫秒') >= 0 && flowHtml.indexOf('第 1') >= 0,
     'len=' + flowHtml.length);
-  check('幽灵侦探渲染「宿主已销毁」红标', ghostHtml.indexOf('宿主已销毁') >= 0, 'len=' + ghostHtml.length);
+  check('幽灵侦探渲染「所属对象已被删除」红标', ghostHtml.indexOf('所属对象已被删除') >= 0, 'len=' + ghostHtml.length);
   check('幽灵卡片带中文宿主名', ghostHtml.indexOf('角色「冒烟守卫」') >= 0);
   const finishMatch = ghostHtml.match(/data-finish-event="(\d+)"/);
   check('幽灵卡片含一键结束按钮', !!finishMatch && ghostHtml.indexOf('结束事件') >= 0);
 
   const ghostStatus = byId['yami-ghost-status'];
-  check('幽灵面板徽标显示滞留数', !!ghostStatus && ghostStatus._text.indexOf('滞留') >= 0, 'badge=' + (ghostStatus && ghostStatus._text));
+  check('幽灵面板徽标显示卡住数', !!ghostStatus && ghostStatus._text.indexOf('卡住') >= 0, 'badge=' + (ghostStatus && ghostStatus._text));
   const flowStatus = byId['yami-eventflow-status'];
-  check('流水面板徽标显示记录中', !!flowStatus && flowStatus._text.indexOf('记录中') >= 0, 'badge=' + (flowStatus && flowStatus._text));
+  check('流水面板徽标显示已记录条数', !!flowStatus && flowStatus._text.indexOf('已记录') >= 0, 'badge=' + (flowStatus && flowStatus._text));
 
   // 真点一次「结束事件」按钮, 验证接线端到端可用
   if (finishMatch && ghostEl._on && ghostEl._on.click) {

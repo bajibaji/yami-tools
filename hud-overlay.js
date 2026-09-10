@@ -3280,7 +3280,7 @@
                 </div>
                 <div>
                   <div class="yami-home-module-title">运行日志</div>
-                  <div class="yami-home-module-desc">报错、事件流水与滞留侦探</div>
+                  <div class="yami-home-module-desc">报错、事件流水与卡住排查</div>
                 </div>
               </div>
               <div class="yami-home-module-badge green" id="yami-home-error-badge">进入</div>
@@ -3361,7 +3361,7 @@
             <div class="yami-audit-list" id="yami-audit-list" style="display: none;"></div>
           </div>
 
-          <!-- 事件流水 (最近 20 步事件指令: 启动/执行/等待/挂起/结束) -->
+          <!-- 事件流水 (事件最近做了什么、停在哪一步) -->
           <div class="yami-eventflow-panel" id="yami-event-flow-panel">
             <div class="yami-eventflow-header">
               <div class="yami-eventflow-title-box">
@@ -3369,18 +3369,18 @@
                   <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M4 3H6V21H4V3ZM9 5H20V7H9V5ZM9 11H20V13H9V11ZM9 17H20V19H9V17Z"></path></svg>
                   事件流水
                 </span>
-                <span class="yami-eventflow-badge idle" id="yami-eventflow-status">[静默]</span>
+                <span class="yami-eventflow-badge idle" id="yami-eventflow-status">[暂无记录]</span>
               </div>
-              <div class="yami-eventflow-hint" id="yami-eventflow-summary">最近 20 步事件指令，剧情卡住时看这里。</div>
+              <div class="yami-eventflow-hint" id="yami-eventflow-summary">事件最近做了什么、停在哪一步，剧情卡住时看这里。</div>
             </div>
             <div class="yami-eventflow-list" id="yami-event-flow-list">
               <div class="yami-eventflow-empty">
-                暂无事件执行记录。
+                暂无记录。游戏里触发一次事件或对话，这里就会显示它每一步在做什么。
               </div>
             </div>
           </div>
 
-          <!-- 幽灵事件侦探 (滞留挂起 / 宿主已销毁, 可一键结束) -->
+          <!-- 幽灵事件侦探 (卡住不动 / 所属对象已被删除, 可一键结束) -->
           <div class="yami-ghost-panel" id="yami-ghost-panel">
             <div class="yami-ghost-header">
               <div class="yami-ghost-title-box">
@@ -3388,13 +3388,13 @@
                   <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 2.5L22.5 21H1.5L12 2.5ZM12 6.9L4.6 19.5H19.4L12 6.9ZM11 10H13V15H11V10ZM11 16.5H13V18.5H11V16.5Z"></path></svg>
                   幽灵事件侦探
                 </span>
-                <span class="yami-ghost-badge idle" id="yami-ghost-status">[无滞留]</span>
+                <span class="yami-ghost-badge idle" id="yami-ghost-status">[一切正常]</span>
               </div>
-              <div class="yami-ghost-hint" id="yami-ghost-summary">剧情不继续又没有任何报错时，这里能看到卡住的事件。</div>
+              <div class="yami-ghost-hint" id="yami-ghost-summary">事件卡住不动时（剧情不继续、又没有任何报错），这里会列出来。</div>
             </div>
             <div class="yami-ghost-list" id="yami-ghost-list">
               <div class="yami-ghost-empty">
-                没有发现滞留事件。
+                没有卡住的事件，剧情都还走得动。
               </div>
             </div>
           </div>
@@ -3715,7 +3715,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.9.0 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.9.1 (检查更新)</span>
         </div>
         <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
@@ -3902,7 +3902,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v0.9.0 (DanJuan妙妙插件)',
+        '- **插件版本**: v0.9.1 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -4003,7 +4003,7 @@
     // ------------------------------------------------------------
     // 数据源 probe.getEventBlackbox(): 引擎所有事件经 EventHandler.call 起步,
     // probe 在编译期建立「原始指令 ↔ 编译槽位」映射, 运行时把 event.index 翻译回
-    // 「第几步 + 那条指令在做什么」; 幽灵判定 = 宿主已销毁 或 长时间无进展。
+    // 「第几步 + 那条指令在做什么」; 幽灵判定 = 所属对象已被删除 或 长时间没在动。
     // 遵从铁律⑲: 走快照签名守卫, 内容未变时绝不重建 DOM (心跳每 150ms 调一次 refresh)。
     // ============================================================
     let eventBlackboxSig = '';
@@ -4011,11 +4011,11 @@
     let eventBlackboxFlash = null;
 
     const EVENT_ACTION_LABEL = {
-      start: '启动', run: '执行', wait: '等待', pause: '暂停', suspend: '挂起', end: '结束'
+      start: '开始', run: '进行中', wait: '等待中', pause: '已暂停', suspend: '停住了', end: '结束了'
     };
 
     const EVENT_STATE_LABEL = {
-      running: '执行中', waiting: '等待中', paused: '已暂停', suspended: '无进展', done: '已结束', unknown: '执行中'
+      running: '进行中', waiting: '等待中', paused: '已暂停', suspended: '卡住了', done: '已结束', unknown: '进行中'
     };
 
     function formatEventDuration(ms) {
@@ -4068,7 +4068,7 @@
         }
         // 反馈文案走短时提示位, 否则会被紧随其后的常规渲染立刻覆盖
         eventBlackboxFlash = {
-          text: ok ? '已结束该滞留事件，引用已摘除。' : '结束失败：该事件可能已自行结束。',
+          text: ok ? '已结束这个卡住的事件。' : '没有结束成功：它可能已经自己结束了。',
           until: Date.now() + 4000
         };
         eventBlackboxSig = ''; // 强制下一帧重绘
@@ -4093,7 +4093,7 @@
 
         const entries = box.entries || [];
         const active = box.active || [];
-        // 侦探台收录: 幽灵事件(宿主已销毁/长时间无进展) 一定入列, 其余收录「没在正常推进」的
+        // 侦探台收录: 幽灵事件(所属对象已被删除/长时间没在动) 一定入列, 其余收录「没在正常推进」的
         const stuck = active.filter(function (a) {
           return a.ghost === true || (a.state !== 'running' && a.state !== 'done');
         });
@@ -4117,24 +4117,24 @@
         if (flowStatusEl) {
           if (!box.trace) {
             flowStatusEl.className = 'yami-eventflow-badge warn';
-            flowStatusEl.textContent = '[仅步骤]';
+            flowStatusEl.textContent = '[仅显示步数]';
           } else if (entries.length === 0) {
             flowStatusEl.className = 'yami-eventflow-badge idle';
-            flowStatusEl.textContent = '[静默]';
+            flowStatusEl.textContent = '[暂无记录]';
           } else {
             flowStatusEl.className = 'yami-eventflow-badge ok';
-            flowStatusEl.textContent = '[记录中 ' + entries.length + ' 条]';
+            flowStatusEl.textContent = '[已记录 ' + entries.length + ' 条]';
           }
         }
         if (flowSummaryEl) {
           flowSummaryEl.textContent = box.trace
-            ? '最近 20 步事件指令，剧情卡住时看这里。'
-            : '当前只能显示步数（指令名识别未就绪，重启工程后重新试玩即可）。';
+            ? '事件最近做了什么、停在哪一步，剧情卡住时看这里。'
+            : '暂时只能看到第几步；重启工程再试玩一次，就能看到它具体在做什么。';
         }
         flowListEl.innerHTML = entries.length === 0
-          ? '<div class="yami-eventflow-empty">暂无事件执行记录。游戏内触发事件或对话后即可看到流水。</div>'
+          ? '<div class="yami-eventflow-empty">暂无记录。游戏里触发一次事件或对话，这里就会显示它每一步在做什么。</div>'
           : entries.map(function (e) {
-            const action = EVENT_ACTION_LABEL[e.action] || '执行';
+            const action = EVENT_ACTION_LABEL[e.action] || '进行中';
             const stepText = e.step > 0
               ? ('第 ' + e.step + (e.total > 0 ? ' / ' + e.total : '') + ' 步')
               : '—';
@@ -4161,31 +4161,31 @@
         if (ghostStatusEl) {
           ghostStatusEl.className = 'yami-ghost-badge ' + (ghostCount > 0 ? 'danger' : (stuck.length > 0 ? 'warn' : 'idle'));
           ghostStatusEl.textContent = ghostCount > 0
-            ? ('[' + ghostCount + ' 个滞留]')
-            : (stuck.length > 0 ? ('[' + stuck.length + ' 个挂起]') : '[无滞留]');
+            ? ('[' + ghostCount + ' 个卡住]')
+            : (stuck.length > 0 ? ('[' + stuck.length + ' 个没在动]') : '[一切正常]');
         }
         if (ghostSummaryEl) {
           ghostSummaryEl.textContent = flash
             ? flash
             : (ghostCount > 0
-              ? '发现滞留事件，剧情不继续多半就是它们卡着，可逐条结束。'
-              : '剧情不继续又没有任何报错时，这里能看到卡住的事件。');
+              ? '有事件卡住了。剧情不继续，多半就是它们，可以逐条结束。'
+              : '事件卡住不动时（剧情不继续、又没有任何报错），这里会列出来。');
         }
         const showList = stuck.slice(0, 8);
         ghostListEl.innerHTML = showList.length === 0
-          ? '<div class="yami-ghost-empty">没有发现滞留事件。</div>'
+          ? '<div class="yami-ghost-empty">没有卡住的事件，剧情都还走得动。</div>'
           : showList.map(function (a) {
             const tags = [];
-            if (a.hostGone) tags.push('<span class="yami-ghost-tag danger">宿主已销毁</span>');
-            else if (a.stale) tags.push('<span class="yami-ghost-tag danger">长时间无进展</span>');
-            if (!a.driven) tags.push('<span class="yami-ghost-tag warn">已停止更新</span>');
+            if (a.hostGone) tags.push('<span class="yami-ghost-tag danger">所属对象已被删除</span>');
+            else if (a.stale) tags.push('<span class="yami-ghost-tag danger">卡住超过 1 分钟</span>');
+            if (!a.driven) tags.push('<span class="yami-ghost-tag warn">已经不再运行</span>');
             const metaParts = [];
-            if (a.host) metaParts.push('宿主：' + a.host);
-            if (a.suspendMs > 0) metaParts.push('已挂起 ' + formatEventDuration(a.suspendMs));
-            metaParts.push('状态：' + (EVENT_STATE_LABEL[a.state] || '执行中'));
+            if (a.host) metaParts.push('属于：' + a.host);
+            if (a.suspendMs > 0) metaParts.push('已停住 ' + formatEventDuration(a.suspendMs));
+            metaParts.push('状态：' + (EVENT_STATE_LABEL[a.state] || '进行中'));
             const stepText = a.step > 0
               ? ('停在第 ' + a.step + (a.total > 0 ? ' / ' + a.total : '') + ' 步 · ' + eventStepText(a))
-              : '尚未执行任何指令';
+              : '还没有走到任何一步';
             return '<div class="yami-ghost-card">'
               + '<div class="yami-ghost-card-head">'
               + '<span class="yami-ghost-name">' + escapeHtml(a.name || '未知事件') + '</span>'
@@ -4194,12 +4194,12 @@
               + '<div class="yami-ghost-card-meta">' + escapeHtml(metaParts.join(' · ')) + '</div>'
               + '<div class="yami-ghost-card-step">' + escapeHtml(stepText) + '</div>'
               + '<div class="yami-ghost-card-actions">'
-              + '<div class="yami-ghost-finish-btn" data-finish-event="' + escapeHtml(String(a.id)) + '" role="button" title="调用引擎原生结束回调，拔除滞留引用">结束事件</div>'
+              + '<div class="yami-ghost-finish-btn" data-finish-event="' + escapeHtml(String(a.id)) + '" role="button" title="结束这个卡住的事件，让它彻底停下来">结束事件</div>'
               + '</div>'
               + '</div>';
           }).join('')
             + (stuck.length > showList.length
-              ? '<div class="yami-ghost-more">另有 ' + (stuck.length - showList.length) + ' 个挂起事件未列出。</div>'
+              ? '<div class="yami-ghost-more">还有 ' + (stuck.length - showList.length) + ' 个没在动的事件没显示出来。</div>'
               : '');
       } catch (e) {}
     }
@@ -6858,7 +6858,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '0.9.0';
+      const cur = (probe && probe.version) ? probe.version : '0.9.1';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -6915,7 +6915,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '0.9.0') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '0.9.1') + ')');
           refreshVersionBadge();
         }
       });
