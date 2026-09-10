@@ -222,7 +222,12 @@ const requiredAnchors = [
   { name: '工程体检面板骨架', pattern: /id="yami-audit-panel"/ },
   { name: '一键体检按钮', pattern: /id="btn-run-project-audit"/ },
   { name: '工程体检接线 probe API', pattern: /probe\.runProjectAudit/ },
-  { name: '报错事件执行定位渲染', pattern: /yami-error-event-ctx/ }
+  { name: '报错事件执行定位渲染', pattern: /yami-error-event-ctx/ },
+  { name: '事件流水面板骨架', pattern: /id="yami-event-flow-list"/ },
+  { name: '幽灵事件侦探面板骨架', pattern: /id="yami-ghost-list"/ },
+  { name: '事件黑匣子渲染函数', pattern: /function renderEventBlackbox\(\)/ },
+  { name: '事件黑匣子接线 probe API', pattern: /probe\.getEventBlackbox\(\)/ },
+  { name: '滞留事件一键结束接线', pattern: /probe\.finishEvent\(/ }
 ];
 
 let failedCount = 0;

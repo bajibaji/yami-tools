@@ -2855,3 +2855,255 @@
         border-radius: 2px !important;
         flex-shrink: 0 !important;
       }
+      /* ============ 事件黑匣子: 事件流水 + 幽灵事件侦探 (运行日志页) ============ */
+      .yami-eventflow-panel,
+      .yami-ghost-panel {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        flex-shrink: 0 !important;
+        background: #202020 !important;
+        border: 1px solid #333333 !important;
+        border-radius: 4px !important;
+        padding: 8px 10px !important;
+        box-sizing: border-box !important;
+      }
+      .yami-eventflow-header,
+      .yami-ghost-header {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+        min-width: 0 !important;
+      }
+      .yami-eventflow-title-box,
+      .yami-ghost-title-box {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .yami-eventflow-title,
+      .yami-ghost-title {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 5px !important;
+        font-size: 12px !important;
+        font-weight: 600 !important;
+        color: #f0f0f0 !important;
+        white-space: nowrap !important;
+      }
+      .yami-eventflow-badge,
+      .yami-ghost-badge {
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        padding: 1px 5px !important;
+        border-radius: 2px !important;
+        white-space: nowrap !important;
+        flex-shrink: 0 !important;
+        background: #303030 !important;
+        color: #999999 !important;
+        border: 1px solid #3d3d3d !important;
+      }
+      .yami-eventflow-badge.ok,
+      .yami-ghost-badge.ok {
+        background: #064e3b !important;
+        color: #1cff9b !important;
+        border-color: #059669 !important;
+      }
+      .yami-eventflow-badge.warn,
+      .yami-ghost-badge.warn {
+        background: #451a03 !important;
+        color: #fbbf24 !important;
+        border-color: #d97706 !important;
+      }
+      .yami-ghost-badge.danger {
+        background: #450a0a !important;
+        color: #ff8888 !important;
+        border-color: #dc2626 !important;
+      }
+      .yami-eventflow-hint,
+      .yami-ghost-hint {
+        font-size: 10px !important;
+        color: #888888 !important;
+        line-height: 1.5 !important;
+      }
+      .yami-eventflow-list {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+        max-height: 190px !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+      }
+      .yami-ghost-list {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        max-height: 150px !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+      }
+      .yami-eventflow-empty,
+      .yami-ghost-empty {
+        font-size: 11px !important;
+        color: #777777 !important;
+        padding: 4px 0 !important;
+        line-height: 1.5 !important;
+      }
+      .yami-eventflow-row {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 2px !important;
+        background: #242424 !important;
+        border: 1px solid #303030 !important;
+        border-left: 3px solid #3d3d3d !important;
+        border-radius: 2px !important;
+        padding: 4px 7px !important;
+        box-sizing: border-box !important;
+      }
+      .yami-eventflow-row-head {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        flex-wrap: wrap !important;
+        min-width: 0 !important;
+      }
+      .yami-eventflow-time {
+        font-family: Consolas, monospace !important;
+        font-size: 10px !important;
+        color: #777777 !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-eventflow-action {
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        padding: 0 5px !important;
+        height: 15px !important;
+        line-height: 15px !important;
+        border-radius: 2px !important;
+        flex-shrink: 0 !important;
+        background: #303030 !important;
+        color: #cccccc !important;
+      }
+      .yami-eventflow-action.act-start { background: #172554 !important; color: #60a5fa !important; }
+      .yami-eventflow-action.act-run { background: #303030 !important; color: #cccccc !important; }
+      .yami-eventflow-action.act-wait { background: #451a03 !important; color: #fbbf24 !important; }
+      .yami-eventflow-action.act-pause { background: #3d3d3d !important; color: #ffb088 !important; }
+      .yami-eventflow-action.act-suspend { background: #450a0a !important; color: #ff8888 !important; }
+      .yami-eventflow-action.act-end { background: #064e3b !important; color: #1cff9b !important; }
+      .yami-eventflow-name {
+        font-size: 11px !important;
+        font-weight: 600 !important;
+        color: #f0f0f0 !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        max-width: 46% !important;
+      }
+      .yami-eventflow-step {
+        font-size: 10px !important;
+        color: #999999 !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-eventflow-count {
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        color: #ff9060 !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-eventflow-desc {
+        font-size: 11px !important;
+        color: #b8b8b8 !important;
+        line-height: 1.45 !important;
+        word-break: break-all !important;
+      }
+      .yami-eventflow-extra {
+        margin-left: 6px !important;
+        font-size: 10px !important;
+        color: #fbbf24 !important;
+      }
+      .yami-ghost-card {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+        background: #241c1c !important;
+        border: 1px solid #3c1e1e !important;
+        border-left: 3px solid #ff4040 !important;
+        border-radius: 2px !important;
+        padding: 6px 8px !important;
+        box-sizing: border-box !important;
+      }
+      .yami-ghost-card-head {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        flex-wrap: wrap !important;
+        min-width: 0 !important;
+      }
+      .yami-ghost-name {
+        font-size: 11px !important;
+        font-weight: 600 !important;
+        color: #f0f0f0 !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        max-width: 60% !important;
+      }
+      .yami-ghost-tag {
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        padding: 0 5px !important;
+        height: 15px !important;
+        line-height: 15px !important;
+        border-radius: 2px !important;
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
+      }
+      .yami-ghost-tag.danger { background: #450a0a !important; color: #ff8888 !important; }
+      .yami-ghost-tag.warn { background: #451a03 !important; color: #fbbf24 !important; }
+      .yami-ghost-card-meta {
+        font-size: 10px !important;
+        color: #999999 !important;
+        line-height: 1.45 !important;
+        word-break: break-all !important;
+      }
+      .yami-ghost-card-step {
+        font-size: 11px !important;
+        color: #d8d8d8 !important;
+        line-height: 1.45 !important;
+        word-break: break-all !important;
+      }
+      .yami-ghost-card-actions {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .yami-ghost-finish-btn {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        position: static !important;
+        box-sizing: border-box !important;
+        user-select: none !important;
+        min-width: 76px !important;
+        height: 22px !important;
+        line-height: 22px !important;
+        padding: 0 8px !important;
+        font-size: 11px !important;
+        font-weight: 600 !important;
+        white-space: nowrap !important;
+        flex-shrink: 0 !important;
+        background: #303030 !important;
+        color: #ffffff !important;
+        border: 1px solid #3d3d3d !important;
+        border-radius: 2px !important;
+        cursor: pointer !important;
+      }
+      .yami-ghost-finish-btn:hover {
+        background: #3d3d3d !important;
+        border-color: #555555 !important;
+      }
+      .yami-ghost-more {
+        font-size: 10px !important;
+        color: #777777 !important;
+        padding: 2px 0 !important;
+      }

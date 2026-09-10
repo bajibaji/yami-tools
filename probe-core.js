@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '0.8.1';
+  const PROBE_VERSION = '0.9.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -180,6 +180,22 @@
 
   function addFrame(map, name, ms) {
     map.set(name, (map.get(name) || 0) + ms);
+  }
+
+  // 事件名解析: 事件文件名形如「新手村.0a1b2c3d4e5f6071.event」, GUID 段之前就是中文名。
+  // 体检字典命中时优先取字典权威名, 最终回退文件名 —— 保证界面永不裸露 GUID (铁律⑱)。
+  function resolveEventNameFromPath(file) {
+    try {
+      const name = String(file || '');
+      if (!name) return '';
+      const guidMatch = name.match(/\.([0-9a-f]{16})\.event$/);
+      if (guidMatch && projectAudit.names && projectAudit.names.has(guidMatch[1])) {
+        return projectAudit.names.get(guidMatch[1]).name;
+      }
+      return name.replace(/\.event$/, '').replace(/\.([0-9a-f]{16})$/, '') || '';
+    } catch (e) {
+      return '';
+    }
   }
 
   function moduleName(mod, list, index, kind) {
@@ -455,48 +471,64 @@
     try {
       const list = typeof EventManager !== 'undefined' && EventManager.activeEvents ? EventManager.activeEvents : [];
       for (const event of Array.from(list)) {
-        if (!event || typeof event.update !== 'function') continue;
-        // 引擎在「等待/暂停/继续」时会整体替换 event.update (event.ts set/continue/pause 分别换成 tick/wait/complete)，
-        // 此时旧包装器已被顶掉 → 必须允许重新包装当前实现，否则该事件耗时从此永久丢失
-        if (event.__yamiPerfProbeEventWrapped__ && event.update === event.__yamiPerfProbeWrapper__) continue;
-        let name = 'event';
-        try {
-          const initial = event.initial || event.commands || {};
-          const eventType = event.type || initial.type || '';
-          const eventPath = event.path || initial.path || '';
-          const file = String(eventPath || '').split('/').pop() || '';
-          const parentName = event.parent && event.parent.constructor && event.parent.constructor.name ? '(' + event.parent.constructor.name + ')' : '';
-          name = (eventType || 'event') + ' :: ' + (file || parentName || 'unknown');
-        } catch (e) {}
-        const orig = event.update.bind(event);
-        const wrapper = function () {
-          if (state.suspend.events === true) return undefined;
-          const t0 = now();
-          let r;
-          let stackEntry = null;
-          try {
-            // 报错定位: 入栈记录当前事件, 异常捕获时反查「哪个事件第几步」
-            stackEntry = { ev: event };
-            if (eventExecStack.length < 40) eventExecStack.push(stackEntry);
-            r = orig.apply(this, arguments);
-          } finally {
-            if (stackEntry) {
-              const si = eventExecStack.lastIndexOf(stackEntry);
-              if (si >= 0) eventExecStack.splice(si, 1);
-            }
-            const ms = now() - t0;
-            rec(state.eventTotal, name, ms);
-            addFrame(frameEventMs, name, ms);
-            if (recentEventHistory.length > 50) recentEventHistory.shift();
-            recentEventHistory.push({ name: name, ms: round3(ms), time: Date.now() });
-          }
-          return r;
-        };
-        Object.defineProperty(event, '__yamiPerfProbeEventWrapped__', { value: true, configurable: true });
-        event.__yamiPerfProbeWrapper__ = wrapper;
-        event.update = wrapper;
+        wrapEventInstance(event);
       }
     } catch (e) {}
+  }
+
+  // 包装单个事件的 update: 微秒级耗时 + 报错定位入栈 + 事件黑匣子状态时间戳(拦截/推进)
+  function wrapEventInstance(event) {
+    if (!event || typeof event.update !== 'function') return false;
+    // 引擎在「等待/暂停/继续」时会整体替换 event.update (event.ts set/continue/pause 分别换成 tick/wait/complete)，
+    // 此时旧包装器已被顶掉 → 必须允许重新包装当前实现，否则该事件耗时从此永久丢失
+    if (event.__yamiPerfProbeEventWrapped__ && event.update === event.__yamiPerfProbeWrapper__) return false;
+    let name = 'event';
+    try {
+      const initial = event.initial || event.commands || {};
+      const eventType = event.type || initial.type || '';
+      const eventPath = event.path || initial.path || '';
+      const file = String(eventPath || '').split('/').pop() || '';
+      const parentName = event.parent && event.parent.constructor && event.parent.constructor.name ? '(' + event.parent.constructor.name + ')' : '';
+      name = (eventType || 'event') + ' :: ' + (file || parentName || 'unknown');
+    } catch (e) {}
+    const impl = event.update;
+    const orig = impl.bind(event);
+    const wrapper = function () {
+      if (state.suspend.events === true) return undefined;
+      const t0 = now();
+      let r;
+      let stackEntry = null;
+      const idxBefore = typeof event.index === 'number' ? event.index : -1;
+      try {
+        // 报错定位: 入栈记录当前事件, 异常捕获时反查「哪个事件第几步」
+        stackEntry = { ev: event };
+        if (eventExecStack.length < 40) eventExecStack.push(stackEntry);
+        r = orig.apply(this, arguments);
+      } finally {
+        if (stackEntry) {
+          const si = eventExecStack.lastIndexOf(stackEntry);
+          if (si >= 0) eventExecStack.splice(si, 1);
+        }
+        const ms = now() - t0;
+        rec(state.eventTotal, name, ms);
+        addFrame(frameEventMs, name, ms);
+        if (recentEventHistory.length > 50) recentEventHistory.shift();
+        recentEventHistory.push({ name: name, ms: round3(ms), time: Date.now() });
+        // 事件黑匣子: 记录「本帧被指令拦截(返回 false)」与「指令索引推进」时刻,
+        // 二者配合即可区分 等待计时 / 暂停 / 挂起等外部条件 (无需依赖引擎内部私有变量)
+        try {
+          if (r === false) event.__yamiEventBlockedAt__ = Date.now();
+          if (typeof event.index === 'number' && event.index !== idxBefore) event.__yamiEventProgressAt__ = Date.now();
+        } catch (e) {}
+      }
+      return r;
+    };
+    Object.defineProperty(event, '__yamiPerfProbeEventWrapped__', { value: true, configurable: true });
+    event.__yamiPerfProbeWrapper__ = wrapper;
+    event.__yamiEventWrapperRef__ = wrapper;
+    event.__yamiEventImplRef__ = impl;
+    event.update = wrapper;
+    return true;
   }
 
   function applyCheatsPerFrame() {
@@ -777,6 +809,9 @@
       state.hooked.renderers = (Game.renderers && Game.renderers.length) || 0;
     }
     wrapEventHandlers();
+    // 事件黑匣子: 编译期指令映射与事件启动钩子必须尽早装上 (引擎读完工程数据即编译事件)
+    installEventTrace();
+    installEventCallHook();
     wrapSceneObjects();
     if (state.objectTotal.size > 500) state.objectTotal.clear();
     if (typeof EventManager !== 'undefined' && EventManager.activeEvents) {
@@ -800,6 +835,7 @@
     
     objSampling = (state.frameSeq % 3 === 0) ? 1 : 0;
     if (state.frameSeq % 60 === 0) refresh();
+    scanEventTimeline();
 
     // 固化上一帧 WebGL 计数
     glStats.lastDrawCalls = glStats.drawCalls;
@@ -1602,14 +1638,7 @@
       const p = ev.path || initial.path || '';
       const file = String(p || '').split('/').pop() || '';
       const idx = typeof ev.index === 'number' ? ev.index : 0;
-      let eventName = '';
-      const guidMatch = file.match(/\.([0-9a-f]{16})\.event$/);
-      if (guidMatch && projectAudit.names && projectAudit.names.has(guidMatch[1])) {
-        eventName = projectAudit.names.get(guidMatch[1]).name;
-      }
-      if (!eventName) {
-        eventName = file.replace(/\.event$/, '').replace(/\.([0-9a-f]{16})$/, '') || '未知事件';
-      }
+      const eventName = resolveEventNameFromPath(file) || '未知事件';
 
       // 获取当前场景名称 (从 Scene.binding 反查中文场景名)
       let sceneName = '';
@@ -1636,6 +1665,656 @@
       };
     } catch (e) {
       return null;
+    }
+  }
+
+  // ============================================================
+  // 事件黑匣子 (Event Black Box): 指令级时间线 + 幽灵事件侦探
+  // ------------------------------------------------------------
+  // 引擎事实依据 (arpg-ts-chinese 模板源码, 逐条核对过):
+  //   · event.ts:766  EventHandler.call 是所有事件启动的唯一入口 (全局/角色/界面/触发器事件全部经此)
+  //   · event.ts:654  update() 把「当前指令列表 + 索引」写回 this.commands / this.index (索引指向下一条)
+  //   · event.ts:681  wait() → EventTimer.tick (timer.duration 逐帧倒计时)
+  //   · event.ts:690  pause() 把 update 换成 EventHandler.wait; event.ts:703 finish() 换成 complete
+  //   · event.ts:88   引擎初始化读完数据即 delete Data.events → 运行时无法再从 Data 反查原始指令
+  //   · command.ts:120 compile() 把「原始指令数据」编译成「指令函数数组」, 禁用指令(! 前缀)不编译、
+  //                   showChoices/block 等一条指令会产出多个槽位 → 编译下标 ≠ 原始下标
+  //   因此本模块在编译期建立「原始指令 ↔ 编译槽位」精确映射, 运行时即可把 event.index 翻译回
+  //   「事件第几步 + 那条指令在做什么」, 全程零磁盘 I/O、零引擎源码改动、零额外渲染开销。
+  // ============================================================
+  const EVENT_TIMELINE_MAX = 20;         // 事件流水保留条数 (蓝图: 最近 20 步)
+  const EVENT_ENTRY_MERGE_MS = 600;      // 同名同动作条目合并窗口, 防高频事件把流水冲垮
+  const EVENT_RUN_ENTRY_MIN_MS = 400;    // 同一事件的「执行」条目最小间隔
+  const EVENT_GHOST_SUSPEND_MS = 60000;  // 挂起超过 60 秒 → 疑似滞留
+  const EVENT_SUSPEND_IDLE_MS = 1000;    // 指令索引超过 1 秒没推进 → 挂起(等外部条件)
+  const EVENT_DRIVEN_WINDOW_MS = 1500;   // 判定「事件是否仍在被每帧驱动」的时间窗
+  const EVENT_LIVE_MAX = 200;            // 同时在册事件上限 (极端泄漏场景下的内存护栏)
+  const EVENT_SCAN_MIN_MS = 80;          // 状态扫描节流 (每帧调用也只按 80ms 落地)
+
+  // 宿主对象类型 → 小白白话 (禁止把 UIElement/GlobalActor 之类英文枚举直接透给用户, 铁律⑱)
+  const EVENT_HOST_LABEL = {
+    Actor: '角色',
+    GlobalActor: '全局角色',
+    UIElement: '界面元素',
+    Trigger: '触发器',
+    SceneObject: '场景对象',
+    SceneRegion: '触发区域',
+    SceneLight: '光源',
+    SceneTilemap: '地图图层',
+    SceneParallax: '视差层',
+    SceneAnimation: '场景动画',
+    Skill: '技能',
+    State: '状态',
+    Equipment: '装备',
+    Item: '物品'
+  };
+
+  // 指令白话名表 (引擎 command.ts 编译器方法名 → 制作者能看懂的动作)
+  const COMMAND_PLAIN = {
+    showText: '显示文本', showChoices: '弹出选项', wait: '等待', setNumber: '设置数值',
+    setString: '设置文本', setBoolean: '设置开关', deleteVariable: '删除变量',
+    comment: '注释（不执行）', block: '指令块', independent: '独立事件', transition: '数值渐变',
+    'if': '条件判断', loop: '循环', break: '跳出循环', 'continue': '继续循环',
+    label: '流程标签', jumpTo: '跳转流程', return: '返回',
+    callEvent: '调用公共事件', setEvent: '修改公共事件开关', registerEvent: '注册事件', stopEvent: '停止事件',
+    playAudio: '播放音效', stopAudio: '停止音效', setVolume: '调整音量', setPan: '调整声场',
+    setReverb: '调整混响', setLoop: '设置循环播放', saveAudio: '记录音量状态', restoreAudio: '恢复音量状态',
+    playAnimation: '播放动画', setAnimation: '设置场景动画', playActorAnimation: '播放角色动画',
+    stopActorAnimation: '停止角色动画', setObjectAnimation: '设置角色动画',
+    createActor: '创建角色', deleteActor: '删除角色', moveActor: '移动角色', translateActor: '瞬移角色',
+    followActor: '跟随角色', setMovementSpeed: '设置移动速度', setAngle: '设置朝向', fixAngle: '锁定朝向',
+    setActive: '启用或禁用对象', setWeight: '设置权重', changeThreat: '调整仇恨值',
+    changeActorState: '修改角色状态', changeActorTeam: '修改角色阵营', changeActorSkill: '修改角色技能',
+    changeActorEquipment: '修改角色装备', changeActorPortrait: '修改角色头像', changeActorSprite: '修改角色精灵图',
+    changeActorMotion: '修改角色动作', changePassableTerrain: '修改通行地形',
+    createGlobalActor: '创建全局角色', transferGlobalActor: '转移全局角色', deleteGlobalActor: '删除全局角色',
+    castSkill: '施放技能', setSkill: '设置技能', setPlayerActor: '设置主角', setPartyMember: '设置队伍成员',
+    loadScene: '加载场景', loadSubscene: '加载子场景', unloadSubscene: '卸载子场景',
+    activateScene: '激活场景', deleteScene: '删除场景', setTerrain: '设置地形', setTile: '设置图块',
+    deleteTile: '删除图块', moveCamera: '移动镜头', clampCamera: '限制镜头范围', unclampCamera: '解除镜头限制',
+    setZoomFactor: '设置缩放', setAmbientLight: '设置环境光', tintScreen: '画面变色', shakeScreen: '震屏',
+    createElement: '创建界面元素', deleteElement: '删除界面元素', setText: '设置界面文本',
+    setTextBox: '设置文本框', setDialogBox: '设置对话框', setImage: '设置界面图片',
+    controlDialog: '控制对话框', setProgressBar: '设置进度条', setButton: '设置按钮',
+    controlButton: '控制按钮', setVideo: '播放视频', waitForVideo: '等待视频结束', setWindow: '操作窗口',
+    createObject: '创建对象', deleteObject: '删除对象', createTrigger: '创建触发器',
+    setTriggerSpeed: '设置触发器速度', setTriggerAngle: '设置触发器角度', setTriggerDuration: '设置触发器时长',
+    setInventory: '设置背包', useItem: '使用物品', setItem: '设置物品', setCooldown: '设置冷却',
+    setShortcut: '设置快捷键', setTeamRelation: '设置阵营关系', getObjectProperty: '读取对象属性',
+    setObjectProperty: '设置对象属性', requestURL: '网络请求', downloadFile: '下载文件', uploadFile: '上传文件',
+    httpRequest: 'HTTP 请求', webSocketConnect: '连接网络长连接', webSocketSend: '发送网络消息',
+    webSocketClose: '断开网络长连接', setGameSpeed: '设置游戏速度', pauseGame: '暂停游戏',
+    continueGame: '继续游戏', preventSceneInput: '屏蔽场景输入', restoreSceneInput: '恢复场景输入',
+    setCursor: '设置鼠标指针', simulateKey: '模拟按键', setLanguage: '切换语言',
+    setResolution: '设置分辨率', commandLine: '执行命令行', relaunchApp: '重启应用', script: '执行脚本',
+    setPixelRatio: '设置像素比', switchCollisionSystem: '切换碰撞系统', discardTargets: '清空目标列表',
+    detectTargets: '检测目标', resetTargets: '重置目标', renderOutline: '描边显示',
+    gameData: '读写游戏数据'
+  };
+
+  // 编译期追踪: 编译结果(指令函数列表) → { 原始指令数据, 原始下标 → 编译槽位 }
+  const eventTrace = {
+    hooked: false,
+    compiler: null,
+    byList: new WeakMap(),
+    frames: []
+  };
+
+  // 事件时间线运行时状态
+  const eventTimeline = {
+    seq: 0,
+    entries: [],
+    live: new Map(),
+    callHooked: false,
+    lastScanAt: 0
+  };
+
+  // 推进「下一条待编译原始指令」游标: 已编译函数直接占 1 槽, 禁用指令与脏数据不占槽
+  function eventTraceAdvance(frame) {
+    const raw = frame.raw;
+    while (frame.cursor < raw.length) {
+      const item = raw[frame.cursor];
+      const rawIndex = frame.cursor++;
+      if (typeof item === 'function') { frame.slots++; continue; }
+      if (!item || typeof item.id !== 'string') continue;
+      if (item.id[0] === '!') continue;
+      frame.pending = {
+        id: item.id,
+        rawIndex: rawIndex,
+        kind: (eventTrace.compiler && (item.id in eventTrace.compiler)) ? 'method' : 'script'
+      };
+      return;
+    }
+    frame.pending = null;
+  }
+
+  // 包裹单条指令编译器: 只有「当前待编译原始指令的 id 正好等于本次调用」才会计账,
+  // 因此编译器内部的辅助调用 (compileActor / compileNumber / compileJumps...) 一律不干扰映射
+  function wrapCommandCompiler(name, orig) {
+    const wrapper = function () {
+      const frame = eventTrace.frames.length ? eventTrace.frames[eventTrace.frames.length - 1] : null;
+      if (frame && frame.pending) {
+        const pending = frame.pending;
+        const hit = (pending.kind === 'method' && pending.id === name)
+          || (pending.kind === 'script' && name === 'compileScript');
+        if (hit) {
+          frame.pending = null; // 先清空 → 内部嵌套 compile 不会误认这一条
+          const produced = orig.apply(this, arguments);
+          const count = (typeof produced === 'function') ? 1 : (Array.isArray(produced) ? produced.length : 0);
+          frame.map[pending.rawIndex] = { slot: frame.slots, count: count };
+          frame.slots += count;
+          eventTraceAdvance(frame);
+          return produced;
+        }
+      }
+      return orig.apply(this, arguments);
+    };
+    wrapper.__yamiEventTraceWrapped__ = true;
+    return wrapper;
+  }
+
+  // 安装编译期指令映射 (必须早于工程数据编译完成; 未就绪时返回 false 由 refresh 重试)
+  function installEventTrace() {
+    if (eventTrace.hooked) return true;
+    try {
+      if (typeof Command === 'undefined' || !Command || typeof Command.compile !== 'function') return false;
+      const compiler = Command;
+      eventTrace.compiler = compiler;
+      const proto = Object.getPrototypeOf(compiler);
+      const skip = { constructor: true, compile: true, compileIndependent: true };
+      const keys = [];
+      try { keys.push.apply(keys, Object.getOwnPropertyNames(proto)); } catch (e) {}
+      // setNumber / setString / setBoolean 等由类字段初始化, 属于实例自有属性而非原型方法
+      try { keys.push.apply(keys, Object.keys(compiler)); } catch (e) {}
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        if (skip[key]) continue;
+        let holder = null;
+        try {
+          if (Object.prototype.hasOwnProperty.call(compiler, key)) {
+            if (typeof compiler[key] === 'function') holder = compiler;
+          } else if (typeof compiler[key] === 'function') {
+            holder = proto;
+          }
+        } catch (e) { holder = null; }
+        if (!holder) continue;
+        const orig = holder[key];
+        if (typeof orig !== 'function' || orig.__yamiEventTraceWrapped__) continue;
+        try { holder[key] = wrapCommandCompiler(key, orig); } catch (e) {}
+      }
+      // 顶层编译入口: 每个编译结果登记「原始指令 → 槽位」映射表 (嵌套分支各自登记各自的表)
+      const origCompile = compiler.compile;
+      compiler.compile = function (commands) {
+        const frame = {
+          raw: (commands && typeof commands.length === 'number') ? commands : [],
+          cursor: 0,
+          slots: 0,
+          map: [],
+          pending: null
+        };
+        eventTrace.frames.push(frame);
+        let out;
+        try {
+          eventTraceAdvance(frame);
+          out = origCompile.apply(this, arguments);
+        } finally {
+          eventTrace.frames.pop();
+        }
+        try {
+          if (out && typeof out === 'object') {
+            eventTrace.byList.set(out, {
+              path: (commands && commands.path) || '',
+              raw: frame.raw,
+              map: frame.map,
+              slots: frame.slots,
+              slotToRaw: null
+            });
+          }
+        } catch (e) {}
+        return out;
+      };
+      eventTrace.hooked = true;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // 事件启动钩子: 引擎所有事件都经 EventHandler.call 起步, 在此登记在册
+  function installEventCallHook() {
+    if (eventTimeline.callHooked) return true;
+    try {
+      if (typeof EventHandler === 'undefined' || !EventHandler || typeof EventHandler.call !== 'function') return false;
+      const origCall = EventHandler.call;
+      EventHandler.call = function (event) {
+        const result = origCall.apply(this, arguments);
+        try { registerLiveEvent(event); } catch (e) {}
+        return result;
+      };
+      eventTimeline.callHooked = true;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function eventTypeOf(ev) {
+    try {
+      const initial = ev.initial || {};
+      const type = ev.type || initial.type || '';
+      if (type) return type;
+      // 引擎数据层是在编译「之后」才把 type/path 挂到指令列表上的; 实例上暂时取不到时,
+      // 回退到编译期留存的原始指令数据 (eventTrace 已存 raw 列表)
+      const list = ev.commands || ev.initial;
+      const traced = list ? eventTrace.byList.get(list) : null;
+      const rawType = traced && traced.raw ? traced.raw.type : '';
+      return typeof rawType === 'string' ? rawType : '';
+    } catch (e) { return ''; }
+  }
+
+  function eventNameOf(ev) {
+    try {
+      const list = ev.commands || ev.initial;
+      const traced = list ? eventTrace.byList.get(list) : null;
+      const p = ev.path || (ev.initial && ev.initial.path) || (traced && traced.path) || '';
+      const file = String(p || '').split('/').pop() || '';
+      const resolved = resolveEventNameFromPath(file);
+      if (resolved) return resolved;
+      const type = eventTypeOf(ev);
+      return type ? (type + ' 事件') : '未知事件';
+    } catch (e) { return '未知事件'; }
+  }
+
+  // 宿主描述: 角色「勇者」/ 界面元素 / 触发器… (英文类名一律经中文映射后再进界面)
+  // 优先用 instanceof 判别 (类名在压缩构建下可能被改名), 类名映射仅作兜底
+  function eventHostKind(host) {
+    try {
+      if (typeof GlobalActor !== 'undefined' && GlobalActor && host instanceof GlobalActor) return '全局角色';
+      if (typeof Actor !== 'undefined' && Actor && host instanceof Actor) return '角色';
+      if (typeof UIElement !== 'undefined' && UIElement && host instanceof UIElement) return '界面元素';
+      if (typeof Trigger !== 'undefined' && Trigger && host instanceof Trigger) return '触发器';
+      if (typeof SceneRegion !== 'undefined' && SceneRegion && host instanceof SceneRegion) return '触发区域';
+      if (typeof SceneLight !== 'undefined' && SceneLight && host instanceof SceneLight) return '光源';
+      if (typeof SceneTilemap !== 'undefined' && SceneTilemap && host instanceof SceneTilemap) return '地图图层';
+      if (typeof SceneParallax !== 'undefined' && SceneParallax && host instanceof SceneParallax) return '视差层';
+      if (typeof Skill !== 'undefined' && Skill && host instanceof Skill) return '技能';
+      if (typeof State !== 'undefined' && State && host instanceof State) return '状态';
+      if (typeof Equipment !== 'undefined' && Equipment && host instanceof Equipment) return '装备';
+      if (typeof Item !== 'undefined' && Item && host instanceof Item) return '物品';
+    } catch (e) {}
+    const ctor = (host && host.constructor && host.constructor.name) ? host.constructor.name : '';
+    return EVENT_HOST_LABEL[ctor] || '对象';
+  }
+
+  function eventHostLabel(ev) {
+    try {
+      const host = ev.parent;
+      if (!host) return '';
+      const kind = eventHostKind(host);
+      const rawName = host.name || (host.data && host.data.name) || '';
+      const name = typeof rawName === 'string' ? rawName : '';
+      return name ? (kind + '「' + name + '」') : kind;
+    } catch (e) { return ''; }
+  }
+
+  // 当前实现体 (被探针包装时取包装前的原始实现)
+  function eventImplOf(ev) {
+    try {
+      if (ev.__yamiEventWrapperRef__ && ev.update === ev.__yamiEventWrapperRef__) return ev.__yamiEventImplRef__;
+      return ev.update;
+    } catch (e) { return null; }
+  }
+
+  // 事件状态判定: 完成 / 暂停(等继续) / 等待计时 / 挂起(等外部条件) / 执行中
+  // 注意: 引擎 EventHandler.prototype.update 返回的是 this.complete, 事件未跑完时**每帧都返回 false**,
+  // 因此不能拿「返回 false」当挂起依据 —— 真正的信号是「指令索引多久没有推进」。
+  function eventStateOf(ev, rec) {
+    try {
+      if (ev.complete === true) return { kind: 'done' };
+      const cls = ev.constructor;
+      const impl = eventImplOf(ev);
+      if (cls && impl === cls.wait) return { kind: 'paused' };
+      if (cls && impl === cls.complete) return { kind: 'done' };
+      const timer = ev.timer;
+      if (timer && typeof timer.duration === 'number' && timer.duration > 0) {
+        return { kind: 'waiting', remainMs: Math.round(timer.duration) };
+      }
+      const nowMs = Date.now();
+      const progressAt = Number(ev.__yamiEventProgressAt__) || 0;
+      const since = progressAt || (rec ? rec.startedAt : 0) || nowMs;
+      const idleMs = Math.max(0, nowMs - since);
+      if (idleMs >= EVENT_SUSPEND_IDLE_MS) {
+        return { kind: 'suspended', idleMs: idleMs };
+      }
+      return { kind: 'running', idleMs: idleMs };
+    } catch (e) {
+      return { kind: 'unknown' };
+    }
+  }
+
+  // 变量引用可能是 GUID 字符串, 也可能是 {type:'global', key} 包装 —— 统一抽出 GUID 供界面解密为中文名
+  function commandVarKey(variable) {
+    try {
+      if (!variable) return '';
+      if (typeof variable === 'string') return /^[0-9a-f]{16}$/.test(variable) ? variable : '';
+      if (typeof variable === 'object') {
+        const key = variable.key || variable.variable || variable.id || '';
+        return (typeof key === 'string' && /^[0-9a-f]{16}$/.test(key)) ? key : '';
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  // 原始指令 → 白话描述
+  function describeEventCommand(raw) {
+    const out = { text: '', varKey: '' };
+    try {
+      if (!raw || typeof raw.id !== 'string') return out;
+      const id = raw.id;
+      const params = raw.params || {};
+      const base = COMMAND_PLAIN[id] || '';
+      switch (id) {
+        case 'wait': {
+          const d = params.duration;
+          out.text = (typeof d === 'number') ? ('等待 ' + Math.round(d) + ' 毫秒') : '等待一段时间';
+          return out;
+        }
+        case 'showText': {
+          const text = String(params.content == null ? '' : params.content)
+            .replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+          out.text = text ? ('显示文本「' + (text.length > 12 ? text.slice(0, 12) + '…' : text) + '」') : '显示文本';
+          return out;
+        }
+        case 'showChoices': {
+          const n = Array.isArray(params.choices) ? params.choices.length : 0;
+          out.text = n > 0 ? ('弹出选项（' + n + ' 项）') : '弹出选项';
+          return out;
+        }
+        case 'setNumber':
+        case 'setString':
+        case 'setBoolean':
+        case 'deleteVariable': {
+          out.text = base || '修改变量';
+          out.varKey = commandVarKey(params.variable);
+          return out;
+        }
+        default: {
+          out.text = base || '执行事件指令';
+          return out;
+        }
+      }
+    } catch (e) {
+      return out;
+    }
+  }
+
+  // event.index 指向「下一条」, 故当前那条 = index - 1; 再经编译映射翻译回原始指令下标
+  function eventStepInfo(ev) {
+    const out = { step: 0, total: 0, desc: '', varKey: '', traced: false };
+    try {
+      const list = ev.commands || ev.initial;
+      const index = typeof ev.index === 'number' ? ev.index : 0;
+      const slot = index - 1;
+      if (slot < 0 || !list) return out;
+      const info = eventTrace.byList.get(list);
+      if (!info) {
+        out.step = slot + 1;
+        return out;
+      }
+      out.traced = true;
+      out.total = info.raw ? info.raw.length : 0;
+      if (!info.slotToRaw) {
+        const table = [];
+        for (let i = 0; i < info.map.length; i++) {
+          const m = info.map[i];
+          if (!m || m.count <= 0) continue;
+          for (let s = 0; s < m.count; s++) table[m.slot + s] = i;
+        }
+        info.slotToRaw = table;
+      }
+      const rawIndex = info.slotToRaw[slot];
+      if (typeof rawIndex !== 'number') {
+        out.step = slot + 1;
+        return out;
+      }
+      out.step = rawIndex + 1;
+      const described = describeEventCommand(info.raw[rawIndex]);
+      out.desc = described.text;
+      out.varKey = described.varKey;
+      return out;
+    } catch (e) {
+      return out;
+    }
+  }
+
+  // 写入一条事件流水 (同名同动作同步骤在 600ms 内自动合并计数, 杜绝高频事件刷屏)
+  function pushEventEntry(rec, action, extra) {
+    try {
+      const time = Date.now();
+      const step = (extra && extra.step) || 0;
+      const desc = (extra && extra.desc) || '';
+      const remainMs = (extra && extra.remainMs) || 0;
+      const last = eventTimeline.entries.length ? eventTimeline.entries[eventTimeline.entries.length - 1] : null;
+      if (last && last.action === action && last.name === rec.name && last.step === step
+        && last.desc === desc && time - last.time < EVENT_ENTRY_MERGE_MS) {
+        last.count = (last.count || 1) + 1;
+        last.time = time;
+        return last;
+      }
+      const entry = {
+        id: ++eventTimeline.seq,
+        time: time,
+        eventId: rec.id,
+        name: rec.name,
+        type: rec.type,
+        host: rec.host,
+        action: action || 'run',
+        step: step,
+        total: (extra && extra.total) || 0,
+        desc: desc,
+        varKey: (extra && extra.varKey) || '',
+        remainMs: remainMs,
+        count: 1
+      };
+      eventTimeline.entries.push(entry);
+      if (eventTimeline.entries.length > EVENT_TIMELINE_MAX) eventTimeline.entries.shift();
+      return entry;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function registerLiveEvent(ev) {
+    try {
+      if (!ev || typeof ev !== 'object') return null;
+      const existed = eventTimeline.live.get(ev);
+      if (existed) return existed;
+      if (eventTimeline.live.size >= EVENT_LIVE_MAX) return null;
+      wrapEventInstance(ev);
+      const rec = {
+        id: ++eventTimeline.seq,
+        ev: ev,
+        name: eventNameOf(ev),
+        type: eventTypeOf(ev),
+        host: eventHostLabel(ev),
+        startedAt: Date.now(),
+        changedAt: Date.now(),
+        state: '',
+        stateKey: '',
+        step: 0,
+        total: 0,
+        desc: '',
+        varKey: '',
+        remainMs: 0,
+        lastRunAt: 0
+      };
+      eventTimeline.live.set(ev, rec);
+      pushEventEntry(rec, 'start', eventStepInfo(ev));
+      return rec;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // 幽灵判定: 宿主已被销毁(严重) 或 长时间挂起无进展(疑似滞留)
+  function eventGhostInfo(rec, nowMs) {
+    const info = { ghost: false, hostGone: false, stale: false, suspendMs: 0, driven: false };
+    try {
+      const host = rec.ev && rec.ev.parent;
+      if (host && host.destroyed === true) info.hostGone = true;
+      // 事件是否仍在被每帧驱动 (宿主销毁后常被移出更新器 → 彻底停更, 属更严重的滞留)
+      const blockedAt = Number(rec.ev && rec.ev.__yamiEventBlockedAt__) || 0;
+      info.driven = blockedAt > 0 && (nowMs - blockedAt) < EVENT_DRIVEN_WINDOW_MS;
+      if (rec.state === 'paused' || rec.state === 'suspended') {
+        info.suspendMs = Math.max(rec.idleMs || 0, nowMs - rec.changedAt);
+        info.stale = info.suspendMs >= EVENT_GHOST_SUSPEND_MS;
+      } else if (rec.state === 'waiting') {
+        info.suspendMs = Math.max(0, nowMs - rec.changedAt);
+      }
+      info.ghost = info.hostGone || info.stale;
+      return info;
+    } catch (e) {
+      return info;
+    }
+  }
+
+  function scanEventTimeline(force) {
+    try {
+      if (!eventTrace.hooked) installEventTrace();
+      if (!eventTimeline.callHooked) installEventCallHook();
+      const nowMs = Date.now();
+      if (!force && nowMs - eventTimeline.lastScanAt < EVENT_SCAN_MIN_MS) return;
+      eventTimeline.lastScanAt = nowMs;
+
+      // 1) 补齐在册: 钩子安装之前就启动、或挂在更新器上的事件
+      try {
+        if (typeof EventManager !== 'undefined' && EventManager && EventManager.activeEvents) {
+          const list = EventManager.activeEvents;
+          for (let i = 0; i < list.length; i++) registerLiveEvent(list[i]);
+        }
+      } catch (e) {}
+
+      // 2) 状态推进与状态迁移入流水
+      const finished = [];
+      eventTimeline.live.forEach(function (rec, ev) {
+        const st = eventStateOf(ev, rec);
+        const step = eventStepInfo(ev);
+        if (st.kind === 'done') {
+          if (rec.state !== 'done') rec.state = 'done';
+          finished.push(rec);
+          return;
+        }
+        const key = st.kind + '|' + step.step;
+        if (key !== rec.stateKey) {
+          rec.stateKey = key;
+          rec.changedAt = nowMs;
+          if (st.kind === 'waiting') {
+            pushEventEntry(rec, 'wait', { step: step.step, total: step.total, desc: step.desc, varKey: step.varKey, remainMs: st.remainMs });
+          } else if (st.kind === 'paused') {
+            pushEventEntry(rec, 'pause', step);
+          } else if (st.kind === 'suspended') {
+            pushEventEntry(rec, 'suspend', step);
+          }
+        }
+        if (st.kind === 'running' && step.step > 0 && nowMs - rec.lastRunAt >= EVENT_RUN_ENTRY_MIN_MS) {
+          rec.lastRunAt = nowMs;
+          pushEventEntry(rec, 'run', step);
+        }
+        rec.state = st.kind;
+        rec.step = step.step;
+        rec.total = step.total;
+        rec.desc = step.desc;
+        rec.varKey = step.varKey;
+        rec.remainMs = st.remainMs || 0;
+        rec.idleMs = st.idleMs || 0;
+      });
+
+      // 3) 已结束的事件写一条「结束」并释放强引用 (长时挂机不积压)
+      for (let i = 0; i < finished.length; i++) {
+        const rec = finished[i];
+        pushEventEntry(rec, 'end', { step: rec.step, total: rec.total, desc: rec.desc, varKey: rec.varKey });
+        eventTimeline.live.delete(rec.ev);
+        rec.ev = null;
+      }
+
+      // 4) 在册上限护栏
+      if (eventTimeline.live.size > EVENT_LIVE_MAX) {
+        let drop = eventTimeline.live.size - EVENT_LIVE_MAX;
+        eventTimeline.live.forEach(function (rec, ev) {
+          if (drop <= 0) return;
+          drop--;
+          eventTimeline.live.delete(ev);
+          rec.ev = null;
+        });
+      }
+    } catch (e) {}
+  }
+
+  // 事件黑匣子对外快照 (读一次即扫描一次, 保证界面与真机状态一致)
+  function getEventBlackbox() {
+    try { scanEventTimeline(true); } catch (e) {}
+    const nowMs = Date.now();
+    const active = [];
+    try {
+      eventTimeline.live.forEach(function (rec) {
+        if (!rec.ev) return;
+        const ghost = eventGhostInfo(rec, nowMs);
+        active.push({
+          id: rec.id,
+          name: rec.name,
+          type: rec.type,
+          host: rec.host,
+          state: rec.state || 'running',
+          step: rec.step,
+          total: rec.total,
+          desc: rec.desc,
+          varKey: rec.varKey,
+          remainMs: rec.remainMs,
+          runningMs: Math.max(0, nowMs - rec.startedAt),
+          idleMs: rec.idleMs || 0,
+          driven: ghost.driven,
+          suspendMs: ghost.suspendMs,
+          hostGone: ghost.hostGone,
+          stale: ghost.stale,
+          ghost: ghost.ghost
+        });
+      });
+    } catch (e) {}
+    active.sort(function (a, b) {
+      const ga = a.ghost ? 1 : 0;
+      const gb = b.ghost ? 1 : 0;
+      if (ga !== gb) return gb - ga;
+      return b.suspendMs - a.suspendMs;
+    });
+    let ghostCount = 0;
+    for (let i = 0; i < active.length; i++) { if (active[i].ghost) ghostCount++; }
+    return {
+      ok: true,
+      trace: eventTrace.hooked,
+      callHooked: eventTimeline.callHooked,
+      entries: eventTimeline.entries.slice().reverse(),
+      active: active,
+      ghostCount: ghostCount,
+      thresholds: { suspendMs: EVENT_GHOST_SUSPEND_MS, maxEntries: EVENT_TIMELINE_MAX }
+    };
+  }
+
+  // 一键结束滞留事件: 调引擎原生 event.finish() 触发结束回调与引用摘除
+  function finishEventById(id) {
+    try {
+      const target = Number(id);
+      let hit = null;
+      eventTimeline.live.forEach(function (rec) {
+        if (!hit && rec.id === target && rec.ev) hit = rec;
+      });
+      if (!hit || !hit.ev || typeof hit.ev.finish !== 'function') return false;
+      hit.ev.finish();
+      pushEventEntry(hit, 'end', { step: hit.step, total: hit.total, desc: hit.desc, varKey: hit.varKey });
+      eventTimeline.live.delete(hit.ev);
+      hit.ev = null;
+      return true;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -2485,6 +3164,9 @@
     getSceneEntities: getSceneEntities,
     getMemoryInfo: getMemoryInfo,
     getActiveEvents: getActiveEventsDetails,
+    // 事件黑匣子: 指令级时间线 + 幽灵事件侦探 (读一次即扫描一次)
+    getEventBlackbox: getEventBlackbox,
+    finishEvent: finishEventById,
     runProjectAudit: function () { return projectAudit.run(); },
     getAuditResult: function () { return projectAudit.lastResult; },
     setProjectRoot: function (dir) { projectAudit.setProjectRoot(dir); },

@@ -14,6 +14,7 @@ const SUITE = [
   ['test-cheats-reset.mjs', '作弊台全部还原与状态复原'],
   ['test-fix-regressions.mjs', '缺陷修复回归 (引擎假设/数据语义/文案映射)'],
   ['test-project-audit.mjs', '工程体检(断链+死事件)与报错事件级定位'],
+  ['test-event-blackbox.mjs', '事件黑匣子(指令级时间线+幽灵事件侦探)'],
   ['test-autoupdate.mjs',   '热更新端到端 (需联网)'],
 ];
 

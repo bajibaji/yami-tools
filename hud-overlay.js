@@ -2911,6 +2911,258 @@
         border-radius: 2px !important;
         flex-shrink: 0 !important;
       }
+      /* ============ 事件黑匣子: 事件流水 + 幽灵事件侦探 (运行日志页) ============ */
+      .yami-eventflow-panel,
+      .yami-ghost-panel {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        flex-shrink: 0 !important;
+        background: #202020 !important;
+        border: 1px solid #333333 !important;
+        border-radius: 4px !important;
+        padding: 8px 10px !important;
+        box-sizing: border-box !important;
+      }
+      .yami-eventflow-header,
+      .yami-ghost-header {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+        min-width: 0 !important;
+      }
+      .yami-eventflow-title-box,
+      .yami-ghost-title-box {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .yami-eventflow-title,
+      .yami-ghost-title {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 5px !important;
+        font-size: 12px !important;
+        font-weight: 600 !important;
+        color: #f0f0f0 !important;
+        white-space: nowrap !important;
+      }
+      .yami-eventflow-badge,
+      .yami-ghost-badge {
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        padding: 1px 5px !important;
+        border-radius: 2px !important;
+        white-space: nowrap !important;
+        flex-shrink: 0 !important;
+        background: #303030 !important;
+        color: #999999 !important;
+        border: 1px solid #3d3d3d !important;
+      }
+      .yami-eventflow-badge.ok,
+      .yami-ghost-badge.ok {
+        background: #064e3b !important;
+        color: #1cff9b !important;
+        border-color: #059669 !important;
+      }
+      .yami-eventflow-badge.warn,
+      .yami-ghost-badge.warn {
+        background: #451a03 !important;
+        color: #fbbf24 !important;
+        border-color: #d97706 !important;
+      }
+      .yami-ghost-badge.danger {
+        background: #450a0a !important;
+        color: #ff8888 !important;
+        border-color: #dc2626 !important;
+      }
+      .yami-eventflow-hint,
+      .yami-ghost-hint {
+        font-size: 10px !important;
+        color: #888888 !important;
+        line-height: 1.5 !important;
+      }
+      .yami-eventflow-list {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+        max-height: 190px !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+      }
+      .yami-ghost-list {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        max-height: 150px !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+      }
+      .yami-eventflow-empty,
+      .yami-ghost-empty {
+        font-size: 11px !important;
+        color: #777777 !important;
+        padding: 4px 0 !important;
+        line-height: 1.5 !important;
+      }
+      .yami-eventflow-row {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 2px !important;
+        background: #242424 !important;
+        border: 1px solid #303030 !important;
+        border-left: 3px solid #3d3d3d !important;
+        border-radius: 2px !important;
+        padding: 4px 7px !important;
+        box-sizing: border-box !important;
+      }
+      .yami-eventflow-row-head {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        flex-wrap: wrap !important;
+        min-width: 0 !important;
+      }
+      .yami-eventflow-time {
+        font-family: Consolas, monospace !important;
+        font-size: 10px !important;
+        color: #777777 !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-eventflow-action {
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        padding: 0 5px !important;
+        height: 15px !important;
+        line-height: 15px !important;
+        border-radius: 2px !important;
+        flex-shrink: 0 !important;
+        background: #303030 !important;
+        color: #cccccc !important;
+      }
+      .yami-eventflow-action.act-start { background: #172554 !important; color: #60a5fa !important; }
+      .yami-eventflow-action.act-run { background: #303030 !important; color: #cccccc !important; }
+      .yami-eventflow-action.act-wait { background: #451a03 !important; color: #fbbf24 !important; }
+      .yami-eventflow-action.act-pause { background: #3d3d3d !important; color: #ffb088 !important; }
+      .yami-eventflow-action.act-suspend { background: #450a0a !important; color: #ff8888 !important; }
+      .yami-eventflow-action.act-end { background: #064e3b !important; color: #1cff9b !important; }
+      .yami-eventflow-name {
+        font-size: 11px !important;
+        font-weight: 600 !important;
+        color: #f0f0f0 !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        max-width: 46% !important;
+      }
+      .yami-eventflow-step {
+        font-size: 10px !important;
+        color: #999999 !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-eventflow-count {
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        color: #ff9060 !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-eventflow-desc {
+        font-size: 11px !important;
+        color: #b8b8b8 !important;
+        line-height: 1.45 !important;
+        word-break: break-all !important;
+      }
+      .yami-eventflow-extra {
+        margin-left: 6px !important;
+        font-size: 10px !important;
+        color: #fbbf24 !important;
+      }
+      .yami-ghost-card {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+        background: #241c1c !important;
+        border: 1px solid #3c1e1e !important;
+        border-left: 3px solid #ff4040 !important;
+        border-radius: 2px !important;
+        padding: 6px 8px !important;
+        box-sizing: border-box !important;
+      }
+      .yami-ghost-card-head {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        flex-wrap: wrap !important;
+        min-width: 0 !important;
+      }
+      .yami-ghost-name {
+        font-size: 11px !important;
+        font-weight: 600 !important;
+        color: #f0f0f0 !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        max-width: 60% !important;
+      }
+      .yami-ghost-tag {
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        padding: 0 5px !important;
+        height: 15px !important;
+        line-height: 15px !important;
+        border-radius: 2px !important;
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
+      }
+      .yami-ghost-tag.danger { background: #450a0a !important; color: #ff8888 !important; }
+      .yami-ghost-tag.warn { background: #451a03 !important; color: #fbbf24 !important; }
+      .yami-ghost-card-meta {
+        font-size: 10px !important;
+        color: #999999 !important;
+        line-height: 1.45 !important;
+        word-break: break-all !important;
+      }
+      .yami-ghost-card-step {
+        font-size: 11px !important;
+        color: #d8d8d8 !important;
+        line-height: 1.45 !important;
+        word-break: break-all !important;
+      }
+      .yami-ghost-card-actions {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .yami-ghost-finish-btn {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        position: static !important;
+        box-sizing: border-box !important;
+        user-select: none !important;
+        min-width: 76px !important;
+        height: 22px !important;
+        line-height: 22px !important;
+        padding: 0 8px !important;
+        font-size: 11px !important;
+        font-weight: 600 !important;
+        white-space: nowrap !important;
+        flex-shrink: 0 !important;
+        background: #303030 !important;
+        color: #ffffff !important;
+        border: 1px solid #3d3d3d !important;
+        border-radius: 2px !important;
+        cursor: pointer !important;
+      }
+      .yami-ghost-finish-btn:hover {
+        background: #3d3d3d !important;
+        border-color: #555555 !important;
+      }
+      .yami-ghost-more {
+        font-size: 10px !important;
+        color: #777777 !important;
+        padding: 2px 0 !important;
+      }
     `;
     document.head.appendChild(style);
 
@@ -3020,15 +3272,15 @@
               <div class="yami-home-module-badge active">进入</div>
             </div>
 
-            <!-- 模块 2: 控制台报错 (Remix Icon: ri-bug-line) -->
+            <!-- 模块 2: 运行日志 (Remix Icon: ri-bug-line) -->
             <div class="yami-home-module-item" data-target="errors" role="button">
               <div class="yami-home-module-main">
                 <div class="yami-home-module-icon-box green" title="RemixIcon: ri-bug-line">
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 10H20.618C20.8655 9.33644 21 8.66356 21 8H19C19 6.89543 18.1046 6 17 6H15.8293C15.3441 5.3727 14.7176 4.88603 14 4.56846V2H10V4.56846C9.28238 4.88603 8.65588 5.3727 8.17071 6H7C5.89543 6 5 6.89543 5 8H3C3 8.66356 3.13451 9.33644 3.38197 10H5V11C5 11.3409 5.03433 11.674 5.10014 12H3V14H5.38197C5.86714 15.3273 6.84333 16.4022 8.12154 16.8944L6.29289 18.7231L7.70711 20.1373L9.93934 17.9051C10.5794 17.9678 11.2338 18 11.9 18C12.5662 18 13.2206 17.9678 13.8607 17.9051L16.0929 20.1373L17.5071 18.7231L15.6785 16.8944C16.9567 16.4022 17.9329 15.3273 18.418 14H21V12H18.8999C18.9657 11.674 19 11.3409 19 11V10ZM17 8V11C17 13.7614 14.7614 16 12 16C9.23858 16 7 13.7614 7 11V8H17ZM9 10H11V12H9V10ZM13 10H15V12H13V10Z"></path></svg>
                 </div>
                 <div>
-                  <div class="yami-home-module-title">控制台报错</div>
-                  <div class="yami-home-module-desc">未捕获异常与智能分析</div>
+                  <div class="yami-home-module-title">运行日志</div>
+                  <div class="yami-home-module-desc">报错、事件流水与滞留侦探</div>
                 </div>
               </div>
               <div class="yami-home-module-badge green" id="yami-home-error-badge">进入</div>
@@ -3107,6 +3359,44 @@
               未执行体检。点击【一键体检】静态检测断链与死事件。
             </div>
             <div class="yami-audit-list" id="yami-audit-list" style="display: none;"></div>
+          </div>
+
+          <!-- 事件流水 (最近 20 步事件指令: 启动/执行/等待/挂起/结束) -->
+          <div class="yami-eventflow-panel" id="yami-event-flow-panel">
+            <div class="yami-eventflow-header">
+              <div class="yami-eventflow-title-box">
+                <span class="yami-eventflow-title">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M4 3H6V21H4V3ZM9 5H20V7H9V5ZM9 11H20V13H9V11ZM9 17H20V19H9V17Z"></path></svg>
+                  事件流水
+                </span>
+                <span class="yami-eventflow-badge idle" id="yami-eventflow-status">[静默]</span>
+              </div>
+              <div class="yami-eventflow-hint" id="yami-eventflow-summary">最近 20 步事件指令，剧情卡住时看这里。</div>
+            </div>
+            <div class="yami-eventflow-list" id="yami-event-flow-list">
+              <div class="yami-eventflow-empty">
+                暂无事件执行记录。
+              </div>
+            </div>
+          </div>
+
+          <!-- 幽灵事件侦探 (滞留挂起 / 宿主已销毁, 可一键结束) -->
+          <div class="yami-ghost-panel" id="yami-ghost-panel">
+            <div class="yami-ghost-header">
+              <div class="yami-ghost-title-box">
+                <span class="yami-ghost-title">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 2.5L22.5 21H1.5L12 2.5ZM12 6.9L4.6 19.5H19.4L12 6.9ZM11 10H13V15H11V10ZM11 16.5H13V18.5H11V16.5Z"></path></svg>
+                  幽灵事件侦探
+                </span>
+                <span class="yami-ghost-badge idle" id="yami-ghost-status">[无滞留]</span>
+              </div>
+              <div class="yami-ghost-hint" id="yami-ghost-summary">剧情不继续又没有任何报错时，这里能看到卡住的事件。</div>
+            </div>
+            <div class="yami-ghost-list" id="yami-ghost-list">
+              <div class="yami-ghost-empty">
+                没有发现滞留事件。
+              </div>
+            </div>
           </div>
 
           <!-- 分类筛选器 -->
@@ -3425,7 +3715,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.8.1 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.9.0 (检查更新)</span>
         </div>
         <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
@@ -3612,7 +3902,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v0.8.1 (DanJuan妙妙插件)',
+        '- **插件版本**: v0.9.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -3707,6 +3997,212 @@
     // ============================================================
     let auditScanning = false;
     let auditResult = null;
+
+    // ============================================================
+    // 事件黑匣子 (运行日志): 事件指令级流水 + 幽灵事件侦探
+    // ------------------------------------------------------------
+    // 数据源 probe.getEventBlackbox(): 引擎所有事件经 EventHandler.call 起步,
+    // probe 在编译期建立「原始指令 ↔ 编译槽位」映射, 运行时把 event.index 翻译回
+    // 「第几步 + 那条指令在做什么」; 幽灵判定 = 宿主已销毁 或 长时间无进展。
+    // 遵从铁律⑲: 走快照签名守卫, 内容未变时绝不重建 DOM (心跳每 150ms 调一次 refresh)。
+    // ============================================================
+    let eventBlackboxSig = '';
+    let eventBlackboxBound = false;
+    let eventBlackboxFlash = null;
+
+    const EVENT_ACTION_LABEL = {
+      start: '启动', run: '执行', wait: '等待', pause: '暂停', suspend: '挂起', end: '结束'
+    };
+
+    const EVENT_STATE_LABEL = {
+      running: '执行中', waiting: '等待中', paused: '已暂停', suspended: '无进展', done: '已结束', unknown: '执行中'
+    };
+
+    function formatEventDuration(ms) {
+      const n = Math.max(0, Math.round(Number(ms) || 0));
+      if (n < 1000) return n + ' 毫秒';
+      if (n < 60000) return (n / 1000).toFixed(1) + ' 秒';
+      return Math.floor(n / 60000) + ' 分 ' + Math.round((n % 60000) / 1000) + ' 秒';
+    }
+
+    function formatEventClock(ts) {
+      try {
+        const d = new Date(Number(ts) || Date.now());
+        const pad = function (v) { return v < 10 ? '0' + v : '' + v; };
+        return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      } catch (e) { return ''; }
+    }
+
+    // 变量 GUID → 中文名 (复用存档台数据字典; 取不到就不显示, 界面绝不裸露 GUID — 铁律⑱)
+    function resolveEventVarName(key) {
+      try {
+        if (!key) return '';
+        if (typeof SaveLab !== 'undefined' && SaveLab && SaveLab.dict && SaveLab.dict.variables) {
+          const meta = SaveLab.dict.variables.get(key);
+          if (meta && meta.name) return meta.name;
+        }
+      } catch (e) {}
+      return '';
+    }
+
+    // 指令白话 + 变量中文名 (变量名取不到时退化为不带变量名的纯动作描述)
+    function eventStepText(item) {
+      const desc = (item && item.desc) || '';
+      const varName = resolveEventVarName(item && item.varKey);
+      return varName ? (desc + '【' + varName + '】') : (desc || '执行事件指令');
+    }
+
+    function bindEventBlackboxEvents() {
+      if (eventBlackboxBound) return;
+      const ghostListEl = document.getElementById('yami-ghost-list');
+      if (!ghostListEl) return;
+      ghostListEl.addEventListener('click', function (e) {
+        const btn = e.target && e.target.closest ? e.target.closest('.yami-ghost-finish-btn') : null;
+        if (!btn) return;
+        e.stopPropagation();
+        const id = Number(btn.getAttribute('data-finish-event'));
+        const probe = window.__YAMI_PERF_PROBE__;
+        let ok = false;
+        if (id && probe && typeof probe.finishEvent === 'function') {
+          ok = probe.finishEvent(id) === true;
+        }
+        // 反馈文案走短时提示位, 否则会被紧随其后的常规渲染立刻覆盖
+        eventBlackboxFlash = {
+          text: ok ? '已结束该滞留事件，引用已摘除。' : '结束失败：该事件可能已自行结束。',
+          until: Date.now() + 4000
+        };
+        eventBlackboxSig = ''; // 强制下一帧重绘
+        renderEventBlackbox();
+      });
+      eventBlackboxBound = true;
+    }
+
+    function renderEventBlackbox() {
+      try {
+        const flowListEl = document.getElementById('yami-event-flow-list');
+        const ghostListEl = document.getElementById('yami-ghost-list');
+        if (!flowListEl || !ghostListEl) return;
+        bindEventBlackboxEvents();
+
+        const probe = window.__YAMI_PERF_PROBE__;
+        if (!probe || typeof probe.getEventBlackbox !== 'function') {
+          return;
+        }
+        const box = probe.getEventBlackbox();
+        if (!box || box.ok !== true) return;
+
+        const entries = box.entries || [];
+        const active = box.active || [];
+        // 侦探台收录: 幽灵事件(宿主已销毁/长时间无进展) 一定入列, 其余收录「没在正常推进」的
+        const stuck = active.filter(function (a) {
+          return a.ghost === true || (a.state !== 'running' && a.state !== 'done');
+        });
+
+        // 短时反馈文案 (一键结束后的结果提示), 过期自动失效
+        const flash = (eventBlackboxFlash && Date.now() < eventBlackboxFlash.until) ? eventBlackboxFlash.text : '';
+        if (!flash) eventBlackboxFlash = null;
+
+        // 快照签名 (铁律⑲): 内容未变时跳过重建, 保住滚动与展开态
+        const sig = entries.map(function (e) { return e.id + ':' + e.action + ':' + (e.count || 1); }).join('|')
+          + '##' + stuck.map(function (a) {
+            return a.id + ':' + a.state + ':' + a.step + ':' + (a.ghost ? 1 : 0) + ':' + Math.round((a.suspendMs || 0) / 1000);
+          }).join('|')
+          + '##' + flash;
+        if (sig === eventBlackboxSig && flowListEl.innerHTML) return;
+        eventBlackboxSig = sig;
+
+        // ---- 事件流水 ----
+        const flowStatusEl = document.getElementById('yami-eventflow-status');
+        const flowSummaryEl = document.getElementById('yami-eventflow-summary');
+        if (flowStatusEl) {
+          if (!box.trace) {
+            flowStatusEl.className = 'yami-eventflow-badge warn';
+            flowStatusEl.textContent = '[仅步骤]';
+          } else if (entries.length === 0) {
+            flowStatusEl.className = 'yami-eventflow-badge idle';
+            flowStatusEl.textContent = '[静默]';
+          } else {
+            flowStatusEl.className = 'yami-eventflow-badge ok';
+            flowStatusEl.textContent = '[记录中 ' + entries.length + ' 条]';
+          }
+        }
+        if (flowSummaryEl) {
+          flowSummaryEl.textContent = box.trace
+            ? '最近 20 步事件指令，剧情卡住时看这里。'
+            : '当前只能显示步数（指令名识别未就绪，重启工程后重新试玩即可）。';
+        }
+        flowListEl.innerHTML = entries.length === 0
+          ? '<div class="yami-eventflow-empty">暂无事件执行记录。游戏内触发事件或对话后即可看到流水。</div>'
+          : entries.map(function (e) {
+            const action = EVENT_ACTION_LABEL[e.action] || '执行';
+            const stepText = e.step > 0
+              ? ('第 ' + e.step + (e.total > 0 ? ' / ' + e.total : '') + ' 步')
+              : '—';
+            const countBadge = (e.count || 1) > 1 ? '<span class="yami-eventflow-count">x' + e.count + '</span>' : '';
+            const extra = e.action === 'wait' && e.remainMs > 0
+              ? '<span class="yami-eventflow-extra">剩余 ' + formatEventDuration(e.remainMs) + '</span>'
+              : '';
+            return '<div class="yami-eventflow-row">'
+              + '<div class="yami-eventflow-row-head">'
+              + '<span class="yami-eventflow-time">' + formatEventClock(e.time) + '</span>'
+              + '<span class="yami-eventflow-action act-' + escapeHtml(e.action || 'run') + '">' + escapeHtml(action) + '</span>'
+              + '<span class="yami-eventflow-name">' + escapeHtml(e.name || '未知事件') + '</span>'
+              + '<span class="yami-eventflow-step">' + escapeHtml(stepText) + '</span>'
+              + countBadge
+              + '</div>'
+              + '<div class="yami-eventflow-desc">' + escapeHtml(eventStepText(e)) + extra + '</div>'
+              + '</div>';
+          }).join('');
+
+        // ---- 幽灵事件侦探 ----
+        const ghostStatusEl = document.getElementById('yami-ghost-status');
+        const ghostSummaryEl = document.getElementById('yami-ghost-summary');
+        const ghostCount = box.ghostCount || 0;
+        if (ghostStatusEl) {
+          ghostStatusEl.className = 'yami-ghost-badge ' + (ghostCount > 0 ? 'danger' : (stuck.length > 0 ? 'warn' : 'idle'));
+          ghostStatusEl.textContent = ghostCount > 0
+            ? ('[' + ghostCount + ' 个滞留]')
+            : (stuck.length > 0 ? ('[' + stuck.length + ' 个挂起]') : '[无滞留]');
+        }
+        if (ghostSummaryEl) {
+          ghostSummaryEl.textContent = flash
+            ? flash
+            : (ghostCount > 0
+              ? '发现滞留事件，剧情不继续多半就是它们卡着，可逐条结束。'
+              : '剧情不继续又没有任何报错时，这里能看到卡住的事件。');
+        }
+        const showList = stuck.slice(0, 8);
+        ghostListEl.innerHTML = showList.length === 0
+          ? '<div class="yami-ghost-empty">没有发现滞留事件。</div>'
+          : showList.map(function (a) {
+            const tags = [];
+            if (a.hostGone) tags.push('<span class="yami-ghost-tag danger">宿主已销毁</span>');
+            else if (a.stale) tags.push('<span class="yami-ghost-tag danger">长时间无进展</span>');
+            if (!a.driven) tags.push('<span class="yami-ghost-tag warn">已停止更新</span>');
+            const metaParts = [];
+            if (a.host) metaParts.push('宿主：' + a.host);
+            if (a.suspendMs > 0) metaParts.push('已挂起 ' + formatEventDuration(a.suspendMs));
+            metaParts.push('状态：' + (EVENT_STATE_LABEL[a.state] || '执行中'));
+            const stepText = a.step > 0
+              ? ('停在第 ' + a.step + (a.total > 0 ? ' / ' + a.total : '') + ' 步 · ' + eventStepText(a))
+              : '尚未执行任何指令';
+            return '<div class="yami-ghost-card">'
+              + '<div class="yami-ghost-card-head">'
+              + '<span class="yami-ghost-name">' + escapeHtml(a.name || '未知事件') + '</span>'
+              + tags.join('')
+              + '</div>'
+              + '<div class="yami-ghost-card-meta">' + escapeHtml(metaParts.join(' · ')) + '</div>'
+              + '<div class="yami-ghost-card-step">' + escapeHtml(stepText) + '</div>'
+              + '<div class="yami-ghost-card-actions">'
+              + '<div class="yami-ghost-finish-btn" data-finish-event="' + escapeHtml(String(a.id)) + '" role="button" title="调用引擎原生结束回调，拔除滞留引用">结束事件</div>'
+              + '</div>'
+              + '</div>';
+          }).join('')
+            + (stuck.length > showList.length
+              ? '<div class="yami-ghost-more">另有 ' + (stuck.length - showList.length) + ' 个挂起事件未列出。</div>'
+              : '');
+      } catch (e) {}
+    }
 
     function renderAuditPanel() {
       const panelEl = document.getElementById('yami-audit-panel');
@@ -4283,17 +4779,20 @@
     // 页面 2: 控制台报错黑匣子契约
     Views.register('errors', {
       showExportBtns: false,
-      title: '控制台报错',
+      title: '运行日志',
       showBack: true,
       showModeSwitch: false,
       showClearErrors: true,
       showTabs: false,
       mount(root, ctx) {
         renderAuditPanel();
+        renderEventBlackbox();
         renderErrorsList();
       },
       refresh(ctx) {
         renderErrorsList();
+        // 事件流水与幽灵侦探: 自带快照签名守卫, 内容未变时不重建 (铁律⑲)
+        renderEventBlackbox();
       },
       destroy() {}
     });
@@ -6359,7 +6858,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '0.8.1';
+      const cur = (probe && probe.version) ? probe.version : '0.9.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -6416,7 +6915,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '0.8.1') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '0.9.0') + ')');
           refreshVersionBadge();
         }
       });

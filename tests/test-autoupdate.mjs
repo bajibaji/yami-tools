@@ -90,12 +90,17 @@ async function main() {
   check('1.2.3 > 0.99.99 => 1', v('1.2.3', '0.99.99') === 1);
   check('v 前缀容忍', v('v0.2.0', '0.2.0') === 0);
 
-  console.log('=== 2. checkUpdate: 本地已最新 (0.2.0 vs 远端 raw) ===');
+  console.log('=== 2. checkUpdate: 本地版本 == 远端版本 时不应提示更新 ===');
+  // 预言机硬化: 「已是最新」是「本地 == 远端」的语义, 与仓库当前推到哪一版无关。
+  // 直接把本地版本设成远端真实版本, 这样本地领先远端 (尚未 git push) 时也不会误报回归。
+  const sameSrc = remoteVer === '0.0.0'
+    ? srcClean
+    : srcClean.replace(/const PROBE_VERSION = '[\d.]+';/, "const PROBE_VERSION = '" + remoteVer + "';");
   const sCur = makeSandbox();
-  vm.createContext(sCur); vm.runInContext(srcClean, sCur);
+  vm.createContext(sCur); vm.runInContext(sameSrc, sCur);
   const curProbe = sCur.window.__YAMI_PERF_PROBE__;
   const r1 = await curProbe.checkUpdate();
-  check('hasUpdate = false', r1.hasUpdate === false, 'ver=' + (r1.latestVersion || '?'));
+  check('hasUpdate = false', r1.hasUpdate === false, 'local=' + curProbe.version + ' ver=' + (r1.latestVersion || '?'));
   checkRemote('latestVersion = 远端真实版本 (raw 无缓存)', r1.latestVersion === remoteVer, r1.latestVersion);
   check('事件 update-none 已派发', sCur._events.includes('yami-perf-update-none'));
 
