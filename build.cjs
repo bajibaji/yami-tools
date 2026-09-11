@@ -27,6 +27,8 @@ const ROOT_DIR = __dirname;
 const SRC_CSS_PATH = path.join(ROOT_DIR, 'src', 'style.css');
 const HUD_JS_PATH = path.join(ROOT_DIR, 'hud-overlay.js');
 const PROBE_JS_PATH = path.join(ROOT_DIR, 'probe-core.js');
+const AI_AGENT_PATH = path.join(ROOT_DIR, 'ai-agent.js');
+const AI_HOST_PATH = path.join(ROOT_DIR, 'ai-host.js');
 const DEPLOY_DIR = 'D:\\Program Files\\Open Yami RPG Editor\\extension\\yami-perf-extension';
 
 const isWatch = process.argv.includes('--watch');
@@ -183,6 +185,8 @@ console.log(`  [版本核验] 组件全线单一事实源版本号已完全对�
 try {
   execSync(`node --check "${HUD_JS_PATH}"`, { stdio: 'pipe' });
   execSync(`node --check "${PROBE_JS_PATH}"`, { stdio: 'pipe' });
+  execSync(`node --check "${AI_AGENT_PATH}"`, { stdio: 'pipe' });
+  execSync(`node --check "${AI_HOST_PATH}"`, { stdio: 'pipe' });
   console.log('  [语法编译] hud-overlay.js 与 probe-core.js 语法校验 100% 通过');
 } catch (err) {
   console.error('❌ [语法编译失败] 请检查 JS 代码语法！\n', err.message);
@@ -236,7 +240,8 @@ const requiredAnchors = [
   { name: '体检折叠计数渲染', pattern: /yami-audit-count/ },
   { name: '体检涉及范围渲染', pattern: /yami-audit-item-scope/ },
   { name: '体检按级别汇总', pattern: /stats\.levels/ },
-  { name: '滚动条单一事实源', pattern: /滚动条单一事实源/ }
+  { name: '滚动条单一事实源', pattern: /滚动条单一事实源/ },
+  { name: 'AI 助手页面扩展点', pattern: /__DANJUAN_HUD_API__/ }
 ];
 
 let failedCount = 0;
@@ -250,10 +255,14 @@ for (const chk of requiredAnchors) {
 // 绝对零 Emoji + 中文术语断言 (覆盖 hud / probe / css 全部产物源)
 const emojiRegex = /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E0}-\u{1F1FF}]/u;
 const probeContent = fs.readFileSync(PROBE_JS_PATH, 'utf8');
+const aiAgentContent = fs.readFileSync(AI_AGENT_PATH, 'utf8');
+const aiHostContent = fs.readFileSync(AI_HOST_PATH, 'utf8');
 const styleCssContent = fs.existsSync(SRC_CSS_PATH) ? fs.readFileSync(SRC_CSS_PATH, 'utf8') : '';
 const artifactFiles = [
   ['hud-overlay.js', hudContent],
   ['probe-core.js', probeContent],
+  ['ai-agent.js', aiAgentContent],
+  ['ai-host.js', aiHostContent],
   ['src/style.css', styleCssContent]
 ];
 for (const [fname, fcontent] of artifactFiles) {
@@ -271,10 +280,24 @@ for (const [fname, fcontent] of artifactFiles) {
 }
 
 // 铁律②: 严禁原生 <button> 标签 (编辑器全局 button{position:absolute;width:88px;height:20px} 会打歪)
-const nativeBtnHits = hudContent.match(/<button[\s>]/g) || [];
+const nativeBtnHits = (hudContent + '\n' + aiAgentContent).match(/<button[\s>]/g) || [];
 if (nativeBtnHits.length > 0) {
   console.error(`❌ [断言失败] 检测到 ${nativeBtnHits.length} 处原生 <button> 标签，违反铁律②，请改用 <div role="button">！`);
   failedCount++;
+}
+
+const aiAnchors = [
+  ['AI 助手主页入口', /AI 助手/],
+  ['AI 写入确认按钮', /执行修改/],
+  ['AI 取消修改按钮', /取消修改/],
+  ['AI Agent 工具审批', /status: 'approval'/],
+  ['AI 内置 MCP 路径', /runtime.*yami-mcp.*server\.js/]
+];
+for (const [name, pattern] of aiAnchors) {
+  if (!pattern.test(aiAgentContent + '\n' + aiHostContent)) {
+    console.error(`❌ [断言失败] 缺失关键锚点: ${name}`);
+    failedCount++;
+  }
 }
 
 // 铁律㉑: 任何声明了 overflow auto/scroll 的容器都必须被滚动条样式覆盖
@@ -333,7 +356,7 @@ if (isDeploy) {
     process.exit(1);
   }
 
-  const syncFiles = ['manifest.json', 'probe-core.js', 'hud-overlay.js', 'HANDOFF.md', 'README.md', '.gitignore'];
+  const syncFiles = ['manifest.json', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js', 'ai-host.js', 'HANDOFF.md', 'README.md', '.gitignore'];
   console.log('----------------------------------------------------------------------');
   console.log('文件名              源文件 MD5 (SSOT)                目标文件 MD5 (生产)       状态');
   console.log('----------------------------------------------------------------------');
@@ -349,6 +372,13 @@ if (isDeploy) {
       const match = srcMd5 === destMd5 ? '✅ 一致' : '❌ 不一致';
       console.log(`${f.padEnd(18)} ${srcMd5}  ${destMd5}  ${match}`);
     }
+  }
+
+  const runtimeSource = path.join(ROOT_DIR, 'runtime');
+  const runtimeTarget = path.join(DEPLOY_DIR, 'runtime');
+  if (fs.existsSync(runtimeSource)) {
+    fs.cpSync(runtimeSource, runtimeTarget, { recursive: true, force: true });
+    console.log('runtime/'.padEnd(18) + '内置 yami-mcp 已递归同步'.padEnd(66) + '✅ 一致');
   }
   console.log('----------------------------------------------------------------------');
   console.log('✨ [部署完毕] 生产文件与母仓库完全一致，重启工程试玩即可生效！\n');

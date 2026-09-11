@@ -3241,6 +3241,169 @@
         color: #999999 !important;
         word-break: break-all !important;
       }
+
+      /* ============ AI 助手 ============ */
+      .yami-ai-page {
+        min-height: 100% !important;
+        gap: 10px !important;
+      }
+      .yami-ai-toolbar {
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+      }
+      .yami-ai-status {
+        flex: 1 !important;
+        min-width: 0 !important;
+        font-size: 12px !important;
+        color: #b8b8b8 !important;
+      }
+      .yami-ai-status.ready { color: #4ade80 !important; }
+      .yami-ai-status.working { color: #60a5fa !important; }
+      .yami-ai-status.waiting { color: #fbbf24 !important; }
+      .yami-ai-status.error { color: #ff8888 !important; }
+      .yami-ai-tool-btn,
+      .yami-ai-primary,
+      .yami-ai-secondary {
+        position: static !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        min-height: 28px !important;
+        padding: 4px 10px !important;
+        border-radius: 3px !important;
+        border: 1px solid #3d3d3d !important;
+        background: #303030 !important;
+        color: #e8e8e8 !important;
+        font-size: 12px !important;
+        line-height: 1.4 !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: background-color 0.12s, border-color 0.12s, scale 0.12s !important;
+      }
+      .yami-ai-primary {
+        border-color: #0864a8 !important;
+        background: #0864a8 !important;
+        color: #ffffff !important;
+      }
+      .yami-ai-secondary { background: #242424 !important; }
+      .yami-ai-tool-btn:hover,
+      .yami-ai-secondary:hover { background: #3d3d3d !important; }
+      .yami-ai-primary:hover { background: #0874c0 !important; }
+      .yami-ai-tool-btn:focus-visible,
+      .yami-ai-primary:focus-visible,
+      .yami-ai-secondary:focus-visible,
+      .yami-ai-page input:focus-visible,
+      .yami-ai-page textarea:focus-visible {
+        outline: 2px solid #60a5fa !important;
+        outline-offset: 1px !important;
+      }
+      .yami-ai-tool-btn:active,
+      .yami-ai-primary:active,
+      .yami-ai-secondary:active { scale: 0.96 !important; }
+      .yami-ai-primary.disabled {
+        opacity: 0.55 !important;
+        cursor: default !important;
+        scale: 1 !important;
+      }
+      .yami-ai-settings {
+        display: none !important;
+        grid-template-columns: minmax(76px, auto) minmax(0, 1fr) !important;
+        align-items: center !important;
+        gap: 8px 10px !important;
+        padding: 10px !important;
+        border: 1px solid #3d3d3d !important;
+        border-radius: 4px !important;
+        background: #202020 !important;
+      }
+      .yami-ai-settings.show { display: grid !important; }
+      .yami-ai-settings label,
+      .yami-ai-compose label {
+        color: #b8b8b8 !important;
+        font-size: 12px !important;
+        line-height: 1.5 !important;
+      }
+      .yami-ai-settings input,
+      .yami-ai-compose textarea {
+        min-width: 0 !important;
+        width: 100% !important;
+        border: 1px solid #080808 !important;
+        border-radius: 3px !important;
+        background: #18191a !important;
+        color: #e8e8e8 !important;
+        font: 400 13px/1.5 Inter, "Microsoft YaHei UI", sans-serif !important;
+        padding: 7px 8px !important;
+        resize: vertical !important;
+      }
+      .yami-ai-check {
+        grid-column: 1 / -1 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+      }
+      .yami-ai-check input { width: 16px !important; height: 16px !important; flex: 0 0 auto !important; }
+      .yami-ai-settings .yami-ai-primary { grid-column: 2 !important; justify-self: end !important; }
+      .yami-ai-messages {
+        flex: 1 1 240px !important;
+        min-height: 180px !important;
+        overflow-y: auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+        padding: 2px !important;
+      }
+      .yami-ai-message {
+        max-width: 90% !important;
+        padding: 8px 10px !important;
+        border: 1px solid #383838 !important;
+        border-radius: 4px !important;
+        background: #2b2b2b !important;
+        color: #e0e0e0 !important;
+        font-size: 13px !important;
+        line-height: 1.55 !important;
+        white-space: pre-wrap !important;
+        overflow-wrap: break-word !important;
+        user-select: text !important;
+      }
+      .yami-ai-message.user {
+        align-self: flex-end !important;
+        border-color: #22547a !important;
+        background: #18344a !important;
+        color: #ffffff !important;
+      }
+      .yami-ai-message.system { color: #b8b8b8 !important; background: #202020 !important; }
+      .yami-ai-message.error { border-color: #663333 !important; background: #321f1f !important; color: #ffaaaa !important; }
+      .yami-ai-approval {
+        display: none !important;
+        padding: 10px !important;
+        border: 1px solid #8a5a16 !important;
+        border-radius: 4px !important;
+        background: #2a2418 !important;
+      }
+      .yami-ai-approval.show { display: block !important; }
+      .yami-ai-approval-title { color: #ffd37a !important; font-size: 13px !important; font-weight: 600 !important; }
+      .yami-ai-approval pre {
+        margin: 7px 0 !important;
+        color: #e6dcc8 !important;
+        font: 400 12px/1.5 Consolas, monospace !important;
+        white-space: pre-wrap !important;
+        overflow-wrap: break-word !important;
+      }
+      .yami-ai-approval-actions { display: flex !important; justify-content: flex-end !important; gap: 8px !important; }
+      .yami-ai-compose {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) auto !important;
+        gap: 6px 8px !important;
+        align-items: end !important;
+      }
+      .yami-ai-compose label { grid-column: 1 / -1 !important; }
+      .yami-ai-compose textarea { min-height: 66px !important; max-height: 150px !important; }
+      @media (max-width: 520px) {
+        .yami-ai-settings { grid-template-columns: 1fr !important; }
+        .yami-ai-settings .yami-ai-primary { grid-column: 1 !important; }
+        .yami-ai-compose { grid-template-columns: 1fr !important; }
+        .yami-ai-compose .yami-ai-primary { justify-self: end !important; }
+      }
       /* ============================================================
          滚动条单一事实源 (颜色只在这里定义)
          ------------------------------------------------------------
@@ -3263,7 +3426,8 @@
       #page-cheats::-webkit-scrollbar-track,
       .yami-audit-list::-webkit-scrollbar-track,
       .yami-eventflow-list::-webkit-scrollbar-track,
-      .yami-ghost-list::-webkit-scrollbar-track {
+      .yami-ghost-list::-webkit-scrollbar-track,
+      .yami-ai-messages::-webkit-scrollbar-track {
         background: #181818 !important;
       }
       .yami-perf-dock-body::-webkit-scrollbar-thumb,
@@ -3278,7 +3442,8 @@
       #page-cheats::-webkit-scrollbar-thumb,
       .yami-audit-list::-webkit-scrollbar-thumb,
       .yami-eventflow-list::-webkit-scrollbar-thumb,
-      .yami-ghost-list::-webkit-scrollbar-thumb {
+      .yami-ghost-list::-webkit-scrollbar-thumb,
+      .yami-ai-messages::-webkit-scrollbar-thumb {
         background: #383838 !important;
         border-radius: 2px !important;
       }
@@ -3294,7 +3459,8 @@
       #page-cheats::-webkit-scrollbar-thumb:hover,
       .yami-audit-list::-webkit-scrollbar-thumb:hover,
       .yami-eventflow-list::-webkit-scrollbar-thumb:hover,
-      .yami-ghost-list::-webkit-scrollbar-thumb:hover {
+      .yami-ghost-list::-webkit-scrollbar-thumb:hover,
+      .yami-ai-messages::-webkit-scrollbar-thumb:hover {
         background: #4a4a4a !important;
       }
       .yami-perf-dock-body::-webkit-scrollbar-corner,
@@ -3304,12 +3470,14 @@
       .yami-errors-scroll-list::-webkit-scrollbar-corner,
       .yami-audit-list::-webkit-scrollbar-corner,
       .yami-eventflow-list::-webkit-scrollbar-corner,
-      .yami-ghost-list::-webkit-scrollbar-corner {
+      .yami-ghost-list::-webkit-scrollbar-corner,
+      .yami-ai-messages::-webkit-scrollbar-corner {
         background: #181818 !important;
       }
       /* 新增容器自带宽度 (老容器的宽度分档保持不变) */
       .yami-eventflow-list::-webkit-scrollbar,
-      .yami-ghost-list::-webkit-scrollbar {
+      .yami-ghost-list::-webkit-scrollbar,
+      .yami-ai-messages::-webkit-scrollbar {
         width: 4px !important;
         height: 4px !important;
       }

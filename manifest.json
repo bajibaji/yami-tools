@@ -13,7 +13,8 @@
       ],
       "js": [
         "probe-core.js",
-        "hud-overlay.js"
+        "hud-overlay.js",
+        "ai-agent.js"
       ],
       "run_at": "document_start",
       "all_frames": true,

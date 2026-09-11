@@ -2949,6 +2949,77 @@
 
   // ---------------- 本地轻量 SSE / HTTP 服务 ----------------
   const sseClients = new Set();
+  const bridgeToken = 'yami-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+  function readJsonBody(req, limit) {
+    return new Promise(function(resolve, reject) {
+      let raw = '';
+      req.on('data', function(chunk) {
+        raw += chunk;
+        if (raw.length > (limit || 1024 * 1024)) {
+          reject(new Error('请求体过大'));
+          try { req.destroy(); } catch (e) {}
+        }
+      });
+      req.on('end', function() {
+        try { resolve(raw ? JSON.parse(raw) : {}); } catch (e) { reject(new Error('请求 JSON 无法解析')); }
+      });
+      req.on('error', reject);
+    });
+  }
+  function normalizeRuntimeKey(key) {
+    const map = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', ok: 'Enter', confirm: 'Enter', cancel: 'Escape', esc: 'Escape', space: 'Space' };
+    const value = String(key || '');
+    return map[value.toLowerCase()] || value;
+  }
+  async function executeRuntimeAction(action) {
+    action = action || {};
+    if (action.type === 'key' || action.type === 'input') {
+      const key = normalizeRuntimeKey(action.key);
+      if (!key || !/^(ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Enter|Escape|Space|Key[A-Z]|Digit[0-9]|F[1-12])$/.test(key)) {
+        return { ok: false, error: '不支持的按键: ' + key };
+      }
+      const operation = action.action || 'press';
+      if (typeof Input === 'undefined' || typeof Input.simulateKey !== 'function') return { ok: false, error: '当前游戏没有暴露原生按键接口' };
+      if (operation === 'up') Input.simulateKey('keyup', key);
+      else if (operation === 'down') Input.simulateKey('keydown', key);
+      else {
+        Input.simulateKey('keydown', key);
+        await new Promise(function(resolve) { setTimeout(resolve, Math.min(500, Math.max(20, Number(action.durationMs) || 50))); });
+        Input.simulateKey('keyup', key);
+      }
+      return { ok: true, action: 'key', key, operation };
+    }
+    if (action.type === 'pointer') {
+      const x = Number(action.x);
+      const y = Number(action.y);
+      const button = Number(action.button) || 0;
+      const operation = String(action.action || 'move');
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return { ok: false, error: '鼠标坐标必须是有限数值' };
+      if (!['move', 'down', 'up', 'click'].includes(operation)) return { ok: false, error: '不支持的鼠标动作: ' + operation };
+      const emit = function(type) {
+        window.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, button: button, bubbles: true, cancelable: true }));
+      };
+      emit('pointermove');
+      if (operation === 'down') emit('pointerdown');
+      else if (operation === 'up') emit('pointerup');
+      else if (operation === 'click') { emit('pointerdown'); emit('pointerup'); }
+      return { ok: true, action: 'pointer', operation: operation, x: x, y: y, button: button };
+    }
+    if (action.type === 'finishEvent') return { ok: !!finishEventById(String(action.id || '')), action: 'finishEvent', id: String(action.id || '') };
+    if (action.type === 'suspend') {
+      const kind = String(action.kind || '');
+      if (!Object.prototype.hasOwnProperty.call(state.suspend, kind)) return { ok: false, error: '不支持的暂停类别: ' + kind };
+      state.suspend[kind] = !!action.on;
+      installKernelSuspendHooks();
+      return { ok: true, action: 'suspend', kind, on: state.suspend[kind] };
+    }
+    if (action.type === 'resetCheats') {
+      const probe = window.__YAMI_PERF_PROBE__;
+      if (!probe || typeof probe.resetAllCheats !== 'function') return { ok: false, error: '当前构建没有作弊还原接口' };
+      return { ok: !!probe.resetAllCheats(), action: 'resetCheats' };
+    }
+    return { ok: false, error: '未知运行时动作，仅允许 key、finishEvent、suspend、resetCheats' };
+  }
   function broadcastSSE(event, data) {
     if (!sseClients.size) return;
     const payload = 'event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n';
@@ -2960,14 +3031,53 @@
   try {
     if (typeof require === 'function') {
       const http = require('http');
-      const server = http.createServer(function(req, res) {
+      const nodeFs = require('fs');
+      const nodePath = require('path');
+      const href = String(window.location && window.location.href || '').replace(/\\/g, '/');
+      const isEditorHostPage = /\/resources\/app\/dist\//i.test(href) || /^https?:\/\/localhost:5173\//i.test(href);
+      let pageFile = '';
+      try {
+        pageFile = decodeURIComponent(window.location.pathname || '');
+        if (process.platform === 'win32' && pageFile.startsWith('/')) pageFile = pageFile.slice(1);
+      } catch (e) {}
+      const pageDir = pageFile ? nodePath.dirname(pageFile) : '';
+      const isPlayerHostPage = !!pageDir && nodeFs.existsSync(nodePath.join(pageDir, 'Data', 'config.json')) && nodeFs.existsSync(nodePath.join(pageDir, 'Assets'));
+      if (isPlayerHostPage) {
+        const server = http.createServer(function(req, res) {
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-yami-bridge-token');
 
         if (req.method === 'OPTIONS') {
           res.writeHead(204);
           res.end();
+          return;
+        }
+
+        if (req.method === 'GET' && req.url === '/token') {
+          if (req.headers.origin) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: '令牌只允许本机工具进程读取' }));
+          } else {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, bridgeToken: bridgeToken }));
+          }
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/action') {
+          if (req.headers['x-yami-bridge-token'] !== bridgeToken) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: '运行时桥接令牌无效' }));
+            return;
+          }
+          readJsonBody(req, 64 * 1024).then(executeRuntimeAction).then(function(result) {
+            res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          }).catch(function(error) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: error.message }));
+          });
           return;
         }
 
@@ -3024,6 +3134,216 @@
       server.listen(BRIDGE_PORT, '127.0.0.1', function() {
         console.log('[Yami Perf Bridge] 本地实时调试服务已就绪: http://127.0.0.1:' + BRIDGE_PORT);
       });
+      }
+
+      // 编辑器动作桥：只在编辑器主页面启动，避免 all_frames 下与试玩窗口争抢端口。
+      // 仅暴露固定动作和 DOM 语义点击，不开放任意 JS 执行。
+      let editorBridgeStarted = false;
+      function startEditorBridge() {
+        if (!isEditorHostPage || editorBridgeStarted) return;
+        if (typeof Directory === 'undefined' || typeof File === 'undefined' || typeof Data === 'undefined') {
+          setTimeout(startEditorBridge, 250);
+          return;
+        }
+        editorBridgeStarted = true;
+        const editorServer = http.createServer(function(req, res) {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-yami-bridge-token');
+          if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+          if (req.method === 'GET' && req.url === '/live') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, context: 'editor', timestamp: Date.now() }));
+            return;
+          }
+
+          if (req.method === 'GET' && req.url === '/token') {
+            if (req.headers.origin) {
+              res.writeHead(403, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: '令牌只允许本机工具进程读取' }));
+            } else {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: true, bridgeToken: bridgeToken }));
+            }
+            return;
+          }
+
+          if (req.method === 'POST' && req.url === '/action') {
+            if (req.headers['x-yami-bridge-token'] !== bridgeToken) {
+              res.writeHead(401, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: '编辑器桥接令牌无效' }));
+              return;
+            }
+            readJsonBody(req, 64 * 1024).then(async function(action) {
+              const name = String(action && action.action || '');
+              if (name === 'preflight' || name === 'reload') {
+                const rel = String(action.path || '').replace(/\\/g, '/').replace(/^\.\//, '');
+                if (!rel || rel.includes('..')) return { ok: false, error: '编辑器桥收到非法工程路径' };
+                const dataMatch = rel.match(/^Data\/([a-zA-Z0-9_-]+)\.json$/);
+                const guidMatch = rel.match(/\.([0-9a-f]{16})\.[^.]+$/);
+                let meta = dataMatch
+                  ? Data.manifest?.project?.[dataMatch[1]]
+                  : Data.manifest?.pathMap?.[rel] || (guidMatch ? Data.manifest?.guidMap?.[guidMatch[1]] : null);
+                let dirty = !!(meta && Data.manifest?.changes?.includes(meta));
+                if (!dirty && guidMatch && typeof EventEditor !== 'undefined' && Array.isArray(EventEditor.data)) {
+                  dirty = EventEditor.data.some(function(item) { return item && item.id === guidMatch[1] && item.changed === true; });
+                }
+                if (dirty) {
+                  return { ok: false, dirty: true, path: rel, error: '这个文件在编辑器里有未保存修改，请先保存或取消当前编辑后再试' };
+                }
+                if (name === 'preflight') return { ok: true, dirty: false, path: rel };
+
+                if (dataMatch) {
+                  const key = dataMatch[1];
+                  const data = await File.get({ path: rel, type: 'json' });
+                  Data[key] = data;
+                  const rebuild = {
+                    easings: 'createGUIDMap', autotiles: 'createGUIDMap', teams: 'createTeamMap',
+                    variables: 'createVariableMap', attribute: 'createAttributeContext',
+                    enumeration: 'createEnumerationContext', localization: 'createLocalizationMap'
+                  }[key];
+                  if (rebuild && typeof Data[rebuild] === 'function') {
+                    if (rebuild === 'createGUIDMap') Data[rebuild](data);
+                    else Data[rebuild]();
+                  }
+                  window.dispatchEvent(new Event('datachange'));
+                  return { ok: true, action: name, path: rel };
+                }
+
+                const ext = (rel.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+                const mapName = {
+                  '.actor': 'actors', '.skill': 'skills', '.trigger': 'triggers', '.item': 'items',
+                  '.equip': 'equipments', '.state': 'states', '.event': 'events', '.scene': 'scenes',
+                  '.tile': 'tilesets', '.ui': 'ui', '.anim': 'animations', '.particle': 'particles'
+                }[ext];
+                if (mapName && meta && guidMatch) {
+                  const data = await File.get({ path: rel, type: 'json' });
+                  Object.defineProperty(data, 'guid', { configurable: true, writable: true, value: guidMatch[1] });
+                  Data[mapName][guidMatch[1]] = data;
+                  if (mapName === 'events' && typeof Updater !== 'undefined' && typeof Updater.updateGlobalEvent === 'function') Updater.updateGlobalEvent(meta);
+                  if (mapName === 'scenes' && typeof Data.registerScenePresets === 'function') Data.registerScenePresets(guidMatch[1]);
+                  if (mapName === 'ui' && typeof Data.registerUiPresets === 'function') Data.registerUiPresets(guidMatch[1]);
+                }
+                if (typeof Directory.update === 'function') await Directory.update();
+                if (guidMatch && typeof EventEditor !== 'undefined' && Array.isArray(EventEditor.data)) {
+                  const item = EventEditor.data.find(function(one) { return one && one.id === guidMatch[1]; });
+                  if (item && Data.events && Data.events[guidMatch[1]]) {
+                    item.event = Data.events[guidMatch[1]];
+                    delete item.commands;
+                    if (EventEditor.list?.selected === item && typeof EventEditor.openCommandList === 'function') EventEditor.openCommandList(item);
+                  }
+                }
+                return { ok: true, action: name, path: rel };
+              }
+              if (name === 'save') {
+                if (typeof File.save !== 'function') return { ok: false, error: 'File.save 不可用' };
+                await File.save(false);
+                return { ok: true, action: name };
+              }
+              if (name === 'refresh') {
+                if (typeof Directory.update !== 'function') return { ok: false, error: 'Directory.update 不可用' };
+                await Directory.update();
+                return { ok: true, action: name };
+              }
+              if (name === 'playtest') {
+                if (typeof Title === 'undefined' || typeof Title.playGame !== 'function') return { ok: false, error: 'Title.playGame 不可用' };
+                await Title.playGame();
+                return { ok: true, action: name };
+              }
+              if (name === 'undo' || name === 'redo') {
+                if (typeof UndoManager !== 'undefined' && typeof UndoManager[name] === 'function') {
+                  UndoManager[name]();
+                  return { ok: true, action: name };
+                }
+                return { ok: false, error: '当前编辑器未暴露 UndoManager' };
+              }
+              if (name === 'dumpUi') {
+                const selector = 'button, [role="button"], item, nav-item, select-box, custom-box, number-box, close, minimize, maximize, #title-play, .menu-item, input, textarea, box[hotkey]';
+                const elements = [];
+                for (const el of document.querySelectorAll(selector)) {
+                  const rect = el.getBoundingClientRect();
+                  const style = window.getComputedStyle(el);
+                  if (rect.width <= 0 || rect.height <= 0 || style.display === 'none' || style.visibility === 'hidden') continue;
+                  let text = (el.textContent || '').trim().replace(/\s+/g, ' ');
+                  if (text.length > 60) text = text.slice(0, 60) + '...';
+                  elements.push({
+                    tag: el.tagName.toLowerCase(), id: el.id || undefined,
+                    text: text || undefined, selector: el.id ? '#' + el.id : el.tagName.toLowerCase(),
+                    bounds: [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)]
+                  });
+                }
+                return { ok: true, action: name, count: elements.length, elements: elements };
+              }
+              if (name === 'click') {
+                let el = null;
+                if (typeof action.selector === 'string' && action.selector.length <= 300) el = document.querySelector(action.selector);
+                if (!el && Number.isFinite(Number(action.x)) && Number.isFinite(Number(action.y))) el = document.elementFromPoint(Number(action.x), Number(action.y));
+                if (!el) return { ok: false, error: '没有找到要点击的编辑器控件' };
+                if (typeof el.focus === 'function') el.focus();
+                if (typeof el.click !== 'function') return { ok: false, error: '目标控件不支持点击' };
+                el.click();
+                return { ok: true, action: name, tag: el.tagName.toLowerCase(), id: el.id || '' };
+              }
+              if (name === 'interact') {
+                const operation = String(action.operation || '');
+                let el = null;
+                if (typeof action.selector === 'string' && action.selector.length <= 300) el = document.querySelector(action.selector);
+                if (!el && Number.isFinite(Number(action.x)) && Number.isFinite(Number(action.y))) el = document.elementFromPoint(Number(action.x), Number(action.y));
+                if ((operation === 'input' || operation === 'select')) {
+                  if (!el) return { ok: false, error: '没有找到要输入的编辑器控件' };
+                  if (typeof el.input === 'function') el.input(action.value);
+                  else el.value = action.value == null ? '' : String(action.value);
+                  el.dispatchEvent(new Event('input', { bubbles: true }));
+                  el.dispatchEvent(new Event('change', { bubbles: true }));
+                  return { ok: true, action: name, operation: operation, id: el.id || '' };
+                }
+                const x = Number(action.x);
+                const y = Number(action.y);
+                const button = Number(action.button) || 0;
+                if (!Number.isFinite(x) || !Number.isFinite(y)) return { ok: false, error: '交互坐标必须是有限数值' };
+                const dispatch = function(type, px, py) {
+                  const target = document.elementFromPoint(px, py);
+                  if (target) target.dispatchEvent(new PointerEvent(type, { clientX: px, clientY: py, button: button, bubbles: true, cancelable: true }));
+                  return target;
+                };
+                if (operation === 'click') {
+                  const target = dispatch('pointerdown', x, y);
+                  dispatch('pointerup', x, y);
+                  if (target && typeof target.click === 'function') target.click();
+                } else if (operation === 'move') dispatch('pointermove', x, y);
+                else if (operation === 'down') dispatch('pointerdown', x, y);
+                else if (operation === 'up') dispatch('pointerup', x, y);
+                else if (operation === 'drag') {
+                  const toX = Number(action.toX);
+                  const toY = Number(action.toY);
+                  if (!Number.isFinite(toX) || !Number.isFinite(toY)) return { ok: false, error: '拖动终点必须是有限数值' };
+                  dispatch('pointerdown', x, y);
+                  dispatch('pointermove', toX, toY);
+                  dispatch('pointerup', toX, toY);
+                } else return { ok: false, error: '不支持的编辑器交互动作: ' + operation };
+                return { ok: true, action: name, operation: operation };
+              }
+              return { ok: false, error: '未知编辑器动作，仅允许 save、undo、redo、refresh、playtest、dumpUi、click、interact' };
+            }).then(function(result) {
+              res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify(result));
+            }).catch(function(error) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: error.message }));
+            });
+            return;
+          }
+          res.writeHead(404); res.end();
+        });
+        editorServer.on('error', function(err) {
+          if (err.code !== 'EADDRINUSE') console.warn('编辑器桥端口错误:', err.message);
+        });
+        editorServer.listen(5967, '127.0.0.1', function() {
+          console.log('[Yami Perf Bridge] 编辑器动作服务已就绪: http://127.0.0.1:5967');
+        });
+      }
+      startEditorBridge();
     }
   } catch (e) {
     console.warn('Node.js http bridge 未启动:', e);
@@ -3258,6 +3578,16 @@
     updateFiles: [
       'probe-core.js',
       'hud-overlay.js',
+      'ai-agent.js',
+      'ai-host.js',
+      'runtime/yami-mcp/package.json',
+      'runtime/yami-mcp/server.js',
+      'runtime/yami-mcp/modules/cdp-client.js',
+      'runtime/yami-mcp/modules/db-manager.js',
+      'runtime/yami-mcp/modules/editor-bridge.js',
+      'runtime/yami-mcp/modules/event-builder.js',
+      'runtime/yami-mcp/modules/file-ops.js',
+      'runtime/yami-mcp/modules/runtime-bridge.js',
       'HANDOFF.md',
       'README.md',
       'manifest.json'
@@ -3384,6 +3714,7 @@
       }
       const text = await fetchRemoteText(file);
       const targetPath = path.join(localDir, file);
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
       fs.writeFileSync(targetPath, text, 'utf8');
     }
 
