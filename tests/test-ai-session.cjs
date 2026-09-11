@@ -180,7 +180,7 @@ async function waitReady() {
 async function main() {
   await new Promise(resolve => model.listen(MODEL_PORT, '127.0.0.1', resolve))
   startHost({
-    YAMI_AI_CONTEXT_BUDGET: '4000',
+    YAMI_AI_CONTEXT_WINDOW: '12000',
     YAMI_AI_CONTEXT_KEEP: '4',
     YAMI_AI_TOOL_LIMIT: '500'
   })
@@ -210,7 +210,7 @@ async function main() {
 
   console.log('\n########## 3. 宿主重启后恢复历史 ##########')
   await stopHost()
-  startHost({ YAMI_AI_CONTEXT_BUDGET: '4000', YAMI_AI_CONTEXT_KEEP: '4', YAMI_AI_TOOL_LIMIT: '500' })
+  startHost({ YAMI_AI_CONTEXT_WINDOW: '12000', YAMI_AI_CONTEXT_KEEP: '4', YAMI_AI_TOOL_LIMIT: '500' })
   await waitReady()
   const loaded = await json('/session/load', 'POST', { sessionId: 'stream-1' })
   check('/session/load 返回历史消息', loaded.data.ok === true && Array.isArray(loaded.data.messages))
@@ -223,13 +223,17 @@ async function main() {
     await json('/chat', 'POST', { sessionId: 'compress-1', message: '第 ' + i + ' 轮：' + '填充内容'.repeat(200) })
   }
   const status = await json('/status?sessionId=compress-1')
-  console.error('[诊断] status.payload =', JSON.stringify(status.data))
-  console.error('[诊断] 落盘前 3 条 =', JSON.stringify(JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'compress-1.json'), 'utf8')).messages.slice(0, 3).map(m => ({ role: m.role, head: String(m.content || '').slice(0, 60) }))))
-  check('压缩后上下文仍在预算量级', status.data.context.chars < 60000, 'chars=' + status.data.context.chars)
+  check('压缩后占用回落到阈值以下', status.data.context.tokens < status.data.context.thresholdTokens,
+    status.data.context.tokens + ' < ' + status.data.context.thresholdTokens)
   check('压缩后标记了摘要', status.data.context.summary === true)
+  check('刻度按 token 与真实窗口显示', /\/12k · \d+%$/.test(String(status.data.context.label)), String(status.data.context.label))
   const compressFile = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'compress-1.json'), 'utf8'))
   check('落盘历史第一条为 system', compressFile.messages[0].role === 'system')
-  check('落盘历史包含摘要消息', /此前工作的摘要/.test(JSON.stringify(compressFile.messages[1])))
+  check('落盘历史包含结构化检查点', /<compacted-summary>/.test(JSON.stringify(compressFile.messages[1])))
+  // 本套件的假模型不模拟"压缩指令"（它只会回一句常规答复），所以这里只验检查点的包装与结构骨架；
+  // 八节完整性与摘要质量由 test-context-meter.cjs 的端到端负责
+  check('检查点带引导语与闭合标签', String(compressFile.messages[1].content || '').includes('自动生成的检查点')
+    && String(compressFile.messages[1].content || '').includes('</compacted-summary>'))
   check('最近消息被原样保留', compressFile.messages.some(message => message.role === 'user' && /第 11 轮/.test(message.content || '')))
 
   console.log('\n########## 5. 工具结果裁剪与工具事件 ##########')

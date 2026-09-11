@@ -3490,6 +3490,11 @@
         white-space: nowrap !important;
       }
       .yami-ai-context.show { display: block !important; }
+      /* 触及自动压缩阈值时给个提示色：用户能提前知道"下一次就要折叠历史了" */
+      .yami-ai-context.warn {
+        border-color: #a8762a !important;
+        color: #e0b165 !important;
+      }
 
 
 

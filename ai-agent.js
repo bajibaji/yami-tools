@@ -260,11 +260,15 @@
     const el = document.getElementById('yami-ai-context');
     if (!el) return;
     if (!context) { el.textContent = ''; el.classList.remove('show'); return; }
-    const used = Math.round(context.chars / 1000);
-    const budget = Math.round(context.budget / 1000);
-    el.textContent = '上下文 ' + used + 'k/' + budget + 'k' + (context.summary ? ' · 已压缩' : '');
+    // 刻度文案由宿主按 token 与真实窗口算好（label 形如「320k/1M · 32%」），前端只负责显示，
+    // 避免两处各算一套、又把字符数当上下文长度糊弄用户
+    const suffix = context.summary ? ' · 已压缩' : (context.nearLimit ? ' · 即将自动压缩' : '');
+    el.textContent = '上下文 ' + context.label + suffix;
     el.classList.add('show');
-    el.title = '已压缩：较早的对话被折叠成摘要，最近消息保持原样';
+    el.classList.toggle('warn', !!context.nearLimit);
+    el.title = context.calibrated
+      ? '按模型真实用量计（1M token 窗口，占用达到 80% 自动压缩：先精简长工具结果，再折叠成结构化检查点）'
+      : '按官方换算估算（中文 0.6 token/字、英文 0.3 token/字符；发起一次对话后改用真实用量）';
   }
 
   async function refreshContext() {
@@ -885,7 +889,13 @@
   }
 
   async function sendMessage() {
-    if (state.busy || state.pending) return;
+    if (state.busy) return;
+    // 有未确认的修改时，用户直接发新消息 = 放弃那项修改（宿主会同步作废并给它补上"未执行"应答）。
+    // 以前这里直接 return，界面看着就是"卡住了、发不出去"，用户完全不知道卡在哪。
+    if (state.pending) {
+      state.pending = null;
+      document.getElementById('yami-ai-approval')?.classList.remove('show');
+    }
     const input = document.getElementById('yami-ai-input');
     const text = input && input.value.trim();
     if (!text) { input?.focus(); return; }
@@ -910,7 +920,11 @@
       if (e && (e.name === 'AbortError' || /已打断/.test(String(e.message)))) {
         setStatus('已打断', 'idle');
       } else {
-        addMessage('error', e.message + '。请检查设置后重试。');
+        // 上游报错原文不能无脑接一句"请检查设置"：像消息序列不合法这类错误跟设置毫无关系，
+        // 会把人引到错误的方向去排查。只有确实是配置类问题才这么提示。
+        const detail = String((e && e.message) || '未知错误');
+        const settingIssue = /API.?Key|密钥|端点|endpoint|模型不存在|余额|余额不足/i.test(detail);
+        addMessage('error', detail + (settingIssue ? '。请到设置里检查后重试。' : '。'));
         setStatus('需要处理', 'error');
       }
     } finally {

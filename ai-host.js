@@ -9,6 +9,8 @@ const https = require('https')
 const crypto = require('crypto')
 const { spawn } = require('child_process')
 const pricing = require('./runtime/yami-mcp/modules/pricing')
+const messagePairs = require('./runtime/yami-mcp/modules/message-pairs')
+const contextMeter = require('./runtime/yami-mcp/modules/context-meter')
 
 const PORT = Number(process.env.YAMI_AI_PORT || 5968)
 const TOKEN = process.env.YAMI_AI_TOKEN || crypto.randomBytes(24).toString('hex')
@@ -45,9 +47,28 @@ const READ_ONLY_TOOLS = new Set([
 // 可配置项（便于测试与按机器调优）：YAMI_AI_SESSION_DIR / YAMI_AI_CONTEXT_BUDGET / YAMI_AI_CONTEXT_KEEP / YAMI_AI_MAX_STEPS
 const SESSION_DIR = process.env.YAMI_AI_SESSION_DIR || path.join(CONFIG_DIR, 'sessions')
 const MAX_STEPS = Number(process.env.YAMI_AI_MAX_STEPS || 12)      // 单轮最多连续工具调用步数
-const TOOL_RESULT_LIMIT = Number(process.env.YAMI_AI_TOOL_LIMIT || 32000) // 单条工具结果进入上下文的最大字符数
-const CONTEXT_BUDGET = Number(process.env.YAMI_AI_CONTEXT_BUDGET || 240000) // 上下文预算（字符）：超出即压缩历史
-const KEEP_RECENT = Number(process.env.YAMI_AI_CONTEXT_KEEP || 16)  // 压缩时原样保留的最近消息条数
+const TOOL_RESULT_LIMIT = Number(process.env.YAMI_AI_TOOL_LIMIT || 24000)  // 工具结果进上下文时保留的总字符数（头+尾）
+const TOOL_RESULT_TAIL = Number(process.env.YAMI_AI_TOOL_TAIL || 4000)     // 其中留给尾部的字符数（报错原文与结论常在末尾）
+
+/**
+ * 上下文治理规格（单一事实源，全部走 context-meter）：
+ *   · 窗口 = 官方公布的 1M token（deepseek-flash / v4-pro 同）；
+ *   · 占用达到窗口的 80% 就自动压缩（对齐 DSH compaction-basic 的 thresholdRatio）；
+ *   · 压缩后原样保留最近 16% 窗口（DSH 的 retainRatio），另加「至少保留 N 条消息」的下限。
+ * 可用环境变量覆盖以便测试与按机器调优：YAMI_AI_CONTEXT_WINDOW / YAMI_AI_COMPACT_THRESHOLD
+ * / YAMI_AI_COMPACT_RETAIN / YAMI_AI_CONTEXT_KEEP。
+ */
+function contextSpec() {
+  return contextMeter.resolveSpec({
+    contextWindow: Number(process.env.YAMI_AI_CONTEXT_WINDOW || contextMeter.DEFAULT_CONTEXT_WINDOW),
+    thresholdRatio: Number(process.env.YAMI_AI_COMPACT_THRESHOLD || contextMeter.DEFAULT_THRESHOLD_RATIO),
+    retainRatio: Number(process.env.YAMI_AI_COMPACT_RETAIN || contextMeter.DEFAULT_RETAIN_RATIO),
+    minKeepMessages: Number(process.env.YAMI_AI_CONTEXT_KEEP || contextMeter.DEFAULT_MIN_KEEP_MESSAGES)
+  })
+}
+
+/** 模型可见的工具 schema：整轮复用同一个数组实例，估算结果才能命中缓存 */
+let toolsForModel = []
 
 function safeSessionId(id) {
   const text = String(id || 'default').trim() || 'default'
@@ -66,6 +87,8 @@ function serializeSession(session) {
     summary: session.summary || '',
     usage: session.usage || null,
     grants: session.grants || [],
+    // 真实用量锚点一并落盘：重启后刻度仍然贴近真实值，不必重新估一遍
+    tokenAnchor: session.tokenAnchor || null,
     messages: session.messages,
     pending: session.pending
       ? {
@@ -100,6 +123,7 @@ function loadSessionFromDisk(id) {
       usage: data.usage || null,
       grants: Array.isArray(data.grants) ? data.grants : [],
       pending: data.pending || null,
+      tokenAnchor: data.tokenAnchor || null,
       seen: new Set(),
       busy: false
     }
@@ -108,11 +132,21 @@ function loadSessionFromDisk(id) {
   }
 }
 
-/** 会话里适合回显给前端的消息（跳过 system 与纯工具结果，长内容截断） */
+/** 会话里适合回显给前端的消息（跳过 system 与纯工具结果，长内容截断）
+ *  压缩检查点单独处理：剥掉引导语与标签，只把摘要正文当一条助手消息回显，
+ *  否则用户会在历史里看到一大段「这是自动生成的检查点…」的机器话。 */
 function visibleMessages(session, limit = 4000) {
   return session.messages
     .filter(message => message.role === 'user' || (message.role === 'assistant' && message.content))
-    .map(message => ({ role: message.role, content: String(message.content || '').slice(0, limit) }))
+    .map(message => {
+      if (isCheckpoint(message)) {
+        const summary = String(message.content)
+          .replace(/[\s\S]*?<compacted-summary>\s*/, '')
+          .replace(/\s*<\/compacted-summary>[\s\S]*$/, '')
+        return { role: 'assistant', content: ('【早前对话已压缩，以下是要点】\n\n' + summary).slice(0, limit) }
+      }
+      return { role: message.role, content: String(message.content || '').slice(0, limit) }
+    })
 }
 
 function listSessions() {  try {
@@ -140,7 +174,10 @@ function listSessions() {  try {
   }
 }
 
-/** 工具结果裁剪：保留关键字段，超长部分给出明确提示而不是静默丢弃 */
+/**
+ * 工具结果裁剪：超长结果保留**开头与结尾**（结尾很重要——报错原文、命令输出结论都在末尾，
+ * 只留开头会让模型看不到关键几行，进而反复重读同一个文件），中段给出明确提示而不是静默丢弃。
+ */
 function clipToolResult(result) {
   let text
   try {
@@ -149,69 +186,252 @@ function clipToolResult(result) {
     return '{"ok":false,"error":"工具结果无法序列化"}'
   }
   if (!text || text.length <= TOOL_RESULT_LIMIT) return text
-  const head = text.slice(0, TOOL_RESULT_LIMIT)
+  // 尾部预算不能超过总预算的一半，否则小预算下"只有尾巴"反而更长
+  const tailBudget = Math.max(0, Math.min(TOOL_RESULT_TAIL, Math.floor(TOOL_RESULT_LIMIT / 2)))
+  const headChars = Math.max(0, TOOL_RESULT_LIMIT - tailBudget)
+  const head = text.slice(0, headChars)
+  const tail = tailBudget > 0 ? text.slice(-tailBudget) : ''
   return JSON.stringify({
     ok: result && result.ok !== false,
     truncated: true,
     originalChars: text.length,
-    note: `工具结果过长已裁剪（原 ${text.length} 字符）。需要完整内容请用更精确的参数（如 read_resource 的 key、list_* 的分页）重新获取。`,
-    head
+    note: `工具结果过长已裁剪（原 ${text.length} 字符，保留开头与结尾）。需要完整内容请用更精确的参数（如 read_resource 的 key、list_* 的分页）重新获取。`,
+    head: tail ? head + '\n...(中段省略)...\n' + tail : head
   })
 }
 
-function contextSize(messages) {
-  let total = 0
-  for (const message of messages) {
-    total += String(message.content || '').length
-    if (Array.isArray(message.tool_calls)) total += JSON.stringify(message.tool_calls).length
-  }
-  return total
+/**
+ * 发送前的强制体检：把"带 tool_calls 却没有 tool 应答"的坏序列补齐。
+ *
+ * 历史事故：空转保护/用户打断等提前退出路径漏了回填，坏序列随会话落盘，之后每次请求都被
+ * 上游 400 拒绝（面板只显示一句跟设置无关的报错），整个会话就此报废。坏序列一旦写进历史就
+ * 会一直跟着用户，所以修复必须发生在**每次发请求之前**，而不是指望每条退出路径自觉。
+ */
+function healSessionMessages(session, reason) {
+  const result = messagePairs.repairToolPairs(session.messages, { reason })
+  if (!result.changed) return false
+  session.messages = result.messages
+  saveSession(session)
+  const { filled, droppedOrphan, droppedDuplicate, droppedEmptyCalls } = result.fixes
+  process.stderr.write(`[danjuan-ai] 消息序列已自愈（${reason}）：补 ${filled} 条工具应答，剔除越界 ${droppedOrphan + droppedDuplicate} 条、空调用 ${droppedEmptyCalls} 条\n`)
+  return true
 }
 
-/** 压缩历史：保留 system + 一条「工作摘要」+ 最近若干条，中间部分折叠进摘要
- *  布局说明：system → assistant(【此前工作的摘要】) → ...最近消息，是合法的对话序列，
- *  不再把首条用户消息单独插在摘要之后（那会造成「用户先说、助手再总结」的顺序错乱）。 */
-async function compressContext(session, config, key) {
-  const before = session.messages
-  if (contextSize(before) <= CONTEXT_BUDGET || before.length <= KEEP_RECENT + 3) return false
-  const system = before[0]
-  const tail = before.slice(-KEEP_RECENT)
+/** 给"确定不会执行"的工具调用补应答：它们已经进了历史，缺应答就会变成坏序列 */
+function appendUnexecutedToolResults(session, calls, reason) {
+  const answered = new Set()
+  for (const message of session.messages) {
+    if (message && message.role === 'tool' && message.tool_call_id) answered.add(message.tool_call_id)
+  }
+  const placeholder = messagePairs.notExecutedResult(reason)
+  let added = 0
+  for (const call of calls || []) {
+    if (!call || !call.id || answered.has(call.id)) continue
+    session.messages.push({ role: 'tool', tool_call_id: call.id, content: placeholder })
+    answered.add(call.id)
+    added++
+  }
+  if (added) saveSession(session)
+  return added
+}
 
-  // 摘要文本：优先让模型压缩（能保住目标/已改文件/验证结论），失败则退回静态折叠
+/** 上游对"消息序列不合法"的拒绝（各家措辞不同，这里只认特征最强的几种） */
+function isSequenceError(error) {
+  const text = String((error && error.message) || '')
+  return /tool_call_id|insufficient tool messages|tool_calls?[^。]{0,40}(must|should) be followed|role ['"]?tool['"]?[^。]{0,40}(must|should)/i.test(text)
+}
+
+/** 当前上下文的 token 占用：有真实用量锚点时以锚点为准，误差不随对话变长而累积 */
+function measureContext(session, tools) {
+  return contextMeter.measure(session.messages, { tools: tools || toolsForModel, anchor: session.tokenAnchor })
+}
+
+/** 给前端用的上下文刻度：token 计量 + 窗口占比（文案在宿主侧算好，前端只管显示） */
+function contextStatus(session) {
+  if (!session) return null
+  const spec = contextSpec()
+  const usage = measureContext(session)
+  const percent = Math.max(0, Math.min(999, Math.round(usage.tokens / spec.contextWindow * 100)))
+  return {
+    tokens: usage.tokens,
+    window: spec.contextWindow,
+    thresholdTokens: spec.thresholdTokens,
+    percent,
+    calibrated: usage.calibrated,
+    messages: session.messages.length,
+    summary: !!session.summary,
+    nearLimit: usage.tokens >= spec.thresholdTokens,
+    label: contextMeter.formatTokens(usage.tokens) + '/' + contextMeter.formatTokens(spec.contextWindow) + ' · ' + percent + '%'
+  }
+}
+
+/** 检查点包装：用一段固定引导语让后续模型把摘要当作既定背景，而不是当成新指令 */
+const CHECKPOINT_PREAMBLE = '这是自动生成的检查点，浓缩了此前的对话以腾出上下文。把其中内容当作已经确认的背景继续推进，不要复述它，也不要提到这次压缩，直接接着后面的消息做事。'
+const CHECKPOINT_OPEN = '<compacted-summary>'
+const CHECKPOINT_CLOSE = '</compacted-summary>'
+
+/**
+ * 摘要指令：八节固定结构照搬 DeepSeek Harness 的 compaction 提示词。
+ * 结构必须完整（空节写「（无）」）—— 能丢的只有细节，不能丢的是「有哪些类别的事实」，
+ * 少一节就等于小模型永远想不起来还有这类信息要交代。
+ */
+const COMPACTION_INSTRUCTION = [
+  '你现在是本 AI 开发助手的压缩引擎。把上面的对话浓缩成一份结构化检查点，让另一个模型能在不丢关键信息的前提下接续工作。',
+  '',
+  '严格按下面的 Markdown 结构输出：每一节都必须保留、顺序不变。用简短的项目符号，不要写成长段文字。某一节为空就写「（无）」，绝不删节。',
+  '',
+  '## 主要请求与意图',
+  '- [用户最初与演变后的目标；措辞重要时按原话引用]',
+  '',
+  '## 关键技术概念',
+  '- [涉及的技术、框架、模式与约定]',
+  '',
+  '## 文件与代码',
+  '- [精确路径：为什么重要、关键改动或代码片段]',
+  '',
+  '## 错误与修复',
+  '- [报错：如何解决的，以及相关的用户反馈]',
+  '',
+  '## 待办事项',
+  '- [用户明确要求但尚未完成的事]',
+  '',
+  '## 当前工作',
+  '- [此刻正在做什么]',
+  '',
+  '## 下一步',
+  '- [紧接着的单一动作，与最近一次请求一致；没有就写「（无）」]',
+  '',
+  '## 关键上下文',
+  '- [决策及其理由、约束、用户偏好、未决问题、继续工作所需的数据]',
+  '',
+  '规则：',
+  '- 用简体中文书写，保留精确的文件路径、命令、报错原文、标识符、数值、函数签名与语法片段。',
+  '- 忠实记录用户的反馈与明确指令，尤其是纠正意见。',
+  '- 不要提到这次摘要请求，也不要提到上下文被压缩过。',
+  '- 只输出检查点文本：不要调用任何工具，也不要执行任何其他动作。',
+  `- 如果对话里已经出现 ${CHECKPOINT_OPEN} 块，那是上一次的检查点：不要把旧内容原样抄过来，保留仍然成立的事实、丢掉过期的，把新信息合并进同一份结构。`
+].join('\n')
+
+/** 一条消息是不是压缩检查点 */
+function isCheckpoint(message) {
+  return !!message && typeof message.content === 'string' && message.content.includes(CHECKPOINT_OPEN)
+}
+
+/**
+ * 上下文治理：两级压缩（对齐 DeepSeek Harness 的 compaction 设计）
+ *   第一级 确定性修剪：历史里超长的工具结果换成「头 + 标记 + 尾」，不调模型、零成本、可复现；
+ *   第二级 模型摘要：把中段历史折叠成一份结构化检查点，替换成一条消息。
+ * 触发条件是「占用达到窗口阈值（默认 1M 的 80%）」，而不是撞满窗口才动手。
+ * 布局：system → 检查点(user) → ...最近消息，是合法且省事的对话序列。
+ */
+async function compressContext(session, config, key, tools) {
+  const spec = contextSpec()
+  const usage = measureContext(session, tools)
+  const fixedOverhead = contextMeter.estimateTools(tools || toolsForModel)
+  const decision = contextMeter.shouldCompact({ tokens: usage.tokens, toolsTokens: fixedOverhead, thresholdTokens: spec.thresholdTokens })
+  if (!decision.compact) {
+    if (decision.reason === 'fixed-overhead') {
+      process.stderr.write(`[danjuan-ai] 工具定义本身约占 ${fixedOverhead} token，已达压缩阈值 ${spec.thresholdTokens}，压缩对话没有意义，已跳过\n`)
+    }
+    return false
+  }
+  if (session.messages.length <= spec.minKeepMessages + 3) return false
+
+  // ---- 第一级：确定性修剪（多数情况下这一步就够，且不花一分钱 token） ----
+  const pruned = contextMeter.pruneToolResults(session.messages)
+  if (pruned.pruned.length) {
+    session.messages = pruned.messages
+    session.tokenAnchor = null   // 消息内容被改写，真实用量锚点随之作废
+    saveSession(session)
+    process.stderr.write(`[danjuan-ai] 上下文修剪：${pruned.pruned.length} 条超长工具结果改为头尾保留，省下约 ${pruned.savedTokens} token\n`)
+  }
+  const afterPrune = measureContext(session, tools)
+  if (afterPrune.tokens < spec.thresholdTokens) return pruned.pruned.length > 0
+
+  // ---- 第二级：模型摘要 ----
+  const before = session.messages
+  // 保留范围：先按 token 预算从尾部累积，再对齐到工具调用组边界（切在 tool 消息上会造出坏序列）
+  const startIndex = messagePairs.alignStartIndex(before, contextMeter.selectStartIndex(before, spec.retainTokens, spec))
+  if (startIndex <= 1) return pruned.pruned.length > 0
+  const system = before[0]
+  const tail = before.slice(startIndex)
+  const folded = before.slice(1, startIndex)
+
   let summaryText = ''
   if (key) {
     try {
-      const digest = before.slice(1, before.length - KEEP_RECENT)
-        .filter(message => message.role !== 'system')
-        .map(message => {
-          const role = message.role === 'tool' ? '工具结果' : message.role === 'assistant' ? '助手' : message.role === 'user' ? '用户' : message.role
-          const calls = Array.isArray(message.tool_calls) && message.tool_calls.length
-            ? '（调用工具：' + message.tool_calls.map(call => call.function && call.function.name).join('、') + '）'
-            : ''
-          return role + calls + '：' + String(message.content || '').replace(/\s+/g, ' ').slice(0, 300)
-        })
-        .join('\n')
-        .slice(0, 24000)
-      const produced = await requestModel(config, key, [
-        { role: 'system', content: '你在压缩一段开发助手的工作历史。用简体中文输出不超过 250 字的要点摘要，必须保留：用户的目标、已改动过的文件路径、验证结论（编译/校验结果）、未完成事项。不要客套话，不要重复。' },
-        { role: 'user', content: (session.summary ? '已有摘要：' + session.summary + '\n\n' : '') + '以下是需要压缩的历史：\n' + digest }
-      ], [])
+      // 摘要调用重放「system + 待折叠消息」再追加指令：与正常请求共享同一段前缀，
+      // 上游的前缀缓存能直接复用；也让摘要看到的是原文，而不是二手的压缩描述。
+      // 必须走流式：非流式在整段生成的漫长时间里没有任何数据流动，会撞上 socket 空闲超时
+      // （摘要恰好是"超大输入 + 长输出"的最坏场景）。
+      const produced = await requestModelStream(config, key, [
+        ...before.slice(0, startIndex),
+        { role: 'user', content: COMPACTION_INSTRUCTION }
+      ], tools || toolsForModel, () => {}, null)
       summaryText = String(produced.content || '').trim()
+      if (produced.__usage) session.usage = pricing.addUsage(session.usage, produced.__usage)
+      if (!summaryText) process.stderr.write('[danjuan-ai] 摘要调用没有返回文本，改用静态折叠\n')
     } catch (error) {
       process.stderr.write('[danjuan-ai] 上下文摘要失败，改用静态折叠: ' + error.message + '\n')
     }
   }
   if (!summaryText) {
-    summaryText = (session.summary ? session.summary + '\n' : '') + `（已折叠 ${before.length - KEEP_RECENT - 1} 条较早的对话与工具结果，原上下文过长）`
+    // 摘要失败也要交出一份结构完整的检查点：骨架 + 逐条要点。
+    // 「细节不可用」这种话等于把历史全扔了——要点行至少保住目标、改了哪些文件、报了什么错。
+    const digest = folded
+      .filter(message => message.role !== 'system')
+      .map(message => {
+        const role = message.role === 'tool' ? '工具结果' : message.role === 'assistant' ? '助手' : '用户'
+        const calls = Array.isArray(message.tool_calls) && message.tool_calls.length
+          ? '（调用 ' + message.tool_calls.map(call => call.function && call.function.name).join('、') + '）'
+          : ''
+        return '- ' + role + calls + '：' + String(message.content || '').replace(/\s+/g, ' ').slice(0, 200)
+      })
+      .join('\n')
+    const previous = session.summary ? session.summary + '\n' : ''
+    summaryText = previous + [
+      '## 主要请求与意图',
+      '- （模型摘要未成功，以下为折叠要点的机械摘录）',
+      '',
+      '## 关键技术概念',
+      '- （无）',
+      '',
+      '## 文件与代码',
+      `- 已折叠 ${folded.length} 条较早的对话与工具结果，逐条要点见「关键上下文」。`,
+      '',
+      '## 错误与修复',
+      '- （无）',
+      '',
+      '## 待办事项',
+      '- （无）',
+      '',
+      '## 当前工作',
+      '- （无）',
+      '',
+      '## 下一步',
+      '- （无）',
+      '',
+      '## 关键上下文',
+      digest || '- （无）',
+      '',
+      '- 需要早前细节时，请重新读取相关文件，不要凭记忆推断。'
+    ].join('\n')
   }
   session.summary = summaryText
-  session.messages = [system, { role: 'assistant', content: '【此前工作的摘要】\n' + summaryText }, ...tail]
+  session.messages = [system, {
+    role: 'user',
+    content: CHECKPOINT_PREAMBLE + '\n\n' + CHECKPOINT_OPEN + '\n' + summaryText + '\n' + CHECKPOINT_CLOSE
+  }, ...tail]
+  session.tokenAnchor = null
+  // 折叠只动"组边界"，但历史里可能本来就残留坏序列（旧版本写下的），顺手体检一次
+  healSessionMessages(session, '上下文压缩后体检')
   if (session.seen) session.seen.clear()
   else session.seen = new Set()
   for (const message of session.messages) {
     if (Array.isArray(message.tool_calls)) for (const call of message.tool_calls) session.seen.add(call.id)
   }
-  process.stderr.write(`[danjuan-ai] 上下文已压缩：折叠 ${before.length - KEEP_RECENT - 1} 条，${before.length} → ${session.messages.length} 条，约 ${Math.round(contextSize(session.messages) / 1000)}k 字符\n`)
+  const after = measureContext(session, tools)
+  process.stderr.write(`[danjuan-ai] 上下文已压缩：折叠 ${folded.length} 条，${before.length} → ${session.messages.length} 条，约 ${contextMeter.formatTokens(usage.tokens)} → ${contextMeter.formatTokens(after.tokens)} token\n`)
   return true
 }
 
@@ -600,11 +820,16 @@ function messagesForApi(messages) {
 
 function buildModelBody(config, messages, tools, stream) {
   const thinkingOn = config.thinkingMode !== 'disabled'
-  const body = { model: config.model, messages: messagesForApi(messages), tools, tool_choice: 'auto', stream }
+  const body = { model: config.model, messages: messagesForApi(messages), stream }
+  // 没有工具时不要发 tools / tool_choice：空数组与孤立的 tool_choice 都可能被上游判为非法请求
+  if (Array.isArray(tools) && tools.length) {
+    body.tools = tools
+    // 注意：思考模式下 tool_choice 不支持 required / 指定具体工具（官方会返回 400），这里固定 auto。
+    body.tool_choice = 'auto'
+  }
   // stream_options 必须与 stream:true 同用（官方：单独用会 400）；带上它流式响应才会在末尾给出 usage，
   // 否则拿不到真实 token 用量、费用估算只能瞎猜。
   if (stream) body.stream_options = { include_usage: true }
-  // 注意：思考模式下 tool_choice 不支持 required / 指定具体工具（官方会返回 400），这里固定 auto。
   if (thinkingOn) {
     body.thinking = { type: 'enabled' }
     body.reasoning_effort = config.thinkingEffort || 'high'
@@ -1009,17 +1234,25 @@ async function continueSession(session, config, events = {}) {
   const client = await ensureMcp()
   const key = await getApiKey(config)
   if (!key && /api\.deepseek\.com/i.test(config.endpoint)) throw new Error('请先在设置中填写 DeepSeek API Key')
-  await compressContext(session, config, key)
+  // 工具 schema 整轮复用同一个数组实例：既省掉重复序列化，也让计量结果命中缓存
+  toolsForModel = modelTools(client.tools)
+  // 每次发请求前先体检历史：旧版本可能把坏序列写进过会话（上游会一路 400 到底）
+  healSessionMessages(session, '发送前体检')
+  await compressContext(session, config, key, toolsForModel)
   // 打转保护：同一批工具调用（同名同参）连续重复时，模型已陷入循环，及时中断而不是撞步数上限
   let lastSignature = ''
   let repeats = 0
   let repairJustInjected = false
+  let sequenceRetryUsed = false
   for (let step = 0; step < MAX_STEPS; step++) {
     if (cancelToken && cancelToken.cancelled) return aborted()
     if (events.onStatus) events.onStatus(step === 0 ? '正在思考' : `继续处理（第 ${step + 1} 步）`)
     let assistant
+    // 记下这次请求实际发出的消息条数：响应里的 prompt_tokens 就是这批消息（含 system 与工具
+    // schema）的真实用量，存成锚点后，面板刻度与压缩判定都不用再靠纯估算
+    const sentCount = session.messages.length
     try {
-      assistant = await requestModelStream(config, key, session.messages, modelTools(client.tools), delta => {
+      assistant = await requestModelStream(config, key, session.messages, toolsForModel, delta => {
         if (events.onDelta) events.onDelta(delta)
       }, cancelToken)
     } catch (error) {
@@ -1028,10 +1261,25 @@ async function continueSession(session, config, events = {}) {
         if (error.message) session.messages.push({ role: 'assistant', content: error.message })
         return aborted()
       }
+      // 上游因消息序列不合法而拒绝（400）：先自愈再重试一次，不占步数。
+      // 这是给"将来新增的退出路径又漏了回填"准备的兜底——坏序列不该把整个会话锁死。
+      if (!sequenceRetryUsed && isSequenceError(error) && healSessionMessages(session, '上游拒绝消息序列')) {
+        sequenceRetryUsed = true
+        if (events.onNotice) events.onNotice('历史消息不完整，已自动修复，正在重试')
+        step--
+        continue
+      }
       throw error
     }
     assistant.role = 'assistant'
-    if (assistant.__usage) session.usage = pricing.addUsage(session.usage, assistant.__usage)
+    if (assistant.__usage) {
+      session.usage = pricing.addUsage(session.usage, assistant.__usage)
+      // 真实用量锚点：prompt_tokens 覆盖了 system、工具 schema 与刚发出的这批消息，
+      // 之后的刻度就是「锚点 + 新增消息的估算」，不必自己实现分词器也不会累积误差
+      if (Number.isInteger(assistant.__usage.promptTokens) && assistant.__usage.promptTokens > 0) {
+        session.tokenAnchor = { messageCount: sentCount, promptTokens: assistant.__usage.promptTokens, toolsTokens: contextMeter.estimateTools(toolsForModel) }
+      }
+    }
     session.messages.push(assistant)
     saveSession(session)
     const calls = Array.isArray(assistant.tool_calls) ? assistant.tool_calls : []
@@ -1047,6 +1295,9 @@ async function continueSession(session, config, events = {}) {
         // 连续 3 次完全相同的调用才算空转：留一轮余量，避免"参数没描述清楚时"被过早掐断
         if (repeats >= 3) {
           const labels = calls.map(call => toolLabel(call.function && call.function.name)).join('、')
+          // 这批调用一次都没执行，但它们已经随 assistant 入了历史：必须补上应答，
+          // 否则这条坏序列会跟着会话落盘，之后每次请求都被上游 400 拒绝（会话直接废掉）
+          appendUnexecutedToolResults(session, calls, '模型陷入重复调用，本次已停止')
           return await attachChangelog(session, {
             ok: false,
             status: 'stuck',
@@ -1060,8 +1311,11 @@ async function continueSession(session, config, events = {}) {
     }
     repairJustInjected = false
     if (cancelToken && cancelToken.cancelled) {
-      // 模型已给出工具调用但用户按下停止：本轮不再执行，避免"说停还在改文件"
-      session.messages.push({ role: 'assistant', content: assistant.content || '', reasoning_content: assistant.reasoning_content || '' })
+      // 模型已给出工具调用但用户按下停止：本轮不再执行，避免"说停还在改文件"。
+      // 注意：这条带 tool_calls 的 assistant 上面已经入历史了，这里**不能**再补一条去掉
+      // tool_calls 的副本（重复消息），而必须给每个未执行的调用补上应答——否则留下的是
+      // "有调用、无应答"的坏序列，用户下次一开口就被上游 400 拒绝。
+      appendUnexecutedToolResults(session, calls, '用户打断了这次操作')
       session.messages.push({ role: 'user', content: '（用户打断了这次操作，工具调用未执行）' })
       return aborted()
     }
@@ -1219,6 +1473,8 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
         : { phase: 'done', name, label: toolLabel(name) })
     }
   }
+  // 打断导致中途退出：剩下的调用一个都没执行，但它们已随 assistant 入了历史，必须补应答
+  if (cancelToken && cancelToken.cancelled) appendUnexecutedToolResults(session, calls, '用户打断了这次操作')
   return { approval: null, results }
 }
 
@@ -1378,6 +1634,8 @@ async function handle(pathname, body, events = {}) {
     const id = safeSessionId(body.sessionId)
     const restored = loadSessionFromDisk(id)
     if (!restored) throw new Error('没有找到这个会话')
+    // 磁盘上的历史可能是旧版本写下的坏序列：恢复时先体检，别让用户一开口就撞 400
+    healSessionMessages(restored, '恢复会话时体检')
     sessions.set(id, restored)
     return {
       ok: true,
@@ -1397,7 +1655,19 @@ async function handle(pathname, body, events = {}) {
     if (!text) throw new Error('请输入要完成的事情')
     const session = sessionFor(body.sessionId || 'default')
     if (session.busy) throw new Error('上一条需求还在处理中，请稍候')
-    if (session.pending) throw new Error('请先执行或取消上一项修改')
+    if (session.pending) {
+      // 用户没理会挂起的那张确认卡，直接说了新需求：视为放弃那项修改。
+      // （比硬拦"请先执行或取消"更好——窗口重开时确认卡未必还在，硬拦会把人锁死在原地）
+      const abandoned = session.pending
+      session.pending = null
+      appendUnexecutedToolResults(
+        session,
+        [abandoned.call].concat(abandoned.remaining || []),
+        '用户改说了别的需求，这项操作没有执行'
+      )
+      if (events.onNotice) events.onNotice(`已放弃未确认的操作：${toolLabel(abandoned.name)} · ${String(abandoned.args && abandoned.args.path || '')}`)
+    }
+    healSessionMessages(session, '发送前体检')
     session.messages.push({ role: 'user', content: text })
     session.busy = true
     session.repairs = 0   // 每条新需求重新给自动修复预算
@@ -1414,8 +1684,9 @@ async function handle(pathname, body, events = {}) {
     if (!session.pending) throw new Error('没有等待确认的操作')
     const pending = session.pending
     session.pending = null
+    const rejected = pathname === '/reject'
     let result
-    if (pathname === '/reject') result = { ok: false, rejected: true, message: '用户取消了这项操作' }
+    if (rejected) result = { ok: false, rejected: true, message: '用户取消了这项操作' }
     else {
       const args = FILE_MUTATIONS.has(pending.name)
         ? {
@@ -1444,9 +1715,15 @@ async function handle(pathname, body, events = {}) {
     const config = readStoredConfig()
 
     // 用户确认的写入同样要过编译门禁；失败时把 tsc 报错喂回模型自动重修（与自动执行路径一致）
-    const failure = compileFailureOf(pending.name, result)
-    if (failure) {
+    const failure = rejected ? null : compileFailureOf(pending.name, result)
+    if (rejected) {
+      // 用户明确取消：这一步与后面排队的调用都不再执行。剩余调用必须补上"未执行"应答——
+      // 否则它们会继续弹确认卡（用户刚说了不要），历史里还会留下没人应答的调用。
+      appendUnexecutedToolResults(session, pending.remaining || [], '用户取消了这项操作')
+    } else if (failure) {
       if ((session.repairs || 0) >= MAX_REPAIR_ATTEMPTS) {
+        // 编译没过且修复预算用尽：本轮中止，队列里剩下的调用一律作废（补应答收尾）
+        appendUnexecutedToolResults(session, pending.remaining || [], '前一步编译未通过，本次已停止')
         return await attachChangelog(session, {
           ok: false,
           status: 'compile-failed',
@@ -1517,7 +1794,7 @@ const server = http.createServer(async (req, res) => {
   if (token !== TOKEN) return sendJson(res, 401, { ok: false, error: 'AI 助手令牌无效' })
   try {
     if (req.method === 'GET' && pathname === '/status') {
-      // 附带当前会话的上下文占用，供前端显示「上下文 12k/60k」这类指示
+      // 附带当前会话的上下文占用，供前端显示「上下文 320k/1M · 32%」这类指示
       const sessionId = safeSessionId(requestUrl.searchParams.get('sessionId') || 'default')
       const session = sessions.get(sessionId)
       return sendJson(res, 200, {
@@ -1525,9 +1802,7 @@ const server = http.createServer(async (req, res) => {
         projectRoot,
         mcpReady: !!mcp,
         config: publicConfig(),
-        context: session
-          ? { messages: session.messages.length, chars: contextSize(session.messages), budget: CONTEXT_BUDGET, summary: !!session.summary }
-          : null,
+        context: contextStatus(session),
         grants: session && Array.isArray(session.grants) ? session.grants : [],
         usage: session ? (session.usage || null) : null,
         usageText: session ? pricing.describeUsage(session.usage) : '',

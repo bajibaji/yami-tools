@@ -178,6 +178,12 @@
    - **200KB 上下文截断保护**：`read_resource` 支持指定 `args.key` 读取子节；对超过 200KB 的大文件默认实施安全截断与结构摘要，避免挤爆大模型提示词；
    - **资产删除全局引用反查强保护**：`delete_resource` 自动扫描工程内所有 `.event`、`.actor`、`.ui` 与 `Data/*.json`，若目标 GUID 仍存在入边引用则坚决拦截并输出引用位置，仅在 `force: true` 时放行；
    - **IIFE 单次调用防重放**：编辑器 CDP 模拟动作统一封装为自执行单次调用，根治双击或多次触发的隐患。
+5. **上下文计量与自动压缩（对齐 DeepSeek Harness 的 token-meter / compaction-basic / tool-result-pruner）**：
+   - **窗口与阈值**：窗口取官方公布的 **1M token**（`deepseek-flash` / `deepseek-v4-pro` 同），占用达 **80%** 触发压缩，压缩后原样保留最近 **16%** 窗口的原文（外加「至少保留 N 条消息」的下限）；规格集中在 `runtime/yami-mcp/modules/context-meter.js`；
+   - **计量口径**：按官方「Token 用量计算」换算——中文 0.6 token/字、英文 0.3 token/字符，每条消息与每个内容块各 +4 结构开销；**工具 schema（35 个工具约 4.4k token）也计入**；
+   - **真实用量锚点**：上游返回的 `prompt_tokens` 是权威计数，存成 `session.tokenAnchor = { messageCount, promptTokens }` 后，刻度 = 锚点 + 增量估算，误差不随对话变长而累积；面板显示形如 `上下文 320k/1M · 32%`；
+   - **两级压缩**：第一级确定性修剪（超长工具结果换成「头 + 标记 + 尾」，默认 8192/4096/1024，不调模型、零成本）；第二级模型摘要（重放「system + 待折叠消息」+ 追加压缩指令，复用上游前缀缓存），产出**八节固定结构**的检查点包在 `<compacted-summary>` 里，替换成一条带引导语的 user 消息；
+   - **不可压的固定开销**：工具 schema 本身超过阈值时明确跳过压缩并说明原因，不做「压了还是超」的空转。
 
 ---
 
@@ -207,7 +213,9 @@
 | `ai-render-core.js` | 流式渲染纯逻辑（帧合并调度 / 增量文本缓冲 / 滚动判定 / 历史窗口） | UMD 双挂：浏览器全局与 Node `require` 同时可用 |
 | `ai-host.js` | AI 宿主：模型调用、工具编排、审批、会话、计费、连接体检 | 127.0.0.1:5968 |
 | `runtime/yami-mcp/server.js` | 内置 MCP 服务（35 个工具） | 由宿主以 stdio 拉起 |
-| `runtime/yami-mcp/modules/*` | 工具实现模块（diff / changelog / playtest / todos / pricing / file-ops / 双桥 / cdp / db / event-builder） | 每个模块都必须登记进热更新清单，否则老用户热更新后缺文件 |
+| `runtime/yami-mcp/modules/*` | 工具实现与共享模块（diff / changelog / playtest / todos / pricing / message-pairs / file-ops / 双桥 / cdp / db / event-builder） | 每个模块都必须登记进热更新清单（`tests/test-static-health.cjs` 会扫目录核对，漏登记会让老用户热更新后宿主起不来） |
+| `runtime/yami-mcp/modules/message-pairs.js` | 消息序列自愈：`assistant.tool_calls` 与 `tool` 应答配对（补占位 / 剔除越界 / 压缩切点对齐 / 合法性校验） | 宿主每次发请求前调用；依赖它的 `require`，删文件等于 AI 助手全废 |
+| `runtime/yami-mcp/modules/context-meter.js` | 上下文计量与压缩规格（token 估算 / 1M 窗口与 80% 阈值 / 保留范围选择 / 长工具结果头尾修剪 / 真实用量锚点） | 计量口径与阈值参数的单一事实源，别处不要再自己算上下文大小 |
 | `src/style.css` | 样式单一事实源 | 构建时注入 `hud-overlay.js` |
 | `build.cjs` | 构建门禁 + 镜像部署 | 断言、SSOT 级联、`--deploy` / `--watch` / `--bump` |
 | `tests/*` | 零依赖测试套件 | 由 `tests/run-all.cjs` 汇总 |
@@ -223,8 +231,8 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 ```
 
 - 门禁覆盖：46 项核心锚点、零彩色 Emoji、术语合规、`src/style.css` 花括号与嵌套结构、滚动容器必须有滚动条样式、插件装配（manifest↔bootstrap↔热更新清单↔部署清单四处咬合）。
-- 测试套件（节选）：AI Agent E2E、AI 会话与上下文、MCP 特色工具、编译自动修复、审批差异、试玩冒烟、变更小结、待办、价目、思考模式、只读并发、打断输出、渲染性能、工具提示一致性、静态健康、整体验收、热更新。
-- 常用环境变量：`YAMI_TEST_PROJECT`、`YAMI_AI_PORT` / `YAMI_AI_TOKEN` / `YAMI_AI_CONFIG_DIR` / `YAMI_AI_SESSION_DIR` / `YAMI_AI_CONTEXT_BUDGET` / `YAMI_AI_MAX_STEPS`、`YAMI_RUNTIME_BRIDGE_PORT`、`YAMI_MCP_GUARDED`。
+- 测试套件（节选）：AI Agent E2E、AI 会话与上下文、上下文计量与自动压缩、消息序列自愈、MCP 特色工具、编译自动修复、审批差异、试玩冒烟、变更小结、待办、价目、思考模式、只读并发、打断输出、渲染性能、工具提示一致性、静态健康、整体验收、热更新。
+- 常用环境变量：`YAMI_TEST_PROJECT`、`YAMI_AI_PORT` / `YAMI_AI_TOKEN` / `YAMI_AI_CONFIG_DIR` / `YAMI_AI_SESSION_DIR` / `YAMI_AI_MAX_STEPS`、`YAMI_AI_CONTEXT_WINDOW`（默认 1000000，即 1M token）/ `YAMI_AI_COMPACT_THRESHOLD`（默认 0.8）/ `YAMI_AI_COMPACT_RETAIN`（默认 0.16）/ `YAMI_AI_CONTEXT_KEEP`（最少保留消息条数，默认 16）/ `YAMI_AI_TOOL_LIMIT`（工具结果入上下文的字符上限，默认 24000）/ `YAMI_AI_TOOL_TAIL`（其中尾部预留，默认 4000）、`YAMI_RUNTIME_BRIDGE_PORT`、`YAMI_MCP_GUARDED`。
 
 ## 1.8 引擎接口暴露契约（`window.YamiEngine`）
 
@@ -837,6 +845,31 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 - **根因**：配置里存的"密钥"其实是 BASE URL（历史误填），而 `hasApiKey` 只看字段非空。
 - **铁律**：填成网址一律拒收并说明；只有官方 `api.deepseek.com` 才要求 `sk-` 形状（本地 Ollama/LM Studio 端点的密钥随意）；启动时体检一次历史密钥，发现无效就清掉并说明原因；面板提供「测试连接」（打免费 `/models`）。
 
+### ㉞ 带 tool_calls 的历史必须有应答，否则整个会话被永久锁死
+
+- **现象**：聊天突然只回一句上游原文 `An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. (insufficient tool messages following tool_calls message)`，之后**每一句**都报同一个错，界面还补一句"请检查设置后重试"——而设置毫无问题，用户完全无从下手。
+- **根因**：模型空转被自动停止（或用户按停止、工具批处理中途取消）时，那条带 `tool_calls` 的 assistant 消息**已经入了历史**，但对应应答没回填。坏序列随会话落盘，此后每次请求都被上游 400 拒绝，这个会话就废了（本次事故现场：`session-mtx31obt` 第 17 条消息）。
+- **铁律**：
+  1. 每条提前退出路径都要给"不会执行"的调用补应答（`message-pairs.js` 的 `notExecutedResult`），打断时**不要**再补一条去掉 tool_calls 的 assistant 副本（那会变成重复消息）；
+  2. 压缩历史的切点必须对齐"消息组"边界（`alignTailStart`），绝不能切断 assistant 与它的工具应答；
+  3. **发送前统一体检**（`repairToolPairs`）：缺应答补占位、越界与重复的剔除、空 `tool_calls` 摘掉——不能指望每条退出路径都自觉回填；
+  4. 上游因序列拒绝时，自动自愈并重试一次，别让坏历史把会话锁死；
+  5. 报错话术不要一律接"请检查设置"：像这种序列错误跟设置无关，只在确实是配置类问题时才这么提示。
+- **事故复现**：拒绝发生时，用户的每一条新消息都被写进历史却得不到回答，会话里会堆积多句同样的问话。
+
+### ㉟ 上下文窗口按官方 token 计，触发按窗口占比，别用字符数拍脑袋
+
+- **现象**：才聊十几轮就不断「压缩上下文」，历史被反复折叠；面板上的「上下文 240k/240k」用户看不懂，也说不清离上限还有多远。
+- **根因**：预算写的是「240000 **字符**」，而官方公布的上下文是 **1M token**。按中文 0.6 token/字折算，24 万字符只有 14 万 token——只用了窗口的 14%，长期过早压缩、白白丢上下文；工具 schema（35 个工具约 4.4k token）更是从来没算进占用，量出来的数既不是 token 也不是真实占用。
+- **铁律**：
+  1. 窗口用官方数字（1M token），触发用**窗口占比**（0.8），保留用占比（0.16）——都放在 `context-meter.js`，别处不许再自己算；
+  2. 换算按官方「Token 用量计算」页：中文 0.6 token/字、英文 0.3 token/字符，中英混排必须逐字分类（一律套英文密度 4 字符/token 会把中文低估三倍）；
+  3. **工具 schema 必须计入**：它每次请求都要带；若它本身超过阈值，压缩对话毫无意义，要明确跳过而不是空转；
+  4. 估算之上要有**真实用量锚点**：上游返回的 `prompt_tokens` 是权威值，用它加增量估算，误差才不会随对话变长累积；
+  5. 压缩分两级：先做**不花钱的确定性修剪**（长工具结果留头尾），不够再花 token 让模型摘要；
+  6. 摘要调用必须走**流式**：非流式在漫长的生成期间没有任何数据流动，会撞上 socket 空闲超时（摘要恰好是「超大输入 + 长输出」的最坏场景）；
+  7. 摘要用固定结构（八节，空节写「（无）」）并包进 `<compacted-summary>` 检查点；摘要失败时用「骨架 + 逐条要点」兜底，绝不写一句「细节不可用」就把历史扔掉。
+
 ## 2.3 关键设计决策与取舍
 
 | 决策 | 理由 | 代价 / 备注 |
@@ -873,7 +906,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 | 存档管理（速改 / 变量开关 / JSON 树 / 一键还原） | 已落地 | 同上 |
 | 场景实体检查台 / 作弊台 / 工程体检 / 诊断断点 | 已落地 | 同上 |
 | AI 助手面板（流式对话 / 思考过程 / 审批差异 / 撤销 / 计划 / 变更小结） | 已落地 | `ai-agent.js` |
-| AI 宿主（模型调用 / 工具编排 / 会话持久化 / 上下文压缩 / 计费 / 连接体检 / 打断） | 已落地 | `ai-host.js` |
+| AI 宿主（模型调用 / 工具编排 / 会话持久化 / 上下文计量与两级压缩 / 计费 / 连接体检 / 打断） | 已落地 | `ai-host.js` + `context-meter.js` |
 | 内置 MCP 工具集（35 项：读 / 写 / 搜 / 编译 / 事件编排 / 数据表 / 备份 / 试玩冒烟…） | 已落地 | `runtime/yami-mcp/` |
 | 代理能力（子任务委派给子代理） | 未做（P2） | 见 3.3 |
 | 计划模式（Plan Mode） | 明确不做 | 用户拍板不需要 |
@@ -888,6 +921,9 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 6. **模型空转修复**：补齐 `read_resource` 的 `key` / `forceFull` 声明，打转阈值放宽到连续 3 次。
 7. **版本升到 `v1.1.0`**：SSOT 级联对齐 probe-core / hud-overlay / README / HANDOFF，并同步 MCP 客户端版本字段。
 8. **测试体系加固**：新增「静态健康」（隐式全局 / CSS 结构 / 插件装配 / 自调用检测）、「渲染性能」、「工具提示一致性」、「打断输出」四套件；构建门禁 46 项锚点。
+9. **会话锁死事故修复（用户报「没法聊天啊」）**：模型空转被自动停止时，带 `tool_calls` 的 assistant 已入历史却没有工具应答，坏序列随会话落盘，此后每次请求都被上游 400 拒绝（`session-mtx31obt` 第 17 条为事故现场）。修法：① 新增共享模块 `runtime/yami-mcp/modules/message-pairs.js`（补占位 / 剔除越界与重复 / 压缩切点对齐 / 合法性校验）；② 空转保护、用户打断、工具批处理取消、审批拒绝等所有提前退出路径一律补「未执行」应答；③ **每次发请求前统一体检**（`healSessionMessages`），旧会话自动治好、无需用户删会话；④ 上游因序列拒绝时自愈并重试一次；⑤ 报错话术不再一律接"请检查设置"；⑥ 前端有未确认卡片时直接发新消息 = 放弃该项修改（不再静默卡住）。新增 `tests/test-message-pairs.cjs`（22 项）与热更新清单扫目录断言。
+
+10. **上下文计量与自动压缩改造（用户要求：窗口 1M、占用 80% 自动压缩、算法参考 DeepSeek Harness）**：① 新增共享模块 `runtime/yami-mcp/modules/context-meter.js`——官方 token 换算（中文 0.6 字/英文 0.3 字符）、1M 窗口、80% 阈值、16% 保留、保留范围选择、长工具结果头尾修剪、真实用量锚点、固定开销压不动时明确跳过；② 旧的「240k 字符预算」作废（那只是窗口的 14%，导致长期过早压缩），`YAMI_AI_CONTEXT_BUDGET` 退役；③ 两级压缩：第一级确定性修剪（不调模型、零成本）→ 第二级模型摘要（重放 system + 待折叠消息 + 压缩指令，**流式**调用以复用前缀缓存并避免空闲超时）；④ 摘要产出八节固定结构的 `<compacted-summary>` 检查点（对齐 DSH compaction-basic 提示词），失败时降级为「骨架 + 逐条要点」；⑤ 工具 schema（约 4.4k token）计入占用；⑥ 面板刻度改为 `上下文 320k/1M · 32%` 并显示校准来源，触及阈值时高亮；⑦ 新增 `tests/test-context-meter.cjs`（45 项），`test-ai-session.cjs` 的压缩断言改到 token 口径。
 
 ## 3.3 未完成 / 未验证 / 已知限制
 

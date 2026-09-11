@@ -333,6 +333,15 @@ function checkPluginWiring() {
     assert.ok(declared.includes(`'${file}'`), `热更新清单 updateFiles 必须包含 ${file}，否则老用户热更新后缺文件`)
   }
 
+  // 新增模块最容易漏登记：宿主 require 它们，漏一个就是"老用户热更新后宿主直接起不来"。
+  // 不靠人记，直接扫目录对清单（历史上 updateFiles 是靠人工维护的 15 文件列表）。
+  const moduleDir = path.join(ROOT, 'runtime', 'yami-mcp', 'modules')
+  const moduleFiles = fs.readdirSync(moduleDir).filter(name => name.endsWith('.js')).sort()
+  assert.ok(moduleFiles.length > 0, 'runtime/yami-mcp/modules 下应当有工具模块')
+  for (const name of moduleFiles) {
+    assert.ok(declared.includes(`modules/${name}`), `热更新清单 updateFiles 必须包含 runtime/yami-mcp/modules/${name}（宿主会 require 它，漏了会让老用户热更新后宿主起不来）`)
+  }
+
   // 引擎接口兼容：源码版把内部对象挂在 window.YamiEngine 下（打包版才是裸全局），
   // 插件三处取值点都必须认这个命名空间，否则「保存/撤销/刷新/试玩」在源码版又全废。
   const probeSrc = fs.readFileSync(path.join(ROOT, 'probe-core.js'), 'utf8')
@@ -348,7 +357,7 @@ function checkPluginWiring() {
   for (const file of shipped) {
     assert.ok(syncList.includes(`'${file}'`), `部署清单 syncFiles 必须包含 ${file}，否则镜像里少文件`)
   }
-  return { files: shipped.length, bootstrap: 3 }
+  return { files: shipped.length, bootstrap: 3, modules: moduleFiles.length }
 }
 
 function main() {
@@ -375,7 +384,7 @@ function main() {
   console.log('CSS 结构检查: 花括号配平、无规则块嵌套')
 
   const wiring = checkPluginWiring()
-  console.log(`插件装配检查: 主世界装载器 -> 3 个脚本 / manifest / 热更新清单 / 部署清单 (${wiring.files} 个发布文件) 全部咬合`)
+  console.log(`插件装配检查: 主世界装载器 -> 3 个脚本 / manifest / 热更新清单 / 部署清单 (${wiring.files} 个发布文件 + ${wiring.modules} 个运行时模块) 全部咬合`)
 
   console.log('静态健康检查: 隐式全局 / CSS 结构 / 插件装配 全部通过')
 }

@@ -3756,6 +3756,8 @@
       'runtime/yami-mcp/modules/file-ops.js',
       'runtime/yami-mcp/modules/playtest.js',
       'runtime/yami-mcp/modules/pricing.js',
+      'runtime/yami-mcp/modules/message-pairs.js',
+      'runtime/yami-mcp/modules/context-meter.js',
       'runtime/yami-mcp/modules/todos.js',
       'runtime/yami-mcp/modules/runtime-bridge.js',
       'HANDOFF.md',

@@ -135,7 +135,9 @@ async function main() {
   fs.writeFileSync(path.join(sandbox, 'ai-host.js'), fs.readFileSync(path.join(ROOT, 'ai-host.js'), 'utf8'))
   fs.mkdirSync(path.join(sandbox, 'runtime', 'yami-mcp', 'modules'), { recursive: true })
   fs.writeFileSync(path.join(sandbox, 'runtime', 'yami-mcp', 'server.js'), FAKE_MCP)
-  fs.copyFileSync(path.join(ROOT, 'runtime', 'yami-mcp', 'modules', 'pricing.js'), path.join(sandbox, 'runtime', 'yami-mcp', 'modules', 'pricing.js'))
+  // 整个 modules 目录都要拷：宿主还 require 了 message-pairs 等共享模块，
+  // 只挑单个文件复制的话，将来每加一个模块都会让这个套件在沙箱里 MODULE_NOT_FOUND
+  fs.cpSync(path.join(ROOT, 'runtime', 'yami-mcp', 'modules'), path.join(sandbox, 'runtime', 'yami-mcp', 'modules'), { recursive: true })
   const host = startHost(sandbox)
   let ready = false
   for (let i = 0; i < 60; i++) {
