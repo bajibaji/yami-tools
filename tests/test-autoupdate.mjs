@@ -1,6 +1,6 @@
 // 自动更新引擎端到端自回归 (extension 分支): 真实网络 raw 通道 + 内存 fs 防真写盘
 // 覆盖: compareVersion / checkUpdate(最新与旧版两态) / performAutoUpdate(顺序+内容+进度+版本门闩)
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import vm from 'node:vm';
 
 const probeSrc = readFileSync(new URL('../probe-core.js', import.meta.url), 'utf8');
@@ -174,11 +174,13 @@ async function main() {
   sUp.process = mockProcess;
   vm.createContext(sUp); vm.runInContext(srcOld, sUp);
   const upProbe = sUp.window.__YAMI_PERF_PROBE__;
+  const declaredFileCount = (probeSrc.match(/updateFiles:\s*\[([\s\S]*?)\]/) || ['', ''])[1].match(/'[^']+'/g)?.length || 0;
   let progress = [];
   const res = await upProbe.performAutoUpdate((cur, total, file) => progress.push(cur + '/' + total + ':' + file));
   check('success = true', res.success === true);
-  check('更新文件数一致', res.updatedFiles === writes.length && res.updatedFiles >= 15, 'files=' + res.updatedFiles);
-  check('进度回调完整', progress.length === res.updatedFiles);
+  check('成功返回且实际写入数 = 落地文件数', res.updatedFiles === writes.length && res.updatedFiles >= 15, 'files=' + res.updatedFiles);
+  // 进度按「清单总数」推进（跳过的文件也必须推进，否则进度条会卡在中间不到 100%）
+  check('进度回调覆盖清单全部条目', progress.length === declaredFileCount, `progress=${progress.length}/${declaredFileCount}`);
   check('目标目录 = 生产目录候选', String(res.targetDir).includes('extension/yami-perf-extension'));
   const names = writes.map(w => w.p.split('/').pop());
   check('写盘顺序: probe-core.js 最先', names[0] === 'probe-core.js', names.join(','));
@@ -186,6 +188,24 @@ async function main() {
   check('清单包含 ai-agent.js', names.includes('ai-agent.js'));
   check('清单包含 ai-host.js', names.includes('ai-host.js'));
   check('清单包含 runtime/yami-mcp/server.js', writes.some(w => w.p.includes('runtime/yami-mcp/server.js')));
+  // 关键防线：**声明的**热更新清单必须覆盖 runtime/yami-mcp/modules 下的每一个模块。
+  // 历史教训：本轮新增 diff.js 时漏加进清单，别人热更新后会缺文件、MCP 直接崩。
+  // 注意区分两件事：①清单是否声明（本断言）；②远端此刻是否已提供（推送落地前会有窗口，属正常）。
+  const declaredMatch = probeSrc.match(/updateFiles:\s*\[([\s\S]*?)\]/);
+  const declaredFiles = declaredMatch
+    ? Array.from(declaredMatch[1].matchAll(/'([^']+)'/g)).map(m => m[1])
+    : [];
+  const moduleDir = new URL('../runtime/yami-mcp/modules/', import.meta.url);
+  const localModules = readdirSync(moduleDir).filter(f => f.endsWith('.js'));
+  const undeclared = localModules.filter(f => !declaredFiles.includes('runtime/yami-mcp/modules/' + f));
+  check('热更新清单声明覆盖 runtime/yami-mcp/modules 全部模块', undeclared.length === 0, undeclared.length ? '未声明: ' + undeclared.join(',') : `${localModules.length} 个模块全部已声明`);
+
+  // 远端暂未提供的文件必须被如实记入 missingFiles，而不是让整次更新抛错失败
+  const resMissing = Array.isArray(res.missingFiles) ? res.missingFiles : [];
+  const notOnRemote = declaredFiles.filter(f => !writes.some(w => w.p.endsWith(f)));
+  check('远端暂缺文件被跳过并如实报告（不整次失败）', res.success === true && notOnRemote.every(f => resMissing.includes(f)), notOnRemote.length ? '暂缺: ' + notOnRemote.join(',') : '远端无暂缺文件');
+  check('更新结果给出已写入数量', res.updatedFiles === writes.length, `written=${res.updatedFiles}/${declaredFiles.length}`);
+  check('未因个别文件缺失而漏下关键文件', declaredFiles.filter(f => ['probe-core.js', 'manifest.json', 'hud-overlay.js'].includes(f)).every(f => writes.some(w => w.p.endsWith(f))));
   check('递归创建 runtime 子目录', mkdirs.some(d => String(d).includes('runtime')));
   const probeTxt = writes.find(w => w.p.endsWith('probe-core.js'));
   const manifestTxt = writes.find(w => w.p.endsWith('manifest.json'));

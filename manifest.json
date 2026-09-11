@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DanJuan妙妙插件",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "DanJuan妙妙插件 - Open Yami 开发者非侵入式辅助套件 (性能大盘/控制台报错分析)",
   "action": {
     "default_title": "DanJuan妙妙插件"
@@ -12,13 +12,23 @@
         "<all_urls>"
       ],
       "js": [
+        "bootstrap.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "ai-render-core.js",
         "probe-core.js",
         "hud-overlay.js",
         "ai-agent.js"
       ],
-      "run_at": "document_start",
-      "all_frames": true,
-      "world": "MAIN"
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }

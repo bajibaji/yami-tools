@@ -883,6 +883,16 @@
       .yami-perf-event-name { font-weight: 500 !important; color: #ffffff !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; max-width: 250px !important; }
       .yami-perf-event-tag { font-size: 10px !important; color: #808080 !important; background: #181818 !important; padding: 1px 4px !important; border-radius: 2px !important; font-family: Consolas, monospace !important; }
 
+      /* 余额与本次花费：跟在版本号后面，只有 AI 助手页显示（切页由 HUD 调度） */
+      #yami-ai-footer-cost {
+        color: #909090 !important;
+        font-size: 11px !important;
+        font-family: Consolas, monospace !important;
+        cursor: default !important;
+        user-select: text !important;
+        white-space: nowrap !important;
+      }
+      #yami-ai-footer-cost:empty { display: none !important; }
       .yami-perf-dock-footer {
         height: 36px !important;
         min-height: 36px !important;
@@ -3378,14 +3388,18 @@
       }
       .yami-ai-settings {
         display: none !important;
-        grid-template-columns: minmax(76px, auto) minmax(0, 1fr) !important;
-        align-items: center !important;
-        gap: 8px 10px !important;
+        /* 单列：标签一行、控件一行。旧的「标签 | 控件」两列在 440px 停靠宽度里会被
+           长文案（勾选项说明、密钥状态提示）撑爆，auto 列吃光宽度、1fr 列被压成 0，
+           输入框只剩一条竖缝、保存设置竖排——实测踩过 */
+        grid-template-columns: minmax(0, 1fr) !important;
+        align-items: stretch !important;
+        gap: 6px !important;
         padding: 10px !important;
         border: 1px solid #3d3d3d !important;
         border-radius: 4px !important;
         background: #202020 !important;
       }
+      .yami-ai-settings > * { grid-column: 1 !important; min-width: 0 !important; }
       .yami-ai-settings.show { display: grid !important; }
       .yami-ai-settings label,
       .yami-ai-compose label {
@@ -3394,6 +3408,7 @@
         line-height: 1.5 !important;
       }
       .yami-ai-settings input,
+      .yami-ai-settings select,
       .yami-ai-compose textarea {
         min-width: 0 !important;
         width: 100% !important;
@@ -3412,7 +3427,9 @@
         gap: 8px !important;
       }
       .yami-ai-check input { width: 16px !important; height: 16px !important; flex: 0 0 auto !important; }
-      .yami-ai-settings .yami-ai-primary { grid-column: 2 !important; justify-self: end !important; }
+      .yami-ai-settings .yami-ai-primary { grid-column: 1 !important; justify-self: stretch !important; text-align: center !important; }
+      .yami-ai-settings .yami-ai-check { display: flex !important; align-items: center !important; gap: 6px !important; }
+      .yami-ai-settings .yami-ai-model-row { flex-wrap: wrap !important; }
       .yami-ai-messages {
         flex: 1 1 240px !important;
         min-height: 180px !important;
@@ -3443,6 +3460,344 @@
       }
       .yami-ai-message.system { color: #b8b8b8 !important; background: #202020 !important; }
       .yami-ai-message.error { border-color: #663333 !important; background: #321f1f !important; color: #ffaaaa !important; }
+      /* 工具调用与过程提示：不占用答复气泡，弱化为一行提示条（对标 Claude Code 的工具日志） */
+      .yami-ai-notice {
+        align-self: flex-start !important;
+        max-width: 92% !important;
+        padding: 4px 8px !important;
+        border-inline-start: 2px solid #3a3a3a !important;
+        color: #9a9a9a !important;
+        font-family: Consolas, monospace !important;
+        font-size: 12px !important;
+        line-height: 1.5 !important;
+        white-space: pre-wrap !important;
+        overflow-wrap: anywhere !important;
+        user-select: text !important;
+      }
+      .yami-ai-notice.ok { border-inline-start-color: #3f7a4a !important; color: #8fc79c !important; }
+      .yami-ai-notice.bad { border-inline-start-color: #7a3f3f !important; color: #e09a9a !important; }
+      .yami-ai-notice.wait { border-inline-start-color: #8a5a16 !important; color: #e0bb7a !important; }
+      /* 上下文占用指示：随时可见的预算刻度 */
+      .yami-ai-context {
+        display: none !important;
+        margin-inline-start: auto !important;
+        padding: 2px 6px !important;
+        border: 1px solid #383838 !important;
+        border-radius: 3px !important;
+        color: #8a8a8a !important;
+        font-family: Consolas, monospace !important;
+        font-size: 11px !important;
+        white-space: nowrap !important;
+      }
+      .yami-ai-context.show { display: block !important; }
+
+
+
+      /* 批量授权列表（在撤销面板内，可随时取消） */
+      .yami-ai-grants {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+        padding: 6px !important;
+        border: 1px solid #4a4a2a !important;
+        border-radius: 4px !important;
+        background: #2a2a1f !important;
+      }
+      .yami-ai-grant-row {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+      }
+      .yami-ai-grant { margin-top: 6px !important; }
+
+      /* 任务计划卡片（待办清单）：多步任务的进度骨架 */
+      .yami-ai-plan {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 3px !important;
+        padding: 8px 10px !important;
+        border: 1px solid #3f4a3a !important;
+        border-inline-start: 3px solid #6a8f5a !important;
+        border-radius: 4px !important;
+        background: #212720 !important;
+      }
+      .yami-ai-plan-head { color: #a8c79a !important; font-size: 12px !important; font-weight: 600 !important; }
+      .yami-ai-plan-item {
+        color: #a8a8a8 !important;
+        font-size: 12px !important;
+        line-height: 1.6 !important;
+        overflow-wrap: anywhere !important;
+        user-select: text !important;
+      }
+      .yami-ai-plan-item.in_progress { color: #d8c88a !important; }
+      .yami-ai-plan-item.done { color: #8fc79c !important; }
+
+
+
+
+      /* 一个回合：上面是「执行过程」（思考+工具集中在一处），下面是正文 */
+      .yami-ai-turn {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        align-self: stretch !important;
+      }
+      .yami-ai-turn-body {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+      }
+      .yami-ai-process {
+        border: 1px solid #33333c !important;
+        border-radius: 4px !important;
+        background: #1e1e22 !important;
+        overflow: hidden !important;
+      }
+      .yami-ai-process-head {
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        padding: 5px 8px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+      }
+      .yami-ai-process-title { color: #9a9aa8 !important; font-size: 12px !important; font-weight: 600 !important; }
+      .yami-ai-process-meta { color: #7a7a8a !important; font-size: 11px !important; font-family: Consolas, monospace !important; }
+      .yami-ai-process-toggle { margin-inline-start: auto !important; color: #7a7a8a !important; font-size: 12px !important; line-height: 1 !important; }
+      .yami-ai-process-head:hover .yami-ai-process-toggle { color: #d0d0e0 !important; }
+      .yami-ai-process-body {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+        padding: 0 8px 7px !important;
+      }
+      .yami-ai-process.collapsed .yami-ai-process-body { display: none !important; }
+      /* 过程区里的步骤行去掉提示条外框，压成紧凑清单 */
+      .yami-ai-process-body .yami-ai-notice {
+        border: 0 !important;
+        border-radius: 0 !important;
+        background: transparent !important;
+        padding: 1px 0 !important;
+        font-size: 12px !important;
+        line-height: 1.6 !important;
+      }
+      /* 打断按钮：忙碌时发送键变红，点它就是停 */
+      #yami-ai-send.stop { background: #8a3a3a !important; }
+      #yami-ai-send.stop:hover { background: #a34444 !important; }
+
+      /* 思考过程块：默认单行预览；可切展开 / 折叠 */
+      .yami-ai-thinking {
+        align-self: stretch !important;
+        border: 1px solid #3a3a46 !important;
+        border-inline-start: 3px solid #6a6a8a !important;
+        border-radius: 4px !important;
+        background: #23232b !important;
+        padding: 6px 8px !important;
+      }
+      .yami-ai-thinking-head {
+        display: flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        cursor: default !important;
+      }
+      .yami-ai-thinking-title { color: #a8a8c8 !important; font-size: 12px !important; font-weight: 600 !important; }
+      .yami-ai-thinking-meta { color: #7a7a8a !important; font-size: 11px !important; font-family: Consolas, monospace !important; }
+      /* 折叠控件就是一个符号：带底色边框的按钮挂在思考块头部太抢眼 */
+      .yami-ai-thinking-toggle {
+        margin-inline-start: auto !important;
+        padding: 0 4px !important;
+        font-size: 12px !important;
+        line-height: 1 !important;
+        color: #7a7a8a !important;
+        background: transparent !important;
+        border: 0 !important;
+        cursor: pointer !important;
+        user-select: none !important;
+      }
+      .yami-ai-thinking-toggle:hover { color: #d0d0e0 !important; }
+      .yami-ai-thinking-body {
+        margin-top: 5px !important;
+        max-height: 30vh !important;
+        overflow-y: auto !important;
+        color: #9a9aa8 !important;
+        font-size: 12px !important;
+        line-height: 1.65 !important;
+        white-space: pre-wrap !important;
+        overflow-wrap: anywhere !important;
+        user-select: text !important;
+      }
+      .yami-ai-thinking.collapsed .yami-ai-thinking-body { display: none !important; }
+      .yami-ai-thinking.preview .yami-ai-thinking-body {
+        max-height: none !important;
+        overflow: hidden !important;
+        white-space: nowrap !important;
+        text-overflow: ellipsis !important;
+        opacity: 0.85 !important;
+      }
+      /* 输入框下方的快捷调节条：模型 / Thinking / 强度 */
+      .yami-ai-devbar {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        flex-wrap: wrap !important;
+        grid-column: 1 / -1 !important;
+        padding-top: 2px !important;
+      }
+      .yami-ai-devbar label {
+        color: #9a9a9a !important;
+        font-size: 11px !important;
+        margin: 0 !important;
+        flex: 0 0 auto !important;
+      }
+      .yami-ai-devbar select {
+        flex: 0 1 auto !important;
+        min-width: 0 !important;
+        max-width: 46% !important;
+        background: #2b2b2b !important;
+        color: #e0e0e0 !important;
+        border: 1px solid #3a3a3a !important;
+        border-radius: 3px !important;
+        padding: 2px 6px !important;
+        font-size: 12px !important;
+      }
+      .yami-ai-devbar .yami-ai-check { margin: 0 !important; }
+      .yami-ai-devbar .yami-ai-tool-btn { padding: 1px 6px !important; }
+      .yami-ai-devbar .yami-ai-tool-btn.busy { opacity: 0.5 !important; }
+      /* 设置区：思考强度下拉与余额提示 */
+      .yami-ai-model-row label { flex: 0 0 auto !important; margin: 0 !important; }
+      .yami-ai-model-row select {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        background: #2b2b2b !important;
+        color: #e0e0e0 !important;
+        border: 1px solid #3a3a3a !important;
+        border-radius: 3px !important;
+        padding: 3px 6px !important;
+      }
+      .yami-ai-hint {
+        color: #9a9a9a !important;
+        font-size: 11px !important;
+        line-height: 1.5 !important;
+        overflow-wrap: anywhere !important;
+        user-select: text !important;
+      }
+      /* 模型名 + 拉取按钮同一行 */
+      .yami-ai-model-row {
+        display: flex !important;
+        gap: 6px !important;
+        align-items: center !important;
+      }
+      .yami-ai-model-row input { flex: 1 1 auto !important; min-width: 0 !important; }
+      .yami-ai-model-row .yami-ai-secondary { flex: 0 0 auto !important; }
+      /* 变更小结卡片：这次动了什么、编译过没过、下一步做什么 */
+      .yami-ai-changelog {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+        padding: 8px 10px !important;
+        border: 1px solid #3a4a5a !important;
+        border-inline-start: 3px solid #4a7aa8 !important;
+        border-radius: 4px !important;
+        background: #1f2833 !important;
+      }
+      .yami-ai-changelog-head { color: #8fb8e0 !important; font-size: 12px !important; font-weight: 600 !important; }
+      .yami-ai-changelog-line {
+        color: #d8d8d8 !important;
+        font-size: 12px !important;
+        line-height: 1.6 !important;
+        overflow-wrap: anywhere !important;
+        user-select: text !important;
+      }
+      .yami-ai-changelog-file {
+        color: #a8a8a8 !important;
+        font: 400 11px/1.6 Consolas, monospace !important;
+        overflow-wrap: anywhere !important;
+        user-select: text !important;
+      }
+      .yami-ai-changelog-file.bad { color: #e09a9a !important; }
+      .yami-ai-changelog-next { color: #c8b88a !important; font-size: 12px !important; line-height: 1.6 !important; }
+      /* 撤销面板：列出本次对话里 AI 改过的文件，一键退回 */
+      .yami-ai-undo {
+        display: none !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        max-height: 40vh !important;
+        overflow-y: auto !important;
+        padding: 6px !important;
+        border: 1px solid #383838 !important;
+        border-radius: 4px !important;
+        background: #232323 !important;
+      }
+      .yami-ai-undo.show { display: flex !important; }
+      .yami-ai-undo-tip { color: #9a9a9a !important; font-size: 12px !important; line-height: 1.6 !important; }
+      .yami-ai-undo-item {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+        padding: 8px !important;
+        border: 1px solid #333333 !important;
+        border-radius: 4px !important;
+        background: #2a2a2a !important;
+      }
+      .yami-ai-undo-info { display: flex !important; flex-direction: column !important; gap: 2px !important; min-width: 0 !important; }
+      .yami-ai-undo-path {
+        color: #e0e0e0 !important;
+        font-size: 12px !important;
+        overflow-wrap: anywhere !important;
+        user-select: text !important;
+      }
+      .yami-ai-undo-btn {
+        flex: 0 0 auto !important;
+        padding: 4px 10px !important;
+        border: 1px solid #4a5a3a !important;
+        border-radius: 3px !important;
+        background: #26301f !important;
+        color: #b7d49a !important;
+        font-size: 12px !important;
+        cursor: pointer !important;
+      }
+      .yami-ai-undo-btn:hover { background: #2f3d26 !important; }
+      .yami-ai-undo-btn:active { scale: 0.96 !important; }
+      /* 会话历史面板 */
+      .yami-ai-history {
+        display: none !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        max-height: 46vh !important;
+        overflow-y: auto !important;
+        padding: 6px !important;
+        border: 1px solid #383838 !important;
+        border-radius: 4px !important;
+        background: #232323 !important;
+      }
+      .yami-ai-history.show { display: flex !important; }
+      .yami-ai-history-empty { color: #8a8a8a !important; font-size: 12px !important; line-height: 1.6 !important; }
+      .yami-ai-history-item {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 2px !important;
+        padding: 8px !important;
+        border: 1px solid #333333 !important;
+        border-radius: 4px !important;
+        background: #2a2a2a !important;
+        cursor: pointer !important;
+      }
+      .yami-ai-history-item:hover { border-color: #4a4a4a !important; background: #303030 !important; }
+      .yami-ai-history-item:active { scale: 0.98 !important; }
+      .yami-ai-history-item.current { border-color: #22547a !important; background: #18344a !important; }
+      .yami-ai-history-title { color: #e0e0e0 !important; font-size: 13px !important; }
+      .yami-ai-history-meta { color: #8a8a8a !important; font-size: 11px !important; font-family: Consolas, monospace !important; }
+      .yami-ai-history-del {
+        align-self: flex-end !important;
+        padding: 1px 6px !important;
+        border: 1px solid #4a3030 !important;
+        border-radius: 3px !important;
+        color: #c98a8a !important;
+        font-size: 11px !important;
+      }
+      .yami-ai-history-del:hover { background: #3a2424 !important; }
       .yami-ai-approval {
         display: none !important;
         padding: 10px !important;
@@ -3459,6 +3814,39 @@
         white-space: pre-wrap !important;
         overflow-wrap: break-word !important;
       }
+      /* 高危操作（删除等）：卡片整体转红，按钮文案也会变，避免顺手点掉 */
+      .yami-ai-approval.danger {
+        border-color: #a33a3a !important;
+        background: #2e1c1c !important;
+      }
+      .yami-ai-approval.danger .yami-ai-approval-title { color: #ff9c9c !important; }
+      /* 改动差异：逐行着色，新增绿 / 删除红 / 上下文灰 / 定位行蓝 */
+      .yami-ai-approval-stat {
+        display: none !important;
+        margin-top: 4px !important;
+        color: #9a9a9a !important;
+        font: 400 11px/1.4 Consolas, monospace !important;
+      }
+      .yami-ai-approval-stat.show { display: block !important; }
+      .yami-ai-approval-diff {
+        max-height: 34vh !important;
+        overflow: auto !important;
+        margin-top: 6px !important;
+        padding: 6px 8px !important;
+        border: 1px solid #3a3a3a !important;
+        border-radius: 4px !important;
+        background: #1d1d1d !important;
+      }
+      .yami-ai-diff-line {
+        color: #b8b8b8 !important;
+        font: 400 12px/1.5 Consolas, monospace !important;
+        white-space: pre !important;
+        overflow-wrap: normal !important;
+        user-select: text !important;
+      }
+      .yami-ai-diff-line.add { color: #8fd19e !important; background: #1e2a20 !important; }
+      .yami-ai-diff-line.del { color: #e09a9a !important; background: #2a1e1e !important; }
+      .yami-ai-diff-line.hunk { color: #7aa7d0 !important; }
       .yami-ai-approval-actions { display: flex !important; justify-content: flex-end !important; gap: 8px !important; }
       .yami-ai-compose {
         display: grid !important;
@@ -3469,8 +3857,6 @@
       .yami-ai-compose label { grid-column: 1 / -1 !important; }
       .yami-ai-compose textarea { min-height: 66px !important; max-height: 150px !important; }
       @media (max-width: 520px) {
-        .yami-ai-settings { grid-template-columns: 1fr !important; }
-        .yami-ai-settings .yami-ai-primary { grid-column: 1 !important; }
         .yami-ai-compose { grid-template-columns: 1fr !important; }
         .yami-ai-compose .yami-ai-primary { justify-self: end !important; }
       }
@@ -3497,7 +3883,11 @@
       .yami-audit-list::-webkit-scrollbar-track,
       .yami-eventflow-list::-webkit-scrollbar-track,
       .yami-ghost-list::-webkit-scrollbar-track,
-      .yami-ai-messages::-webkit-scrollbar-track {
+      .yami-ai-messages::-webkit-scrollbar-track,
+      .yami-ai-history::-webkit-scrollbar-track,
+      .yami-ai-undo::-webkit-scrollbar-track,
+      .yami-ai-thinking-body::-webkit-scrollbar-track,
+      .yami-ai-approval-diff::-webkit-scrollbar-track {
         background: #181818 !important;
       }
       .yami-perf-dock-body::-webkit-scrollbar-thumb,
@@ -3513,7 +3903,11 @@
       .yami-audit-list::-webkit-scrollbar-thumb,
       .yami-eventflow-list::-webkit-scrollbar-thumb,
       .yami-ghost-list::-webkit-scrollbar-thumb,
-      .yami-ai-messages::-webkit-scrollbar-thumb {
+      .yami-ai-messages::-webkit-scrollbar-thumb,
+      .yami-ai-history::-webkit-scrollbar-thumb,
+      .yami-ai-undo::-webkit-scrollbar-thumb,
+      .yami-ai-thinking-body::-webkit-scrollbar-thumb,
+      .yami-ai-approval-diff::-webkit-scrollbar-thumb {
         background: #383838 !important;
         border-radius: 2px !important;
       }
@@ -3530,7 +3924,9 @@
       .yami-audit-list::-webkit-scrollbar-thumb:hover,
       .yami-eventflow-list::-webkit-scrollbar-thumb:hover,
       .yami-ghost-list::-webkit-scrollbar-thumb:hover,
-      .yami-ai-messages::-webkit-scrollbar-thumb:hover {
+      .yami-ai-messages::-webkit-scrollbar-thumb:hover,
+      .yami-ai-approval-diff::-webkit-scrollbar-thumb:hover,
+      .yami-ai-thinking-body::-webkit-scrollbar-thumb:hover {
         background: #4a4a4a !important;
       }
       .yami-perf-dock-body::-webkit-scrollbar-corner,
@@ -3541,12 +3937,20 @@
       .yami-audit-list::-webkit-scrollbar-corner,
       .yami-eventflow-list::-webkit-scrollbar-corner,
       .yami-ghost-list::-webkit-scrollbar-corner,
-      .yami-ai-messages::-webkit-scrollbar-corner {
+      .yami-ai-messages::-webkit-scrollbar-corner,
+      .yami-ai-history::-webkit-scrollbar-corner,
+      .yami-ai-undo::-webkit-scrollbar-corner,
+      .yami-ai-thinking-body::-webkit-scrollbar-corner,
+      .yami-ai-approval-diff::-webkit-scrollbar-corner {
         background: #181818 !important;
       }
       /* 新增容器自带宽度 (老容器的宽度分档保持不变) */
       .yami-eventflow-list::-webkit-scrollbar,
       .yami-ghost-list::-webkit-scrollbar,
+      .yami-ai-history::-webkit-scrollbar,
+      .yami-ai-undo::-webkit-scrollbar,
+      .yami-ai-thinking-body::-webkit-scrollbar,
+      .yami-ai-approval-diff::-webkit-scrollbar,
       .yami-ai-messages::-webkit-scrollbar {
         width: 4px !important;
         height: 4px !important;
@@ -4140,7 +4544,8 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.0.0 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.1.0 (检查更新)</span>
+          <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
         <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
@@ -4221,6 +4626,12 @@
       // 底栏导出按钮组显隐调度：仅当进入性能分析 (profiler) 视图时精准浮现，其余视图绝对隐藏
       if (exportGroupEl) {
         exportGroupEl.style.setProperty('display', pageDef.showExportBtns ? 'flex' : 'none', 'important');
+      }
+
+      // 余额与本次花费只属于 AI 助手页：跟着版本号一行显示，切走即隐藏
+      const aiCostEl = document.getElementById('yami-ai-footer-cost');
+      if (aiCostEl) {
+        aiCostEl.style.setProperty('display', nextView === 'ai' ? 'inline-flex' : 'none', 'important');
       }
 
       // 调度页面容器显隐
@@ -4327,7 +4738,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.0.0 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.1.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -7445,7 +7856,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.0.0';
+      const cur = (probe && probe.version) ? probe.version : '1.1.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -7502,7 +7913,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.0.0') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.1.0') + ')');
           refreshVersionBadge();
         }
       });

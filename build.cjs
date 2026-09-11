@@ -29,7 +29,11 @@ const HUD_JS_PATH = path.join(ROOT_DIR, 'hud-overlay.js');
 const PROBE_JS_PATH = path.join(ROOT_DIR, 'probe-core.js');
 const AI_AGENT_PATH = path.join(ROOT_DIR, 'ai-agent.js');
 const AI_HOST_PATH = path.join(ROOT_DIR, 'ai-host.js');
-const DEPLOY_DIR = 'D:\\Program Files\\Open Yami RPG Editor\\extension\\yami-perf-extension';
+const BOOTSTRAP_PATH = path.join(ROOT_DIR, 'bootstrap.js');
+const RENDER_CORE_PATH = path.join(ROOT_DIR, 'ai-render-core.js');
+// 部署镜像目录：YAMI_DEPLOY_DIR 优先（跨平台/自定义安装位置），Windows 默认值兜底
+const DEPLOY_DIR = process.env.YAMI_DEPLOY_DIR ||
+  path.join('D:\\Program Files\\Open Yami RPG Editor', 'extension', 'yami-perf-extension');
 
 const isWatch = process.argv.includes('--watch');
 const isDeploy = process.argv.includes('--deploy') || isWatch;   // --watch 内含首次部署
@@ -241,7 +245,8 @@ const requiredAnchors = [
   { name: '体检涉及范围渲染', pattern: /yami-audit-item-scope/ },
   { name: '体检按级别汇总', pattern: /stats\.levels/ },
   { name: '滚动条单一事实源', pattern: /滚动条单一事实源/ },
-  { name: 'AI 助手页面扩展点', pattern: /__DANJUAN_HUD_API__/ }
+  { name: 'AI 助手页面扩展点', pattern: /__DANJUAN_HUD_API__/ },
+  { name: 'AI 余额与花费位（版本号一行）', pattern: /id="yami-ai-footer-cost"/ }
 ];
 
 let failedCount = 0;
@@ -252,17 +257,46 @@ for (const chk of requiredAnchors) {
   }
 }
 
+// 铁律㉓: 插件必须经「主世界装载器」进入页面
+// (历史教训: Electron 20 的扩展内容脚本跑在隔离世界, 那里没有 require/process,
+//  于是 AI 宿主永远起不来、5966/5967 桥永不监听, 面板只会报 require is not defined;
+//  manifest 的 content_scripts.world="MAIN" 是 Chrome 111+ 字段, Electron 20 直接忽略)
+const manifestContent = fs.readFileSync(path.join(ROOT_DIR, 'manifest.json'), 'utf8');
+const bootstrapSource = fs.readFileSync(BOOTSTRAP_PATH, 'utf8');
+if (!/"bootstrap\.js"/.test(manifestContent)) {
+  console.error('❌ [断言失败] manifest.json 未挂载 bootstrap.js（插件将跑在隔离世界，Node 能力全废）');
+  failedCount++;
+}
+if (/"world"\s*:/.test(manifestContent)) {
+  console.error('❌ [断言失败] manifest.json 声明了 world 字段：Electron 20 不支持，留着只会误导后来人');
+  failedCount++;
+}
+if (!/"web_accessible_resources"/.test(manifestContent)) {
+  console.error('❌ [断言失败] manifest.json 缺少 web_accessible_resources（主世界无法按扩展基址取脚本）');
+  failedCount++;
+}
+for (const f of ['ai-render-core.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js']) {
+  if (!manifestContent.includes('"' + f + '"') || !bootstrapSource.includes("'" + f + "'")) {
+    console.error(`❌ [断言失败] 主世界装载器与 manifest 对 ${f} 的声明不一致`);
+    failedCount++;
+  }
+}
+
 // 绝对零 Emoji + 中文术语断言 (覆盖 hud / probe / css 全部产物源)
 const emojiRegex = /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E0}-\u{1F1FF}]/u;
 const probeContent = fs.readFileSync(PROBE_JS_PATH, 'utf8');
 const aiAgentContent = fs.readFileSync(AI_AGENT_PATH, 'utf8');
 const aiHostContent = fs.readFileSync(AI_HOST_PATH, 'utf8');
+const bootstrapContent = fs.readFileSync(BOOTSTRAP_PATH, 'utf8');
+const renderCoreContent = fs.readFileSync(RENDER_CORE_PATH, 'utf8');
 const styleCssContent = fs.existsSync(SRC_CSS_PATH) ? fs.readFileSync(SRC_CSS_PATH, 'utf8') : '';
 const artifactFiles = [
   ['hud-overlay.js', hudContent],
   ['probe-core.js', probeContent],
   ['ai-agent.js', aiAgentContent],
   ['ai-host.js', aiHostContent],
+  ['bootstrap.js', bootstrapContent],
+  ['ai-render-core.js', renderCoreContent],
   ['src/style.css', styleCssContent]
 ];
 for (const [fname, fcontent] of artifactFiles) {
@@ -296,6 +330,40 @@ const aiAnchors = [
 for (const [name, pattern] of aiAnchors) {
   if (!pattern.test(aiAgentContent + '\n' + aiHostContent)) {
     console.error(`❌ [断言失败] 缺失关键锚点: ${name}`);
+    failedCount++;
+  }
+}
+
+// 铁律㉒: style.css 结构自检 —— 花括号必须配平, 且普通规则块内不得再嵌套规则
+// (历史教训: 手工给滚动条选择器组追加容器时把 `A:hover,` 写成 `A:hover {`, 变成
+//  `A:hover { B:hover { ... } }`; 浏览器会静默丢掉这两条规则, 页面不报错,
+//  滚动条悬停高亮就凭空消失——所以构建期必须自己发现结构损坏)
+if (styleCssContent) {
+  const cssSrc = styleCssContent.replace(/\/\*[\s\S]*?\*\//g, '');
+  const stack = [];
+  let cssLine = 1;
+  let structErr = null;
+  for (let i = 0; i < cssSrc.length && !structErr; i++) {
+    const ch = cssSrc[i];
+    if (ch === '\n') { cssLine++; continue; }
+    if (ch === '{') {
+      if (stack.length > 0 && !stack[stack.length - 1]) {
+        structErr = `第 ${cssLine} 行: 普通规则块内又出现 '{' (多半是选择器组漏了逗号)`;
+        break;
+      }
+      const head = cssSrc.slice(Math.max(0, i - 400), i);
+      const seg = head.slice(Math.max(head.lastIndexOf('{'), head.lastIndexOf('}'), head.lastIndexOf(';')) + 1);
+      stack.push(/^\s*@/.test(seg));
+      continue;
+    }
+    if (ch === '}') {
+      if (stack.length === 0) { structErr = `第 ${cssLine} 行: 多余的 '}'`; break; }
+      stack.pop();
+    }
+  }
+  if (!structErr && stack.length > 0) structErr = `文件结尾有 ${stack.length} 个 '{' 未闭合`;
+  if (structErr) {
+    console.error(`❌ [断言失败] src/style.css 结构损坏 -> ${structErr}`);
     failedCount++;
   }
 }
@@ -356,7 +424,7 @@ if (isDeploy) {
     process.exit(1);
   }
 
-  const syncFiles = ['manifest.json', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js', 'ai-host.js', 'HANDOFF.md', 'README.md', '.gitignore'];
+  const syncFiles = ['manifest.json', 'bootstrap.js', 'ai-render-core.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js', 'ai-host.js', 'HANDOFF.md', 'README.md', '.gitignore'];
   console.log('----------------------------------------------------------------------');
   console.log('文件名              源文件 MD5 (SSOT)                目标文件 MD5 (生产)       状态');
   console.log('----------------------------------------------------------------------');

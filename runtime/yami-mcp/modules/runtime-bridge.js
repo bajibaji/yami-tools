@@ -9,10 +9,12 @@
  */
 
 const http = require('http')
+const { normalizeSequence, diffDiagnosis, describeVerdict } = require('./playtest')
 
 class RuntimeBridge {
   constructor(port = 5966, cdpClient = null) {
-    this.port = port
+    // 端口可被环境变量覆盖：真机默认 5966，测试可指向模拟桥以便验证整条链路
+    this.port = Number(process.env.YAMI_RUNTIME_BRIDGE_PORT) || port
     this.cdp = cdpClient
   }
 
@@ -85,12 +87,52 @@ class RuntimeBridge {
   }
 
   /**
+   * 获取「给 AI 读的」诊断摘要：报错黑匣子（带可疑文件名+行号+就地源码）、卡住/幽灵事件、
+   * 性能离群点与内存。体积约十几 KB，用于替代整份 /report（数百 KB 且含 300 帧时间线，会挤爆上下文）。
+   */
+  async getDiagnosis() {
+    const res = await this.requestJson('/diagnose', 3000)
+    if (res.ok) return { ok: true, running: true, data: res.data }
+    // 老版本插件没有 /diagnose 端点：退回 /report 只保留关键部分，保证仍可用
+    const fallback = await this.requestJson('/report', 3000)
+    if (!fallback.ok) {
+      return {
+        ok: false,
+        running: false,
+        message: '游戏未在试玩运行中（端口 5966 未响应）。请先启动试玩，让问题复现一次，再调用本工具。'
+      }
+    }
+    const report = fallback.data || {}
+    return {
+      ok: true,
+      running: true,
+      degraded: true,
+      message: '当前插件的 /diagnose 端点不可用（旧版本），已退回精简版报告',
+      data: {
+        kind: 'yami-diagnosis-fallback',
+        performance: {
+          computeP95Ms: report.compute && report.compute.p95,
+          frameP95Ms: report.frame && report.frame.p95,
+          drawCalls: report.webgl && report.webgl.lastDrawCalls,
+          topUpdaters: report.updaters,
+          topRenderers: report.renderers,
+          topEvents: report.events
+        },
+        memory: report.memory,
+        scene: report.scene,
+        activeEvents: (report.activeEvents && report.activeEvents.active) || [],
+        hint: '建议升级插件以获得带源码上下文的完整诊断'
+      }
+    }
+  }
+
+  /**
    * 向试玩窗口派发物理按键输入（支持方向移动、确认、取消、技能键）
    * 优先使用 CDP 原生 Input.dispatchKeyEvent 注入物理击键，直达 Player 目标
    * @param {string} key 按键（'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape', 'KeyZ', 'Space' 等）
    * @param {string} [action='press'] 'press' | 'down' | 'up'
    */
-  async sendInput(key, action = 'press') {
+  async sendInput(key, action = 'press', holdMs) {
     if (!key) return { ok: false, error: '缺少 key 参数' }
     const keyMap = {
       up: 'ArrowUp',
@@ -113,7 +155,12 @@ class RuntimeBridge {
     if (live.ok && live.data && live.data.bridgeToken) {
       return await new Promise((resolve) => {
         const http = require('http')
-        const payload = Buffer.from(JSON.stringify({ type: 'key', key: realKey, action }), 'utf8')
+        const payload = Buffer.from(JSON.stringify({
+          type: 'key',
+          key: realKey,
+          action,
+          ...(Number.isFinite(Number(holdMs)) ? { durationMs: Number(holdMs) } : {})
+        }), 'utf8')
         const req = http.request({
           hostname: '127.0.0.1', port: this.port, path: '/action', method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length, 'x-yami-bridge-token': live.data.bridgeToken },
@@ -169,6 +216,101 @@ class RuntimeBridge {
       req.end(payload)
     })
   }
+
+  /**
+   * 试玩冒烟：按脚本驱动一遍游戏，报告「这一趟跑坏了没有」。
+   *
+   * 与 Claude Code 那种通用编码助手最大的不同点就在这：它能直接让游戏跑起来、
+   * 走两步、再把运行时黑匣子的变化读回来，形成"改完 → 真跑一遍 → 看有没有坏"的闭环。
+   *
+   * @param {string|Array} sequence 按键脚本（'down,down,ok' 或对象数组）
+   * @param {{settleMs?:number}} [options] settleMs：脚本跑完后再等多久收数据（默认 1200ms）
+   */
+  async playtestSmoke(sequence, options = {}) {
+    const { steps, rejected } = normalizeSequence(sequence)
+    const settleMs = Math.min(Math.max(Number(options.settleMs) || 1200, 200), 10000)
+    if (!steps.length) {
+      return { ok: false, error: '没有可执行的动作步骤；sequence 示例："down,down,ok" 或 [{ key:"left", waitMs:800 }]', rejected }
+    }
+
+    const before = await this.getDiagnosis()
+    if (!before.ok) {
+      return {
+        ok: false,
+        running: false,
+        message: '游戏没有在试玩中，无法冒烟。请先在编辑器里点【试玩】把游戏跑起来，再让我执行这一步。'
+      }
+    }
+
+    const executed = []
+    for (const step of steps) {
+      if (step.kind === 'wait') {
+        await delay(step.waitMs)
+        executed.push({ kind: 'wait', waitMs: step.waitMs })
+        continue
+      }
+      const sent = await this.sendInput(step.key, step.action, step.holdMs)
+      executed.push({ kind: 'key', key: step.key, action: step.action, ok: !!(sent && sent.ok), error: sent && sent.ok ? undefined : (sent && sent.error) })
+      await delay(step.waitMs)
+    }
+    await delay(settleMs)
+
+    const after = await this.getDiagnosis()
+    if (!after.ok) {
+      return {
+        ok: true,
+        running: false,
+        executed,
+        rejected,
+        message: '脚本执行到一半游戏退出了（可能崩溃或用户关闭了试玩窗口），没有拿到事后诊断。',
+        before: summarizeDiagnosis(before.data)
+      }
+    }
+
+    const diff = diffDiagnosis(before.data, after.data)
+    const failedSteps = executed.filter(item => item.kind === 'key' && item.ok === false)
+    return {
+      ok: true,
+      running: true,
+      verdict: diff.verdict,
+      message: describeVerdict(diff, executed.length) + (failedSteps.length ? `（另有 ${failedSteps.length} 步按键没有送达）` : ''),
+      executed,
+      rejected,
+      steps: executed.length,
+      before: summarizeDiagnosis(before.data),
+      after: summarizeDiagnosis(after.data),
+      problems: {
+        newErrors: diff.newErrors,
+        worsenedErrors: diff.worsenedErrors,
+        newStuckEvents: diff.newStuckEvents,
+        performanceRegressed: diff.perf.regressed
+      },
+      perf: diff.perf,
+      hint: diff.verdict === 'ok'
+        ? '这一段没有跑坏。需要更彻底就换更长的路径再跑一遍。'
+        : '用 problems 里的文件名+行号配合 search_project / read_script 定位，改完再跑一次同样的脚本对比。'
+    }
+  }
+}
+
+function summarizeDiagnosis(data) {
+  const diagnosis = data || {}
+  const perf = diagnosis.performance || {}
+  const summary = diagnosis.summary || {}
+  return {
+    fps: perf.fps || 0,
+    frameP95Ms: perf.frameP95Ms || 0,
+    computeP95Ms: perf.computeP95Ms || 0,
+    drawCalls: perf.drawCalls || 0,
+    errorKinds: summary.errorKinds || 0,
+    errorTotal: summary.errorTotal || 0,
+    stuckEvents: summary.stuckEvents || 0,
+    overBudgetFrames: summary.overBudgetFrames || 0
+  }
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)))
 }
 
 module.exports = RuntimeBridge

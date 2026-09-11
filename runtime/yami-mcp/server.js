@@ -24,7 +24,10 @@ const EventBuilder = require('./modules/event-builder')
 const CdpClient = require('./modules/cdp-client')
 const RuntimeBridge = require('./modules/runtime-bridge')
 const EditorBridge = require('./modules/editor-bridge')
-const { resolveInside, relativePath, sha256, writeAtomic, restoreBackup } = require('./modules/file-ops')
+const { resolveInside, relativePath, sha256, writeAtomic, restoreBackup, listBackups } = require('./modules/file-ops')
+const { unifiedDiff } = require('./modules/diff')
+const { snapshotProject, diffSnapshot, buildChangelog } = require('./modules/changelog')
+const { normalizeTodos, summarizeTodos, validateTransition, renderTodos } = require('./modules/todos')
 
 const VERSION = '0.2.0'
 const PROTOCOL_VERSION = '2024-11-05'
@@ -50,11 +53,111 @@ function resolveRoot() {
 
 const ROOT = resolveRoot()
 
+/**
+ * 受限模式：由插件内置 Agent Host（ai-host.js）启动时置 1。
+ * 定位是"防呆"而非安全边界——内置大模型不得自行解除上下文保护的旁路开关，
+ * read_resource 的 forceFull 只留给外部 MCP 客户端人工使用。
+ */
+const GUARDED = process.env.YAMI_MCP_GUARDED === '1'
+
+/**
+ * 操作风险分级：给审批卡片用。
+ *   low     只读或可忽略
+ *   medium  写盘（有备份、可回滚）
+ *   high    删除、批量替换、落盘发布这类不可轻易撤销的动作 → 需要二次确认令牌
+ */
+const HIGH_RISK_TOOLS = new Set(['delete_resource'])
+const MEDIUM_RISK_TOOLS = new Set([
+  'write_resource', 'write_script', 'edit_script', 'create_script',
+  'patch_resource', 'append_event_commands', 'upsert_database_item'
+])
+function riskOf(tool) {
+  if (HIGH_RISK_TOOLS.has(tool)) return 'high'
+  if (MEDIUM_RISK_TOOLS.has(tool)) return 'medium'
+  return 'low'
+}
+
+/**
+ * 二次确认令牌：高危操作的 dryRun 预览会发一个一次性令牌，
+ * 正式执行必须原样带回，避免"预览的内容和用户确认的不是同一份"（也挡住误触/重放）。
+ */
+const confirmationTokens = new Map()
+const CONFIRM_TOKEN_TTL = 5 * 60 * 1000
+function issueConfirmationToken(tool, rel, oldSha) {
+  const token = crypto.randomBytes(12).toString('hex')
+  confirmationTokens.set(token, { tool, path: rel, oldSha, at: Date.now() })
+  for (const [key, value] of confirmationTokens) {
+    if (Date.now() - value.at > CONFIRM_TOKEN_TTL) confirmationTokens.delete(key)
+  }
+  return token
+}
+function takeConfirmationToken(token, tool, rel) {
+  const entry = confirmationTokens.get(String(token || ''))
+  if (!entry) return { ok: false, error: '确认令牌无效或已过期，请重新预览一次' }
+  confirmationTokens.delete(token)
+  if (Date.now() - entry.at > CONFIRM_TOKEN_TTL) return { ok: false, error: '确认令牌已过期，请重新预览一次' }
+  if (entry.tool !== tool) return { ok: false, error: '确认令牌与当前操作不匹配，请重新预览' }
+  if (rel && entry.path !== rel) return { ok: false, error: '确认令牌对应的文件已变化，请重新预览' }
+  return { ok: true, entry }
+}
+
+/** 组装审批用的差异预览（写盘类工具统一走这里） */
+function withDiff(preview, oldText, newText, options = {}) {
+  const diff = unifiedDiff(oldText, newText, { label: options.label || '' })
+  return {
+    ...preview,
+    risk: options.risk || 'medium',
+    diff: diff.text,
+    diffStat: { added: diff.added, removed: diff.removed, truncated: diff.truncated },
+    ...(options.impact ? { impact: options.impact } : {})
+  }
+}
+
+/**
+ * 候选 Open Yami 编辑器安装根目录（不写死盘符，跨平台可用）：
+ *   1. YAMI_ENGINE_ROOT 环境变量（Agent Host 或外部客户端可显式指定）；
+ *   2. 可执行文件同层（编辑器内 ELECTRON_RUN_AS_NODE 启动时，process.execPath 即编辑器本体）；
+ *   3. Windows 默认安装位置（保留原有行为，仅作为兜底）；
+ *   4. 源码仓库并列目录（开发者在本机跑源码时）。
+ */
+function candidateEngineRoots() {
+  const roots = []
+  if (process.env.YAMI_ENGINE_ROOT) roots.push(process.env.YAMI_ENGINE_ROOT)
+  if (process.execPath) roots.push(path.dirname(process.execPath))
+  roots.push('D:\\Program Files\\Open Yami RPG Editor')
+  roots.push(path.resolve(__dirname, '..', '..', '..', '2'))
+  return roots.filter(Boolean)
+}
+
 const cdpClient = new CdpClient()
 const dbManager = new DatabaseManager(ROOT, () => generateGuid())
 const eventBuilder = new EventBuilder(ROOT)
 const runtimeBridge = new RuntimeBridge(5966, cdpClient)
 const editorBridge = new EditorBridge(5967)
+
+/* ============================== 变更小结的运行时状态 ============================== */
+// 基线快照：新任务开始时由 project_changelog(reset:true) 建立，之后只报增量
+let baselineSnapshot = null
+// 本轮写入记录（工具名、是否通过编译、是否被回滚），供小结标注"谁改的、编译过没过"
+const recentWrites = []
+const RECENT_WRITES_MAX = 200
+// 最近一次试玩冒烟结论
+let lastPlaytest = null
+// 本次任务的待办清单（模型通过 todo_write 维护）
+let currentTodos = []
+
+/** 从编译器输出里取第一条报错（给变更小结用） */
+function firstCompileError(compile) {
+  const output = String((compile && compile.output) || '')
+  const line = output.split('\n').map(text => text.trim()).find(text => text.includes('error TS')) || ''
+  return line.slice(0, 200)
+}
+
+function rememberWrite(entry) {
+  if (!entry || !entry.path) return
+  recentWrites.push(entry)
+  if (recentWrites.length > RECENT_WRITES_MAX) recentWrites.splice(0, recentWrites.length - RECENT_WRITES_MAX)
+}
 
 /* ============================== 类型与规则 ============================== */
 
@@ -208,11 +311,13 @@ function findCompiler() {
   if (process.env.YAMI_TSC_EXE && fs.existsSync(process.env.YAMI_TSC_EXE)) {
     return { command: process.env.YAMI_TSC_EXE, args: [] }
   }
-  const engineRoot = process.env.YAMI_ENGINE_ROOT || 'D:\\Program Files\\Open Yami RPG Editor'
-  const exeCandidates = [
-    path.join(engineRoot, 'resources', 'app', 'node_modules', '@typescript', 'typescript-win32-x64', 'lib', 'tsc.exe'),
-    path.join(engineRoot, 'resources', 'app', 'node_modules', '@typescript', 'typescript-win32-x64', 'lib', 'tsc')
-  ]
+  const exeCandidates = []
+  for (const engineRoot of candidateEngineRoots()) {
+    exeCandidates.push(
+      path.join(engineRoot, 'resources', 'app', 'node_modules', '@typescript', 'typescript-win32-x64', 'lib', 'tsc.exe'),
+      path.join(engineRoot, 'resources', 'app', 'node_modules', '@typescript', 'typescript-win32-x64', 'lib', 'tsc')
+    )
+  }
   for (const c of exeCandidates) if (fs.existsSync(c)) return { command: c, args: [] }
 
   if (process.env.YAMI_TSC_JS && fs.existsSync(process.env.YAMI_TSC_JS)) {
@@ -226,7 +331,7 @@ function findCompiler() {
   return null
 }
 
-function registerCreatedScript(type, guid) {
+function registerCreatedScript(type, guid, tool = 'create_script') {
   const table = type === 'plugin' ? 'plugins' : type === 'command' ? 'commands' : null
   if (!table) return { ok: true, skipped: true }
   const rel = `Data/${table}.json`
@@ -240,7 +345,7 @@ function registerCreatedScript(type, guid) {
     data.push(type === 'plugin'
       ? { id: guid, enabled: true, parameters: {} }
       : { id: guid, enabled: true, alias: '', keywords: '' })
-    return { ok: true, ...writeAtomic(ROOT, rel, JSON.stringify(data, null, 2) + '\n'), registered: true, table }
+    return { ok: true, ...writeAtomic(ROOT, rel, JSON.stringify(data, null, 2) + '\n', { tool }), registered: true, table }
   }
   return { ok: true, registered: false, table }
 }
@@ -279,12 +384,20 @@ function listResourceFiles(type) {
 }
 
 function findCommandCatalogPath() {
-  const candidates = [
-    process.env.YAMI_COMMANDS_JSON,
-    path.join(path.dirname(process.execPath), 'resources', 'app', 'dist', 'commands.json'),
-    'D:\\Program Files\\Open Yami RPG Editor\\resources\\app\\dist\\commands.json'
-  ].filter(Boolean)
-  return candidates.find(file => fs.existsSync(file)) || null
+  const candidates = [process.env.YAMI_COMMANDS_JSON]
+  // 编辑器自带目录（Windows 安装版 / 解包产物），路径相对可执行文件推导而非写死盘符
+  for (const engineRoot of candidateEngineRoots()) {
+    candidates.push(
+      path.join(engineRoot, 'resources', 'app', 'dist', 'commands.json'),
+      path.join(engineRoot, 'resources', 'app', 'Project', 'commands.json')
+    )
+  }
+  // 源码仓库同层（开发者在本机直接跑源码时的兜底）
+  candidates.push(
+    path.resolve(__dirname, '..', '..', '..', '2', 'Project', 'commands.json'),
+    path.join(process.cwd(), 'Project', 'commands.json')
+  )
+  return candidates.filter(Boolean).find(file => fs.existsSync(file)) || null
 }
 
 function flattenCommandCatalog() {
@@ -720,6 +833,120 @@ const tools = [
     inputSchema: { type: 'object', properties: {} }
   },
   {
+    name: 'diagnose_runtime',
+    description: '读取试玩运行时的诊断摘要（AI 专用）：未捕获报错按指纹聚合、每条带「可疑文件名 + 行号 + 就地源码 + 白话归因」，外加卡住/幽灵事件、最耗时更新器与渲染器、内存与资源缓存。先诊断再动手改代码时用这个，不要读整份报告。',
+    readOnlyHint: true,
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'todo_write',
+    description: '维护本次任务的待办清单（多步开发任务开工时先列一次，之后每完成一步更新状态）。用户会在界面上看到进度骨架；步骤文案用白话，别写代码术语。状态：pending 待做 / in_progress 进行中 / done 已完成。',
+    readOnlyHint: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        todos: {
+          description: '清单：字符串数组 ["第一步","第二步"]，或对象数组 [{ text:"第一步", status:"done" }]',
+          oneOf: [
+            { type: 'array', items: { type: 'string' } },
+            { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, status: { type: 'string', enum: ['pending', 'in_progress', 'done'] }, id: { type: 'string' } } } }
+          ]
+        },
+        clear: { type: 'boolean', description: '清空清单（任务结束后用）' }
+      }
+    }
+  },
+  {
+    name: 'project_changelog',
+    description: '生成「本次改动小结」：把工程当前状态与上一次基线快照对比，列出真正被改/新建/删除的文件（写了又改回去、写失败回滚的都不会被算进来），并合并编译结论与试玩冒烟结论。改完收尾、或用户问"你刚才改了什么"时用它。传 reset:true 可把当前状态设为新基线（一般在新任务开始时调用一次）。',
+    readOnlyHint: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        reset: { type: 'boolean', description: '把当前工程状态设为新基线并返回（用于开始一件新任务）' },
+        limit: { type: 'number', description: '最多列出多少个文件，默认 50' }
+      }
+    }
+  },
+  {
+    name: 'list_backups',
+    description: '列出可回退的历史版本（每次 AI 写盘前都会自动备份）：返回时间、被改文件、由哪个工具改动、体积。用户说「改回去 / 撤销 / 恢复原样」时先用它确认要回到哪一步。',
+    readOnlyHint: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: '可选：只看某个文件的备份（相对路径）' },
+        limit: { type: 'number', description: '最多返回多少条，1-200，默认 30' }
+      }
+    }
+  },
+  {
+    name: 'restore_backup',
+    description: '把某个文件回退到指定备份（不传 backup 则回退到该文件最早的一次备份，即 AI 动手之前）。回退前会先把当前内容另存一份，所以回退本身也能再撤回；返回与当前内容的差异。',
+    readOnlyHint: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: '要回退的文件（相对路径）' },
+        backup: { type: 'string', description: '可选：list_backups 给出的 backup 路径；不传则回退到最早备份' },
+        dryRun: { type: 'boolean', description: '默认 true 只预览将发生的差异；false 才真正回退' },
+        expectedSha256: { type: 'string', description: '可选：校验当前文件未被他人改动' }
+      },
+      required: ['path']
+    }
+  },
+  {
+    name: 'search_project',
+    description: '在工程里做内容检索（类似 grep）：按正则搜索脚本与数据文件，返回命中文件、行号、该行内容与可选上下文行。改代码前先用它定位，避免整份读取大文件。',
+    readOnlyHint: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '要搜索的正则或纯文本（如 "movementSpeed"、"掉落物品"、"parseGUID"）' },
+        scope: { type: 'string', enum: ['script', 'data', 'event', 'all'], description: '搜索范围：script 只搜 .ts/.js 脚本，data 搜 Data/*.json，event 搜 .event 资源，all 搜全部（默认 script）' },
+        contextLines: { type: 'number', description: '每个命中附带的前后上下文行数，0-5，默认 0' },
+        maxResults: { type: 'number', description: '最多返回多少条命中，1-200，默认 40' },
+        ignoreCase: { type: 'boolean', description: '是否忽略大小写，默认 false' }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'edit_script',
+    description: '精确修改脚本片段（不必整文件重写）：把 oldText 替换为 newText；要求 oldText 在文件内唯一匹配，否则报错并提示可用命中位置。支持 dryRun 预览与 expectedSha256 冲突检测，写入后自动用引擎 tsc 编译校验，失败自动回滚。',
+    readOnlyHint: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: '脚本相对路径，如 Assets/插件/全局插件/经验值计算.xxxx.ts' },
+        oldText: { type: 'string', description: '要被替换的原文片段（必须与文件内容逐字符一致，且在文件中唯一）' },
+        newText: { type: 'string', description: '替换后的新片段；传空字符串表示删除该片段' },
+        dryRun: { type: 'boolean', description: '默认 true 只预览差异；false 正式写盘' },
+        expectedSha256: { type: 'string', description: '可选；正式写入时校验文件未被他人改动' }
+      },
+      required: ['path', 'oldText', 'newText']
+    }
+  },
+  {
+    name: 'playtest_smoke',
+    description: '试玩冒烟测试（本工程特色验证闭环）：按脚本驱动一遍游戏（方向键走位、确认对话等），跑完自动对比运行时诊断，报告「新出现的报错 / 变频繁的报错 / 新卡住的事件 / 性能是否恶化」。改完代码想确认"真的还能玩"时用它。需要先在编辑器里启动试玩。',
+    readOnlyHint: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sequence: {
+          description: '动作脚本：可写字符串简写 "down,down,ok"，也可写对象数组 [{ key:"left", action:"press", holdMs:600, waitMs:900 }, { waitMs:500 }]',
+          oneOf: [
+            { type: 'string' },
+            { type: 'array', items: { type: 'object', properties: { key: { type: 'string' }, action: { type: 'string', enum: ['press', 'down', 'up'] }, holdMs: { type: 'number' }, waitMs: { type: 'number' } } } }
+          ]
+        },
+        settleMs: { type: 'number', description: '脚本跑完后再等多久收集数据（毫秒，默认 1200）' }
+      },
+      required: ['sequence']
+    }
+  },
+  {
     name: 'send_player_input',
     description: '向正在运行的试玩游戏下发虚拟按键操作（方向键、确定对话、取消等），用于自动化探索与跑图回归测试',
     readOnlyHint: false,
@@ -827,8 +1054,9 @@ async function callTool(name, args) {
           const writable = await ensureEditorWritable(`Data/${table}.json`)
           if (!writable.ok) return writable
         }
-        const written = writeAtomic(ROOT, rel, src)
-        const registration = registerCreatedScript(args.type, guid)
+        const written = writeAtomic(ROOT, rel, src, { tool: 'write_resource' })
+        rememberWrite({ path: rel, tool: 'write_resource', ok: true })
+        const registration = registerCreatedScript(args.type, guid, 'create_script')
         if (!registration.ok) {
           try { fs.unlinkSync(resolveInside(ROOT, rel)) } catch {}
           return { ok: false, registration, error: '脚本注册失败，已撤销脚本文件：' + registration.error }
@@ -868,17 +1096,160 @@ async function callTool(name, args) {
       try {
         const writable = await ensureEditorWritable(rel)
         if (!writable.ok) return writable
-        const written = writeAtomic(ROOT, rel, args.content)
+        const written = writeAtomic(ROOT, rel, args.content, { tool: 'write_script' })
         let compile = null
         compile = await runCompileCheck()
+        if (compile && !compile.ok) {
+          let rollback = null
+          try { if (written.backup) rollback = restoreBackup(ROOT, rel, written.backup) } catch (e) { rollback = { error: e.message } }
+          rememberWrite({ path: rel, tool: 'edit_script', ok: false, compileOk: false, errorCount: compile.errorCount || 0, firstError: firstCompileError(compile), rolledBack: !!rollback && !rollback.error })
+          return { ok: false, ...preview, compile, rollback, error: '编译未通过，已尝试自动恢复修改前脚本' }
+        }
+        await notifyEditorReload(rel)
+        rememberWrite({ path: rel, tool: 'write_script', ok: true, compileOk: compile ? compile.ok : undefined, errorCount: compile ? (compile.errorCount || 0) : 0 })
+        return { ok: true, dryRun: false, ...preview, ...written, compile, message: `已写入 ${rel}` }
+      } catch (e) { return { ok: false, error: `写入失败: ${e.message}` } }
+    }
+    case 'edit_script': {
+      const rel = normalizeRelPath(args.path)
+      if (!/\.(ts|js)$/i.test(rel) || !rel.startsWith('Assets/')) return { ok: false, error: '只允许编辑 Assets 内的 .ts 或 .js 脚本' }
+      if (typeof args.oldText !== 'string' || !args.oldText.length) return { ok: false, error: 'oldText 必须是非空字符串（要替换的原文片段）' }
+      if (typeof args.newText !== 'string') return { ok: false, error: 'newText 必须是字符串；删除片段请传空字符串' }
+      const oldText = readText(rel)
+      if (oldText === null) return { ok: false, error: `脚本不存在: ${rel}` }
+      const target = args.oldText
+      const firstHit = oldText.indexOf(target)
+      if (firstHit === -1) {
+        return { ok: false, error: '未在脚本中找到 oldText；请用 read_script 或 search_project 取到与文件逐字符一致的片段（注意缩进与换行）' }
+      }
+      if (oldText.indexOf(target, firstHit + target.length) !== -1) {
+        // 多处匹配会改错地方，直接拒绝并给出所有命中行号，让模型缩小片段
+        const lineNumbers = []
+        let cursor = firstHit
+        while (cursor !== -1 && lineNumbers.length < 20) {
+          lineNumbers.push(oldText.slice(0, cursor).split('\n').length)
+          cursor = oldText.indexOf(target, cursor + target.length)
+        }
+        return { ok: false, ambiguous: true, lines: lineNumbers, error: `oldText 在脚本中出现多次（行 ${lineNumbers.join('、')}），为保证改对位置请带上更多上下文使其唯一` }
+      }
+      if (args.expectedSha256 && sha256(oldText) !== args.expectedSha256) {
+        return { ok: false, conflict: true, error: '脚本已被其他操作修改，expectedSha256 不匹配；请重新读取后再改' }
+      }
+      const line = oldText.slice(0, firstHit).split('\n').length
+      const nextText = oldText.slice(0, firstHit) + args.newText + oldText.slice(firstHit + target.length)
+      const preview = withDiff({
+        path: rel,
+        line,
+        oldSha256: sha256(oldText),
+        newSha256: sha256(nextText),
+        changedBytes: Buffer.byteLength(nextText) - Buffer.byteLength(oldText),
+        removedLines: target.split('\n').length,
+        addedLines: args.newText.split('\n').length
+      }, oldText, nextText, { label: `精确修改 ${rel}（第 ${line} 行）` })
+      // 片段替换不改元数据块，但仍校验一次：避免把 @plugin 块改坏却毫无提示
+      const nextMeta = parsePluginMeta(nextText)
+      if (!nextMeta.ok) return { ok: false, ...preview, error: '替换后脚本的 /* @plugin ... */ 元数据块不合法，未写入' }
+      if (args.dryRun !== false) {
+        return {
+          ok: true,
+          dryRun: true,
+          ...preview,
+          // 注意：这里不能再写 `diff` 字段——那会覆盖 withDiff 生成的统一差异文本。
+          // 片段级前后对照另起字段名，避免与审批卡片的差异预览打架（这个坑实测踩过）。
+          fragmentDiff: { before: target.slice(0, 600), after: args.newText.slice(0, 600) },
+          message: `片段替换校验通过（第 ${line} 行，-${target.split('\n').length}/+${args.newText.split('\n').length} 行），未写盘`
+        }
+      }
+      try {
+        const writable = await ensureEditorWritable(rel)
+        if (!writable.ok) return writable
+        const written = writeAtomic(ROOT, rel, nextText, { tool: 'edit_script' })
+        const compile = await runCompileCheck()
         if (compile && !compile.ok) {
           let rollback = null
           try { if (written.backup) rollback = restoreBackup(ROOT, rel, written.backup) } catch (e) { rollback = { error: e.message } }
           return { ok: false, ...preview, compile, rollback, error: '编译未通过，已尝试自动恢复修改前脚本' }
         }
         await notifyEditorReload(rel)
-        return { ok: true, dryRun: false, ...preview, ...written, compile, message: `已写入 ${rel}` }
+        rememberWrite({ path: rel, tool: 'edit_script', ok: true, compileOk: compile ? compile.ok : undefined, errorCount: compile ? (compile.errorCount || 0) : 0, firstError: compile && !compile.ok ? firstCompileError(compile) : '' })
+        return { ok: true, dryRun: false, ...preview, ...written, compile, message: `已精确修改 ${rel}（第 ${line} 行）` }
       } catch (e) { return { ok: false, error: `写入失败: ${e.message}` } }
+    }
+    case 'search_project': {
+      const query = String(args.query || '')
+      if (!query) return { ok: false, error: 'query 不能为空' }
+      const scope = ['script', 'data', 'event', 'all'].includes(args.scope) ? args.scope : 'script'
+      const maxResults = Math.min(Math.max(Number(args.maxResults) || 40, 1), 200)
+      const contextLines = Math.min(Math.max(Number(args.contextLines) || 0, 0), 5)
+      let pattern
+      try {
+        pattern = new RegExp(query, args.ignoreCase ? 'gi' : 'g')
+      } catch (e) {
+        // 非法正则（用户可能直接搜 "a(b" 这类字面量）→ 退化为纯文本搜索
+        pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), args.ignoreCase ? 'gi' : 'g')
+      }
+      const scopeFilter = {
+        script: file => /\.(ts|js)$/i.test(file),
+        data: file => /^Data[\\/].+\.json$/i.test(path.relative(ROOT, file)),
+        event: file => /\.event$/i.test(file),
+        all: () => true
+      }[scope]
+      const files = walk(ROOT).filter(file => {
+        if (!scopeFilter(file)) return false
+        if (/[\\/](\.yami-mcp-backups|node_modules|\.git|Dist)[\\/]/.test(file)) return false
+        if (file.endsWith('Data/manifest.json')) return false
+        try { return fs.statSync(file).size <= 2 * 1024 * 1024 } catch { return false }
+      })
+      const results = []
+      let scanned = 0
+      for (const file of files) {
+        if (results.length >= maxResults) break
+        let text
+        try { text = fs.readFileSync(file, 'utf8') } catch { continue }
+        scanned++
+        if (!pattern.test(text)) { pattern.lastIndex = 0; continue }
+        pattern.lastIndex = 0
+        const lines = text.split(/\r?\n/)
+        for (let index = 0; index < lines.length && results.length < maxResults; index++) {
+          const lineText = lines[index]
+          pattern.lastIndex = 0
+          const matches = []
+          let hit
+          while ((hit = pattern.exec(lineText)) !== null) {
+            matches.push([hit.index, hit.index + hit[0].length])
+            if (hit[0].length === 0) pattern.lastIndex++
+            if (matches.length >= 8) break
+          }
+          if (!matches.length) continue
+          const entry = {
+            path: path.relative(ROOT, file).split(path.sep).join('/'),
+            line: index + 1,
+            text: lineText.trim().slice(0, 240),
+            matches
+          }
+          if (contextLines > 0) {
+            const from = Math.max(0, index - contextLines)
+            const to = Math.min(lines.length - 1, index + contextLines)
+            entry.context = []
+            for (let cursor = from; cursor <= to; cursor++) {
+              entry.context.push({ line: cursor + 1, text: lines[cursor].trim().slice(0, 200), current: cursor === index })
+            }
+          }
+          results.push(entry)
+        }
+      }
+      return {
+        ok: true,
+        query,
+        scope,
+        scannedFiles: scanned,
+        totalMatched: results.length,
+        truncated: results.length >= maxResults,
+        results,
+        hint: results.length
+          ? '用 read_script / read_resource 读取命中的文件（或直接用 edit_script 做片段替换）'
+          : '没有命中：换个关键词，或先用 list_scripts / list_resources 看有哪些文件'
+      }
     }
     case 'patch_resource': {
       const rel = normalizeRelPath(args.path)
@@ -897,12 +1268,13 @@ async function callTool(name, args) {
       const required = REQUIRED_FIELDS[TYPE_BY_EXT[path.extname(rel).toLowerCase()]] || []
       for (const field of required) if (!(field in next)) nextIssues.push(`缺少必需字段: ${field}`)
       if (nextIssues.length) return { ok: false, error: nextIssues.join('；') }
-      const preview = { path: rel, oldSha256: sha256(oldText), newSha256: sha256(nextText), changedBytes: Buffer.byteLength(nextText) - Buffer.byteLength(oldText), preview: next }
+      const preview = withDiff({ path: rel, oldSha256: sha256(oldText), newSha256: sha256(nextText), changedBytes: Buffer.byteLength(nextText) - Buffer.byteLength(oldText), preview: next }, oldText, nextText, { label: `修改资源 ${rel}` })
       if (args.dryRun !== false) return { ok: true, dryRun: true, ...preview, message: '资源补丁校验通过，未写盘' }
       try {
         const writable = await ensureEditorWritable(rel)
         if (!writable.ok) return writable
-        const written = writeAtomic(ROOT, rel, nextText)
+        const written = writeAtomic(ROOT, rel, nextText, { tool: 'patch_resource' })
+        rememberWrite({ path: rel, tool: 'patch_resource', ok: true })
         await notifyEditorReload(rel)
         return { ok: true, dryRun: false, ...preview, ...written, message: `已安全更新 ${rel}` }
       } catch (e) { return { ok: false, error: `写入失败: ${e.message}` } }
@@ -939,14 +1311,55 @@ async function callTool(name, args) {
       const backup = path.join(backupDir, `${Date.now()}-${path.basename(rel)}.deleted.bak`)
       const currentSha256 = sha256(fs.readFileSync(abs))
       if (args.expectedSha256 && currentSha256 !== args.expectedSha256) return { ok: false, conflict: true, error: '资源已被其他操作修改，拒绝删除' }
-      if (args.dryRun !== false) return { ok: true, dryRun: true, path: rel, bytes: stat.size, oldSha256: currentSha256, message: `将删除 ${rel}，并备份到 .yami-mcp-backups` }
+
+      // 删除属于不可轻易撤销的动作：
+      //   1) dryRun 预览给出「要删掉什么」的摘要（名称、类型、体积、前几行内容）；
+      //   2) 正式执行必须带回预览时发的一次性确认令牌 —— 只传 force 不足以删掉东西。
+      const rawText = fs.readFileSync(abs, 'utf8')
+      const impact = {
+        name: path.basename(rel),
+        type: TYPE_BY_EXT[path.extname(rel).toLowerCase()] || 'other',
+        bytes: stat.size,
+        preview: rawText.split(/\r?\n/).slice(0, 12).join('\n').slice(0, 600),
+        backup: '.yami-mcp-backups/' + path.basename(backup)
+      }
+      const previewResult = {
+        ok: true,
+        dryRun: true,
+        path: rel,
+        risk: 'high',
+        bytes: stat.size,
+        oldSha256: currentSha256,
+        impact,
+        message: `将删除 ${path.basename(rel)}（${stat.size} 字节），删除前会自动备份；这是不可轻易撤销的操作，需要你确认。`
+      }
+      if (args.dryRun !== false) {
+        return { ...previewResult, confirmationToken: issueConfirmationToken('delete_resource', rel, currentSha256) }
+      }
+      const tokenCheck = takeConfirmationToken(args.confirmationToken, 'delete_resource', rel)
+      if (!tokenCheck.ok) {
+        // 语义要准：这次调用**没有执行**，所以 ok:false，别让调用方以为已经进入执行阶段
+        return {
+          ok: false,
+          dryRun: true,
+          confirmRequired: true,
+          path: rel,
+          risk: 'high',
+          bytes: stat.size,
+          impact,
+          confirmationToken: issueConfirmationToken('delete_resource', rel, currentSha256),
+          error: tokenCheck.error + '（请把返回的 confirmationToken 原样带上再执行一次）'
+        }
+      }
       try {
         const writable = await ensureEditorWritable(rel)
         if (!writable.ok) return writable
         fs.mkdirSync(backupDir, { recursive: true })
         fs.copyFileSync(abs, backup)
         fs.unlinkSync(abs)
-        return { ok: true, dryRun: false, path: rel, backup, message: `已删除 ${rel}，备份仍保留` }
+        // 备份路径以工程根为基准返回（相对路径，跨平台且便于直接交给 read 工具恢复）
+        const backupRel = '.yami-mcp-backups/' + path.basename(backup)
+        return { ok: true, dryRun: false, path: rel, risk: 'high', backup: backupRel, impact, message: `已删除 ${rel}，备份为 ${backupRel}（可随时恢复）` }
       } catch (e) { return { ok: false, error: `删除失败: ${e.message}` } }
     }
     case 'generate_guid': {
@@ -1002,15 +1415,18 @@ async function callTool(name, args) {
           if (!(args.key in parsed)) return { ok: false, error: `文件中不存在指定的 key: ${args.key}` }
           return { ok: true, path: rel, key: args.key, content: parsed[args.key], sha256: fullSha }
         }
-        if (raw.length > 200000 && !args.forceFull) {
+        if (raw.length > 200000 && (GUARDED || !args.forceFull)) {
           const keys = Object.keys(parsed)
+          const hint = GUARDED
+            ? '请改用 key 参数按顶层字段精确定位子节（可先看 topLevelKeys）。'
+            : '可传 key 参数精确定位子节，或传 forceFull=true 读取完整内容。'
           return {
             ok: true,
             path: rel,
             truncated: true,
             sizeBytes: raw.length,
             sha256: fullSha,
-            message: `文件体积较大 (${Math.round(raw.length / 1024)} KB)，已开启上下文截断保护。可传 key 参数精确定位子节，或传 forceFull=true 读取完整内容。`,
+            message: `文件体积较大 (${Math.round(raw.length / 1024)} KB)，已开启上下文截断保护。${hint}`,
             topLevelKeys: keys.slice(0, 50)
           }
         }
@@ -1066,7 +1482,7 @@ async function callTool(name, args) {
       try {
         const writable = await ensureEditorWritable(rel)
         if (!writable.ok) return writable
-        const written = writeAtomic(ROOT, rel, text)
+        const written = writeAtomic(ROOT, rel, text, { tool: 'create_script' })
         let memoryStatus = null
         try {
           const reloadRes = await cdpClient.reloadEditorResource(rel, guid)
@@ -1091,12 +1507,14 @@ async function callTool(name, args) {
     case 'trigger_playtest':
       return await cdpClient.triggerPlaytest()
     case 'editor_action': {
+      // 取引擎接口：源码版停在 window.YamiEngine 下，老打包版直接挂全局，两套都认。
+      const pick = "const E = (window.YamiEngine || {});"
       const expressions = {
-        save: "(() => { if (typeof File === 'undefined' || !File.save) return {ok:false, error:'File.save 不可用'}; const r = File.save(false); return Promise.resolve(r).then(() => ({ok:true, action:'save'})); })()",
-        undo: "(() => { if (typeof UndoManager === 'undefined' || !UndoManager.undo) return {ok:false, error:'UndoManager.undo 不可用'}; UndoManager.undo(); return {ok:true, action:'undo'}; })()",
-        redo: "(() => { if (typeof UndoManager === 'undefined' || !UndoManager.redo) return {ok:false, error:'UndoManager.redo 不可用'}; UndoManager.redo(); return {ok:true, action:'redo'}; })()",
-        refresh: "(() => { if (typeof Directory === 'undefined' || !Directory.update) return {ok:false, error:'Directory.update 不可用'}; return Promise.resolve(Directory.update()).then(() => ({ok:true, action:'refresh'})); })()",
-        playtest: "(() => { if (typeof Title === 'undefined' || !Title.playGame) return {ok:false, error:'Title.playGame 不可用'}; const r = Title.playGame(); return Promise.resolve(r).then(() => ({ok:true, action:'playtest'})); })()"
+        save: "(() => { " + pick + " const F = E.File; if (!F || !F.save) return {ok:false, error:'File.save 不可用（引擎未暴露 YamiEngine.File）'}; const r = F.save(false); return Promise.resolve(r).then(() => ({ok:true, action:'save'})); })()",
+        undo: "(() => { " + pick + " const U = E.UndoManager; if (!U || !U.undo) return {ok:false, error:'UndoManager.undo 不可用（引擎未暴露 YamiEngine.UndoManager）'}; U.undo(); return {ok:true, action:'undo'}; })()",
+        redo: "(() => { " + pick + " const U = E.UndoManager; if (!U || !U.redo) return {ok:false, error:'UndoManager.redo 不可用（引擎未暴露 YamiEngine.UndoManager）'}; U.redo(); return {ok:true, action:'redo'}; })()",
+        refresh: "(() => { " + pick + " const D = E.Directory; if (!D || !D.update) return {ok:false, error:'Directory.update 不可用（引擎未暴露 YamiEngine.Directory）'}; return Promise.resolve(D.update()).then(() => ({ok:true, action:'refresh'})); })()",
+        playtest: "(() => { " + pick + " const T = E.Title; if (!T || !T.playGame) return {ok:false, error:'Title.playGame 不可用（引擎未暴露 YamiEngine.Title）'}; const r = T.playGame(); return Promise.resolve(r).then(() => ({ok:true, action:'playtest'})); })()"
       }
       if (!expressions[args.action]) return { ok: false, error: `不支持的编辑器动作: ${args.action}` }
       const directActions = new Set(['save', 'undo', 'redo', 'refresh', 'playtest'])
@@ -1135,6 +1553,135 @@ async function callTool(name, args) {
     }
     case 'get_runtime_state':
       return await runtimeBridge.getLiveState()
+    case 'diagnose_runtime':
+      return await runtimeBridge.getDiagnosis()
+    case 'todo_write': {
+      if (args.clear === true) {
+        currentTodos = []
+        return { ok: true, cleared: true, items: [], summary: summarizeTodos([]) }
+      }
+      const { items, rejected } = normalizeTodos(args.todos)
+      if (!items.length) {
+        return { ok: false, rejected, error: '清单为空或格式不对；todos 传字符串数组或 [{text,status}] 数组' }
+      }
+      // 不允许把"已完成"改回"待做"：进度倒退会让用户误判
+      const transition = validateTransition(currentTodos, items)
+      if (!transition.ok) {
+        return { ok: false, regressed: transition.regressed, error: '不允许把已完成的步骤改回未完成：' + transition.regressed.join('、') }
+      }
+      currentTodos = items
+      const summary = summarizeTodos(items)
+      return {
+        ok: true,
+        rejected,
+        items,
+        summary,
+        progress: summary.headline,
+        rendered: renderTodos(items),
+        hint: summary.done === summary.total ? '全部完成，可以收尾并给用户小结了' : '继续做下一个未完成项，完成一个就回来更新状态'
+      }
+    }
+    case 'project_changelog': {
+      const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 200)
+      const current = snapshotProject(ROOT)
+      if (args.reset === true || !baselineSnapshot) {
+        const isFirst = !baselineSnapshot
+        baselineSnapshot = current
+        return {
+          ok: true,
+          baseline: true,
+          trackedFiles: current.size,
+          message: isFirst
+            ? `已把当前状态设为基线（跟踪 ${current.size} 个文本资源），之后再来叫我就只报增量。`
+            : `已把当前状态重置为新基线（${current.size} 个文本资源）。`
+        }
+      }
+      const diff = diffSnapshot(baselineSnapshot, current)
+      const changelog = buildChangelog({ snapshotDiff: diff, writes: recentWrites, playtest: lastPlaytest })
+      const todoSummary = summarizeTodos(currentTodos)
+      return {
+        ok: true,
+        trackedFiles: current.size,
+        summary: changelog.summary,
+        headline: changelog.headline,
+        files: changelog.files.slice(0, limit),
+        truncated: changelog.files.length > limit,
+        playtest: changelog.playtest,
+        todos: currentTodos,
+        todoSummary,
+        nextSteps: changelog.nextSteps
+      }
+    }
+    case 'list_backups': {
+      const filterPath = args.path ? normalizeRelPath(args.path) : ''
+      const limit = Math.min(Math.max(Number(args.limit) || 30, 1), 200)
+      const all = listBackups(ROOT, filterPath)
+      const grouped = new Map()
+      for (const item of all) grouped.set(item.path, (grouped.get(item.path) || 0) + 1)
+      return {
+        ok: true,
+        count: all.length,
+        fileCount: grouped.size,
+        backups: all.slice(0, limit).map(item => ({
+          backup: item.backup,
+          path: item.path,
+          savedAt: item.savedAt,
+          tool: item.tool,
+          bytes: item.bytes,
+          olderVersions: grouped.get(item.path) || 1
+        })),
+        truncated: all.length > limit,
+        hint: all.length
+          ? '要把某个文件退回 AI 动手之前，调用 restore_backup（不传 backup 即回到最早一次备份）'
+          : '还没有任何备份：AI 每次写盘都会自动备份，先去改一次就会出现'
+      }
+    }
+    case 'restore_backup': {
+      const rel = normalizeRelPath(args.path)
+      if (rel === 'Data/manifest.json') return { ok: false, error: 'Data/manifest.json 是引擎派生的资源索引，禁止回退（重新打开工程会自动重建）' }
+      const abs = resolveInside(ROOT, rel)
+      if (!fs.existsSync(abs)) return { ok: false, error: `文件不存在: ${rel}` }
+      const candidates = listBackups(ROOT, rel)
+      if (!candidates.length) return { ok: false, error: `没有找到 ${rel} 的备份，无法回退` }
+      // 不指定 backup 时回到**最早**一次（即 AI 动手之前的原始版本）
+      const chosen = args.backup
+        ? candidates.find(item => item.backup === String(args.backup).replace(/\\/g, '/'))
+        : candidates[candidates.length - 1]
+      if (!chosen) return { ok: false, error: '指定的备份不存在或不属于这个文件，请先用 list_backups 查看' }
+
+      const currentText = fs.readFileSync(abs, 'utf8')
+      const backupAbs = resolveInside(ROOT, chosen.backup)
+      const restoreText = fs.readFileSync(backupAbs, 'utf8')
+      if (args.expectedSha256 && sha256(currentText) !== args.expectedSha256) {
+        return { ok: false, conflict: true, error: '文件已被其他操作修改，expectedSha256 不匹配；请重新确认后再回退' }
+      }
+      const diff = unifiedDiff(currentText, restoreText, { label: `回退 ${rel} → ${chosen.savedAt}` })
+      const preview = {
+        path: rel,
+        risk: 'medium',
+        backup: chosen.backup,
+        savedAt: chosen.savedAt,
+        tool: chosen.tool,
+        oldSha256: sha256(currentText),
+        newSha256: sha256(restoreText),
+        diff: diff.text,
+        diffStat: { added: diff.added, removed: diff.removed, truncated: diff.truncated }
+      }
+      if (args.dryRun !== false) return { ok: true, dryRun: true, ...preview, message: `将把 ${rel} 回退到 ${chosen.savedAt} 的版本，未写盘` }
+      try {
+        const writable = await ensureEditorWritable(rel)
+        if (!writable.ok) return writable
+        // 先给"当前内容"也存一份，保证回退本身可以再撤回（撤销的撤销）
+        const safety = writeAtomic(ROOT, rel, restoreText, { tool: 'restore_backup', kind: 'pre-restore' })
+        await notifyEditorReload(rel)
+        return { ok: true, dryRun: false, ...preview, safetyBackup: safety.backup, message: `已把 ${rel} 回退到 ${chosen.savedAt} 的版本（当前内容也已备份，可再次撤回）` }
+      } catch (e) { return { ok: false, error: `回退失败: ${e.message}` } }
+    }
+    case 'playtest_smoke': {
+      const smoke = await runtimeBridge.playtestSmoke(args.sequence, { settleMs: args.settleMs })
+      if (smoke && smoke.ok) lastPlaytest = { verdict: smoke.verdict, message: smoke.message, steps: smoke.steps, problems: smoke.problems, at: Date.now() }
+      return smoke
+    }
     case 'send_player_input':
       return await runtimeBridge.sendInput(args.key, args.action)
     case 'send_player_pointer':
@@ -1144,23 +1691,83 @@ async function callTool(name, args) {
   }
 }
 
-async function runCompileCheck() {
+/** 跑一次 tsc，返回原始输出（compile_check 与写入后的编译门禁共用）
+ *  注意：覆盖用参数必须放在 -p 之前，放在 -p 之后对读取的项目配置不生效 */
+function runCompiler(extraArgs = []) {
   const compiler = findCompiler()
-  if (!compiler) return { ok: false, error: '未找到 Open Yami tsc 编译器：请设置 YAMI_TSC_EXE，或确认引擎安装目录存在 @typescript/typescript-win32-x64/lib/tsc.exe' }
+  if (!compiler) return null
   return new Promise((resolve) => {
     const { spawn } = require('child_process')
-    const child = spawn(compiler.command, [...compiler.args, '--noEmit', '-p', path.join(ROOT, 'tsconfig.json')], { cwd: ROOT, windowsHide: true })
+    const args = [...compiler.args, '--noEmit', ...extraArgs, '-p', path.join(ROOT, 'tsconfig.json')]
+    const child = spawn(compiler.command, args, { cwd: ROOT, windowsHide: true })
     let output = ''
     child.stdout.on('data', d => output += d)
     child.stderr.on('data', d => output += d)
-    const timer = setTimeout(() => { child.kill(); resolve({ ok: false, error: '编译超时（>120s）', output: output.slice(0, 4000) }) }, 120000)
-    child.on('error', error => { clearTimeout(timer); resolve({ ok: false, error: `启动编译器失败: ${error.message}`, output: output.slice(0, 4000) }) })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      const errors = (output.match(/error TS\d+/g) || []).length
-      resolve({ ok: code === 0, exitCode: code, errorCount: errors, compiler: compiler.command, output: output.slice(0, 4000) })
-    })
+    const timer = setTimeout(() => { child.kill(); resolve({ output, timeout: true, compiler: compiler.command }) }, 120000)
+    child.on('error', error => { clearTimeout(timer); resolve({ output: output + '\n' + error.message, spawnError: error.message, compiler: compiler.command }) })
+    child.on('close', (code) => { clearTimeout(timer); resolve({ output, exitCode: code, compiler: compiler.command }) })
   })
+}
+
+/**
+ * 编译检查门禁。
+ *
+ * 关键坑位（实测）：工程 tsconfig.json 若让 tsc 推断不出 rootDir / 或存在其它"配置级"错误
+ * （形如 tsconfig.json(58,5): error TS5011 ...），tsc 会**只报配置错误、完全跳过代码检查**——
+ * 此时哪怕写入的是语法错误的脚本，输出里也只有那一条配置错误，门禁会误判为通过。
+ * 因此这里必须在只看到配置级错误（TS5xxx）时，带上 --rootDir . 重跑一次真正进入代码检查。
+ */
+async function runCompileCheck() {
+  const compiler = findCompiler()
+  if (!compiler) return { ok: false, error: '未找到 Open Yami tsc 编译器：请设置 YAMI_TSC_EXE，或确认引擎安装目录存在 @typescript/typescript-win32-x64/lib/tsc.exe' }
+  const first = await runCompiler()
+  if (!first) return { ok: false, error: '未找到 Open Yami tsc 编译器' }
+  if (first.timeout) return { ok: false, error: '编译超时（>120s）', output: first.output.slice(0, 4000) }
+  const collect = (output) => {
+    const all = output.match(/error TS\d+/g) || []
+    const configLevel = output.match(/tsconfig\.json\(\d+,\d+\): error TS5\d+/g) || []
+    return { all, configLevel }
+  }
+  let { all, configLevel } = collect(first.output)
+
+  if (all.length > 0 && all.length === configLevel.length) {
+    // 只报了配置级错误 → 代码根本没被检查，补一次 --rootDir . 重跑
+    const retry = await runCompiler(['--rootDir', '.'])
+    if (retry && !retry.timeout) {
+      const second = collect(retry.output)
+      if (second.all.length !== second.configLevel.length) {
+        return {
+          ok: false,
+          exitCode: retry.exitCode,
+          errorCount: second.all.length - second.configLevel.length,
+          compiler: second.all.length ? retry.compiler : compiler.command,
+          configIssue: true,
+          configError: (first.output.match(/error TS5\d+[^\n]*/g) || [])[0] || '',
+          output: retry.output.slice(0, 4000),
+          note: '工程 tsconfig 存在配置级错误，已自动带 --rootDir . 重跑以获得真实的代码检查结果'
+        }
+      }
+      // 重跑后依然只有配置错误：说明代码确实没问题，如实说明并附上配置错误
+      return {
+        ok: true,
+        exitCode: 0,
+        errorCount: 0,
+        compiler: compiler.command,
+        configIssue: true,
+        configError: (first.output.match(/error TS5\d+[^\n]*/g) || [])[0] || '',
+        output: first.output.slice(0, 4000),
+        note: '代码检查通过，但工程 tsconfig 存在配置级错误（建议修复）'
+      }
+    }
+  }
+
+  return {
+    ok: all.length === 0 && !first.spawnError,
+    exitCode: first.exitCode,
+    errorCount: all.length,
+    compiler: compiler.command,
+    output: first.output.slice(0, 4000)
+  }
 }
 
 /* ============================== MCP stdio 协议 ============================== */

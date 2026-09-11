@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.0.0';
+  const PROBE_VERSION = '1.1.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -198,11 +198,26 @@
     }
   }
 
+  /**
+   * 取编辑器内部接口。两套来源都要认：
+   *   · 源码版构建（本机）：统一挂在 window.YamiEngine 下（不覆盖浏览器原生 File）；
+   *   · 老打包版：历史上直接挂 File / Directory / Data 等全局。
+   * 注意 window.File 正常情况下是浏览器原生 File 构造函数，没有 save/root，别拿来当引擎用。
+   */
+  function engineApi() {
+    const box = (typeof window !== 'undefined' && window.YamiEngine) || null;
+    const pick = function (name) {
+      if (box && box[name]) return box[name];
+      try { return typeof window !== 'undefined' ? window[name] : undefined; } catch (e) { return undefined; }
+    };
+    return { File: pick('File'), Directory: pick('Directory'), Title: pick('Title'), UndoManager: pick('UndoManager'), Data: pick('Data') };
+  }
+
   function moduleName(mod, list, index, kind) {
     const known = [];
     try { if (typeof Callback !== 'undefined') known.push(['Callback', Callback]); } catch (e) {}
     try { if (typeof Loader !== 'undefined') known.push(['Loader', Loader]); } catch (e) {}
-    try { if (typeof File !== 'undefined') known.push(['File', File]); } catch (e) {}
+    try { const engineFile = engineApi().File; if (engineFile) known.push(['File', engineFile]); } catch (e) {}
     try { if (typeof Input !== 'undefined') known.push(['Input', Input]); } catch (e) {}
     try { if (typeof Timer !== 'undefined') known.push(['Timer', Timer]); } catch (e) {}
     try { if (typeof Scene !== 'undefined') known.push(['Scene', Scene]); } catch (e) {}
@@ -1403,9 +1418,10 @@
             }
           }
         }
-        // 2. 编辑器宿主: window.File.root
-        if (typeof window !== 'undefined' && window.File && typeof window.File.root === 'string' && window.File.root) {
-          const root = window.File.root.replace(/[\\/]+$/, '').replace(/\\/g, '/');
+        // 2. 编辑器宿主: 引擎接口的 File.root（源码版在 window.YamiEngine.File 上）
+        const engineFile = engineApi().File;
+        if (engineFile && typeof engineFile.root === 'string' && engineFile.root) {
+          const root = engineFile.root.replace(/[\\/]+$/, '').replace(/\\/g, '/');
           if (fs.existsSync(root) && (fs.existsSync(path.join(root, 'Data')) || fs.existsSync(path.join(root, 'Save')))) {
             return root;
           }
@@ -2947,6 +2963,128 @@
     };
   }
 
+  // ---------------- AI 诊断摘要（供 yami-mcp 的 diagnose_runtime 使用） ----------------
+  // 设计目标：把「报错黑匣子 + 卡住事件 + 性能离群点」压成一份 AI 能直接下结论的清单，
+  // 并且每条都带「可疑文件 + 行号 + 就地源码」，让模型能直接定位到要改的那几行。
+  // 体积上限约十几 KB（对照 /report 的数百 KB），杜绝把上下文挤爆。
+  function buildDiagnosis() {
+    const samples = state.samples || [];
+    const computeList = samples.map(function(s) { return s.compute; });
+    const intervalList = samples.map(function(s) { return s.interval; });
+    const scene = getSceneDetails() || {};
+    const memory = getMemoryInfo() || {};
+    // 卡住/幽灵事件要看事件黑匣子的实时快照（带 suspendMs / hostGone / ghost 判定）
+    let activeEvents = [];
+    try {
+      const blackbox = getEventBlackbox();
+      activeEvents = (blackbox && blackbox.active) || [];
+    } catch (e) {}
+    let cacheSummary = { available: false, images: 0, loading: 0, blobMB: 0, note: '' };
+    try {
+      const cache = getCacheInfo() || {};
+      cacheSummary = {
+        available: !!cache.available,
+        images: cache.images || 0,
+        loading: cache.loading || 0,
+        blobMB: Number(((cache.blobKB || 0) / 1024).toFixed(2)),
+        note: cache.available ? '' : '当前引擎构建未暴露资源加载器，只能报内存占用'
+      };
+    } catch (e) {}
+
+    // 1) 报错：按指纹聚合后的记录，取前 8 条，每条带精简栈与源码片段
+    const errors = (state.errorHistory || []).slice(0, 8).map(function(item) {
+      const analysis = item.analysis || {};
+      const snippet = item.codeContext && Array.isArray(item.codeContext.lines) ? item.codeContext : null;
+      return {
+        category: analysis.category || '',
+        title: analysis.title || '',
+        reason: analysis.reason || '',
+        advice: analysis.suggestion || '',
+        type: item.type || 'error',
+        message: String(item.message || '').slice(0, 300),
+        count: item.count || 1,
+        lastTime: item.latestTime || item.time || '',
+        source: String(item.source || '').slice(0, 200),
+        file: snippet ? snippet.fileName : '',
+        lineno: item.lineno || 0,
+        codeContext: snippet ? snippet.lines.slice(0, 9).map(function(line) {
+          return { line: line.line, text: String(line.content || '').slice(0, 160), current: !!line.isTarget };
+        }) : [],
+        stackTop: String(item.stack || '').split('\n').slice(0, 6).map(function(line) { return line.trim().slice(0, 160); }),
+        eventContext: item.eventContext || null
+      };
+    });
+
+    // 2) 卡住的事件（含所属对象已被删除的幽灵事件）
+    const stuck = activeEvents.filter(function(event) { return event.ghost || event.stale || (event.suspendMs || 0) > 1500; }).map(function(event) {
+      return {
+        event: String(event.name || event.id || '').slice(0, 80),
+        type: String(event.type || '').slice(0, 30),
+        host: String(event.host || '').slice(0, 60),
+        state: String(event.state || '').slice(0, 20),
+        step: event.step,
+        total: event.total,
+        desc: String(event.desc || '').slice(0, 140),
+        suspendMs: event.suspendMs || 0,
+        hostGone: !!event.hostGone,
+        stale: !!event.stale,
+        ghost: !!event.ghost
+      };
+    });
+
+    // 3) 性能离群点：谁最耗时（updater / renderer / 事件），只报前几名
+    const top = function(list, count) {
+      return (list || []).slice(0, count || 5).map(function(entry) {
+        return { name: String(entry.name || '').slice(0, 60), ms: round3(entry.ms || 0) };
+      });
+    };
+
+    const overBudget = (state.overBudgetFrames || []).length;
+    const avgCompute = computeList.length ? computeList.reduce(function(a, b) { return a + b; }, 0) / computeList.length : 0;
+
+    return {
+      kind: 'yami-diagnosis',
+      version: PROBE_VERSION,
+      generatedAt: new Date().toISOString(),
+      runningMs: round2(now() - state.startedPerf),
+      summary: {
+        errorKinds: errors.length,
+        errorTotal: (state.errorHistory || []).reduce(function(sum, item) { return sum + (item.count || 1); }, 0),
+        stuckEvents: stuck.length,
+        overBudgetFrames: overBudget
+      },
+      performance: {
+        fps: samples.length ? (samples[samples.length - 1].fps || 60) : 60,
+        computeAvgMs: round2(avgCompute),
+        computeP95Ms: round2(percentile(computeList, 0.95)),
+        frameP95Ms: round2(percentile(intervalList, 0.95)),
+        drawCalls: glStats.lastDrawCalls,
+        triangles: glStats.lastTriangles,
+        topUpdaters: top(state.updaterTotal),
+        topRenderers: top(state.rendererTotal),
+        topEvents: top(state.eventTotal)
+      },
+      memory: {
+        usedMB: memory.used || 0,
+        totalMB: memory.total || 0,
+        imageCache: cacheSummary.images || 0,
+        loading: cacheSummary.loading || 0,
+        blobMB: cacheSummary.blobMB || 0,
+        cacheNote: cacheSummary.note || ''
+      },
+      scene: {
+        name: String(scene.name || '').slice(0, 60),
+        actors: (scene.actors || []).length,
+        regions: (scene.regions || []).length
+      },
+      errors: errors,
+      stuckEvents: stuck.slice(0, 8),
+      hint: errors.length
+        ? '按 errors[].codeContext 里的行号定位可疑代码，再用 edit_script 精确修改；改完必须 compile_check。'
+        : '当前没有捕获到报错；若用户反馈异常，请让他在试玩里复现一次再看。'
+    };
+  }
+
   // ---------------- 本地轻量 SSE / HTTP 服务 ----------------
   const sseClients = new Set();
   const bridgeToken = 'yami-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
@@ -3034,7 +3172,9 @@
       const nodeFs = require('fs');
       const nodePath = require('path');
       const href = String(window.location && window.location.href || '').replace(/\\/g, '/');
-      const isEditorHostPage = /\/resources\/app\/dist\//i.test(href) || /^https?:\/\/localhost:5173\//i.test(href);
+      const isEditorHostPage = /\/resources\/app\/dist\//i.test(href)
+        || /^https?:\/\/localhost:5173\//i.test(href)
+        || /\/dist\/index\.html$/i.test(href);
       let pageFile = '';
       try {
         pageFile = decodeURIComponent(window.location.pathname || '');
@@ -3123,6 +3263,14 @@
           return;
         }
 
+        // AI 诊断摘要：报错黑匣子 + 卡住事件 + 性能离群点，压缩到十几 KB
+        // 与 /report（数百 KB 原始报告）区分开：这份是给模型读的，不是给界面渲染的
+        if (req.url === '/diagnose') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(buildDiagnosis()));
+          return;
+        }
+
         res.writeHead(404);
         res.end();
       });
@@ -3139,10 +3287,25 @@
       // 编辑器动作桥：只在编辑器主页面启动，避免 all_frames 下与试玩窗口争抢端口。
       // 仅暴露固定动作和 DOM 语义点击，不开放任意 JS 执行。
       let editorBridgeStarted = false;
-      function startEditorBridge() {
+      function startEditorBridge(attempt) {
         if (!isEditorHostPage || editorBridgeStarted) return;
-        if (typeof Directory === 'undefined' || typeof File === 'undefined' || typeof Data === 'undefined') {
-          setTimeout(startEditorBridge, 250);
+        const tries = attempt || 0;
+        // 引擎接口有两套来源（window.YamiEngine 或老的裸全局），这里统一绑成局部量，
+        // 下面所有 File / Directory / Data / Title / UndoManager 的引用都能自动兼容。
+        const engine = engineApi();
+        const File = engine.File;
+        const Directory = engine.Directory;
+        const Data = engine.Data;
+        const Title = engine.Title;
+        const UndoManager = engine.UndoManager;
+        if (!Directory || !File || !Data) {
+          // 两种构建都可能还没就绪（页面刚加载），等一会儿；始终等不到就如实说清楚，别无限轮询刷日志。
+          if (tries >= 40) {
+            console.warn('[Yami Perf Bridge] 编辑器动作桥未启动：页面上取不到引擎接口（window.YamiEngine 或全局 File/Directory/Data），'
+              + '编辑器级动作（保存/刷新/试玩）请改走 CDP 或文件级工具。');
+            return;
+          }
+          setTimeout(function () { startEditorBridge(tries + 1); }, 250);
           return;
         }
         editorBridgeStarted = true;
@@ -3576,6 +3739,8 @@
     // 写盘顺序: manifest.json 必须最后落盘——它是版本门闩,
     // 若中途失败旧 manifest 仍在,下次 checkUpdate 版本判定可继续重试,避免半更新状态。
     updateFiles: [
+      'bootstrap.js',
+      'ai-render-core.js',
       'probe-core.js',
       'hud-overlay.js',
       'ai-agent.js',
@@ -3584,9 +3749,14 @@
       'runtime/yami-mcp/server.js',
       'runtime/yami-mcp/modules/cdp-client.js',
       'runtime/yami-mcp/modules/db-manager.js',
+      'runtime/yami-mcp/modules/changelog.js',
+      'runtime/yami-mcp/modules/diff.js',
       'runtime/yami-mcp/modules/editor-bridge.js',
       'runtime/yami-mcp/modules/event-builder.js',
       'runtime/yami-mcp/modules/file-ops.js',
+      'runtime/yami-mcp/modules/playtest.js',
+      'runtime/yami-mcp/modules/pricing.js',
+      'runtime/yami-mcp/modules/todos.js',
       'runtime/yami-mcp/modules/runtime-bridge.js',
       'HANDOFF.md',
       'README.md',
@@ -3707,15 +3877,32 @@
     }
 
     const files = UPDATE_CONFIG.updateFiles;
+    const missing = [];
+    let written = 0;
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (typeof onProgress === 'function') {
         onProgress(i + 1, files.length, file);
       }
-      const text = await fetchRemoteText(file);
+      let text = null;
+      try {
+        text = await fetchRemoteText(file);
+      } catch (e) {
+        // 单个文件拉不到不能让整次热更新失败：
+        //  · 新增文件在推送落地前的短暂窗口内，远端确实还没有；
+        //  · 期间如果直接抛错，用户会卡在"更新失败"且旧版本文件已被部分覆盖。
+        // 因此改为跳过并记入 missing，最后如实报告（版本号门闩仍是 manifest.json 最后写）。
+        missing.push(file);
+        continue;
+      }
       const targetPath = path.join(localDir, file);
       fs.mkdirSync(path.dirname(targetPath), { recursive: true });
       fs.writeFileSync(targetPath, text, 'utf8');
+      written++;
+    }
+    // 关键文件缺失说明这次更新不完整，不能报成功（否则会留下跑不起来的插件）
+    if (missing.includes('probe-core.js') || missing.includes('manifest.json') || missing.includes('runtime/yami-mcp/server.js')) {
+      throw new Error('关键文件未能下载，已停止更新：' + missing.join('、') + '（请稍后重试，远端可能还在同步）');
     }
 
     // 成功后同步更新内存中的版本号
@@ -3733,8 +3920,13 @@
     return {
       success: true,
       version: UPDATE_CONFIG.currentVersion,
-      updatedFiles: files.length,
-      targetDir: localDir
+      updatedFiles: written,
+      totalFiles: files.length,
+      missingFiles: missing,
+      targetDir: localDir,
+      message: missing.length
+        ? `已更新 ${written}/${files.length} 个文件；以下文件远端暂未提供，稍后再检查一次更新即可补齐：${missing.join('、')}`
+        : undefined
     };
   }
 
