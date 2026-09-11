@@ -105,5 +105,28 @@ console.log('\n########## 5. 历史窗口：长会话只渲染最近若干条 ##
   check('空输入不炸', core.historyWindow(null, 60).shown.length === 0)
 }
 
+console.log('\n########## 6. 加载形态：Electron 里 module 与 window 同时存在 ##########')
+{
+  // 实测事故：UMD 写成"二选一"（有 module 就只走 CommonJS），
+  // 而 Electron 渲染进程两者都有 → window.YamiAiRenderCore 永远 undefined →
+  // 依赖它的前端渲染不出一个字。这里用 vm 还原那个环境。
+  const vm = require('vm')
+  const fs = require('fs')
+  const src = fs.readFileSync(path.resolve(__dirname, '..', 'ai-render-core.js'), 'utf8')
+  const sandbox = { module: { exports: {} }, setTimeout, console }
+  sandbox.self = sandbox            // 模拟 window/self
+  sandbox.window = sandbox
+  vm.createContext(sandbox)
+  vm.runInContext(src, sandbox)
+  check('Electron 环境（module 与 self 并存）必须挂上全局', !!sandbox.YamiAiRenderCore, typeof sandbox.YamiAiRenderCore)
+  check('同时仍可被 Node require（单测要用）', !!(sandbox.module.exports && sandbox.module.exports.createScheduler))
+  check('两个入口拿到的是同一份 API', sandbox.YamiAiRenderCore === sandbox.module.exports)
+
+  // 渲染降级：缺渲染核心时正文必须还能显示（静态确认前端留了兜底分支）
+  const agent = fs.readFileSync(path.resolve(__dirname, '..', 'ai-agent.js'), 'utf8')
+  check('前端在缺少渲染核心时有直写兜底', /if \(!contentBuffer\) \{ bubble\.textContent = text\$; return; \}/.test(agent))
+  check('缺渲染核心时会明确告警', /渲染核心 ai-render-core\.js 未加载/.test(agent))
+}
+
 console.log(`\n########## 渲染性能测试: ${passed} PASS / ${failed} FAIL ##########`)
 process.exit(failed > 0 ? 1 : 0)

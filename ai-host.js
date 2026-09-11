@@ -312,13 +312,16 @@ function readStoredConfig() {
       model: data.model || DEFAULT_MODEL,
       thinkingMode: data.thinkingMode === 'disabled' ? 'disabled' : 'enabled',
       thinkingEffort: ['low', 'high', 'max'].includes(data.thinkingEffort) ? data.thinkingEffort : 'high',
+      // 思考过程显示方式属于界面偏好，前端 localStorage 之外再存一份到宿主配置，
+      // 免得换了窗口/清了站点数据后又"设置没保存"
+      thinkingView: ['expand', 'preview', 'collapse'].includes(data.thinkingView) ? data.thinkingView : 'preview',
       encryptedKey: data.encryptedKey || '',
       keyTail: data.keyTail || '',
       keyInvalidReason: data.keyInvalidReason || '',
       approvalMode: data.approvalMode === 'auto' ? 'auto' : 'confirm'
     }
   } catch {
-    return { endpoint: DEFAULT_BASE_URL, model: DEFAULT_MODEL, thinkingMode: 'enabled', thinkingEffort: 'high', encryptedKey: '', keyTail: '', keyInvalidReason: '', approvalMode: 'confirm' }
+    return { endpoint: DEFAULT_BASE_URL, model: DEFAULT_MODEL, thinkingMode: 'enabled', thinkingEffort: 'high', thinkingView: 'preview', encryptedKey: '', keyTail: '', keyInvalidReason: '', approvalMode: 'confirm' }
   }
 }
 
@@ -447,6 +450,7 @@ async function saveConfig(input) {
     model: String(input.model || current.model).trim() || DEFAULT_MODEL,
     thinkingMode: (input.thinkingMode || current.thinkingMode) === 'disabled' ? 'disabled' : 'enabled',
     thinkingEffort: ['low', 'high', 'max'].includes(input.thinkingEffort) ? input.thinkingEffort : (current.thinkingEffort || 'high'),
+    thinkingView: ['expand', 'preview', 'collapse'].includes(input.thinkingView) ? input.thinkingView : (current.thinkingView || 'preview'),
     approvalMode: input.approvalMode === 'auto' ? 'auto' : 'confirm',
     encryptedKey: current.encryptedKey
   }
@@ -470,6 +474,7 @@ function publicConfig(config = readStoredConfig()) {
   return {
     endpoint: config.endpoint, baseUrl: config.endpoint, chatUrl: chatCompletionsUrl(config.endpoint),
     model: config.model, thinkingMode: config.thinkingMode, thinkingEffort: config.thinkingEffort,
+    thinkingView: config.thinkingView,
     approvalMode: config.approvalMode,
     hasApiKey: !!(config.encryptedKey || process.env.DEEPSEEK_API_KEY),
     keyTail: config.keyTail || '',
@@ -1039,12 +1044,13 @@ async function continueSession(session, config, events = {}) {
     if (!repairJustInjected) {
       if (signature === lastSignature) {
         repeats++
-        if (repeats >= 2) {
+        // 连续 3 次完全相同的调用才算空转：留一轮余量，避免"参数没描述清楚时"被过早掐断
+        if (repeats >= 3) {
           const labels = calls.map(call => toolLabel(call.function && call.function.name)).join('、')
           return await attachChangelog(session, {
             ok: false,
             status: 'stuck',
-            message: `模型在重复执行同一批操作（${labels}），已停止以免空转。可以换个说法需求，或先把已完成的改动确认掉再继续。`
+            message: `模型连续 ${repeats + 1} 次执行同一批操作（${labels}），已停止以免空转。可以换个说法需求、让它换个参数/换个文件再试，或先把已完成的改动确认掉再继续。`
           })
         }
       } else {
@@ -1250,7 +1256,7 @@ async function handle(pathname, body, events = {}) {
     // 只更新传入的字段（模型 / 思考开关 / 思考强度），其余保持原值。
     // 快捷调节条每次改动都调它，不能用 /config —— 那会把未传字段按默认值覆盖掉。
     const patch = {}
-    for (const key of ['model', 'thinkingMode', 'thinkingEffort']) {
+    for (const key of ['model', 'thinkingMode', 'thinkingEffort', 'thinkingView']) {
       if (body[key] !== undefined) patch[key] = body[key]
     }
     const config = await saveConfig(patch)

@@ -569,12 +569,16 @@ const tools = [
   },
   {
     name: 'read_resource',
-    description: '读取一个资源文件（.event/.scene/.ui/.trigger/.actor/.tile/.anim/.particle/.skill/.item/.equip/.state 或 Data/*.json），返回解析后的 JSON；RLE 字段（terrains/code）原样保留',
+    description: '读取一个资源文件（.event/.scene/.ui/.trigger/.actor/.tile/.anim/.particle/.skill/.item/.equip/.state 或 Data/*.json），返回解析后的 JSON；RLE 字段（terrains/code）原样保留。文件超过 200KB 会自动截断，此时用 key 精读某个顶层字段，或 forceFull 读全文（受保护的会话里 forceFull 不生效）',
     readOnlyHint: true,
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: '相对项目根的路径，如 Assets/! 事件/@1 启动游戏事件.xxx.event 或 Data/attribute.json' }
+        path: { type: 'string', description: '相对项目根的路径，如 Assets/! 事件/@1 启动游戏事件.xxx.event 或 Data/attribute.json' },
+        // key / forceFull 是截断保护给的出路，必须声明给模型，
+        // 否则它读不到这两个参数、只会拿同样的 path 反复重读（实测踩过：主菜单.ui 连读三次被判定空转）
+        key: { type: 'string', description: '只读该顶层字段（大文件截断后返回 topLevelKeys，从中挑一个，例如 nodes）' },
+        forceFull: { type: 'boolean', description: '忽略截断保护读取完整内容；仅在文件确实需要整体查看时使用' }
       },
       required: ['path']
     }

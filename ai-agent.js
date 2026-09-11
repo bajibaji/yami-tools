@@ -25,7 +25,8 @@
     pending: null,
     mounted: false,
     balance: null,
-    abort: null
+    abort: null,
+    thinkingView: null
   };
   state.token = sharedToken();
   localStorage.setItem('danjuan-ai-session', state.sessionId);
@@ -39,6 +40,10 @@
   // 逐 token 的流式渲染必须按帧合并：片段再多，一帧也只写一次 DOM。
   // 旧实现每来一个片段就重设全文 + 拉滚动条，是 O(n^2)，上下文一长整页卡死。
   const renderCore = (typeof window !== 'undefined' && window.YamiAiRenderCore) || null;
+  if (!renderCore) {
+    // 缺了它不能让对话变空白：下面所有渲染都会退回直写模式，同时把原因说清楚
+    console.warn('[DanJuan AI] 渲染核心 ai-render-core.js 未加载，已退回直写模式（重启编辑器可恢复并拿回性能优化）');
+  }
   const scheduler = renderCore ? renderCore.createScheduler() : null;
   const messageList = () => document.getElementById('yami-ai-messages');
 
@@ -52,7 +57,7 @@
     const list = messageList();
     if (!list) return;
     if (renderCore && !renderCore.shouldStickToBottom({ scrollHeight: list.scrollHeight, scrollTop: list.scrollTop, clientHeight: list.clientHeight })) return;
-    autoScroll();
+    list.scrollTop = list.scrollHeight;
   }
 
   function editorProjectRoot() {
@@ -657,7 +662,9 @@
     let thinkingTextNode = null;
 
     const flushContent = () => {
-      if (!bubble || !contentBuffer) return;
+      if (!bubble) return;
+      // 没有渲染核心（旧注入顺序/文件缺失）时退回整段直写，绝不能一个字都不显示
+      if (!contentBuffer) { bubble.textContent = text$; return; }
       if (!bubbleTextNode || !bubbleTextNode.isConnected) {
         bubble.textContent = '';
         bubbleTextNode = document.createTextNode(contentBuffer.toString());
@@ -667,7 +674,8 @@
       }
     };
     const flushThinking = () => {
-      if (!currentThinkingEl || !reasoningBuffer) return;
+      if (!currentThinkingEl) return;
+      if (!reasoningBuffer) { renderThinking(reasoning$); return; }
       currentThinkingEl.dataset.text = reasoningBuffer.toString();
       if (thinkingView() === 'expand') {
         const body = currentThinkingEl.querySelector('.yami-ai-thinking-body');
@@ -760,9 +768,36 @@
 
   /** 思考过程显示模式：expand 展开（默认）/ collapse 折叠 / preview 单行预览 */
   function thinkingView() {
-    const saved = localStorage.getItem('danjuan-ai-thinking-view');
+    if (['expand', 'preview', 'collapse'].includes(state.thinkingView)) return state.thinkingView;
+    let saved = '';
+    try { saved = localStorage.getItem('danjuan-ai-thinking-view') || ''; } catch (e) { saved = ''; }
     // 默认单行预览：一条思考只占一行（点开可看全文），避免大段灰字横在对话中间
-    return ['expand', 'collapse', 'preview'].includes(saved) ? saved : 'preview';
+    return ['expand', 'preview', 'collapse'].includes(saved) ? saved : (state.thinkingView || 'preview');
+  }
+
+  /**
+   * 改「思考过程显示」：内存 + localStorage + 宿主配置三处都写。
+   * 用户报过"设置没办法保存"——localStorage 在某些环境下不可写，
+   * 所以写不进去要如实回执，并靠宿主配置保证下次打开仍是他选的那一档。
+   */
+  function setThinkingView(mode, options) {
+    const next = ['expand', 'preview', 'collapse'].includes(mode) ? mode : 'preview';
+    state.thinkingView = next;
+    let persisted = false;
+    try {
+      localStorage.setItem('danjuan-ai-thinking-view', next);
+      persisted = localStorage.getItem('danjuan-ai-thinking-view') === next;
+    } catch (e) { persisted = false; }
+    const select = document.getElementById('yami-ai-thinking-view');
+    if (select && select.value !== next) select.value = next;
+    applyThinkingModeToAll();
+    const label = { expand: '展开', preview: '单行预览', collapse: '折叠' }[next];
+    if (!options || options.notify !== false) {
+      addMessage('system', '思考过程显示：' + label + (persisted ? '' : '（本地存储写不进去，已存到宿主配置）'));
+    }
+    // 宿主侧再存一份：换窗口、清站点数据后仍能恢复
+    request('/quick-config', { thinkingView: next }).catch(() => {});
+    return persisted;
   }
 
   function applyThinkingMode(el) {
@@ -1097,6 +1132,16 @@
       }).catch(() => {});
       document.getElementById('yami-ai-key').placeholder = config.hasApiKey ? '已安全保存，留空不修改' : 'DeepSeek API Key';
       renderKeyState(config);
+      // 本地没存过就用宿主配置回填，避免"换窗口后设置像丢了"
+      if (!state.thinkingView && config && ['expand', 'preview', 'collapse'].includes(config.thinkingView)) {
+        let local = '';
+        try { local = localStorage.getItem('danjuan-ai-thinking-view') || ''; } catch (e) { local = ''; }
+        if (!local) {
+          state.thinkingView = config.thinkingView;
+          const sel = document.getElementById('yami-ai-thinking-view');
+          if (sel) sel.value = config.thinkingView;
+        }
+      }
       setStatus(config.hasApiKey || !/api\.deepseek\.com/i.test(config.endpoint) ? '就绪' : '请配置模型', config.hasApiKey ? 'ready' : 'waiting');
     } catch (e) { setStatus('尚未启动', 'idle'); }
   }
@@ -1150,11 +1195,12 @@
     document.getElementById('yami-ai-effort').addEventListener('change', event => quickUpdate({ thinkingEffort: event.target.value }));
     document.getElementById('yami-ai-thinking').addEventListener('change', event => quickUpdate({ thinkingMode: event.target.checked ? 'enabled' : 'disabled' }));
     const viewSelect = document.getElementById('yami-ai-thinking-view');
-    if (viewSelect) {
-      viewSelect.value = thinkingView();
-      viewSelect.addEventListener('change', event => {
-        localStorage.setItem('danjuan-ai-thinking-view', event.target.value);
-        applyThinkingModeToAll();
+    if (viewSelect) viewSelect.value = thinkingView();
+    // 事件委托绑在设置面板上：面板内容重建也不会失效
+    const settingsBox = document.getElementById('yami-ai-settings');
+    if (settingsBox) {
+      settingsBox.addEventListener('change', event => {
+        if (event.target && event.target.id === 'yami-ai-thinking-view') setThinkingView(event.target.value);
       });
     }
     activate(document.getElementById('yami-ai-clear'), async () => {

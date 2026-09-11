@@ -23,8 +23,8 @@
   window.__YAMI_BOOTSTRAP__ = true;
   if (window.top !== window) return; // 只装主文档，避免子 iframe 里重复挂一套界面
 
-  // 顺序有讲究：ai-render-core 提供流式渲染的帧合并/增量缓冲，ai-agent 依赖它
-  const FILES = ['ai-render-core.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js'];
+  // 第一个文件当探针（必须两个基址都有），其余按依赖顺序：渲染核心要在 ai-agent 之前
+  const FILES = ['probe-core.js', 'ai-render-core.js', 'hud-overlay.js', 'ai-agent.js'];
   const LOAD_TIMEOUT = 4000;
 
   function candidateBases() {
@@ -69,7 +69,10 @@
   // 用 probe-core.js 当探针：它加载成功才说明这个基址可用，剩下两个再跟着进去
   async function injectFrom(base) {
     if (!(await loadScript(base + FILES[0]))) return false;
-    for (let i = 1; i < FILES.length; i++) await loadScript(base + FILES[i]);
+    for (let i = 1; i < FILES.length; i++) {
+      // 单个文件失败要指名道姓地报出来，否则前端只会表现成"内容空白"，无从排查
+      if (!(await loadScript(base + FILES[i]))) console.warn('[DanJuan妙妙插件] 注入失败：' + base + FILES[i]);
+    }
     return true;
   }
 

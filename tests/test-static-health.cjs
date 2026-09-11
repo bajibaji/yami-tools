@@ -207,6 +207,72 @@ function checkImplicitGlobals(file) {
   return { file, strict, count: hits.size }
 }
 
+/**
+ * 自调用检测：函数体里直接调用自己（没写递归条件）＝ 无限递归 → 栈溢出，
+ * 一跑就把整条对话打断。实测踩过：批量把 `list.scrollTop = list.scrollHeight`
+ * 换成 autoScroll() 时，把 autoScroll 自己体内的那行也换了，于是它自己调自己。
+ * 合法的递归请在该行写上 `允许递归` 注释。
+ */
+function findSelfCalls(src) {
+  const clean = blankOutLiterals(src)
+  const hits = []
+  const fnRe = /function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/g
+  let m
+  while ((m = fnRe.exec(clean))) {
+    const name = m[1]
+    const bodyStart = fnRe.lastIndex
+    let depth = 1
+    let i = bodyStart
+    for (; i < clean.length && depth > 0; i++) {
+      if (clean[i] === '{') depth++
+      else if (clean[i] === '}') depth--
+    }
+    const body = clean.slice(bodyStart, i)
+    let d = 0
+    for (let k = 0; k < body.length; k++) {
+      const c = body[k]
+      if (c === '{') { d++; continue }
+      if (c === '}') { d--; continue }
+      if (!body.startsWith(name, k)) continue
+      const before = k > 0 ? body[k - 1] : ''
+      if (/[.\w$]/.test(before)) continue
+      if (!/^\s*\(/.test(body.slice(k + name.length))) { continue }
+      // 判定：同步自调用才算危险；写在事件回调（箭头函数/function 表达式）里的重新渲染是合法用法
+      // 默认按危险算；只要这个调用被包在「回调」里（箭头函数 / function 表达式），
+      // 就是延迟执行的合法重渲染（例如删除后再列一次），逐层向上找证据。
+      let dangerous = true
+      const pre = body.slice(Math.max(0, k - 200), k)
+      if (/=>\s*[^{}]*$/.test(pre)) dangerous = false   // 箭头函数的表达式体：() => foo()
+      let cursor = k
+      while (dangerous && cursor > 0) {
+        const bracePos = body.lastIndexOf('{', cursor - 1)
+        if (bracePos === -1) break
+        const prevBrace = body.lastIndexOf('{', bracePos - 1)
+        const head = body.slice(prevBrace + 1, bracePos)
+        if (/=>\s*$/.test(head) || /\bfunction\b[^;{]*$/.test(head)) dangerous = false
+        cursor = bracePos
+      }
+      if (!dangerous) { k += name.length; continue }
+      const lineStart = body.lastIndexOf('\n', k) + 1
+      const lineEndIdx = body.indexOf('\n', k)
+      const line = body.slice(lineStart, lineEndIdx === -1 ? body.length : lineEndIdx)
+      if (line.includes('允许递归')) { k += name.length; continue }
+      const lineNo = src.slice(0, bodyStart + k).split('\n').length
+      hits.push(name + ' (第 ' + lineNo + ' 行)')
+      k += name.length
+    }
+  }
+  return hits
+}
+
+function checkSelfCalls(file) {
+  const full = path.join(ROOT, file)
+  if (!fs.existsSync(full)) return null
+  const hits = findSelfCalls(fs.readFileSync(full, 'utf8'))
+  assert.equal(hits.length, 0, `${file} 里函数直接调用了自己（无限递归会直接把功能打崩）: ${hits.join(' / ')}\n   修法: 改写真正的终止逻辑，或在该行注明「允许递归」`)
+  return { file, ok: true }
+}
+
 function checkCssStructure(file) {
   const full = path.join(ROOT, file)
   if (!fs.existsSync(full)) return null
@@ -294,6 +360,16 @@ function main() {
   }
   console.log(`隐式全局扫描: ${checked.length} 个脚本，无未声明赋值 -> ${checked.join(' / ')}`)
 
+  // 先自检检测器本身：能抓真递归、不冤枉回调里的合法重渲染
+  const sampleBad = 'function a() { a(); }\nfunction c() { if (x) { c(); } }'
+  const sampleOk = 'function b() { activate(el, () => { b(); }); }\nfunction d() { other.d(); }\nfunction e() { activate(el, () => e()); }'
+  assert.deepEqual(findSelfCalls(sampleBad).map(x => x.split(' ')[0]).sort(), ['a', 'c'], '自调用检测必须能抓出函数体顶层的真递归')
+  assert.deepEqual(findSelfCalls(sampleOk), [], '回调里重新渲染自己属合法用法，不能误报')
+
+  const selfCallFiles = ['ai-agent.js', 'ai-render-core.js', 'hud-overlay.js', 'probe-core.js', 'ai-host.js']
+  for (const file of selfCallFiles) checkSelfCalls(file)
+  console.log(`自调用检测: ${selfCallFiles.length} 个脚本无「自己调自己」的无限递归`)
+
   const css = checkCssStructure('src/style.css')
   assert.ok(css, 'src/style.css 必须存在')
   console.log('CSS 结构检查: 花括号配平、无规则块嵌套')
@@ -313,4 +389,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { blankOutLiterals, collectDeclared, findImplicitGlobals, checkImplicitGlobals, checkCssStructure, checkPluginWiring }
+module.exports = { blankOutLiterals, collectDeclared, findImplicitGlobals, checkImplicitGlobals, checkCssStructure, checkPluginWiring, findSelfCalls, checkSelfCalls }

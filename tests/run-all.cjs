@@ -28,6 +28,7 @@ const SUITE = [
   ['test-thinking-mode.cjs',   '思考模式(开关+强度+reasoning回传+用量)'],
   ['test-static-health.cjs',   '静态健康(隐式全局+CSS结构, 秒级无进程)'],
   ['test-render-perf.cjs',     '流式渲染性能(帧合并+增量缓冲+历史窗口)'],
+  ['test-tool-schema.cjs',     'MCP工具提示一致性(提示点名的参数必须在schema里)'],
   ['test-interrupt.cjs',      '打断输出(真停模型请求+工具不再执行+会话落盘)'],
   ['test-parallel-tools.cjs', '只读工具并发执行(按注册表声明+写盘独占)'],
   ['test-acceptance.cjs',     '整体验收(工作流串联+真实工程只读体检)'],

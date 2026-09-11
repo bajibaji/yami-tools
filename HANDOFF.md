@@ -1,13 +1,42 @@
 # DanJuan妙妙插件 (DanJuan DevSuite / Extension)
-## 项目交接、系统架构与核心经验演进全档案 (HANDOFF & ARCHITECTURE)
+## 交接文档 · 三层结构 (HANDOFF)
 
-> **文档定位**：记录本套件的**系统架构剖析、底层工作原理、时间线演进历史、高价值核心经验与防踩坑档案**，作为跨开发者与 AI 协同的唯一技术基线与记忆中枢（SSOT）。当前版本：`v1.1.0`。
+> **文档定位**：跨开发者与 AI 协同的唯一技术基线（SSOT）。文档分三层，读法如下：
+>
+> - **第一层 · 客观事实**：项目是什么、装在哪、怎么跑起来——只写客观存在的东西，不含判断。
+> - **第二层 · 记忆与经验**：项目经历了什么、踩过哪些坑、为什么这样设计——读它能少走弯路。
+> - **第三层 · 当前进度**：推进到哪里了、什么已完成、什么没做完、下一步做什么。
+>
+> **当前版本**：`v1.1.0`　**最近更新**：2026-09-11 深夜
 
 ---
 
-## 1. 项目愿景与整体系统架构 (System Architecture)
+# 第一层 · 客观事实（What It Is）
 
-### 1.1 架构定位与愿景
+## 1.1 项目属性
+
+| 项 | 值 |
+| :--- | :--- |
+| 名称 | DanJuan妙妙插件（DanJuan DevSuite） |
+| 形态 | Open Yami RPG Editor 的 Chrome MV3 扩展（非侵入式，不改游戏逻辑） |
+| 当前版本 | `v1.1.0`（单一事实源：`manifest.json` 的 `version`） |
+| 母仓库 | `yami-tools`，分支 `extension` |
+| 许可与分发 | 母仓库 + GitHub 远端（热更新源），插件目录单向镜像 |
+| 支持平台 | Windows（打包版引擎）与 Linux（源码构建版，本机为 Steam Deck / X11） |
+
+## 1.2 路径映射与运行环境
+
+| 路径 | 角色定位 | 维护准则 |
+| :--- | :--- | :--- |
+| `d:\Documents\GitHub\yami-tools\` (branch: `extension`) | **唯一真实源码源 (Single Source of Truth)** | 插件的母仓库，所有代码编写、版本管理和 Git 提交必须在此进行。 |
+| `D:\Program Files\Open Yami RPG Editor\extension\yami-perf-extension\` | **编辑器运行时加载路径** | 仅作为本地联调和生产加载目标，由母仓库单向覆盖镜像生成，严禁在此建立独立分支。 |
+| 加载机制（引擎侧事实） | `main.ts:330-341` | 引擎启动时遍历 `<编辑器>/extension/` 下**每个子目录**并 `loadExtension(dir, { allowFileAccess: true })`；故目录名可任意、多插件可共存，且**改完必须重启工程**（Electron 无 Ctrl+F5，见铁律④）。日常开发推荐 `node build.cjs --watch`：保存源文件即自动重建+镜像，免手动敲 `--deploy`。 |
+| `https://github.com/bajibaji/yami-tools/tree/extension` | **远端分发与热更新源** | 用户一键热更新拉取代码的公共镜像源。 |
+| `D:\Documents\GitHub\2\` | **Open Yami 引擎底层源码参考** | Electron 主进程 `main/main.ts` 与游戏内核模板 `Project/Templates/`。 |
+
+## 1.3 系统架构与全局数据流
+
+### 1.3.1 架构定位与愿景
 从单一的性能分析扩展，演进为 **Open Yami 原生复合型在场开发者全能套件（DanJuan妙妙插件 / In-Game DevSuite）**：
 - **零修改游戏工程源码**：以 Open Yami RPG Editor 编辑器原生扩展（Chrome MV3 Extension）形式加载，试玩任何工程自动生效，不侵入、不污染游戏项目文件；
 - **完全非阻塞与游戏自由交互**：沉浸式停靠、自由拖拽、支持双重物理级鼠标穿透，游戏不暂停、操作不拦截；
@@ -26,7 +55,7 @@
   11. `[降级保留]` 性能基线快照对比：底层数据接口保留，UI 不主推（小白理解成本高）；
   12. `[不做]` 输入宏录制回放（随机数致回放失效、成本极高）、**主角瞬移「点哪里飞哪里」**（2026-09-09 用户裁决，勿再提议）、调试绘制层（Debug Draw）、UI 检视器、画面射线拾取器线框（2026-09 用户裁决，勿再提议）。
 
-### 1.2 全局数据流向与模块分工拓扑图
+### 1.3.2 全局数据流向与模块分工拓扑图
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -80,9 +109,10 @@
 
 ---
 
-## 2. 核心子系统架构深度剖析 (Core Subsystems)
 
-### 2.1 探针与诊断内核 (`probe-core.js`)
+## 1.4 核心子系统剖析
+
+### 1.4.1 探针与诊断内核 (`probe-core.js`)
 1. **WebGL 底层绘制流水线拦截**：
    - 挂载在 `WebGLRenderingContext` 与 `WebGL2RenderingContext` 原型链上；
    - 拦截 `drawElements` 与 `drawArrays`：精确记录每帧真实 DrawCall 提交次数与几何多边形面数（Triangles）；
@@ -109,7 +139,7 @@
    - **事件启动钩子 `installEventCallHook()`**：包裹 `EventHandler.call` 登记所有在跑事件，配合 `wrapEventInstance` 记录「指令索引推进时间戳」，据此判定 执行/等待/暂停/挂起 四态；
    - **对外的 `getEventBlackbox()` / `finishEvent(id)`**：前者返回最近 20 步流水 + 在册事件快照（含挂起时长、宿主是否已销毁、是否仍在被驱动），后者调引擎原生 `finish()` 拔除滞留引用。
 
-### 2.2 原生暗黑 UI 大盘 (`hud-overlay.js`)
+### 1.4.2 原生暗黑 UI 大盘 (`hud-overlay.js`)
 1. **双模切换架构 (Dual-Mode System)**：
    - 顶栏配置 `[ 普通模式 | 专业模式 ]` 切换开关，本地持久化 `localStorage`，默认启动进入【普通模式】；
    - **普通模式（小白/策划/快速体检）**：
@@ -122,7 +152,7 @@
    - **迷你胶囊 HUD**：实时显示 FPS、耗时与 DC，双模自适应展示，全屏任意拖拽并记忆坐标；
    - **官方原生防走位**：鼠标移入侧边栏时调用 `Scene.preventInput()` 并置零 `Input.buttons`，离开时调用 `Scene.restoreInput()`。DOM 仅在 `mousedown` 拦截冒泡，`click` 与 `mouseup` 完全放行，杜绝点击死锁。
 
-### 2.3 自动化版本管理与 0 成本热更新架构
+### 1.4.3 自动化版本管理与 0 成本热更新架构
 1. **0 服务器成本架构**：
    - 依托 GitHub 仓库（`bajibaji/yami-tools@extension`）为唯一真实源码源；
    - 依托 jsDelivr 全球免费开源 CDN（`cdn.jsdelivr.net/gh/bajibaji/yami-tools@extension/`）加速分发，免翻墙、免服务器、免流量费；
@@ -131,7 +161,7 @@
 3. **Node.js 原生一键原子覆盖**：
    - 探测本地插件物理路径（`D:/Program Files/Open Yami RPG Editor/extension/yami-perf-extension`），直接下载更新文件原子覆盖本地，提示用户“重启工程即可生效”。
 
-### 2.4 AI 全能副驾内核与 yami-mcp 工具枢纽 (`ai-agent.js` / `ai-host.js` / `runtime/yami-mcp`)
+### 1.4.4 AI 全能副驾内核与 yami-mcp 工具枢纽 (`ai-agent.js` / `ai-host.js` / `runtime/yami-mcp`)
 1. **无 9222 端口依赖的本地双桥架构（Dual-Bridge Architecture）**：
    - **磁盘层与元数据**：由内置 `runtime/yami-mcp/server.js`（27 类 MCP 规范工具）以独立子进程管道运行，直读直写工程文件，自动计算 SHA-256 冲突校验并在写入前自动备份至 `.yami-mcp-backups`；
    - **编辑器动作桥 (端口 5967)**：由 `probe-core.js` 在编辑器宿主上下文中监听 `127.0.0.1:5967`，支持 Token 握手鉴权。暴露 `save`（调原生 `File.save`）、`refresh`（调 `Directory.update` 通知资产树即时重扫）、`playtest`（调起测试窗口）与 `undo`/`redo`，彻底摆脱 Electron 远程调试端口假象；
@@ -151,7 +181,88 @@
 
 ---
 
-## 3. 时间线演进历史 (Timeline & Changelog)
+
+## 1.5 端口、协议与令牌
+
+| 端口 | 归属 | 作用 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `5968` | `ai-host.js` | AI 助手本地宿主（HTTP + SSE） | 唯一对外入口；每轮对话、会话读写、余额与价目、连接体检都走这里 |
+| `5967` | `probe-core.js`（编辑器页） | 编辑器动作桥：保存 / 撤销 / 重做 / 刷新资源树 / 启动试玩 | 需要引擎把内部接口挂到 `window.YamiEngine`（见 1.8） |
+| `5966` | `probe-core.js`（试玩页） | 试玩实时推流（SSE）与按键/鼠标注入 | 只在试玩窗口的页面里监听 |
+| `9222` | Electron 调试端口 | CDP（可选，用于界面审查与无视觉点击兜底） | 由桌面快捷方式带上，不是运行必需 |
+
+- 鉴权：`ai-host` 与两座桥都要求令牌，请求头 `x-yami-agent-token`（SSE 亦可走 `?token=`）；令牌文件在 `<配置目录>/agent-token`（Linux 为 `~/DanJuanDevSuite/`）。
+- AI 宿主 SSE 事件类型：`start` / `status` / `delta`（分 `content` 与 `reasoning` 两路）/ `tool` / `notice` / `plan` / `result` / `error`。
+- MCP 侧：`ai-host` 以 stdio 拉起 `runtime/yami-mcp/server.js`（JSON-RPC 2.0），工具数以 `tools/list` 为准（当前 35 项）。
+
+## 1.6 发布文件清单与职责
+
+| 文件 | 职责 | 备注 |
+| :--- | :--- | :--- |
+| `manifest.json` | MV3 扩展清单 | **只挂 `bootstrap.js`**；三个主脚本走 `web_accessible_resources` 放行 |
+| `bootstrap.js` | 主世界装载器（内容脚本） | 把主脚本按序注入页面主世界；首文件为探针，单个失败会指名告警 |
+| `probe-core.js` | 探针内核 + 5966/5967 双桥 + 热更新 | 数据源与动作执行端 |
+| `hud-overlay.js` | 暗黑大盘 UI（含全部样式 SSOT） | 样式由 `src/style.css` 在构建时注入 |
+| `ai-agent.js` | AI 助手面板（对话 UI、审批、撤销、计划、成本显示） | 依赖 `ai-render-core.js`，缺它会降级直写并告警 |
+| `ai-render-core.js` | 流式渲染纯逻辑（帧合并调度 / 增量文本缓冲 / 滚动判定 / 历史窗口） | UMD 双挂：浏览器全局与 Node `require` 同时可用 |
+| `ai-host.js` | AI 宿主：模型调用、工具编排、审批、会话、计费、连接体检 | 127.0.0.1:5968 |
+| `runtime/yami-mcp/server.js` | 内置 MCP 服务（35 个工具） | 由宿主以 stdio 拉起 |
+| `runtime/yami-mcp/modules/*` | 工具实现模块（diff / changelog / playtest / todos / pricing / file-ops / 双桥 / cdp / db / event-builder） | 每个模块都必须登记进热更新清单，否则老用户热更新后缺文件 |
+| `src/style.css` | 样式单一事实源 | 构建时注入 `hud-overlay.js` |
+| `build.cjs` | 构建门禁 + 镜像部署 | 断言、SSOT 级联、`--deploy` / `--watch` / `--bump` |
+| `tests/*` | 零依赖测试套件 | 由 `tests/run-all.cjs` 汇总 |
+
+## 1.7 构建、测试与部署
+
+```bash
+. ~/.nvm/nvm.sh                                   # 先加载 nvm（本机 node 走 nvm）
+node build.cjs                                    # 门禁自检（锚点 / 零 Emoji / 术语 / CSS 结构 / 滚动条 SSOT / 插件装配）
+node build.cjs --bump minor                       # 单一事实源自增版本并级联
+YAMI_DEPLOY_DIR="<引擎仓库>/extension/yami-perf-extension" node build.cjs --deploy
+node tests/run-all.cjs                            # 全量套件（单个套件建议 timeout ≤60，整套会超过命令行时限）
+```
+
+- 门禁覆盖：46 项核心锚点、零彩色 Emoji、术语合规、`src/style.css` 花括号与嵌套结构、滚动容器必须有滚动条样式、插件装配（manifest↔bootstrap↔热更新清单↔部署清单四处咬合）。
+- 测试套件（节选）：AI Agent E2E、AI 会话与上下文、MCP 特色工具、编译自动修复、审批差异、试玩冒烟、变更小结、待办、价目、思考模式、只读并发、打断输出、渲染性能、工具提示一致性、静态健康、整体验收、热更新。
+- 常用环境变量：`YAMI_TEST_PROJECT`、`YAMI_AI_PORT` / `YAMI_AI_TOKEN` / `YAMI_AI_CONFIG_DIR` / `YAMI_AI_SESSION_DIR` / `YAMI_AI_CONTEXT_BUDGET` / `YAMI_AI_MAX_STEPS`、`YAMI_RUNTIME_BRIDGE_PORT`、`YAMI_MCP_GUARDED`。
+
+## 1.8 引擎接口暴露契约（`window.YamiEngine`）
+
+- 位置：引擎仓库 `Project/Script/main/main.ts` —— 顶部 import 内部对象后挂 `(window as any).YamiEngine = { File, Directory, Title, UndoManager, Data }`。
+- **刻意不挂 `window.File`**：浏览器原生 `File` 构造函数占用该名，覆盖会波及上传 / Blob 等原生能力。
+- 重建：`pnpm run build:vite`（只重建渲染层 dist，约 5 秒）；编辑器按 `dist/index.html` + `dist/assets/index.js` 运行。
+- 插件侧统一取值：`window.YamiEngine?.X ?? window.X`（兼容老打包版裸全局）。三处取值点：`probe-core.js` 的 `engineApi()`、`runtime/yami-mcp/server.js` 的 `editor_action` 表达式、`ai-agent.js` 的工程根探测；`tests/test-static-health.cjs` 有断言守着，禁止改回裸全局。
+- 已核对可用的引擎方法：`File.save(hint)`、`Directory.update()`、`Title.playGame()`、`UndoManager.undo()/redo()`、`Data` 系列。
+
+---
+
+## 1.9 版本与 Git 规范
+
+### 1.9.1 Git 提交与智能版本自增规范
+
+1. **绝对禁止主动 Git (No Autonomous Git)**：
+   - 平时日常开发、Bug 修复、样式调优过程中，**严禁擅自执行任何 `git commit` 或 `git push`**！
+   - 所有改动在本地仓库（`extension` 分支）完成后，直接单向覆盖拷贝到 `D:\Program Files\Open Yami RPG Editor\extension\yami-perf-extension` 进行实机联调。
+2. **唯一口令驱动触发 (User Command-Driven)**：
+   - **只有当用户明确在对话中发出“git上去”、“提交代码”、“发布版本”等口令时，方可触发 Git 流程**！
+3. **改动幅度智能决定版本号大小 (Smart SemVer Auto-Bump)**：
+   - **Patch (`x.y.Z + 1`)**：中小型 Bug 修复、文案优化、CSS 样式微调（小改动）；
+   - **Minor (`x.Y + 1.0`)**：新增功能模块（如新增排查项、新增诊断算法、开发作弊器/变量监视器等新功能）；
+   - **Major (`X + 1.0.0`)**：跨模块核心架构重构、不兼容底层变更，或正式发布 1.0 里程碑；
+4. **全自动 SSOT 级联版本同步 (One-Source Cascade Sync)**：
+   - 彻底废除多文件手工查找替换的低效模式！以 `manifest.json` 为**唯一绝对权威输入源**；
+   - 支持 `node build.cjs --bump [patch|minor|major|<ver>]` 命令行秒级自增；
+   - `build.cjs` 自动将权威版本单向级联注入 `probe-core.js`、`hud-overlay.js`、`README.md` 与 `HANDOFF.md`，实现改一处、秒级全量自动对齐并完成生产镜像部署。
+
+---
+
+---
+
+# 第二层 · 记忆与经验（What Happened & Why）
+
+## 2.1 演进时间线
+
+### 2.1.1 里程碑概览
 
 只记录关键技术节点与核心架构突破，按演进时间升序排列：
 
@@ -206,7 +317,313 @@
 
 ---
 
-## 4. 核心经验与致命踩坑防踩档案 (Critical Gotchas)
+
+### 2.1.2 逐日详档
+
+#### 2026-09-03 [里程碑] 变量与开关全量元信息解密与深度 E2E 验证
+- **问题根因**：原先变量字典仅存储名称字符串，且布尔开关由于 Yami 引擎未改动前未写入 save.variables，导致所有布尔变量被误判为 [VAR] 并渲染为输入框；同时若初始化时字典有任何时序延迟，变量名会退化为 GUID。
+- **全量升级**：
+  1. loadDictionaries 升级为加载完整元信息对象：包含中文名称、真实类型（boolean / number / string）、所属文件夹分类（如常用变量、系统变量、地下城、世界地图、用户界面）与备注说明；
+  2. render 与 renderVarsPanel 注入字典零状态自愈逻辑：只要检测到字典为空自动重新装载，杜绝 GUID 形式的变量名展示；
+  3. 变量与开关列表精准呈现工业级分类标签与类型徽章（[开关] 绿色、[数值] 黄色、[文本] 蓝色），布尔型 100% 渲染为 Toggle 开关；
+  4. 编写并全绿通过 17 项深度 E2E 仿真测试与 25 项全流程端到端自动化测试。
+
+#### 2026-09-03 [优化] 存档管理三大子面板最大弹窗高度自适应贯通
+- **痛点解决**：此前常用速改、变量与开关、JSON 树形图被死固定的 max-height (如 320px/480px) 截断，且缺少 flex: 1 贯通链路，导致大屏弹窗下高度仅展示一小截，内部双滚动条局促体验糟糕。
+- **方案落地**：
+  1. 宿主弹性链路全面贯通：#page-save 与 .yami-save-container、.yami-save-panel 设置 flex: 1 1 0; min-height: 0; height: 100%; overflow: hidden;
+  2. 变量与开关：移除行内 max-height: 480px 限制，.yami-save-var-list 设置 flex: 1; max-height: none; overflow-y: auto; 垂直吃满全部剩余高度，一屏沉浸式检视；
+  3. JSON 树形图：移除 320px 死限制，.yami-save-tree-box 设置 flex: 1; max-height: none; 满屏展开；
+  4. 常用速改：引入 .yami-save-quick-scroll 弹性容器，垂直自由流动，滚动体验流畅平滑。
+- **测试验证**：编写并通过 14 项三大子面板满高自适应 E2E 自动化测试。
+
+#### 2026-09-04 · 控制台报错工作台全维度落地 (v0.4.0)
+- **引擎专属白话诊断库扩充**：新增空指针目标属性解引用、公共事件死锁/爆栈、场景地形与 Autotile 加载越界、插件自定义指令参数异常、WebGL 图形管线、音频解码播放受阻、NaN 无效计算等 11 类典型异常；
+- **同类高频错误指纹聚合**：引入 fingerprint 错误指纹算法，同源异常自动聚合并累计频次（`[xN次]` 徽章），标注首末发生时间戳，杜绝异常列表被无谓刷屏；
+- **源码就地展开与定位直达**：就地展开报错行上下 7 行源码片段，高亮标记出错行；提供【定位文件】按钮，一键调起操作系统资源管理器定位文件；
+- **多维分类过滤与搜索**：顶部提供 `全部`、`高频`、`空指针`、`方法丢失`、`插件指令`、`场景地形`、`资源404`、`控制台` 标签式弹性换行过滤器，支持关键字实时检索；
+- **一键导出 Markdown 报告**：生成包含硬件环境、游戏状态、场景、FPS/DrawCall 以及全部异常详细调用栈与源码片段的专业报告，自动复制并落盘；
+- **全量测试凭证**：编写并通过 24 项全维度自动化测试（`e2e-error-debugger-test.cjs` 100% 全绿通过）。
+
+#### 2026-09-04 · 架构深度打磨与顶级作用域提升 (v0.4.1)
+- **未读计数有界收敛**：`errorUnreadCount` 严格收敛至 `state.errorHistory.length` 语义上限（上限 100），彻底消除死循环长时挂机爆大数隐患；
+- **转义函数单一事实源提升**：将 `esc` 与 `escapeHtml` 提升至 IIFE 最顶层模块作用域，消除闭包耦合与依赖函数提升可能带来的断链风险；
+- **死变量彻底清理**：移除重构遗留的 `errorsCountLabelEl` 死变量；
+- **回归测试资产跟进**：`errflow` 测试套件更新对齐 v0.4.0+ 指纹聚合模型（3 连发同源 = 1 条 count=3），构建自检 18 项核心锚点全绿。
+
+#### 2026-09-04 · 场景实体检查台 (Scene Inspector) 全维度落地 (v0.5.0)
+- **探针同屏实体快照 `getSceneEntities`**：一次 O(n) 只读遍历产出角色实例（场景放置 local / 全局角色 global 精确分组，`instanceof GlobalActor` 判别 + `data.type` 跨 realm 兜底）与触发区域（矩形范围、区内角色名单、绑定状态）；每实体携带坐标/朝向/渲染优先级、碰撞体（形状/直径/immovable/本帧位移）、导航器（mode/速度/寻路态）、动画播放器（motion/暂停/播完）与玩家主角高亮；`binding null`（未开地图）与无 Scene 双空态全防御，不处理双场景槽（bind 已指向当前场景）；
+- **SceneLab 分组检视台**：`#page-scene` 独立第 5 页；顶部场景信息卡（地图名/路径/尺寸 + 角色/区域/动画/粒子/触发器/光源计数 + 镜头）、搜索框、全部/角色/区域过滤与"仅可见"开关；角色按「场景放置/全局角色」分组，触发区域独立组；展开行就地检视坐标、碰撞体、导航、动画、区内角色详情；**500ms 心跳节流 + 快照 JSON 相等跳过重建 + 单组展示上限 200** 三重护栏杜绝高频 DOM 抖动；
+- **主页第 4 卡收编**：将遗留"变量与开关（规划中）"占位卡替换为「场景实体」入口（该能力早已并入存档管理台【变量与开关】子面板），主页 4 大模块卡片全部转正落地；
+- **mount 无调用点陷阱规避**：SceneLab 的挂载与事件绑定转入 `refresh` 惰性自愈（`_ensureRoot` 一次性守卫），对齐 SaveLab 的实际入口模式；
+- **版本与门禁**：SSOT 三源提升至 v0.5.0；build.cjs 锚点扩至 20 项（新增 register('scene')/scene 骨架/主页四模块顺序正则收尾）；
+- **测试凭证**：新增 `.e2e-tmp/test-scene-lab.mjs` 25 断言全绿（空态/binding null/schema 分组/字段/数据变化一致性/hud 接线静态契约/Proxy-DOM 集成渲染冒烟），`errflow` 13
+
+#### 2026-09-04 · 小白友好文案整改与目标用户画像确立 (v0.5.1)
+- **目标用户画像确立**：插件受众 = 会用 Open Yami 编辑器做游戏、但计算机理论知识薄弱的制作者（非程序员）；所有界面文案必须中文白话直白、零黑话，专业术语仅在专业模式保留；
+- **错误卡片分类名中文化**：卡片头部 `[异常] NullPointer` 等英文分类统一改走共享中文映射 `CAT_LABEL`（空指针/方法丢失/插件指令/场景地形/资源404/控制台），过滤器按钮与卡片共用同一映射源，杜绝双份文案漂移；
+- **场景实体详情去代码残留**：详情字段 `隐藏 (visible=false)` 黑话改为 `已隐藏`；计数 chip「弹道」术语修正为「触发器」（trigger=触发器铁律）；
+- 版本三源（manifest / PROBE_VERSION / hud 兜底）同步 v0.5.1；回归全绿（verify 30 / autoupdate 24 / errflow 13 / scene-lab 25）。
+
+#### 2026-09-04 · 场景实体入口统一（工作区改动，随下一版发布）
+- **移除专业模式 tab 栏「场景实体」重复入口**：场景实体唯一入口 = 主页第 4 卡白话检视页（SceneLab），普通人不会再撞见英文数据卡版本；`ptab-scene` 数据块代码完整保留备用，恢复只需加回一行 tab 按钮；
+- 专业模式视图由 4 减为 3（性能总览 / 渲染DrawCall / 活跃事件），其余模块不受影响；对应更新 1.2 拓扑图与 2.2 双模架构描述。
+
+#### 2026-09-07 · 调试控制台与变量监视器小窗落地 (v0.6.0)
+- **调试控制台 (CheatsLab) 全维度上线**：
+  1. 游戏变速：支持 0.5x, 1x, 2x, 5x, 10x 档位；通过单帧高频循环驱动 `Game.update()` 彻底绕过 `time.ts:64` 的 `maxDeltaTime=35` 节流瓶颈，同时跳过冗余 GPU 渲染；
+  2. 穿墙模式 (NoClip)：设置 `Party.player.passage = -1`，关闭时自动恢复角色原本通行能力；
+  3. 加速奔跑 (SpeedBoost)：设置 `Party.player.navigator.movementSpeed = 12`，关闭时无缝复原原本移速；
+  4. 无限生命 (GodMode)：每帧主动向主角生命属性注入满血（自适应 `health`、`hp`、`生命值` 与对应上限），杜绝测试中暴毙打断流程；
+  5. 秒杀全图怪 (KillAllMonsters)：一键遍历当前场景实体列表，对非队伍玩家怪物的生命值归零并触发消亡；
+  6. ~~坐标瞬移 (点哪里飞哪里)~~：**本条为误记，从未落地**——v0.7.0 复核时全库无 `teleport`/`Input.mouse` 任何实现，且场景实体页亦无屏幕坐标→世界坐标换算可复用；经用户 2026-09-09 裁决**不做**（见 §1.1 第 13 条），勿再按本条提议实现；
+  7. 后台时间漂移监测 (Background Drift)：监听 `visibilitychange`，切出后台时精准记录真实与逻辑落差并给出白话提示。
+- **变量监视器小窗 (PinnedWidget) 落地**：
+  1. 迷你胶囊下方常驻可扩展监视浮窗，最多固定 5 个核心变量；
+  2. 支持在【存档管理】的变量与开关面板中通过 `[盯]` / `[已盯]` 按钮自由固定或取消固定；
+  3. 挂接 `Variable.set` 拦截器与探针预警：捕获类型不匹配被引擎静默吞噬（`variable.ts:118`）及 `NaN` 异常计算，实时展示醒目 `[异常]` 工业角标；
+  4. 遵从多层 UI 联动隐身机制：大盘展开时联动随胶囊隐身，收起时自动唤醒。
+- **主页 5 大功能入口布局**：主页扩展为 5 大模块网格（性能分析、控制台报错、存档管理、场景实体、调试控制台）。
+- **门禁校验与 SSOT 一致性**：manifest.json、probe-core.js、hud-overlay.js 全线对齐 v0.6.0，build.cjs 24 项核心锚点断言 + 0 Emoji + 中文术语自检全绿。
+
+#### 2026-09-09 · 作弊台安全闭环、铁律② 门禁化与回归资产入库 (v0.7.0)
+- **作弊台「一键全部还原」落地**：
+  1. `probe.resetAllCheats()` 新增——关闭 `speedMultiplier`/`noClip`/`speedBoost`/`godMode` 全部开关，复原主角原本 `passage` 与 `navigator.movementSpeed`、`Time.timeScale=1`，并**立即执行一次 `applyCheatsPerFrame()`**（不等下一帧，且原值还原后自动清空 `orig*` 缓存）；
+  2. 作弊页新增第 4 卡「全部还原」，带状态指示器：`状态干净`（绿）/ `有作弊开启`（黄），`refresh` 时按四项开关任一开启实时切换；
+  3. **解决真实事故源**：此前开了穿墙/锁血/加速忘记关，试玩状态残留会被误判为游戏 bug，甚至污染正式包。
+- **铁律② 门禁化（全库唯一原生 `<button>` 违规清零）**：
+  1. `hud-overlay.js` 存档台变量面板 `[盯]` 按钮由 `<button>` 改为 `<div role="button">`（此前是**全库唯一**一处原生 button）；
+  2. `src/style.css` 的 `.btn-pin-var` 补齐防护：`position: static` / `box-sizing: border-box` / `display: inline-flex` / `min-width: 46px` / `flex-shrink: 0`，抵御编辑器全局 `button{position:absolute;width:88px;height:20px}`；
+  3. **build.cjs 新增原生 `<button>` 负向断言**——此后任何一处 `<button>` 都会让构建直接失败，铁律从文档约定升级为机器门禁。
+- **回归资产入库（防测试网丢失）**：
+  1. `verify-perf-probe.mjs` / `test-errflow.mjs` / `test-scene-lab.mjs` / `test-autoupdate.mjs` 由被 gitignore 的 `.e2e-tmp/` 迁入 `tests/`（相对路径 `../` 不变，断言内容一字未改）；
+  2. 新增 `tests/test-cheats-reset.mjs`（19 断言）：覆盖开关归零、原本属性复原、`timeScale` 复位、还原后不再干预游戏数值、hud 接线契约与零原生 button；
+  3. 新增 `tests/run-all.cjs` 零依赖总入口，发布前跑 `node build.cjs && node tests/run-all.cjs`。
+- **修复测试自身缺陷（非产品回归）**：`test-autoupdate.mjs` 的「远端版本」预言机原为裸 `fetch` 单通道，网络抖动时退化成 `'0.0.0'` 导致 5 条断言对着未知值误报失败；改为 raw + jsDelivr 双通道兜底，两条均不可达时显式 `SKIP` 并打日志（**预言机可用时断言一条不减**）。
+- **门禁与凭证**：SSOT 三源同步 v0.7.0；build.cjs 锚点扩至 **26 项** + 原生 button 负向断言 + 0 Emoji + 术语自检全绿；回归 **verify 30 / errflow 13 / scene-lab 25 / cheats-reset 19** 全绿（autoupdate 依赖公网，节点受限时第 4 节按环境跳过）。
+
+#### 2026-09-09 · 全量缺陷排查与修复 (v0.7.1)
+- **排查方法**：5 路并行静态审计（`probe-core` / `hud-overlay` 三段 / 样式构建文档）+ **引擎源码交叉核验**（`D:\Documents\GitHub\2\Project\Templates\arpg-ts-chinese`）+ **真机 E2E**（Playwright 驱动真实 Chrome，把仓库源码以 `world:MAIN` 等价方式注入真实游戏工程并逐页走查）。
+- **P0 功能失效修复**：
+  1. **存档台编辑被 150ms 心跳冲掉**（`SaveLab.refresh` 无守卫 → 每 150ms 重读磁盘并整体重建 DOM）：新增 `dirty` 脏标记 + 焦点守卫，速改/变量/开关输入即置脏，写盘与切槽位后清除；**真机实测：输入 `999999` → 500ms 后仍为 `999999`，失焦 600ms 后仍未被回读覆盖**（修复前为 `999999 → 100` 且失焦）。
+  2. **变量监视小窗恒显示 `-`**：取数源由 `Variable.groups[0]`（引擎实为 `[[],[],[]]` 数组）改为 `Variable.map`（`variable.ts:58/98`）。
+  3. **报错页每 150ms 整体重建**（展开的源码 150ms 内自动收起、滚动回顶）：`renderErrorsList` 增加重建签名比对，无变化即跳过；**实测 DOM 变更 8 次/1.2s → 0 次**。
+  4. **场景实体台二次进入后行展开失效**：`destroy()` 未解绑常驻容器上的监听 → 重入叠加，同一次点击被多个 handler 抵消；改为保存绑定引用并在 `destroy` 中 `removeEventListener`。
+  5. **场景实体台搜索框每敲一个字就失焦**：重建后回填焦点与光标，且用户聚焦搜索框时跳过重建。
+- **引擎 API 错配修复**（均以引擎源码为准）：
+  1. `killAllMonsters` 原用 `emit('destroy')`（只派发事件、不移除实例）→ 改为 `actor.destroy()`（`GlobalEntityManager.remove` + `parent.remove`）；
+  2. 「全局注册事件总数」恒为 0：引擎初始化后 `delete Data.events` → 改取 `EventManager.guidMap`（`event.ts:45/88`）；
+  3. 事件耗时包装器被引擎「等待/暂停/继续」整体替换 `update` 后永久失效 → 记录包装器引用，被顶掉即重新包装；
+  4. `Variable.set` 告警漏报「键不存在」（引擎静默丢弃）→ 补判并给出中文原因；
+  5. `Local.textMap[].contents[lang]` 为闭包函数时本地化反查失败 → 调用取值，避免界面露 GUID。
+- **数据与健壮性修复**：
+  1. 空输入框 `Number('') === 0` 会把金币/等级/HP/MP 写成 0 → 统一按「未填写」跳过；
+  2. 文本变量被强制转数值（引擎按类型丢弃）→ 仅原值为数值时才转换；
+  3. 自造顶层 `switches` 字段（引擎完全不读，属存档污染）移除，键不在存档时改为明确提示；
+  4. `console.error` 代理遇循环引用对象会 `JSON.stringify` 抛错并反噬游戏 → 代理体整体 try/catch + 安全降级；
+  5. 错误源码上下文在指纹去重前无条件同步读盘（死循环报错每秒 60 次 I/O）→ 移到去重判定之后 + 加缓存 + 行号越界返回 null；
+  6. 自身日志前缀 `[Yami Perf]` 大小写不匹配，导致插件自身异常被当成游戏错误计入黑匣子 → 改为大小写不敏感匹配；
+  7. 对象级真凶快照 2/3 帧为空导致卡片 4Hz 闪烁 → 保留上一份非空快照；
+  8. 首帧 interval（注入 → 游戏启动的空闲期）污染报告 `frame.max` → 首帧超过 500ms 直接丢弃；
+  9. 静音还原硬写 `gain=1` → 记录并还原玩家原有音量；「全部还原」硬写 `Time.timeScale=1` → 记录并还原游戏原有 timeScale（子弹时间等不再被永久覆盖）；
+  10. 卡顿次数被 `slice(-6)` 截断 → 列表仍取最近 6 条，计数改用真实总数。
+- **文案与门禁**：
+  1. `CAT_LABEL` 提升至 IIFE 顶层并补齐 7 个缺失分类（`UndefinedVariable`/`StackOverflow`/`RenderError`/`JSONParseError`/`AudioError`/`NumericError`/`RuntimeError`），导出报告复用同一映射（铁律⑱）——真机实测卡片头部已由 `[RuntimeError]` 变为 `[异常] 未知异常`；
+  2. `src/style.css`：`.yami-error-count-badge` 引用的不存在动画 `pulseCount` → 复用既有 `yami-pulse`；`#page-cheats` 与 `.yami-nav-back-btn` 默认隐藏补 `!important`（铁律⑭）；
+  3. `build.cjs`：样式注入标记缺失/源文件缺失由静默跳过改为 `exit 1`；版本 SSOT 的 hud 侧校验由条件式改为「兜底版本字面量必须存在且全部等于 manifest 版本」；
+  4. `README.md` 事实对齐：版本 `v0.5.1`→`v0.7.0`、断言 `20`→`26`、铁律 `17`→`19`、补 `tests/` 目录与作弊台/变量监视模块说明。
+- **回归资产**：新增 `tests/test-fix-regressions.mjs`（20 断言：timeScale 还原、`destroy()` 真移除、`guidMap` 计数、缺失键告警、循环引用代理不抛错、分类标签全覆盖 + 4 项接线契约）；`tests/run-all.cjs` 扩为 **6 套**。
+- **验证凭证**：`node build.cjs` 26 项全绿；`node tests/run-all.cjs` **6/6 套通过**（verify 30 / errflow 13 / scene-lab 25 / cheats-reset 19 / fix-regressions 20 / autoupdate 25）；真机 E2E 五页全渲染、无插件侧新增异常。
+
+#### 2026-09-09 · 工程体检（断链+死事件）与报错事件级定位全链路落地 (v0.8.0)
+- **工程体检内核 `projectAudit` (`probe-core.js`)**：
+  1. 纯静态只读扫描 `Data/*.json` 与 `Assets/` 资产目录，建立全局名称与 GUID 字典表（文件名直接解析 + manifest 权威映射 + variables/attribute/teams/easings/autotiles/enumeration 通用树形提取）；
+  2. 结合节点自注册 ID 集合（`presetId`、`prefabId`、`sprites[].id`）与全局字典双表判别，递归排查非法断链引用；
+  3. **死事件白名单实锤**：严格对齐 `event.ts:49-76` 22 类引擎系统保留事件白名单（startup/autorun/loadscene/touch/mouse/gamepad 等）永不判死；仅将无任何 `callEvent` 入边的公共事件判为死事件；
+  4. **真实工程验证凭据**：在 `d:\new-game` 仅 1.5 秒扫完数十万字符资产，实锤揪出 21 种怪物与强化事件中残留的已删除属性 GUID `0def781ddbf542fc`！
+- **控制台报错页 (运行日志) 整合体检面板 (`hud-overlay.js` + `src/style.css`)**：
+  1. `#page-errors` 顶部工具栏下方集成「工程体检」独立卡片（带官方 Remix Icon 矢量路径、状态徽标与【一键体检】按钮）；
+  2. 扫描过程展示 `[扫描中...]` 状态，完成后展示健康度评价与文件/引用统计概览；
+  3. 异常清单展开检视：断链卡片（红标）标注文件、第几步指令、丢失 GUID 与字段；死事件卡片（橙标）标注事件名与类型；支持【复制信息】与【定位文件】（调起系统资源管理器）；
+  4. 遵从铁律⑲：体检纯由用户点击触发，绝不进入 150ms 心跳轮询，零运行时性能负担。
+- **报错定位事件级升级**：
+  1. `probe-core.js` 原型链拦截 `EventHandler.prototype.update` 维护事件执行栈 `eventExecStack`；
+  2. 捕获未处理异常时调用 `currentEventContext()` 获取顶层事件名、执行步数（`ev.index + 1` 步）以及当前场景名（从 `Scene.binding` / `Data.scenes` 反查中文名称）；
+  3. 报错卡片醒目呈现 `[事件定位] 发生在【某事件】第 N 步 · 【场景名】` 工业徽标，且 Markdown 结构化报告同步输出。
+- **门禁与自动化回归**：
+  1. `build.cjs` 锚点扩充至 **30 项**，0 Emoji 与 0 原生 `<button>` 铁律机器检查全绿；
+  2. 新增 `tests/test-project-audit.mjs`（21 项全绿断言：字典构建、断链精确捕获、死事件白名单豁免、事件执行定位捕获、DOM 接线静态契约与零原生 button）；
+  3. `tests/run-all.cjs` 测试套件扩至 **7 套**。
+
+#### 2026-09-09 · SSOT 智能级联版本管理与一键驱动落地 (v0.8.1)
+- **痛点彻底根除**：此前版本号散落在 `manifest.json`、`probe-core.js`、`hud-overlay.js` 多处字面量、`README.md` 与 `HANDOFF.md`，每次升级需人工逐文件核对修改，效率低下且容易被门禁拦截；
+- **全自动 SSOT 级联同步架构**：
+  1. 确立 `manifest.json` 为**唯一绝对权威输入源**；
+  2. 升级 `build.cjs` 支持 `--bump [patch|minor|major|<ver>]` 参数（默认 `patch`）；
+  3. 构建时自动比对基线版本，将权威版本号秒级单向级联注入 `probe-core.js`、`hud-overlay.js`、`README.md` 与 `HANDOFF.md`；
+  4. 新增根目录极简原生批处理脚本 `bump.cmd`（封装 `node build.cjs --bump %* --deploy`），支持终端一行命令 `.\bump` 或 `.\bump minor` 瞬间完成「版本自增 + 级联对齐 + 30 项门禁自检 + 生产目录镜像部署」。
+
+#### 2026-09-10 · 事件黑匣子：指令级时间线 + 幽灵事件侦探 (v0.9.0)
+- **需求来源**：蓝图 v0.8.0 详案顺延落地（v0.8.0 被「工程体检 + 报错事件级定位」占用）。目标场景：**"角色不动了、剧情不继续了，控制台却没有任何报错"** —— 打开运行日志即可看到「最后停在哪一步、在等什么」。
+- **蓝图技术路线被真机源码否决（关键修正）**：原方案「hook `EventHandler.prototype.update` 读 `this.index`，再经 `Data.events[id].commands[index]` 反查指令」**不可行**——
+  1. `event.ts:88` 引擎初始化读完数据即 `delete Data.events`，运行时该结构已不存在；
+  2. `command.ts:120` 的编译会跳过禁用指令（`!` 前缀）、跳过 null 结果、把 `showChoices`/`block` 这类一条指令展开成多个槽位，**`event.index` 是编译后槽位下标，与原始指令下标并不相等**（真机实测：8 条原始指令编译出 9 个槽位）。
+- **落地架构（编译期映射 + 运行期翻译，零磁盘 I/O、零引擎改动）**：
+  1. **编译期追踪 `installEventTrace()`**：包裹 `Command.compile` 与**每一条指令编译器**（原型方法 + `setNumber`/`setString`/`setBoolean` 这类类字段自有属性 + `compileScript` 自定义指令通道），按引擎同款推槽规则还原「原始指令下标 ↔ 编译槽位区间」映射表，并存入 `WeakMap<编译结果, 映射表>`；嵌套分支子列表由递归编译各自登记，天然支持 `event.commands` 切换到分支列表后的独立翻译。计账只在「待编译原始指令的 id 恰好等于本次调用」时发生，故 `compileActor`/`compileNumber`/`compileJumps` 等内部辅助调用完全不干扰映射；
+  2. **事件启动钩子 `installEventCallHook()`**：包裹 `EventHandler.call`（`event.ts:766` 是全局/角色/界面/触发器事件的**唯一启动入口**），逐条登记在册，并复用 `wrapEventInstance` 给每个事件装上「索引推进时间戳」探针；
+  3. **状态机 `eventStateOf()`**：完成 / 暂停（`update === EventHandler.wait`）/ 等待计时（`timer.duration > 0`，回传剩余毫秒）/ 挂起（**索引超过 1 秒没推进**）/ 执行中；`finish()` 后由引擎回调自动出册，长时挂机不积压引用（上限 200 条护栏）；
+  4. **幽灵判定 `eventGhostInfo()`**：宿主 `.destroyed === true` → 红标【所属对象已被删除】；挂起 ≥ 60 秒 → 【卡住超过 1 分钟】；连每帧驱动都断了 → 【已经不再运行】；
+  5. **一键结束 `finishEvent(id)`**：调引擎原生 `event.finish()` 触发结束回调与引用摘除（对应引擎盲点：普通挂起事件零监控，仅 `Stats.debug` 下查 independent 1 分钟）；
+  6. **白话指令表 `COMMAND_PLAIN`**：覆盖 100+ 条引擎指令的中文名（设置数值/弹出选项/施放技能/加载场景…），并对 `wait`（"等待 500 毫秒"）、`showText`（文本摘要）、`showChoices`（项数）、变量类指令（GUID 单独回传、由界面经存档台字典解密为中文变量名）做参数级白话；变量名取不到时自动退化，**界面绝不裸露 GUID 与英文枚举**（铁律⑱）。
+- **UI 落地（控制台报错页 → 运行日志页）**：
+  1. 主页第 2 卡与页面标题统一更名 **「运行日志」**（文案：报错、事件流水与卡住排查），页面内新增「事件流水」与「幽灵事件侦探」两张卡片，原报错黑匣子与工程体检卡片保持原样；
+  2. 流水行 = 时间 + 动作徽标（开始/进行中/等待中/已暂停/停住了/结束了，各自配色）+ 事件名 + 「第 N / M 步」+ 白话指令描述，同名同动作条目 600ms 内自动合并计数 `[xN]`（**防高频事件刷屏**），环形缓冲严格 20 条；
+  3. 幽灵卡片 = 事件名 + 红/橙标签 + 中文归属描述（`instanceof` 判别后映射为「角色「勇者」」，压缩构建改名也不受影响）+ 已停住时长 + 停在第几步在做什么 + 【结束事件】按钮；
+  4. **铁律⑲ 合规**：`renderEventBlackbox()` 走快照签名守卫，内容未变时绝不重建 DOM；一键结束后的反馈文案走 4 秒「短时提示位」，不会被下一帧常规文案立刻覆盖。
+- **门禁与回归凭证**：
+  1. `build.cjs` 锚点由 30 项扩至 **35 项**（事件流水面板骨架 / 幽灵侦探面板骨架 / 渲染函数 / `probe.getEventBlackbox()` 接线 / `probe.finishEvent(` 接线）；
+  2. 新增 `tests/test-event-blackbox.mjs`（**54 项断言全绿**）：以「高保真伪引擎」逐条复刻 `command.ts:120` 的推槽语义（禁用指令 / null 结果 / `showChoices` 双槽 / `block` 三槽 / 分支子列表递归 / 已编译函数占槽），实测「跳过禁用与 null 后仍精确翻译回第 5 步」；另覆盖多槽槽位翻译、嵌套分支独立翻译、四态状态机、宿主已销毁红标、一键结束、流水 20 条上限与合并计数、以及 **Proxy-DOM 端到端冒烟**（真跑 `hud-overlay.js` 并点击【结束事件】按钮，断言事件真的被 `finish()` 摘除、反馈文案真的回填）；
+  3. `tests/run-all.cjs` 扩至 **8 套**，全量回归 **207 项断言 8/8 套通过**；
+  4. **回归预言机硬化（非产品回归）**：`test-autoupdate.mjs` 第 2 节的「本地已最新」原先直接拿工作区真实版本号去比远端，**只要本地领先远端（改了版本但还没 git push）就必然误报**；改为「把沙箱内本地版本就地替换为远端真实版本」再断言 `hasUpdate === false` —— 语义一字未改（本地 == 远端 → 不提示更新），但不再与「仓库推到哪一版」耦合；
+  5. **真机 E2E 凭证（真实 Yami 引擎运行时，非沙箱模拟）**：复用 `.e2e-tmp/ext-smoke.cjs` 的 `world:MAIN + document_start` 注入方式，在无头 Chrome 里加载真实工程 `D:/GAME-20240905` 并逐条断言 ——
+     - `Command` / `EventHandler` / `EventManager` 在 MAIN world **确实可达**（编译期追踪与启动钩子的前提成立；注意它们是**全局词法绑定**，`window.Command === undefined`，必须用裸标识符访问）；
+     - `getEventBlackbox().trace === true` 且 `callHooked === true`；
+     - 取**工程真实 `.event` 指令数据**（真实 `setString` + 其禁用副本 + 数值 `wait` + 真实 `if` 分支）跑**真实 `Command.compile`**，实测映射表：`槽1 → 第 1 步 设置文本`、`槽2 → 第 3 步 等待 1 毫秒`（禁用的那条被精确跳过）、`槽3 → 第 4 步 条件判断`，`total = 4` 与原始指令条数一致；等待态识别（真实 `timer.duration`）与 `EventHandler.finish()` 均生效；
+     - 真实 HUD 的「运行日志」页渲染出事件流水面板，徽标显示 `[记录中 4 条]`；
+     - 结果 **19 项断言全绿**（脚本 `.e2e-tmp/_blackbox-real.cjs`，`guidMap` 为空的环境限制项显式 SKIP）。
+- **文档对齐**：修正蓝图里程碑表（v0.8.0 实际内容、v0.9.0 事件黑匣子、存档安全体验顺延 v0.10.0）、HANDOFF §1.1 第 9/10/11 条状态与版本号，清除第 353 行游离残文，新增铁律⑳「引擎返回值与数据生命周期双重误读」。
+
+#### 2026-09-10 · 事件黑匣子面板「小白口径」文案整改 (v0.9.1)
+- **触发原因**：用户重申目标用户画像 —— **会用引擎做游戏、但不懂代码、计算机原理也很差**。回头按这把尺子审自己刚交付的 v0.9.0 面板，发现**我自己违反了铁律⑱**：面板里写满了「宿主已销毁」「长时间无进展」「已停止更新」「挂起」「滞留」「指令名识别未就绪」「结束回调/引用摘除」这类黑话。**功能是对的，话没说到用户心里**。
+- **整改原则**：面板内每一句可见文字都改写成「他会怎么描述这件事」，而不是「引擎里这叫什么」。范围**严格限定在本次新增的事件黑匣子面板**（其余模块文案一字未动，旧的「探针未就绪」等残留按用户裁决暂不处理）。
+- **对照表（改前 → 改后）**：
+  | 位置 | 改前 | 改后 |
+  |---|---|---|
+  | 幽灵标签 | 宿主已销毁 | **所属对象已被删除** |
+  | 幽灵标签 | 长时间无进展 | **卡住超过 1 分钟** |
+  | 幽灵标签 | 已停止更新 | **已经不再运行** |
+  | 幽灵元信息 | 宿主：角色「勇者」· 已挂起 2 分 13 秒 | **属于：角色「勇者」· 已停住 2 分 13 秒** |
+  | 幽灵徽标 | [N 个滞留] / [无滞留] | **[N 个卡住] / [一切正常]** |
+  | 幽灵空态 | 没有发现滞留事件。 | **没有卡住的事件，剧情都还走得动。** |
+  | 结束反馈 | 已结束该滞留事件，引用已摘除。 | **已结束这个卡住的事件。** |
+  | 按钮悬浮提示 | 调用引擎原生结束回调，拔除滞留引用 | **结束这个卡住的事件，让它彻底停下来** |
+  | 流水动作徽标 | 启动/执行/等待/暂停/挂起/结束 | **开始/进行中/等待中/已暂停/停住了/结束了** |
+  | 流水状态词 | 执行中 / 无进展 | **进行中 / 卡住了** |
+  | 流水徽标 | [静默] / [仅步骤] / [记录中 N 条] | **[暂无记录] / [仅显示步数] / [已记录 N 条]** |
+  | 降级提示 | 指令名识别未就绪，重启工程后重新试玩即可 | **暂时只能看到第几步；重启工程再试玩一次，就能看到它具体在做什么。** |
+  | 流水空态 | 暂无事件执行记录。游戏内触发事件或对话后即可看到流水。 | **暂无记录。游戏里触发一次事件或对话，这里就会显示它每一步在做什么。** |
+  | 主页第 2 卡副标题 | 报错、事件流水与滞留侦探 | **报错、事件流水与卡住排查** |
+- **同步范围**：面板内 3 处**代码注释**（含会进入 DOM 的 HTML 注释）一并改成同一口径；`tests/test-event-blackbox.mjs` 的文案断言同步跟随（**断言即文案回归**）；README 与蓝图中被引用的界面标签（【宿主已销毁】等）一并校正，避免文档描述一个不存在的界面。
+- **验证凭证**：`node build.cjs` 35 锚点全绿；`node tests/run-all.cjs` **8/8 套、207 断言**全绿（含改后文案断言）；真机 E2E **19 项断言全绿**，真实页面徽标实测已由 `[记录中 4 条]` 变为 **`[已记录 4 条]`**；`--deploy` 镜像 6 文件 MD5 全一致。
+- **结论/教训**：**功能正确 ≠ 文案合格**。这个用户不会去理解「宿主」「销毁」「挂起」，他只会说「角色没了」「剧情卡住了」。与引擎有关的一切内部词汇（宿主/引用/回调/未就绪/静态扫描…）都属于铁律⑱的打击范围，**交付前必须用用户的嘴再过一遍界面文字**。
+
+#### 2026-09-10 · 诊断断点补齐：变量告警定位 + 内存与缓存 (v0.10.0)
+- **需求来源**：用户追问「这个插件解决了引擎的缺陷吗？能让小白用得舒服、快速解决问题吗」。复盘时**先按「会不会让目标用户卡住」重排了引擎缺陷**（不是按工程刺眼程度）：
+  | 引擎缺陷 | 对用户的实际伤害 | 当时覆盖度 |
+  |---|---|---|
+  | `variable.ts:117-133` 类型不匹配**静默丢弃** | 他用「设置变量」写文本进数值变量 → 游戏毫无反应、零提示 → 只会以为"引擎坏了" | **半覆盖**：看得见症状，**不知道是谁写的** |
+  | `event.ts:457-477` 事件层零监控 | "剧情不走但没报错" | 已由 v0.9.0 事件黑匣子补上 |
+  | `loader.ts:19-23` 资源缓存只增不减 | "玩久了越来越卡、最后闪退" → 他归因成"电脑不行" | **未覆盖** |
+  | 数据销毁 / 39 个全局单例 / 插件无契约 | 对他不可见（是我们的成本） | 不需要解决 |
+  结论：**插件并不"解决"引擎缺陷，它补的是「引擎不说话」这件事**；而"看见症状"到"知道去哪改"之间还剩两个断点。用户裁决：**两个都做**。
+- **① 变量写入被丢弃 → 定位到「哪条事件第几步·什么指令」**：
+  1. 新增 `currentEventLocation()`（probe-core）：复用**事件执行栈 `eventExecStack`** + 引擎的**模块级执行游标 `CommandList` / `CommandIndex`** + **编译期指令映射表**，把"谁在写"翻译成「事件《新手村剧情》· 第 2 / 3 步 · 设置文本 · 场景：新手村」。引擎的 `while (CommandList[CommandIndex++]?.())` 会把游标推过当前指令，故当前指令槽 = `CommandIndex - 1`（这条语义坑已写进注释，接手者别再踩）；取不到引擎游标时回退到事件实例上的 `index`；
+  2. 告警记录新增 `eventName / sceneName / step / total / cmdDesc / located / count`（10 秒内同因重复丢弃累计 `count`）；
+  3. UI 落到两处：**存档台【变量与开关】每一个变量行下方**（`[写入被丢弃] 类型冲突丢弃 · 事件《…》· 第 2 / 3 步 · 设置文本`，全量变量都能看到，不限已固定项）与 **Pin 监视小窗**（`[异常]` 悬浮提示补全定位，并新增一行可见定位文字）；
+  4. 白话格式由 hud 侧 `varWarningLocation()` 统一生成（单点，避免两处文案漂移）。
+- **② 内存与缓存：一键清理 + 白话统计（安全优先）**：
+  1. **先读引擎定安全边界**（`loader.ts`）：`cachedImages[key]` 既可能是**加载中的 Promise** 也可能是已加载 `<img>`；`cachedUrls[path]` 是 objectURL，且**引擎在图片 onload 时若 `save=false` 就会 revoke 掉它**（loader.ts:254-256）→ 所以「清图片」必须**同步清掉 `cachedUrls`**，否则下次重新加载会拿到失效 URL 导致图片裂开；`cachedBlobs[url]` 才是真正的二进制内存；
+  2. `getCacheInfo()`：分开统计 已加载图片 / 加载中 / objectURL / Blob 数量与体积 / JS 堆内存 / 是否正在加载；
+  3. `clearAssetCache()`：**安全闸门** —— `Loader.complete === false`（有正在进行的加载）时**直接拒绝**并回传 `reason: 'loading'`；清理时**跳过 Promise 条目**、释放图片与对应 objectURL、顺手回收孤儿 Blob；回传 before/after 供界面展示"清了什么"；
+  4. **真机暴露的构建差异（重要，别踩）**：`D:/GAME-20240905` 的真实运行时里 **`Loader` 取不到**（`eval('Loader')` 直接 ReferenceError），而同一页面上 `Data` / `Command` / `EventHandler` / `Scene` / `Callback` 全部可达 —— 即**不同引擎构建暴露的全局词法绑定面并不一致，任何新功能都不能硬依赖某个全局名字**。故新增 `findAssetLoader()`：先按候选名（`Loader`/`FileLoader`/`ResourceLoader`/`AssetLoader`）取，再在可达引擎对象上找「身上挂着 `cachedImages` 的那个 loader」；
+  5. **能力不可用就如实降级，不假装可用**：取不到加载器时 `getCacheInfo()` 回传 `available: false`（内存信息照常给），hud 卡片变成「[仅内存] + 已用内存 N MB（当前引擎版本读不到图片缓存）」并**隐藏清理按钮**、改提示「变卡时先重启工程试玩一次」。真机 E2E 专门断言了这条降级路径（`available=false` 且 `clearAssetCache` 返回 `no-loader` 而非抛错）；
+  6. UI：性能分析·普通模式新增「内存与缓存」卡片（状态徽标 正常/加载中/偏多/仅内存 + 白话统计 + 【清理缓存】按钮 + 点击结果反馈）；**清理只由点击触发，绝不进心跳**（铁律⑲），渲染走快照签名。
+- **验证凭证**：
+  1. `build.cjs` 锚点 35 → **40 项**（新增 内存与缓存卡片骨架 / 一键清理按钮 / `probe.getCacheInfo()` / `probe.clearAssetCache()` / `varWarningLocation` 五条）；
+  2. 新增 `tests/test-diagnosis-gaps.mjs`（**35 项断言全绿**）：用「伪引擎」复刻引擎的 `while (CommandList[CommandIndex++]?.())` 游标语义与 `variable.ts` 静默丢弃语义，实测告警能落到「禁用指令被跳过 → 第 2 步 · 设置文本」并累计次数；缓存部分逐条验证**安全闸门**（加载中拒绝且一个字节没动、加载中的 Promise 条目被完整保留、objectURL 同步清除并 revoke、孤儿 Blob 回收、清理后统计归零、**取不到加载器时如实降级**）；
+  3. `tests/run-all.cjs` 扩至 **9 套**，全量 **241 断言 9/9 全绿**；
+  4. 真机 E2E **23 断言全绿 / 0 失败**（2 项环境 SKIP：静态服务下全局事件未注册、该引擎构建未暴露资源加载器），其中缓存清理在真机按降级路径验证通过（不抛错、如实标注）。
+- **顺手修掉的测试脆弱点（非产品回归）**：`test-autoupdate.mjs` 第 4 节原先拿「raw 通道读到的远端版本」去比对「jsDelivr 通道下载下来的文件内容」——两个通道在 CDN 追赶期必然不一致（本次就撞上：raw 已 0.9.1 而 jsDelivr 仍 0.8.1）→ 改为断言**载荷自洽**（内存版本 == 实际下载到的 manifest 版本；下载的 `probe-core.js` 里的 `PROBE_VERSION` == 下载到的 manifest 版本），并把「拿远端版本做等值断言」的地方改为**断言前现读一次**。
+- **顺带发现（本轮未处理，留给用户裁决）**：
+  1. **0-Emoji 门禁有盲区**：`build.cjs` 的正则覆盖 `1F300-1F9FF / 2600-26FF / 2700-27BF / 1F1E0-1F1FF`；性能页快速排查按钮里的 `⏸`（U+23F8）**不在范围内**（实际 5 处却能过门禁）；而本次我在 probe 注释里写的一个警告三角符号（U+26A0，落在 2600-26FF 区间）**被门禁正确拦下** —— 同一套规则一漏一拦，证明盲区真实存在；
+  2. **存档台变量面板裸露 GUID**：变量行渲染 `ID: <16位GUID>`（`renderVarsPanel`），与铁律⑱「界面绝不裸露 GUID」冲突——属历史遗留，本次未动。
+
+#### 2026-09-10 · 工程体检输出改造：折叠 + 分级 + 白话影响 + 入边补全 (v0.11.0)
+- **触发**：用户问「运行日志里的工程体检，为什么能发现 203 个异常？」。实测拆解 `D:/new-game`：**203 = 200 断链 + 3 死事件**，而 200 条断链其实只有 **55 个不同的 ID**（同一个 ID 最多被引用 12 次）→ 数量在表达上被放大；继续排查又发现**字典缺口导致的误报**与**同一档红字混报三种性质**的产品问题。
+- **逐条核实的引擎事实（本轮新增到技术底牌）**：
+  1. **未知属性 = 静默丢弃两条路**：载入侧 `variable.ts:256 Attribute.loadEntries` 是 `if (attr !== undefined)` 才写入；运行侧 `command.ts:478` 更直接 —— `const attrKey = Attribute.get(key)?.key; if (!attrKey) return Function.empty`，即**给已删属性赋值的指令会被编译成一个什么都不做的空函数，既不报错也不生效**。所以"可能失效"不是猜测，是源码实锤；
+  2. **界面的事件绑定是内联指令**：`.ui` 里形如 `"events":[{"type":"create","enabled":true,"commands":[...]}]`，**不引用独立 `.event` 文件** → 界面绑定不会给独立事件文件产生 GUID 入边；
+  3. `callEvent` / `setEvent` / `stopEvent` 用 `params.eventId`；`registerEvent` 是**内联 commands**（压根没有事件 GUID 入边）；
+  4. **资产清单是目录不是引用**：`Data/manifest.json` 列出全部资产 GUID，若计入"引用"会让死事件判定整体失效 → 必须整份跳过。
+- **落地改造（probe 侧）**：
+  1. **单趟扫描**同时收集「定义」与「引用」（旧版先单独跑一趟 `collectPresets`，白解析一遍全部资产）；合法目标改为**三源判定**：`names`（文件名 + `Data/*.json` 字典）∪ **`definedIds`（资产文件内部以 `"id"` 定义的 GUID —— 界面元素属性键、场景节点、动画帧等）** ∪ `nodePresets`。**这是误报的主因**：旧字典只覆盖文件名与 Data，跨文件引用界面元素属性键时必然全被误报；
+  2. **按 GUID 折叠**：同一 ID 只出一条，带 `count`（引用处数）、`fileCount` 与 `files`（涉及文件，最多记 10 个）、`samples`（最多 8 个上下文）；
+  3. **按影响分级 + 白话影响说明**：`resource`（立绘/图片/素材丢失）→ **high「会影响运行」**；`property` 且出现在指令里 → **mid「可能失效」**（写明会被编译成空函数）；`property` 只出现在资产初始值里 → **low「历史遗留，不影响运行」**（写明载入时被默默忽略）；其它按是否在指令里落 mid/low；
+  4. **死事件入边补全**：`eventId` 参数 ∪「全工程任何位置出现过该 GUID」∪ `definedIds` ∪ 脚本 `EventManager.call/emit/get('<guid>')` ∪ **脚本里出现事件名**（保守兜底）；
+  5. `stats` 新增 `missingIds`（折叠后类别数）/ `missingRefs`（引用处数）/ `levels`（高/中/低计数）。
+- **落地改造（hud 侧）**：体检卡片改为「**折叠卡 + `xN` 徽标 + 涉及文件（前 3 个 + 等 N 个）+ 分级徽标 + 一句白话影响**」；状态徽标在有关键项时显示 `[N 处会影响运行]`，否则 `[N 项待清理]`；**卡片正文不再裸露 GUID**（GUID 挪到悬浮提示与「复制信息」里给开发用），换成语义描述 + 涉及文件，更利于小白定位。
+- **真机对照证据（同一个探针、同一台机器）**：
+  | 工程 | 改版前 | 改版后 |
+  |---|---|---|
+  | `D:/new-game` | 203 张无差别红卡 | **102 张**：引用丢失 **99 类 / 545 处**（会影响运行 11 · 可能失效 73 · 历史遗留 15）+ 死事件 3 |
+  | 模板工程 `arpg-ts-chinese`（干净工程） | — | **0 张**（证明误报基本清零） |
+- **那 3 个死事件的定性（用户会问，所以写死在这里）**：`主菜单_多属性复合整数属性_更新` / `最大生命值_更新` / `最大魔法值_更新` 均为 `type: "common"`、**带真实指令**（8 条 / 2 条），全工程只在 `Data/manifest.json` 出现过 → 是**真·遗留孤儿事件**（多半是主菜单改成内联绑定后剩下的），不是误报，可放心删。
+- **对用户工程的结论（可直接照做）**：`new-game` 那 545 处绝大多数是**属性表被重建/删改后，怪物模板与「敌人怪物强化」事件还留着旧属性键**；其中**最值得修的是 `Assets/角色/怪物/敌人怪物强化.event`** —— 它给已不存在的属性做 `mul`，按 `command.ts:478` 这段是**空转**，等于整个强化事件没生效。
+- **验证凭证**：`build.cjs` 锚点 40 → **43 项**；`tests/test-project-audit.mjs` 由 21 扩至 **32 断言全绿**（新增折叠字段、分级与白话影响、字典三源、界面绑定/脚本入边不被误判死事件）；`tests/run-all.cjs` **9 套 252 断言全绿**；`--deploy` 镜像 6 文件 MD5 一致。
+- **顺手修掉的测试自身缺陷**：`test-fix-regressions.mjs` 的「analyzeError 分类都有中文标签」原先**全库通扫** `category:`，把工程体检的另一套分类域也当成报错分类 → 改为只扫 `analyzeError` 函数体。
+- **门禁再抓两次（记录在案，证明门禁有效）**：① 我在 probe 注释里用了那个被禁用的界面用词，被**中文术语自检**拦下（应为「界面元素」）；② 因一次被中止的构建已先执行过 `--bump`，版本被多推到 v0.12.0，已用 `--bump 0.11.0` 显式回退并让文档对齐。
+
+
+#### 2026-09-10 · UI 打磨：过渡属性收敛 + 按压触感 + 图标体系统一（工作区改动，随下一版发布）
+- **排查方式**：`src/style.css` 静态扫描 + **真机计算样式实测**（`getComputedStyle` / `document.getAnimations()` / 真实 `mouse.down()` 分段测量），覆盖 163 个元素与 5 个页面截图。
+- **过渡属性收敛**：`transition: all` 由 **21 处归零**，逐条改为按各自 `:hover/.active` 变体推导出的精确属性（如 `.yami-quick-btn → color, background-color, border-color, scale`）；简写归一（`background→background-color`、`border→border-color`），剔除 `cursor`/`pointer-events`（本不可动效）与 `font-weight`（会引发文字重排）。
+- **按压触感**：全表原 **0 条 `:active`**，新增 17 个控件的 `:active { scale: 0.96 }`（better-ui 规定值）。真机实测按下态由 `scale:none` 变为 `scale:0.96`，与悬停态可区分。**坑位记录：`scale` 是独立 CSS 属性，不体现在 `transform` 里，量按压反馈必须单独读 `getComputedStyle(el).scale`，否则会误判「无反馈」。**
+- **图标体系统一**：废弃 `⏸/▶/▸/▾/⤴` 共 13 处文本字形，全部换成**官方 Remix Icon v4 矢量 path**（新增 IIFE 顶层 `ICON_PATH` + `ico(name)`，遵循铁律⑯）；路径数据取自 Remix-Design/RemixIcon 官方仓库，未做改动；刷新率排查按钮的状态文案同步由 `textContent` 改为 `innerHTML` 组装，颜色随 `.active` 的 `currentColor` 走。
+- **出场动效**：大盘进场时序移至 `.yami-perf-dock.show`（0.2s），基础规则承载更短的出场（0.16s + 更柔曲线 `cubic-bezier(0.2, 0, 0, 1)`），实测两态 transition 已分离。
+- **验证凭证**：`build.cjs` **44 项锚点** + 0 Emoji + 术语自检全绿；回归 **9/9 套通过**；真机复测「带时长的 `transition: all`」归零、`:active` 生效、同心圆角仍无违例、常驻动画 0 条。
+- **未验证（如实记录）**：场景台行箭头与卡顿列表上传标记的**视觉**确认未做——真机夹具中游戏未启动，场景行无数据可渲染；二者与已验证的暂停图标同走 `ico()` 机制与同一官方图标源。
+
+#### 2026-09-10 · 布局加固：分组间距 / 窄宽溢出 / 逻辑属性（工作区改动，随下一版发布）
+- **实测方式**：真机 **7 档宽度（1440→500px）× 5 页面**扫描横向压榨（`scrollWidth > clientWidth` 且非可滚容器）与纵向裁剪（`overflow:hidden` 且内容超出），并实测组内/组间间距像素值。
+- **组间间距（改的第一处没生效，靠实测才发现）**：`.yami-suite-page { gap }` 被各页面容器自己的 `!important` 压回 8–10px（`.yami-errors-container` / `.yami-scene-container` / `.yami-save-container`）——真机先照出 `[组内 gap] .yami-suite-page=8px` 与理论值不符。三个容器统一改 `16px` 后实测：**组间 `16/24/16/16/16px`，组内 6–8px，比值 2–2.7 倍**（better-layout 要求组间 ≥ 组内 2×）。
+- **窄宽溢出（≤500px 视口）**：
+  1. 报错页长 URL 是**不可断行 token**，撑破卡片（`.yami-error-source 198>190`）→ 加 `overflow-wrap: anywhere`（`.yami-error-msg` 同）；
+  2. 作弊页变速按钮行不换行（`.yami-cheat-grid 208>198`）→ `.yami-speed-btns` 补 `flex-wrap: wrap`，`.yami-speed-btn` 由 `flex: 1` 改 `flex: 1 1 auto` + `min-width: 44px`。**坑位记录：没有 `min-width` 时，`flex-basis: 0` 的 flex 项永远不会触发换行，只会撑破父级**；
+  3. 三处内联 flex 行（`.yami-cheat-btn` 所在）补 `flex-wrap: wrap`。
+- **呼吸感**：`.yami-quick-toggles` 6→8px、`.yami-error-filter-bar` `4px 5px`→`6px 8px`、`.yami-speed-btns` 6→8px（实测相邻控件间隙由 5–6px 提升到 8px）。
+- **逻辑属性**：物理方向属性**全表清零**——CSS 25 处 + JS 内联 5 处，`margin/padding-left|right` → `*-inline-start|end`、`text-align: right` → `end`；真机物理定位（如大盘 `right: 8px`）保持不动。
+- **注记（非代码回归）**：全量跑时 `test-autoupdate.mjs` 曾 5 项 FAIL，单独复跑 24 PASS/0 FAIL —— 输出显示 `通道 {"raw":"0.0.0","jsdelivr":"0.8.1"}`，raw 通道抖动 + jsDelivr 缓存旧版所致（与 v0.7.1 记录同类网络问题）。
+
+#### 2026-09-11 · AI 全能副驾与 yami-mcp 全流程集成 (v1.0.0 正式里程碑)
+- **业务诉求与目标画像**：
+  在无需 9222 远程调试端口的前提下，打通「DanJuan 妙妙插件 + yami-mcp + 本地 DeepSeek / OpenAI 兼容大模型」，让小白和独立开发者能在游戏与编辑器内通过全白话控制 Open Yami 的所有操作（包括编写/编译 TypeScript 脚本、编写/调试/修复事件、读写全量数据表、触发试玩与自动化测试、回滚修改）。
+- **架构落地与模块交付**：
+  1. **AI 视图与宿主服务 (`ai-agent.js` / `ai-host.js`)**：
+     - 大盘第 6 主视图 `#page-ai-agent` 落地，对齐 0 Emoji、暗黑调色板与工业文字标签；
+     - 5968 本地代理服务，支持流式 SSE 交互；
+     - DPAPI（Windows CryptProtectData）本地物理加密密钥保护，杜绝明文凭证泄漏；
+     - 危险写操作生成白话卡片 + Diff 高亮预览 + 显式【确认执行】与【一键回滚】机制。
+  2. **内置 MCP 工具服务器 (`runtime/yami-mcp/`)**：
+     - 单一真实源落盘并在构建/热更新时同步级联（`server.js`、`db-manager.js`、`event-builder.js`、`file-ops.js` 等 8 个核心模块，哈希 100% 匹配）；
+     - 工具集扩展至完整的 27 类：工程元数据、资源读写与编译校验、事件解析与语法树构建、数据表与变量管理、编辑器与试玩控制；
+     - 原生 TS 编译器集成：通过定位引擎自带的 `@typescript/typescript-win32-x64/lib/tsc.exe` 实现 0.3 秒无损快速类型排查（`ok=true, errorCount=0`）。
+  3. **三大高危漏洞加固与安全门禁闭环**：
+     - **大文件上下文防挤爆门禁**：`read_resource` 支持 `args.key` 分节读取，超 200KB 文件默认安全截断并输出结构导航；
+     - **资产删除全局引用反查拦截**：`delete_resource` 物理删除前递归全工程排查 GUID 入边引用，有引用时强制拦截（需 `force: true`）；
+     - **IIFE 表达式单次调用保护**：编辑器 CDP 动作表达式（`File.save` / `playtest`）自闭包封装，根除连发重复调用隐患。
+  4. **热更新端到端闭环加固**：
+     - `UPDATE_CONFIG.updateFiles` 扩至 15 个关键文件，全面覆盖 `runtime/yami-mcp/` 子目录及 AI 模块；
+     - 严格遵守 `probe-core.js` 首位写盘、`manifest.json` 末位版本门闩写盘次序；
+     - `test-autoupdate.mjs` 端到端回归测试 100% 通过。
+- **全量验证凭证**：
+  1. `node build.cjs`：**45 项核心锚点 + 原生 button 负向断言 + 0 Emoji + 术语合规 100% 全绿**；
+  2. `node tests/run-all.cjs`：**10/10 套自动化回归测试（280+ 项断言）全部 PASS**；
+  3. `yami-mcp/test.js`：**22/22 项工具链单测全绿**；
+  4. `test-compile.js`：真实工程 TypeScript 原生编译 **ok=true errorCount=0**；
+  5. 镜像部署验证：`--deploy` 生成生产镜像，MD5 与单一真实源 100% 完全一致。
+
+
+## 2.2 致命踩坑与铁律档案
 
 后续接手开发任何新模块时，**必须严格遵守以下血泪经验**：
 
@@ -377,332 +794,121 @@
 
 ---
 
-## 5. Git 提交与智能版本自增规范 (Strict Git & Smart SemVer Policy)
 
-1. **绝对禁止主动 Git (No Autonomous Git)**：
-   - 平时日常开发、Bug 修复、样式调优过程中，**严禁擅自执行任何 `git commit` 或 `git push`**！
-   - 所有改动在本地仓库（`extension` 分支）完成后，直接单向覆盖拷贝到 `D:\Program Files\Open Yami RPG Editor\extension\yami-perf-extension` 进行实机联调。
-2. **唯一口令驱动触发 (User Command-Driven)**：
-   - **只有当用户明确在对话中发出“git上去”、“提交代码”、“发布版本”等口令时，方可触发 Git 流程**！
-3. **改动幅度智能决定版本号大小 (Smart SemVer Auto-Bump)**：
-   - **Patch (`x.y.Z + 1`)**：中小型 Bug 修复、文案优化、CSS 样式微调（小改动）；
-   - **Minor (`x.Y + 1.0`)**：新增功能模块（如新增排查项、新增诊断算法、开发作弊器/变量监视器等新功能）；
-   - **Major (`X + 1.0.0`)**：跨模块核心架构重构、不兼容底层变更，或正式发布 1.0 里程碑；
-4. **全自动 SSOT 级联版本同步 (One-Source Cascade Sync)**：
-   - 彻底废除多文件手工查找替换的低效模式！以 `manifest.json` 为**唯一绝对权威输入源**；
-   - 支持 `node build.cjs --bump [patch|minor|major|<ver>]` 命令行秒级自增；
-   - `build.cjs` 自动将权威版本单向级联注入 `probe-core.js`、`hud-overlay.js`、`README.md` 与 `HANDOFF.md`，实现改一处、秒级全量自动对齐并完成生产镜像部署。
+### ㉗ 扩展内容脚本跑在隔离世界，Node 能力必须靠主世界装载器
+
+- **现象**：面板每个按钮都报 `require is not defined`，AI 宿主永远起不来，5966/5967 双桥从不监听。
+- **根因**：Electron 20 的扩展内容脚本运行在隔离世界（无 `require`/`process`），而 `content_scripts.world = "MAIN"` 是 Chrome 111+ 字段，Electron 20 直接忽略。引擎两个窗口都是 `nodeIntegration: true`，**只有主世界有 Node**。
+- **铁律**：manifest 的 `content_scripts` 只挂 `bootstrap.js`，由它把主脚本注入主世界；改 manifest 必须重启编辑器才生效。
+
+### ㉘ UMD 在 Electron 渲染进程里必须双挂（module 与 window 并存）
+
+- **现象**：对话里 AI 回复一个字都看不到。
+- **根因**：`ai-render-core.js` 的 UMD 写成"有 `module` 就只走 CommonJS"，而渲染进程里 `module` 与 `window` 同时存在 → `window.YamiAiRenderCore` 永远 undefined；前端又硬依赖它 → 正文永不写进 DOM。
+- **铁律**：先 `const api = factory()`，再 `module.exports = api` **并且** `root.X = api`；同时前端对新增依赖必须留降级分支并告警，绝不静默空白。
+
+### ㉙ 逐 token 渲染必须按帧合并 + 增量追加
+
+- **现象**：上下文一长界面就卡死。
+- **根因**：每个片段都 `textContent = 全文`（O(n) 拷贝 × n 段 = O(n²)）并同步拉滚动条（强制重排）。
+- **铁律**：帧合并（一帧只写一次 DOM）、增量追加（`createTextBuffer` + `TextNode.appendData`）、滚动跟随先判断用户是否在底部、长会话只渲染最近 60 条。回归在 `tests/test-render-perf.cjs`。
+
+### ㉚ 机械批量替换必须逐处复核（自调用事故）
+
+- **现象**：聊天一发消息就 `RangeError: Maximum call stack size exceeded`。
+- **根因**：把 `list.scrollTop = list.scrollHeight;` 全量替换成 `autoScroll();` 时，把 `autoScroll` **函数体内**那一行也换了 → 自己调自己、无终止条件。
+- **铁律**：批量替换后逐处复核；`tests/test-static-health.cjs` 现已内置自调用检测（默认危险，只有找到"这是回调"的证据才放过；真递归需注明「允许递归」）。
+
+### ㉛ 工具提示里点名的参数必须在 schema 里声明
+
+- **现象**：模型"连续多次执行同一批操作（读取资源）"被判定空转后掐断。
+- **根因**：`read_resource` 实现支持 `key`/`forceFull`（大文件截断后的唯一出路），注册给模型的 `inputSchema` 只声明了 `path`；工具返回又让模型"改用 key 参数"，模型看不到该参数，只能拿同样的 path 反复重读。
+- **铁律**：工具描述、返回提示、实现三者必须一致；`tests/test-tool-schema.cjs` 会核对"提示点名的参数是否已声明"。大文件（>200KB）走 `key` 精读，别整体读全文。
+
+### ㉜ 设置项要三级落值，绑定要用事件委托
+
+- **现象**：界面设置改了保存不住。
+- **根因**：只写 `localStorage` 一处，且事件直接绑在节点上，面板重建即失效。
+- **铁律**：内存状态 → `localStorage`（写完回读校验）→ 宿主配置（`/quick-config`）三处都写；切换后必须给出可见回执；事件用委托绑在容器上。
+
+### ㉝ 密钥体检：官方端点管形状，本地端点不拦
+
+- **现象**：面板显示"已安全保存"，实际每次调用 401。
+- **根因**：配置里存的"密钥"其实是 BASE URL（历史误填），而 `hasApiKey` 只看字段非空。
+- **铁律**：填成网址一律拒收并说明；只有官方 `api.deepseek.com` 才要求 `sk-` 形状（本地 Ollama/LM Studio 端点的密钥随意）；启动时体检一次历史密钥，发现无效就清掉并说明原因；面板提供「测试连接」（打免费 `/models`）。
+
+## 2.3 关键设计决策与取舍
+
+| 决策 | 理由 | 代价 / 备注 |
+| :--- | :--- | :--- |
+| 插件零外部依赖（Node 原生 http / readline / spawn） | 免安装、离线可用、避免依赖漂移 | 需要自己实现 diff、SSE、WebSocket（用 Node 24 原生）等 |
+| 扩展只做装载器，主脚本注入主世界 | 只有主世界有 Node，双桥与宿主才可能工作 | 改 manifest 必须重启编辑器 |
+| AI 宿主独立进程（5968），不塞进渲染进程 | 模型请求、工具编排、文件写入不该阻塞界面；崩了也不拖垮编辑器 | 需要令牌与父进程看门狗（父死子退） |
+| 写盘一律「先预览 → 用户确认 → 原子写 + 备份」 | 面向不懂代码的用户，改坏要能一键回退 | 多一次交互；删除类额外要一次性确认令牌 |
+| 打断要真停（销毁上游请求 + 停止剩余工具） | 只断界面不停后台 = 继续烧 token、继续改文件 | 需要取消令牌贯穿模型与工具循环 |
+| 思考过程默认「单行预览」 | 大段推理横在对话中间不符合阅读习惯 | 想看全文点开，或在设置里切「展开」 |
+| 工具/文案全部用中文口语，不暴露 GUID | 目标用户是不懂代码的开发者 | 需要维护中文工具名映射 |
+| 版本以 `manifest.json` 为唯一事实源并级联 | 手工多处改必然漂移 | 依赖 `build.cjs` 门禁；未提交前不得发版 |
+
+## 2.4 协作约定（与人类协作者）
+
+1. **不要擅自 Git**：只有用户明确说"提交 / 发布版本"才允许 commit / push。
+2. **不要为了看界面而启动用户的编辑器，也不要用截图当验证依据**：GUI 效果交给用户自己看；助手只做命令行验证、测试套件、构建门禁与静态检查，并把需要用户确认的点讲清楚。
+3. **不要自作主张**：涉及口径、价格、模型参数、外部接口数据这类事实，必须查官方文档或向用户确认，不猜。
+4. **沟通与注释用中文**，代码注释写"为什么这么做"（历史教训），不写"做了什么"。
+5. **改完必须过门禁**：`node build.cjs` + 相关测试套件；影响发布文件时 `--deploy`。
 
 ---
 
-## 6. 核心源码路径映射与运行目录对照表
+# 第三层 · 当前进度（Where We Are）
 
-| 路径 | 角色定位 | 维护准则 |
+> 更新日期：2026-09-11 深夜 · 当前版本：`v1.1.0`
+
+## 3.1 能力清单与完成度
+
+| 能力 | 状态 | 位置 / 说明 |
 | :--- | :--- | :--- |
-| `d:\Documents\GitHub\yami-tools\` (branch: `extension`) | **唯一真实源码源 (Single Source of Truth)** | 插件的母仓库，所有代码编写、版本管理和 Git 提交必须在此进行。 |
-| `D:\Program Files\Open Yami RPG Editor\extension\yami-perf-extension\` | **编辑器运行时加载路径** | 仅作为本地联调和生产加载目标，由母仓库单向覆盖镜像生成，严禁在此建立独立分支。 |
-| 加载机制（引擎侧事实） | `main.ts:330-341` | 引擎启动时遍历 `<编辑器>/extension/` 下**每个子目录**并 `loadExtension(dir, { allowFileAccess: true })`；故目录名可任意、多插件可共存，且**改完必须重启工程**（Electron 无 Ctrl+F5，见铁律④）。日常开发推荐 `node build.cjs --watch`：保存源文件即自动重建+镜像，免手动敲 `--deploy`。 |
-| `https://github.com/bajibaji/yami-tools/tree/extension` | **远端分发与热更新源** | 用户一键热更新拉取代码的公共镜像源。 |
-| `D:\Documents\GitHub\2\` | **Open Yami 引擎底层源码参考** | Electron 主进程 `main/main.ts` 与游戏内核模板 `Project/Templates/`。 |
-### 2026-09-03 [里程碑] 变量与开关全量元信息解密与深度 E2E 验证
-- **问题根因**：原先变量字典仅存储名称字符串，且布尔开关由于 Yami 引擎未改动前未写入 save.variables，导致所有布尔变量被误判为 [VAR] 并渲染为输入框；同时若初始化时字典有任何时序延迟，变量名会退化为 GUID。
-- **全量升级**：
-  1. loadDictionaries 升级为加载完整元信息对象：包含中文名称、真实类型（boolean / number / string）、所属文件夹分类（如常用变量、系统变量、地下城、世界地图、用户界面）与备注说明；
-  2. render 与 renderVarsPanel 注入字典零状态自愈逻辑：只要检测到字典为空自动重新装载，杜绝 GUID 形式的变量名展示；
-  3. 变量与开关列表精准呈现工业级分类标签与类型徽章（[开关] 绿色、[数值] 黄色、[文本] 蓝色），布尔型 100% 渲染为 Toggle 开关；
-  4. 编写并全绿通过 17 项深度 E2E 仿真测试与 25 项全流程端到端自动化测试。
+| 性能大盘（帧率 / DrawCall / 真凶归因 / A-B 排查） | 已落地 | `probe-core.js` + `hud-overlay.js` |
+| 运行日志与错误黑匣子（指纹聚合 / 指令级时间线 / 幽灵事件） | 已落地 | 同上 |
+| 存档管理（速改 / 变量开关 / JSON 树 / 一键还原） | 已落地 | 同上 |
+| 场景实体检查台 / 作弊台 / 工程体检 / 诊断断点 | 已落地 | 同上 |
+| AI 助手面板（流式对话 / 思考过程 / 审批差异 / 撤销 / 计划 / 变更小结） | 已落地 | `ai-agent.js` |
+| AI 宿主（模型调用 / 工具编排 / 会话持久化 / 上下文压缩 / 计费 / 连接体检 / 打断） | 已落地 | `ai-host.js` |
+| 内置 MCP 工具集（35 项：读 / 写 / 搜 / 编译 / 事件编排 / 数据表 / 备份 / 试玩冒烟…） | 已落地 | `runtime/yami-mcp/` |
+| 代理能力（子任务委派给子代理） | 未做（P2） | 见 3.3 |
+| 计划模式（Plan Mode） | 明确不做 | 用户拍板不需要 |
 
-### 2026-09-03 [优化] 存档管理三大子面板最大弹窗高度自适应贯通
-- **痛点解决**：此前常用速改、变量与开关、JSON 树形图被死固定的 max-height (如 320px/480px) 截断，且缺少 flex: 1 贯通链路，导致大屏弹窗下高度仅展示一小截，内部双滚动条局促体验糟糕。
-- **方案落地**：
-  1. 宿主弹性链路全面贯通：#page-save 与 .yami-save-container、.yami-save-panel 设置 flex: 1 1 0; min-height: 0; height: 100%; overflow: hidden;
-  2. 变量与开关：移除行内 max-height: 480px 限制，.yami-save-var-list 设置 flex: 1; max-height: none; overflow-y: auto; 垂直吃满全部剩余高度，一屏沉浸式检视；
-  3. JSON 树形图：移除 320px 死限制，.yami-save-tree-box 设置 flex: 1; max-height: none; 满屏展开；
-  4. 常用速改：引入 .yami-save-quick-scroll 弹性容器，垂直自由流动，滚动体验流畅平滑。
-- **测试验证**：编写并通过 14 项三大子面板满高自适应 E2E 自动化测试。
+## 3.2 最近一轮完成（2026-09-11）
 
-### 2026-09-04 · 控制台报错工作台全维度落地 (v0.4.0)
-- **引擎专属白话诊断库扩充**：新增空指针目标属性解引用、公共事件死锁/爆栈、场景地形与 Autotile 加载越界、插件自定义指令参数异常、WebGL 图形管线、音频解码播放受阻、NaN 无效计算等 11 类典型异常；
-- **同类高频错误指纹聚合**：引入 fingerprint 错误指纹算法，同源异常自动聚合并累计频次（`[xN次]` 徽章），标注首末发生时间戳，杜绝异常列表被无谓刷屏；
-- **源码就地展开与定位直达**：就地展开报错行上下 7 行源码片段，高亮标记出错行；提供【定位文件】按钮，一键调起操作系统资源管理器定位文件；
-- **多维分类过滤与搜索**：顶部提供 `全部`、`高频`、`空指针`、`方法丢失`、`插件指令`、`场景地形`、`资源404`、`控制台` 标签式弹性换行过滤器，支持关键字实时检索；
-- **一键导出 Markdown 报告**：生成包含硬件环境、游戏状态、场景、FPS/DrawCall 以及全部异常详细调用栈与源码片段的专业报告，自动复制并落盘；
-- **全量测试凭证**：编写并通过 24 项全维度自动化测试（`e2e-error-debugger-test.cjs` 100% 全绿通过）。
+1. **引擎接口暴露**：`window.YamiEngine = { File, Directory, Title, UndoManager, Data }`，插件三处取值点改经它，`editor_action` / `interact_editor` 具备可用的前提。
+2. **插件装载架构改造**：新增主世界装载器 `bootstrap.js`，解决隔离世界无 Node 的致命问题；补 `web_accessible_resources` 与单文件失败告警。
+3. **对话界面补基础能力**：真打断（停止键 / Esc，宿主侧取消令牌贯穿模型与工具）、执行过程集中显示（思考+工具收进「执行过程」，正文干净）、思考默认单行预览、余额与本次花费移到版本号那一行（仅 AI 助手页显示）。
+4. **流式渲染性能治理**：新增 `ai-render-core.js`（帧合并 / 增量缓冲 / 智能滚动 / 历史窗口），修掉 O(n²) 卡死。
+5. **DeepSeek 接入打通**：对照官方文档核验请求形状（模型名 / thinking / reasoning_effort / reasoning_content 回传 / tool_choice / 价目与高峰时段），新增密钥体检、启动清理无效密钥、`POST /test-connection` 一键体检；面板实测报「连接正常：密钥有效，模型 deepseek-flash 可用」。
+6. **模型空转修复**：补齐 `read_resource` 的 `key` / `forceFull` 声明，打转阈值放宽到连续 3 次。
+7. **版本升到 `v1.1.0`**：SSOT 级联对齐 probe-core / hud-overlay / README / HANDOFF，并同步 MCP 客户端版本字段。
+8. **测试体系加固**：新增「静态健康」（隐式全局 / CSS 结构 / 插件装配 / 自调用检测）、「渲染性能」、「工具提示一致性」、「打断输出」四套件；构建门禁 46 项锚点。
 
-### 2026-09-04 · 架构深度打磨与顶级作用域提升 (v0.4.1)
-- **未读计数有界收敛**：`errorUnreadCount` 严格收敛至 `state.errorHistory.length` 语义上限（上限 100），彻底消除死循环长时挂机爆大数隐患；
-- **转义函数单一事实源提升**：将 `esc` 与 `escapeHtml` 提升至 IIFE 最顶层模块作用域，消除闭包耦合与依赖函数提升可能带来的断链风险；
-- **死变量彻底清理**：移除重构遗留的 `errorsCountLabelEl` 死变量；
-- **回归测试资产跟进**：`errflow` 测试套件更新对齐 v0.4.0+ 指纹聚合模型（3 连发同源 = 1 条 count=3），构建自检 18 项核心锚点全绿。
+## 3.3 未完成 / 未验证 / 已知限制
 
-### 2026-09-04 · 场景实体检查台 (Scene Inspector) 全维度落地 (v0.5.0)
-- **探针同屏实体快照 `getSceneEntities`**：一次 O(n) 只读遍历产出角色实例（场景放置 local / 全局角色 global 精确分组，`instanceof GlobalActor` 判别 + `data.type` 跨 realm 兜底）与触发区域（矩形范围、区内角色名单、绑定状态）；每实体携带坐标/朝向/渲染优先级、碰撞体（形状/直径/immovable/本帧位移）、导航器（mode/速度/寻路态）、动画播放器（motion/暂停/播完）与玩家主角高亮；`binding null`（未开地图）与无 Scene 双空态全防御，不处理双场景槽（bind 已指向当前场景）；
-- **SceneLab 分组检视台**：`#page-scene` 独立第 5 页；顶部场景信息卡（地图名/路径/尺寸 + 角色/区域/动画/粒子/触发器/光源计数 + 镜头）、搜索框、全部/角色/区域过滤与"仅可见"开关；角色按「场景放置/全局角色」分组，触发区域独立组；展开行就地检视坐标、碰撞体、导航、动画、区内角色详情；**500ms 心跳节流 + 快照 JSON 相等跳过重建 + 单组展示上限 200** 三重护栏杜绝高频 DOM 抖动；
-- **主页第 4 卡收编**：将遗留"变量与开关（规划中）"占位卡替换为「场景实体」入口（该能力早已并入存档管理台【变量与开关】子面板），主页 4 大模块卡片全部转正落地；
-- **mount 无调用点陷阱规避**：SceneLab 的挂载与事件绑定转入 `refresh` 惰性自愈（`_ensureRoot` 一次性守卫），对齐 SaveLab 的实际入口模式；
-- **版本与门禁**：SSOT 三源提升至 v0.5.0；build.cjs 锚点扩至 20 项（新增 register('scene')/scene 骨架/主页四模块顺序正则收尾）；
-- **测试凭证**：新增 `.e2e-tmp/test-scene-lab.mjs` 25 断言全绿（空态/binding null/schema 分组/字段/数据变化一致性/hud 接线静态契约/Proxy-DOM 集成渲染冒烟），`errflow` 13
+| 项目 | 状态 | 说明 |
+| :--- | :--- | :--- |
+| 编辑器动作桥（5967）在源码构建版的实际可用性 | **待用户真机确认** | 需要重启编辑器后看控制台是否出现 `[Yami Perf Bridge] 编辑器动作服务已就绪: http://127.0.0.1:5967`；本机引擎源码构建此前不暴露引擎全局，已通过 `YamiEngine` 补上 |
+| `playtest_smoke` 真实试玩链路 | 待真机验证 | 需要编辑器 + 启动试玩窗口（自动化只能覆盖桩） |
+| 界面细节验收（思考块 / 过程区 / 成本行 / 打断手感） | 待用户确认 | 助手不启动编辑器、不截图，一律由用户看 |
+| 子代理委派（把子任务派给独立 agent） | 未做（P2） | 现有「任务计划」已能显示步骤；委派本身收益待评估 |
+| 热更新通道 | 3 处已声明但线上推送未做 | 清单完整性有断言守着；远端 manifest 版本需用户决定何时推 |
+| 引擎仓库的本地补丁 | 未提交 | Linux 移植补丁 + `YamiEngine` 暴露，均为本地改动，是否上游由用户决定 |
 
-### 2026-09-04 · 小白友好文案整改与目标用户画像确立 (v0.5.1)
-- **目标用户画像确立**：插件受众 = 会用 Open Yami 编辑器做游戏、但计算机理论知识薄弱的制作者（非程序员）；所有界面文案必须中文白话直白、零黑话，专业术语仅在专业模式保留；
-- **错误卡片分类名中文化**：卡片头部 `[异常] NullPointer` 等英文分类统一改走共享中文映射 `CAT_LABEL`（空指针/方法丢失/插件指令/场景地形/资源404/控制台），过滤器按钮与卡片共用同一映射源，杜绝双份文案漂移；
-- **场景实体详情去代码残留**：详情字段 `隐藏 (visible=false)` 黑话改为 `已隐藏`；计数 chip「弹道」术语修正为「触发器」（trigger=触发器铁律）；
-- 版本三源（manifest / PROBE_VERSION / hud 兜底）同步 v0.5.1；回归全绿（verify 30 / autoupdate 24 / errflow 13 / scene-lab 25）。
+## 3.4 下一步建议
 
-### 2026-09-04 · 场景实体入口统一（工作区改动，随下一版发布）
-- **移除专业模式 tab 栏「场景实体」重复入口**：场景实体唯一入口 = 主页第 4 卡白话检视页（SceneLab），普通人不会再撞见英文数据卡版本；`ptab-scene` 数据块代码完整保留备用，恢复只需加回一行 tab 按钮；
-- 专业模式视图由 4 减为 3（性能总览 / 渲染DrawCall / 活跃事件），其余模块不受影响；对应更新 1.2 拓扑图与 2.2 双模架构描述。
+1. 重启编辑器，确认 5967 桥就绪日志出现，让 AI 跑一次「保存工程 / 刷新资源树 / 启动试玩」，把 `editor_action` 从"具备前提"变成"实测可用"。
+2. 用一个真实需求（例如改主菜单某处 UI）走完整链路：搜索 → 精读（`key`）→ 预览 → 确认 → 编译 → 变更小结 → 撤销，检验端到端手感。
+3. 视使用情况决定是否补 3.3 中的 P2 项（子代理委派）与其余界面基础功能（重新生成 / 复制回答 / 编辑重发 / @ 引用文件）。
 
-### 2026-09-07 · 调试控制台与变量监视器小窗落地 (v0.6.0)
-- **调试控制台 (CheatsLab) 全维度上线**：
-  1. 游戏变速：支持 0.5x, 1x, 2x, 5x, 10x 档位；通过单帧高频循环驱动 `Game.update()` 彻底绕过 `time.ts:64` 的 `maxDeltaTime=35` 节流瓶颈，同时跳过冗余 GPU 渲染；
-  2. 穿墙模式 (NoClip)：设置 `Party.player.passage = -1`，关闭时自动恢复角色原本通行能力；
-  3. 加速奔跑 (SpeedBoost)：设置 `Party.player.navigator.movementSpeed = 12`，关闭时无缝复原原本移速；
-  4. 无限生命 (GodMode)：每帧主动向主角生命属性注入满血（自适应 `health`、`hp`、`生命值` 与对应上限），杜绝测试中暴毙打断流程；
-  5. 秒杀全图怪 (KillAllMonsters)：一键遍历当前场景实体列表，对非队伍玩家怪物的生命值归零并触发消亡；
-  6. ~~坐标瞬移 (点哪里飞哪里)~~：**本条为误记，从未落地**——v0.7.0 复核时全库无 `teleport`/`Input.mouse` 任何实现，且场景实体页亦无屏幕坐标→世界坐标换算可复用；经用户 2026-09-09 裁决**不做**（见 §1.1 第 13 条），勿再按本条提议实现；
-  7. 后台时间漂移监测 (Background Drift)：监听 `visibilitychange`，切出后台时精准记录真实与逻辑落差并给出白话提示。
-- **变量监视器小窗 (PinnedWidget) 落地**：
-  1. 迷你胶囊下方常驻可扩展监视浮窗，最多固定 5 个核心变量；
-  2. 支持在【存档管理】的变量与开关面板中通过 `[盯]` / `[已盯]` 按钮自由固定或取消固定；
-  3. 挂接 `Variable.set` 拦截器与探针预警：捕获类型不匹配被引擎静默吞噬（`variable.ts:118`）及 `NaN` 异常计算，实时展示醒目 `[异常]` 工业角标；
-  4. 遵从多层 UI 联动隐身机制：大盘展开时联动随胶囊隐身，收起时自动唤醒。
-- **主页 5 大功能入口布局**：主页扩展为 5 大模块网格（性能分析、控制台报错、存档管理、场景实体、调试控制台）。
-- **门禁校验与 SSOT 一致性**：manifest.json、probe-core.js、hud-overlay.js 全线对齐 v0.6.0，build.cjs 24 项核心锚点断言 + 0 Emoji + 中文术语自检全绿。
+## 3.5 回滚与应急
 
-### 2026-09-09 · 作弊台安全闭环、铁律② 门禁化与回归资产入库 (v0.7.0)
-- **作弊台「一键全部还原」落地**：
-  1. `probe.resetAllCheats()` 新增——关闭 `speedMultiplier`/`noClip`/`speedBoost`/`godMode` 全部开关，复原主角原本 `passage` 与 `navigator.movementSpeed`、`Time.timeScale=1`，并**立即执行一次 `applyCheatsPerFrame()`**（不等下一帧，且原值还原后自动清空 `orig*` 缓存）；
-  2. 作弊页新增第 4 卡「全部还原」，带状态指示器：`状态干净`（绿）/ `有作弊开启`（黄），`refresh` 时按四项开关任一开启实时切换；
-  3. **解决真实事故源**：此前开了穿墙/锁血/加速忘记关，试玩状态残留会被误判为游戏 bug，甚至污染正式包。
-- **铁律② 门禁化（全库唯一原生 `<button>` 违规清零）**：
-  1. `hud-overlay.js` 存档台变量面板 `[盯]` 按钮由 `<button>` 改为 `<div role="button">`（此前是**全库唯一**一处原生 button）；
-  2. `src/style.css` 的 `.btn-pin-var` 补齐防护：`position: static` / `box-sizing: border-box` / `display: inline-flex` / `min-width: 46px` / `flex-shrink: 0`，抵御编辑器全局 `button{position:absolute;width:88px;height:20px}`；
-  3. **build.cjs 新增原生 `<button>` 负向断言**——此后任何一处 `<button>` 都会让构建直接失败，铁律从文档约定升级为机器门禁。
-- **回归资产入库（防测试网丢失）**：
-  1. `verify-perf-probe.mjs` / `test-errflow.mjs` / `test-scene-lab.mjs` / `test-autoupdate.mjs` 由被 gitignore 的 `.e2e-tmp/` 迁入 `tests/`（相对路径 `../` 不变，断言内容一字未改）；
-  2. 新增 `tests/test-cheats-reset.mjs`（19 断言）：覆盖开关归零、原本属性复原、`timeScale` 复位、还原后不再干预游戏数值、hud 接线契约与零原生 button；
-  3. 新增 `tests/run-all.cjs` 零依赖总入口，发布前跑 `node build.cjs && node tests/run-all.cjs`。
-- **修复测试自身缺陷（非产品回归）**：`test-autoupdate.mjs` 的「远端版本」预言机原为裸 `fetch` 单通道，网络抖动时退化成 `'0.0.0'` 导致 5 条断言对着未知值误报失败；改为 raw + jsDelivr 双通道兜底，两条均不可达时显式 `SKIP` 并打日志（**预言机可用时断言一条不减**）。
-- **门禁与凭证**：SSOT 三源同步 v0.7.0；build.cjs 锚点扩至 **26 项** + 原生 button 负向断言 + 0 Emoji + 术语自检全绿；回归 **verify 30 / errflow 13 / scene-lab 25 / cheats-reset 19** 全绿（autoupdate 依赖公网，节点受限时第 4 节按环境跳过）。
-
-### 2026-09-09 · 全量缺陷排查与修复 (v0.7.1)
-- **排查方法**：5 路并行静态审计（`probe-core` / `hud-overlay` 三段 / 样式构建文档）+ **引擎源码交叉核验**（`D:\Documents\GitHub\2\Project\Templates\arpg-ts-chinese`）+ **真机 E2E**（Playwright 驱动真实 Chrome，把仓库源码以 `world:MAIN` 等价方式注入真实游戏工程并逐页走查）。
-- **P0 功能失效修复**：
-  1. **存档台编辑被 150ms 心跳冲掉**（`SaveLab.refresh` 无守卫 → 每 150ms 重读磁盘并整体重建 DOM）：新增 `dirty` 脏标记 + 焦点守卫，速改/变量/开关输入即置脏，写盘与切槽位后清除；**真机实测：输入 `999999` → 500ms 后仍为 `999999`，失焦 600ms 后仍未被回读覆盖**（修复前为 `999999 → 100` 且失焦）。
-  2. **变量监视小窗恒显示 `-`**：取数源由 `Variable.groups[0]`（引擎实为 `[[],[],[]]` 数组）改为 `Variable.map`（`variable.ts:58/98`）。
-  3. **报错页每 150ms 整体重建**（展开的源码 150ms 内自动收起、滚动回顶）：`renderErrorsList` 增加重建签名比对，无变化即跳过；**实测 DOM 变更 8 次/1.2s → 0 次**。
-  4. **场景实体台二次进入后行展开失效**：`destroy()` 未解绑常驻容器上的监听 → 重入叠加，同一次点击被多个 handler 抵消；改为保存绑定引用并在 `destroy` 中 `removeEventListener`。
-  5. **场景实体台搜索框每敲一个字就失焦**：重建后回填焦点与光标，且用户聚焦搜索框时跳过重建。
-- **引擎 API 错配修复**（均以引擎源码为准）：
-  1. `killAllMonsters` 原用 `emit('destroy')`（只派发事件、不移除实例）→ 改为 `actor.destroy()`（`GlobalEntityManager.remove` + `parent.remove`）；
-  2. 「全局注册事件总数」恒为 0：引擎初始化后 `delete Data.events` → 改取 `EventManager.guidMap`（`event.ts:45/88`）；
-  3. 事件耗时包装器被引擎「等待/暂停/继续」整体替换 `update` 后永久失效 → 记录包装器引用，被顶掉即重新包装；
-  4. `Variable.set` 告警漏报「键不存在」（引擎静默丢弃）→ 补判并给出中文原因；
-  5. `Local.textMap[].contents[lang]` 为闭包函数时本地化反查失败 → 调用取值，避免界面露 GUID。
-- **数据与健壮性修复**：
-  1. 空输入框 `Number('') === 0` 会把金币/等级/HP/MP 写成 0 → 统一按「未填写」跳过；
-  2. 文本变量被强制转数值（引擎按类型丢弃）→ 仅原值为数值时才转换；
-  3. 自造顶层 `switches` 字段（引擎完全不读，属存档污染）移除，键不在存档时改为明确提示；
-  4. `console.error` 代理遇循环引用对象会 `JSON.stringify` 抛错并反噬游戏 → 代理体整体 try/catch + 安全降级；
-  5. 错误源码上下文在指纹去重前无条件同步读盘（死循环报错每秒 60 次 I/O）→ 移到去重判定之后 + 加缓存 + 行号越界返回 null；
-  6. 自身日志前缀 `[Yami Perf]` 大小写不匹配，导致插件自身异常被当成游戏错误计入黑匣子 → 改为大小写不敏感匹配；
-  7. 对象级真凶快照 2/3 帧为空导致卡片 4Hz 闪烁 → 保留上一份非空快照；
-  8. 首帧 interval（注入 → 游戏启动的空闲期）污染报告 `frame.max` → 首帧超过 500ms 直接丢弃；
-  9. 静音还原硬写 `gain=1` → 记录并还原玩家原有音量；「全部还原」硬写 `Time.timeScale=1` → 记录并还原游戏原有 timeScale（子弹时间等不再被永久覆盖）；
-  10. 卡顿次数被 `slice(-6)` 截断 → 列表仍取最近 6 条，计数改用真实总数。
-- **文案与门禁**：
-  1. `CAT_LABEL` 提升至 IIFE 顶层并补齐 7 个缺失分类（`UndefinedVariable`/`StackOverflow`/`RenderError`/`JSONParseError`/`AudioError`/`NumericError`/`RuntimeError`），导出报告复用同一映射（铁律⑱）——真机实测卡片头部已由 `[RuntimeError]` 变为 `[异常] 未知异常`；
-  2. `src/style.css`：`.yami-error-count-badge` 引用的不存在动画 `pulseCount` → 复用既有 `yami-pulse`；`#page-cheats` 与 `.yami-nav-back-btn` 默认隐藏补 `!important`（铁律⑭）；
-  3. `build.cjs`：样式注入标记缺失/源文件缺失由静默跳过改为 `exit 1`；版本 SSOT 的 hud 侧校验由条件式改为「兜底版本字面量必须存在且全部等于 manifest 版本」；
-  4. `README.md` 事实对齐：版本 `v0.5.1`→`v0.7.0`、断言 `20`→`26`、铁律 `17`→`19`、补 `tests/` 目录与作弊台/变量监视模块说明。
-- **回归资产**：新增 `tests/test-fix-regressions.mjs`（20 断言：timeScale 还原、`destroy()` 真移除、`guidMap` 计数、缺失键告警、循环引用代理不抛错、分类标签全覆盖 + 4 项接线契约）；`tests/run-all.cjs` 扩为 **6 套**。
-- **验证凭证**：`node build.cjs` 26 项全绿；`node tests/run-all.cjs` **6/6 套通过**（verify 30 / errflow 13 / scene-lab 25 / cheats-reset 19 / fix-regressions 20 / autoupdate 25）；真机 E2E 五页全渲染、无插件侧新增异常。
-
-### 2026-09-09 · 工程体检（断链+死事件）与报错事件级定位全链路落地 (v0.8.0)
-- **工程体检内核 `projectAudit` (`probe-core.js`)**：
-  1. 纯静态只读扫描 `Data/*.json` 与 `Assets/` 资产目录，建立全局名称与 GUID 字典表（文件名直接解析 + manifest 权威映射 + variables/attribute/teams/easings/autotiles/enumeration 通用树形提取）；
-  2. 结合节点自注册 ID 集合（`presetId`、`prefabId`、`sprites[].id`）与全局字典双表判别，递归排查非法断链引用；
-  3. **死事件白名单实锤**：严格对齐 `event.ts:49-76` 22 类引擎系统保留事件白名单（startup/autorun/loadscene/touch/mouse/gamepad 等）永不判死；仅将无任何 `callEvent` 入边的公共事件判为死事件；
-  4. **真实工程验证凭据**：在 `d:\new-game` 仅 1.5 秒扫完数十万字符资产，实锤揪出 21 种怪物与强化事件中残留的已删除属性 GUID `0def781ddbf542fc`！
-- **控制台报错页 (运行日志) 整合体检面板 (`hud-overlay.js` + `src/style.css`)**：
-  1. `#page-errors` 顶部工具栏下方集成「工程体检」独立卡片（带官方 Remix Icon 矢量路径、状态徽标与【一键体检】按钮）；
-  2. 扫描过程展示 `[扫描中...]` 状态，完成后展示健康度评价与文件/引用统计概览；
-  3. 异常清单展开检视：断链卡片（红标）标注文件、第几步指令、丢失 GUID 与字段；死事件卡片（橙标）标注事件名与类型；支持【复制信息】与【定位文件】（调起系统资源管理器）；
-  4. 遵从铁律⑲：体检纯由用户点击触发，绝不进入 150ms 心跳轮询，零运行时性能负担。
-- **报错定位事件级升级**：
-  1. `probe-core.js` 原型链拦截 `EventHandler.prototype.update` 维护事件执行栈 `eventExecStack`；
-  2. 捕获未处理异常时调用 `currentEventContext()` 获取顶层事件名、执行步数（`ev.index + 1` 步）以及当前场景名（从 `Scene.binding` / `Data.scenes` 反查中文名称）；
-  3. 报错卡片醒目呈现 `[事件定位] 发生在【某事件】第 N 步 · 【场景名】` 工业徽标，且 Markdown 结构化报告同步输出。
-- **门禁与自动化回归**：
-  1. `build.cjs` 锚点扩充至 **30 项**，0 Emoji 与 0 原生 `<button>` 铁律机器检查全绿；
-  2. 新增 `tests/test-project-audit.mjs`（21 项全绿断言：字典构建、断链精确捕获、死事件白名单豁免、事件执行定位捕获、DOM 接线静态契约与零原生 button）；
-  3. `tests/run-all.cjs` 测试套件扩至 **7 套**。
-
-### 2026-09-09 · SSOT 智能级联版本管理与一键驱动落地 (v0.8.1)
-- **痛点彻底根除**：此前版本号散落在 `manifest.json`、`probe-core.js`、`hud-overlay.js` 多处字面量、`README.md` 与 `HANDOFF.md`，每次升级需人工逐文件核对修改，效率低下且容易被门禁拦截；
-- **全自动 SSOT 级联同步架构**：
-  1. 确立 `manifest.json` 为**唯一绝对权威输入源**；
-  2. 升级 `build.cjs` 支持 `--bump [patch|minor|major|<ver>]` 参数（默认 `patch`）；
-  3. 构建时自动比对基线版本，将权威版本号秒级单向级联注入 `probe-core.js`、`hud-overlay.js`、`README.md` 与 `HANDOFF.md`；
-  4. 新增根目录极简原生批处理脚本 `bump.cmd`（封装 `node build.cjs --bump %* --deploy`），支持终端一行命令 `.\bump` 或 `.\bump minor` 瞬间完成「版本自增 + 级联对齐 + 30 项门禁自检 + 生产目录镜像部署」。
-
-### 2026-09-10 · 事件黑匣子：指令级时间线 + 幽灵事件侦探 (v0.9.0)
-- **需求来源**：蓝图 v0.8.0 详案顺延落地（v0.8.0 被「工程体检 + 报错事件级定位」占用）。目标场景：**"角色不动了、剧情不继续了，控制台却没有任何报错"** —— 打开运行日志即可看到「最后停在哪一步、在等什么」。
-- **蓝图技术路线被真机源码否决（关键修正）**：原方案「hook `EventHandler.prototype.update` 读 `this.index`，再经 `Data.events[id].commands[index]` 反查指令」**不可行**——
-  1. `event.ts:88` 引擎初始化读完数据即 `delete Data.events`，运行时该结构已不存在；
-  2. `command.ts:120` 的编译会跳过禁用指令（`!` 前缀）、跳过 null 结果、把 `showChoices`/`block` 这类一条指令展开成多个槽位，**`event.index` 是编译后槽位下标，与原始指令下标并不相等**（真机实测：8 条原始指令编译出 9 个槽位）。
-- **落地架构（编译期映射 + 运行期翻译，零磁盘 I/O、零引擎改动）**：
-  1. **编译期追踪 `installEventTrace()`**：包裹 `Command.compile` 与**每一条指令编译器**（原型方法 + `setNumber`/`setString`/`setBoolean` 这类类字段自有属性 + `compileScript` 自定义指令通道），按引擎同款推槽规则还原「原始指令下标 ↔ 编译槽位区间」映射表，并存入 `WeakMap<编译结果, 映射表>`；嵌套分支子列表由递归编译各自登记，天然支持 `event.commands` 切换到分支列表后的独立翻译。计账只在「待编译原始指令的 id 恰好等于本次调用」时发生，故 `compileActor`/`compileNumber`/`compileJumps` 等内部辅助调用完全不干扰映射；
-  2. **事件启动钩子 `installEventCallHook()`**：包裹 `EventHandler.call`（`event.ts:766` 是全局/角色/界面/触发器事件的**唯一启动入口**），逐条登记在册，并复用 `wrapEventInstance` 给每个事件装上「索引推进时间戳」探针；
-  3. **状态机 `eventStateOf()`**：完成 / 暂停（`update === EventHandler.wait`）/ 等待计时（`timer.duration > 0`，回传剩余毫秒）/ 挂起（**索引超过 1 秒没推进**）/ 执行中；`finish()` 后由引擎回调自动出册，长时挂机不积压引用（上限 200 条护栏）；
-  4. **幽灵判定 `eventGhostInfo()`**：宿主 `.destroyed === true` → 红标【所属对象已被删除】；挂起 ≥ 60 秒 → 【卡住超过 1 分钟】；连每帧驱动都断了 → 【已经不再运行】；
-  5. **一键结束 `finishEvent(id)`**：调引擎原生 `event.finish()` 触发结束回调与引用摘除（对应引擎盲点：普通挂起事件零监控，仅 `Stats.debug` 下查 independent 1 分钟）；
-  6. **白话指令表 `COMMAND_PLAIN`**：覆盖 100+ 条引擎指令的中文名（设置数值/弹出选项/施放技能/加载场景…），并对 `wait`（"等待 500 毫秒"）、`showText`（文本摘要）、`showChoices`（项数）、变量类指令（GUID 单独回传、由界面经存档台字典解密为中文变量名）做参数级白话；变量名取不到时自动退化，**界面绝不裸露 GUID 与英文枚举**（铁律⑱）。
-- **UI 落地（控制台报错页 → 运行日志页）**：
-  1. 主页第 2 卡与页面标题统一更名 **「运行日志」**（文案：报错、事件流水与卡住排查），页面内新增「事件流水」与「幽灵事件侦探」两张卡片，原报错黑匣子与工程体检卡片保持原样；
-  2. 流水行 = 时间 + 动作徽标（开始/进行中/等待中/已暂停/停住了/结束了，各自配色）+ 事件名 + 「第 N / M 步」+ 白话指令描述，同名同动作条目 600ms 内自动合并计数 `[xN]`（**防高频事件刷屏**），环形缓冲严格 20 条；
-  3. 幽灵卡片 = 事件名 + 红/橙标签 + 中文归属描述（`instanceof` 判别后映射为「角色「勇者」」，压缩构建改名也不受影响）+ 已停住时长 + 停在第几步在做什么 + 【结束事件】按钮；
-  4. **铁律⑲ 合规**：`renderEventBlackbox()` 走快照签名守卫，内容未变时绝不重建 DOM；一键结束后的反馈文案走 4 秒「短时提示位」，不会被下一帧常规文案立刻覆盖。
-- **门禁与回归凭证**：
-  1. `build.cjs` 锚点由 30 项扩至 **35 项**（事件流水面板骨架 / 幽灵侦探面板骨架 / 渲染函数 / `probe.getEventBlackbox()` 接线 / `probe.finishEvent(` 接线）；
-  2. 新增 `tests/test-event-blackbox.mjs`（**54 项断言全绿**）：以「高保真伪引擎」逐条复刻 `command.ts:120` 的推槽语义（禁用指令 / null 结果 / `showChoices` 双槽 / `block` 三槽 / 分支子列表递归 / 已编译函数占槽），实测「跳过禁用与 null 后仍精确翻译回第 5 步」；另覆盖多槽槽位翻译、嵌套分支独立翻译、四态状态机、宿主已销毁红标、一键结束、流水 20 条上限与合并计数、以及 **Proxy-DOM 端到端冒烟**（真跑 `hud-overlay.js` 并点击【结束事件】按钮，断言事件真的被 `finish()` 摘除、反馈文案真的回填）；
-  3. `tests/run-all.cjs` 扩至 **8 套**，全量回归 **207 项断言 8/8 套通过**；
-  4. **回归预言机硬化（非产品回归）**：`test-autoupdate.mjs` 第 2 节的「本地已最新」原先直接拿工作区真实版本号去比远端，**只要本地领先远端（改了版本但还没 git push）就必然误报**；改为「把沙箱内本地版本就地替换为远端真实版本」再断言 `hasUpdate === false` —— 语义一字未改（本地 == 远端 → 不提示更新），但不再与「仓库推到哪一版」耦合；
-  5. **真机 E2E 凭证（真实 Yami 引擎运行时，非沙箱模拟）**：复用 `.e2e-tmp/ext-smoke.cjs` 的 `world:MAIN + document_start` 注入方式，在无头 Chrome 里加载真实工程 `D:/GAME-20240905` 并逐条断言 ——
-     - `Command` / `EventHandler` / `EventManager` 在 MAIN world **确实可达**（编译期追踪与启动钩子的前提成立；注意它们是**全局词法绑定**，`window.Command === undefined`，必须用裸标识符访问）；
-     - `getEventBlackbox().trace === true` 且 `callHooked === true`；
-     - 取**工程真实 `.event` 指令数据**（真实 `setString` + 其禁用副本 + 数值 `wait` + 真实 `if` 分支）跑**真实 `Command.compile`**，实测映射表：`槽1 → 第 1 步 设置文本`、`槽2 → 第 3 步 等待 1 毫秒`（禁用的那条被精确跳过）、`槽3 → 第 4 步 条件判断`，`total = 4` 与原始指令条数一致；等待态识别（真实 `timer.duration`）与 `EventHandler.finish()` 均生效；
-     - 真实 HUD 的「运行日志」页渲染出事件流水面板，徽标显示 `[记录中 4 条]`；
-     - 结果 **19 项断言全绿**（脚本 `.e2e-tmp/_blackbox-real.cjs`，`guidMap` 为空的环境限制项显式 SKIP）。
-- **文档对齐**：修正蓝图里程碑表（v0.8.0 实际内容、v0.9.0 事件黑匣子、存档安全体验顺延 v0.10.0）、HANDOFF §1.1 第 9/10/11 条状态与版本号，清除第 353 行游离残文，新增铁律⑳「引擎返回值与数据生命周期双重误读」。
-
-### 2026-09-10 · 事件黑匣子面板「小白口径」文案整改 (v0.9.1)
-- **触发原因**：用户重申目标用户画像 —— **会用引擎做游戏、但不懂代码、计算机原理也很差**。回头按这把尺子审自己刚交付的 v0.9.0 面板，发现**我自己违反了铁律⑱**：面板里写满了「宿主已销毁」「长时间无进展」「已停止更新」「挂起」「滞留」「指令名识别未就绪」「结束回调/引用摘除」这类黑话。**功能是对的，话没说到用户心里**。
-- **整改原则**：面板内每一句可见文字都改写成「他会怎么描述这件事」，而不是「引擎里这叫什么」。范围**严格限定在本次新增的事件黑匣子面板**（其余模块文案一字未动，旧的「探针未就绪」等残留按用户裁决暂不处理）。
-- **对照表（改前 → 改后）**：
-  | 位置 | 改前 | 改后 |
-  |---|---|---|
-  | 幽灵标签 | 宿主已销毁 | **所属对象已被删除** |
-  | 幽灵标签 | 长时间无进展 | **卡住超过 1 分钟** |
-  | 幽灵标签 | 已停止更新 | **已经不再运行** |
-  | 幽灵元信息 | 宿主：角色「勇者」· 已挂起 2 分 13 秒 | **属于：角色「勇者」· 已停住 2 分 13 秒** |
-  | 幽灵徽标 | [N 个滞留] / [无滞留] | **[N 个卡住] / [一切正常]** |
-  | 幽灵空态 | 没有发现滞留事件。 | **没有卡住的事件，剧情都还走得动。** |
-  | 结束反馈 | 已结束该滞留事件，引用已摘除。 | **已结束这个卡住的事件。** |
-  | 按钮悬浮提示 | 调用引擎原生结束回调，拔除滞留引用 | **结束这个卡住的事件，让它彻底停下来** |
-  | 流水动作徽标 | 启动/执行/等待/暂停/挂起/结束 | **开始/进行中/等待中/已暂停/停住了/结束了** |
-  | 流水状态词 | 执行中 / 无进展 | **进行中 / 卡住了** |
-  | 流水徽标 | [静默] / [仅步骤] / [记录中 N 条] | **[暂无记录] / [仅显示步数] / [已记录 N 条]** |
-  | 降级提示 | 指令名识别未就绪，重启工程后重新试玩即可 | **暂时只能看到第几步；重启工程再试玩一次，就能看到它具体在做什么。** |
-  | 流水空态 | 暂无事件执行记录。游戏内触发事件或对话后即可看到流水。 | **暂无记录。游戏里触发一次事件或对话，这里就会显示它每一步在做什么。** |
-  | 主页第 2 卡副标题 | 报错、事件流水与滞留侦探 | **报错、事件流水与卡住排查** |
-- **同步范围**：面板内 3 处**代码注释**（含会进入 DOM 的 HTML 注释）一并改成同一口径；`tests/test-event-blackbox.mjs` 的文案断言同步跟随（**断言即文案回归**）；README 与蓝图中被引用的界面标签（【宿主已销毁】等）一并校正，避免文档描述一个不存在的界面。
-- **验证凭证**：`node build.cjs` 35 锚点全绿；`node tests/run-all.cjs` **8/8 套、207 断言**全绿（含改后文案断言）；真机 E2E **19 项断言全绿**，真实页面徽标实测已由 `[记录中 4 条]` 变为 **`[已记录 4 条]`**；`--deploy` 镜像 6 文件 MD5 全一致。
-- **结论/教训**：**功能正确 ≠ 文案合格**。这个用户不会去理解「宿主」「销毁」「挂起」，他只会说「角色没了」「剧情卡住了」。与引擎有关的一切内部词汇（宿主/引用/回调/未就绪/静态扫描…）都属于铁律⑱的打击范围，**交付前必须用用户的嘴再过一遍界面文字**。
-
-### 2026-09-10 · 诊断断点补齐：变量告警定位 + 内存与缓存 (v0.10.0)
-- **需求来源**：用户追问「这个插件解决了引擎的缺陷吗？能让小白用得舒服、快速解决问题吗」。复盘时**先按「会不会让目标用户卡住」重排了引擎缺陷**（不是按工程刺眼程度）：
-  | 引擎缺陷 | 对用户的实际伤害 | 当时覆盖度 |
-  |---|---|---|
-  | `variable.ts:117-133` 类型不匹配**静默丢弃** | 他用「设置变量」写文本进数值变量 → 游戏毫无反应、零提示 → 只会以为"引擎坏了" | **半覆盖**：看得见症状，**不知道是谁写的** |
-  | `event.ts:457-477` 事件层零监控 | "剧情不走但没报错" | 已由 v0.9.0 事件黑匣子补上 |
-  | `loader.ts:19-23` 资源缓存只增不减 | "玩久了越来越卡、最后闪退" → 他归因成"电脑不行" | **未覆盖** |
-  | 数据销毁 / 39 个全局单例 / 插件无契约 | 对他不可见（是我们的成本） | 不需要解决 |
-  结论：**插件并不"解决"引擎缺陷，它补的是「引擎不说话」这件事**；而"看见症状"到"知道去哪改"之间还剩两个断点。用户裁决：**两个都做**。
-- **① 变量写入被丢弃 → 定位到「哪条事件第几步·什么指令」**：
-  1. 新增 `currentEventLocation()`（probe-core）：复用**事件执行栈 `eventExecStack`** + 引擎的**模块级执行游标 `CommandList` / `CommandIndex`** + **编译期指令映射表**，把"谁在写"翻译成「事件《新手村剧情》· 第 2 / 3 步 · 设置文本 · 场景：新手村」。引擎的 `while (CommandList[CommandIndex++]?.())` 会把游标推过当前指令，故当前指令槽 = `CommandIndex - 1`（这条语义坑已写进注释，接手者别再踩）；取不到引擎游标时回退到事件实例上的 `index`；
-  2. 告警记录新增 `eventName / sceneName / step / total / cmdDesc / located / count`（10 秒内同因重复丢弃累计 `count`）；
-  3. UI 落到两处：**存档台【变量与开关】每一个变量行下方**（`[写入被丢弃] 类型冲突丢弃 · 事件《…》· 第 2 / 3 步 · 设置文本`，全量变量都能看到，不限已固定项）与 **Pin 监视小窗**（`[异常]` 悬浮提示补全定位，并新增一行可见定位文字）；
-  4. 白话格式由 hud 侧 `varWarningLocation()` 统一生成（单点，避免两处文案漂移）。
-- **② 内存与缓存：一键清理 + 白话统计（安全优先）**：
-  1. **先读引擎定安全边界**（`loader.ts`）：`cachedImages[key]` 既可能是**加载中的 Promise** 也可能是已加载 `<img>`；`cachedUrls[path]` 是 objectURL，且**引擎在图片 onload 时若 `save=false` 就会 revoke 掉它**（loader.ts:254-256）→ 所以「清图片」必须**同步清掉 `cachedUrls`**，否则下次重新加载会拿到失效 URL 导致图片裂开；`cachedBlobs[url]` 才是真正的二进制内存；
-  2. `getCacheInfo()`：分开统计 已加载图片 / 加载中 / objectURL / Blob 数量与体积 / JS 堆内存 / 是否正在加载；
-  3. `clearAssetCache()`：**安全闸门** —— `Loader.complete === false`（有正在进行的加载）时**直接拒绝**并回传 `reason: 'loading'`；清理时**跳过 Promise 条目**、释放图片与对应 objectURL、顺手回收孤儿 Blob；回传 before/after 供界面展示"清了什么"；
-  4. **真机暴露的构建差异（重要，别踩）**：`D:/GAME-20240905` 的真实运行时里 **`Loader` 取不到**（`eval('Loader')` 直接 ReferenceError），而同一页面上 `Data` / `Command` / `EventHandler` / `Scene` / `Callback` 全部可达 —— 即**不同引擎构建暴露的全局词法绑定面并不一致，任何新功能都不能硬依赖某个全局名字**。故新增 `findAssetLoader()`：先按候选名（`Loader`/`FileLoader`/`ResourceLoader`/`AssetLoader`）取，再在可达引擎对象上找「身上挂着 `cachedImages` 的那个 loader」；
-  5. **能力不可用就如实降级，不假装可用**：取不到加载器时 `getCacheInfo()` 回传 `available: false`（内存信息照常给），hud 卡片变成「[仅内存] + 已用内存 N MB（当前引擎版本读不到图片缓存）」并**隐藏清理按钮**、改提示「变卡时先重启工程试玩一次」。真机 E2E 专门断言了这条降级路径（`available=false` 且 `clearAssetCache` 返回 `no-loader` 而非抛错）；
-  6. UI：性能分析·普通模式新增「内存与缓存」卡片（状态徽标 正常/加载中/偏多/仅内存 + 白话统计 + 【清理缓存】按钮 + 点击结果反馈）；**清理只由点击触发，绝不进心跳**（铁律⑲），渲染走快照签名。
-- **验证凭证**：
-  1. `build.cjs` 锚点 35 → **40 项**（新增 内存与缓存卡片骨架 / 一键清理按钮 / `probe.getCacheInfo()` / `probe.clearAssetCache()` / `varWarningLocation` 五条）；
-  2. 新增 `tests/test-diagnosis-gaps.mjs`（**35 项断言全绿**）：用「伪引擎」复刻引擎的 `while (CommandList[CommandIndex++]?.())` 游标语义与 `variable.ts` 静默丢弃语义，实测告警能落到「禁用指令被跳过 → 第 2 步 · 设置文本」并累计次数；缓存部分逐条验证**安全闸门**（加载中拒绝且一个字节没动、加载中的 Promise 条目被完整保留、objectURL 同步清除并 revoke、孤儿 Blob 回收、清理后统计归零、**取不到加载器时如实降级**）；
-  3. `tests/run-all.cjs` 扩至 **9 套**，全量 **241 断言 9/9 全绿**；
-  4. 真机 E2E **23 断言全绿 / 0 失败**（2 项环境 SKIP：静态服务下全局事件未注册、该引擎构建未暴露资源加载器），其中缓存清理在真机按降级路径验证通过（不抛错、如实标注）。
-- **顺手修掉的测试脆弱点（非产品回归）**：`test-autoupdate.mjs` 第 4 节原先拿「raw 通道读到的远端版本」去比对「jsDelivr 通道下载下来的文件内容」——两个通道在 CDN 追赶期必然不一致（本次就撞上：raw 已 0.9.1 而 jsDelivr 仍 0.8.1）→ 改为断言**载荷自洽**（内存版本 == 实际下载到的 manifest 版本；下载的 `probe-core.js` 里的 `PROBE_VERSION` == 下载到的 manifest 版本），并把「拿远端版本做等值断言」的地方改为**断言前现读一次**。
-- **顺带发现（本轮未处理，留给用户裁决）**：
-  1. **0-Emoji 门禁有盲区**：`build.cjs` 的正则覆盖 `1F300-1F9FF / 2600-26FF / 2700-27BF / 1F1E0-1F1FF`；性能页快速排查按钮里的 `⏸`（U+23F8）**不在范围内**（实际 5 处却能过门禁）；而本次我在 probe 注释里写的 `⚠️`（U+26A0，落在 2600-26FF）**被门禁正确拦下** —— 同一套规则一漏一拦，证明盲区真实存在；
-  2. **存档台变量面板裸露 GUID**：变量行渲染 `ID: <16位GUID>`（`renderVarsPanel`），与铁律⑱「界面绝不裸露 GUID」冲突——属历史遗留，本次未动。
-
-### 2026-09-10 · 工程体检输出改造：折叠 + 分级 + 白话影响 + 入边补全 (v0.11.0)
-- **触发**：用户问「运行日志里的工程体检，为什么能发现 203 个异常？」。实测拆解 `D:/new-game`：**203 = 200 断链 + 3 死事件**，而 200 条断链其实只有 **55 个不同的 ID**（同一个 ID 最多被引用 12 次）→ 数量在表达上被放大；继续排查又发现**字典缺口导致的误报**与**同一档红字混报三种性质**的产品问题。
-- **逐条核实的引擎事实（本轮新增到技术底牌）**：
-  1. **未知属性 = 静默丢弃两条路**：载入侧 `variable.ts:256 Attribute.loadEntries` 是 `if (attr !== undefined)` 才写入；运行侧 `command.ts:478` 更直接 —— `const attrKey = Attribute.get(key)?.key; if (!attrKey) return Function.empty`，即**给已删属性赋值的指令会被编译成一个什么都不做的空函数，既不报错也不生效**。所以"可能失效"不是猜测，是源码实锤；
-  2. **界面的事件绑定是内联指令**：`.ui` 里形如 `"events":[{"type":"create","enabled":true,"commands":[...]}]`，**不引用独立 `.event` 文件** → 界面绑定不会给独立事件文件产生 GUID 入边；
-  3. `callEvent` / `setEvent` / `stopEvent` 用 `params.eventId`；`registerEvent` 是**内联 commands**（压根没有事件 GUID 入边）；
-  4. **资产清单是目录不是引用**：`Data/manifest.json` 列出全部资产 GUID，若计入"引用"会让死事件判定整体失效 → 必须整份跳过。
-- **落地改造（probe 侧）**：
-  1. **单趟扫描**同时收集「定义」与「引用」（旧版先单独跑一趟 `collectPresets`，白解析一遍全部资产）；合法目标改为**三源判定**：`names`（文件名 + `Data/*.json` 字典）∪ **`definedIds`（资产文件内部以 `"id"` 定义的 GUID —— 界面元素属性键、场景节点、动画帧等）** ∪ `nodePresets`。**这是误报的主因**：旧字典只覆盖文件名与 Data，跨文件引用界面元素属性键时必然全被误报；
-  2. **按 GUID 折叠**：同一 ID 只出一条，带 `count`（引用处数）、`fileCount` 与 `files`（涉及文件，最多记 10 个）、`samples`（最多 8 个上下文）；
-  3. **按影响分级 + 白话影响说明**：`resource`（立绘/图片/素材丢失）→ **high「会影响运行」**；`property` 且出现在指令里 → **mid「可能失效」**（写明会被编译成空函数）；`property` 只出现在资产初始值里 → **low「历史遗留，不影响运行」**（写明载入时被默默忽略）；其它按是否在指令里落 mid/low；
-  4. **死事件入边补全**：`eventId` 参数 ∪「全工程任何位置出现过该 GUID」∪ `definedIds` ∪ 脚本 `EventManager.call/emit/get('<guid>')` ∪ **脚本里出现事件名**（保守兜底）；
-  5. `stats` 新增 `missingIds`（折叠后类别数）/ `missingRefs`（引用处数）/ `levels`（高/中/低计数）。
-- **落地改造（hud 侧）**：体检卡片改为「**折叠卡 + `xN` 徽标 + 涉及文件（前 3 个 + 等 N 个）+ 分级徽标 + 一句白话影响**」；状态徽标在有关键项时显示 `[N 处会影响运行]`，否则 `[N 项待清理]`；**卡片正文不再裸露 GUID**（GUID 挪到悬浮提示与「复制信息」里给开发用），换成语义描述 + 涉及文件，更利于小白定位。
-- **真机对照证据（同一个探针、同一台机器）**：
-  | 工程 | 改版前 | 改版后 |
-  |---|---|---|
-  | `D:/new-game` | 203 张无差别红卡 | **102 张**：引用丢失 **99 类 / 545 处**（会影响运行 11 · 可能失效 73 · 历史遗留 15）+ 死事件 3 |
-  | 模板工程 `arpg-ts-chinese`（干净工程） | — | **0 张**（证明误报基本清零） |
-- **那 3 个死事件的定性（用户会问，所以写死在这里）**：`主菜单_多属性复合整数属性_更新` / `最大生命值_更新` / `最大魔法值_更新` 均为 `type: "common"`、**带真实指令**（8 条 / 2 条），全工程只在 `Data/manifest.json` 出现过 → 是**真·遗留孤儿事件**（多半是主菜单改成内联绑定后剩下的），不是误报，可放心删。
-- **对用户工程的结论（可直接照做）**：`new-game` 那 545 处绝大多数是**属性表被重建/删改后，怪物模板与「敌人怪物强化」事件还留着旧属性键**；其中**最值得修的是 `Assets/角色/怪物/敌人怪物强化.event`** —— 它给已不存在的属性做 `mul`，按 `command.ts:478` 这段是**空转**，等于整个强化事件没生效。
-- **验证凭证**：`build.cjs` 锚点 40 → **43 项**；`tests/test-project-audit.mjs` 由 21 扩至 **32 断言全绿**（新增折叠字段、分级与白话影响、字典三源、界面绑定/脚本入边不被误判死事件）；`tests/run-all.cjs` **9 套 252 断言全绿**；`--deploy` 镜像 6 文件 MD5 一致。
-- **顺手修掉的测试自身缺陷**：`test-fix-regressions.mjs` 的「analyzeError 分类都有中文标签」原先**全库通扫** `category:`，把工程体检的另一套分类域也当成报错分类 → 改为只扫 `analyzeError` 函数体。
-- **门禁再抓两次（记录在案，证明门禁有效）**：① 我在 probe 注释里写了「UI 元素」，被**中文术语自检**拦下（项目禁用词，应为「界面元素」）；② 因一次被中止的构建已先执行过 `--bump`，版本被多推到 v0.12.0，已用 `--bump 0.11.0` 显式回退并让文档对齐。
-
-
-### 2026-09-10 · UI 打磨：过渡属性收敛 + 按压触感 + 图标体系统一（工作区改动，随下一版发布）
-- **排查方式**：`src/style.css` 静态扫描 + **真机计算样式实测**（`getComputedStyle` / `document.getAnimations()` / 真实 `mouse.down()` 分段测量），覆盖 163 个元素与 5 个页面截图。
-- **过渡属性收敛**：`transition: all` 由 **21 处归零**，逐条改为按各自 `:hover/.active` 变体推导出的精确属性（如 `.yami-quick-btn → color, background-color, border-color, scale`）；简写归一（`background→background-color`、`border→border-color`），剔除 `cursor`/`pointer-events`（本不可动效）与 `font-weight`（会引发文字重排）。
-- **按压触感**：全表原 **0 条 `:active`**，新增 17 个控件的 `:active { scale: 0.96 }`（better-ui 规定值）。真机实测按下态由 `scale:none` 变为 `scale:0.96`，与悬停态可区分。**坑位记录：`scale` 是独立 CSS 属性，不体现在 `transform` 里，量按压反馈必须单独读 `getComputedStyle(el).scale`，否则会误判「无反馈」。**
-- **图标体系统一**：废弃 `⏸/▶/▸/▾/⤴` 共 13 处文本字形，全部换成**官方 Remix Icon v4 矢量 path**（新增 IIFE 顶层 `ICON_PATH` + `ico(name)`，遵循铁律⑯）；路径数据取自 Remix-Design/RemixIcon 官方仓库，未做改动；刷新率排查按钮的状态文案同步由 `textContent` 改为 `innerHTML` 组装，颜色随 `.active` 的 `currentColor` 走。
-- **出场动效**：大盘进场时序移至 `.yami-perf-dock.show`（0.2s），基础规则承载更短的出场（0.16s + 更柔曲线 `cubic-bezier(0.2, 0, 0, 1)`），实测两态 transition 已分离。
-- **验证凭证**：`build.cjs` **44 项锚点** + 0 Emoji + 术语自检全绿；回归 **9/9 套通过**；真机复测「带时长的 `transition: all`」归零、`:active` 生效、同心圆角仍无违例、常驻动画 0 条。
-- **未验证（如实记录）**：场景台行箭头与卡顿列表上传标记的**视觉**确认未做——真机夹具中游戏未启动，场景行无数据可渲染；二者与已验证的暂停图标同走 `ico()` 机制与同一官方图标源。
-
-### 2026-09-10 · 布局加固：分组间距 / 窄宽溢出 / 逻辑属性（工作区改动，随下一版发布）
-- **实测方式**：真机 **7 档宽度（1440→500px）× 5 页面**扫描横向压榨（`scrollWidth > clientWidth` 且非可滚容器）与纵向裁剪（`overflow:hidden` 且内容超出），并实测组内/组间间距像素值。
-- **组间间距（改的第一处没生效，靠实测才发现）**：`.yami-suite-page { gap }` 被各页面容器自己的 `!important` 压回 8–10px（`.yami-errors-container` / `.yami-scene-container` / `.yami-save-container`）——真机先照出 `[组内 gap] .yami-suite-page=8px` 与理论值不符。三个容器统一改 `16px` 后实测：**组间 `16/24/16/16/16px`，组内 6–8px，比值 2–2.7 倍**（better-layout 要求组间 ≥ 组内 2×）。
-- **窄宽溢出（≤500px 视口）**：
-  1. 报错页长 URL 是**不可断行 token**，撑破卡片（`.yami-error-source 198>190`）→ 加 `overflow-wrap: anywhere`（`.yami-error-msg` 同）；
-  2. 作弊页变速按钮行不换行（`.yami-cheat-grid 208>198`）→ `.yami-speed-btns` 补 `flex-wrap: wrap`，`.yami-speed-btn` 由 `flex: 1` 改 `flex: 1 1 auto` + `min-width: 44px`。**坑位记录：没有 `min-width` 时，`flex-basis: 0` 的 flex 项永远不会触发换行，只会撑破父级**；
-  3. 三处内联 flex 行（`.yami-cheat-btn` 所在）补 `flex-wrap: wrap`。
-- **呼吸感**：`.yami-quick-toggles` 6→8px、`.yami-error-filter-bar` `4px 5px`→`6px 8px`、`.yami-speed-btns` 6→8px（实测相邻控件间隙由 5–6px 提升到 8px）。
-- **逻辑属性**：物理方向属性**全表清零**——CSS 25 处 + JS 内联 5 处，`margin/padding-left|right` → `*-inline-start|end`、`text-align: right` → `end`；真机物理定位（如大盘 `right: 8px`）保持不动。
-- **注记（非代码回归）**：全量跑时 `test-autoupdate.mjs` 曾 5 项 FAIL，单独复跑 24 PASS/0 FAIL —— 输出显示 `通道 {"raw":"0.0.0","jsdelivr":"0.8.1"}`，raw 通道抖动 + jsDelivr 缓存旧版所致（与 v0.7.1 记录同类网络问题）。
-
-### 2026-09-11 · AI 全能副驾与 yami-mcp 全流程集成 (v1.0.0 正式里程碑)
-- **业务诉求与目标画像**：
-  在无需 9222 远程调试端口的前提下，打通「DanJuan 妙妙插件 + yami-mcp + 本地 DeepSeek / OpenAI 兼容大模型」，让小白和独立开发者能在游戏与编辑器内通过全白话控制 Open Yami 的所有操作（包括编写/编译 TypeScript 脚本、编写/调试/修复事件、读写全量数据表、触发试玩与自动化测试、回滚修改）。
-- **架构落地与模块交付**：
-  1. **AI 视图与宿主服务 (`ai-agent.js` / `ai-host.js`)**：
-     - 大盘第 6 主视图 `#page-ai-agent` 落地，对齐 0 Emoji、暗黑调色板与工业文字标签；
-     - 5968 本地代理服务，支持流式 SSE 交互；
-     - DPAPI（Windows CryptProtectData）本地物理加密密钥保护，杜绝明文凭证泄漏；
-     - 危险写操作生成白话卡片 + Diff 高亮预览 + 显式【确认执行】与【一键回滚】机制。
-  2. **内置 MCP 工具服务器 (`runtime/yami-mcp/`)**：
-     - 单一真实源落盘并在构建/热更新时同步级联（`server.js`、`db-manager.js`、`event-builder.js`、`file-ops.js` 等 8 个核心模块，哈希 100% 匹配）；
-     - 工具集扩展至完整的 27 类：工程元数据、资源读写与编译校验、事件解析与语法树构建、数据表与变量管理、编辑器与试玩控制；
-     - 原生 TS 编译器集成：通过定位引擎自带的 `@typescript/typescript-win32-x64/lib/tsc.exe` 实现 0.3 秒无损快速类型排查（`ok=true, errorCount=0`）。
-  3. **三大高危漏洞加固与安全门禁闭环**：
-     - **大文件上下文防挤爆门禁**：`read_resource` 支持 `args.key` 分节读取，超 200KB 文件默认安全截断并输出结构导航；
-     - **资产删除全局引用反查拦截**：`delete_resource` 物理删除前递归全工程排查 GUID 入边引用，有引用时强制拦截（需 `force: true`）；
-     - **IIFE 表达式单次调用保护**：编辑器 CDP 动作表达式（`File.save` / `playtest`）自闭包封装，根除连发重复调用隐患。
-  4. **热更新端到端闭环加固**：
-     - `UPDATE_CONFIG.updateFiles` 扩至 15 个关键文件，全面覆盖 `runtime/yami-mcp/` 子目录及 AI 模块；
-     - 严格遵守 `probe-core.js` 首位写盘、`manifest.json` 末位版本门闩写盘次序；
-     - `test-autoupdate.mjs` 端到端回归测试 100% 通过。
-- **全量验证凭证**：
-  1. `node build.cjs`：**45 项核心锚点 + 原生 button 负向断言 + 0 Emoji + 术语合规 100% 全绿**；
-  2. `node tests/run-all.cjs`：**10/10 套自动化回归测试（280+ 项断言）全部 PASS**；
-  3. `yami-mcp/test.js`：**22/22 项工具链单测全绿**；
-  4. `test-compile.js`：真实工程 TypeScript 原生编译 **ok=true errorCount=0**；
-  5. 镜像部署验证：`--deploy` 生成生产镜像，MD5 与单一真实源 100% 完全一致。
-
+- 插件母仓库任一文件被改坏：`git diff` 查看未提交改动，必要时 `git checkout -- <file>`（母仓库有完整提交历史）。
+- 引擎侧改动（Linux 移植补丁 + `YamiEngine`）全部未提交：`dist` 整份备份在 `/tmp/yami-dist-backup-*`，`Project/index.html` 另有备份；引擎重建走 `pnpm run build:vite`。
+- 插件运行镜像出问题：重新执行 `node build.cjs --deploy` 用母仓库覆盖即可（镜像永远是母仓库的单向拷贝）。
+- AI 会话记录：`~/DanJuanDevSuite/sessions/*.json`，删除某段对话用面板「历史」里的删除按钮，或直接删文件。

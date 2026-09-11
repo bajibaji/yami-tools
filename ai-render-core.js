@@ -11,8 +11,12 @@
  *     ③ 单行预览与历史窗口的取值规则。
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.YamiAiRenderCore = factory();
+  const api = factory();
+  // 两边都要挂，不能二选一：Electron 渲染进程里 module 与 window 同时存在，
+  // 只走 CommonJS 分支的话 window.YamiAiRenderCore 永远是 undefined，
+  // 依赖它的前端就一个字都渲染不出来（实测踩过）。
+  if (typeof module === 'object' && module && module.exports) module.exports = api;
+  if (root) root.YamiAiRenderCore = api;
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 

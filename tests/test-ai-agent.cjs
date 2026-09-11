@@ -202,6 +202,16 @@ async function main() {
     assert.equal(urlAsKey.data.ok, false, '把网址当密钥必须当场拒绝')
     assert.match(String(urlAsKey.data.error), /填的是网址/, urlAsKey.data.error)
 
+    const viewSaved = await request('/quick-config', 'POST', { thinkingView: 'expand' })
+    assert.equal(viewSaved.data.thinkingView, 'expand', '思考过程显示必须能存进宿主配置：' + JSON.stringify(viewSaved.data))
+    const viewReload = await request('/config')
+    assert.equal(viewReload.data.thinkingView, 'expand', '重新读配置要还是用户选的那一档')
+    const viewBad = await request('/quick-config', 'POST', { thinkingView: 'nonsense' })
+    assert.equal(viewBad.data.thinkingView, 'expand', '非法值必须被忽略，不能把用户的选择冲掉')
+    const viewBack = await request('/quick-config', 'POST', { thinkingView: 'preview' })
+    assert.equal(viewBack.data.thinkingView, 'preview', '还能切回去')
+    console.log('思考显示偏好: 写入 / 读回 / 拒绝非法值 全部通过')
+
     const keyState = await request('/config')
     assert.ok(typeof keyState.data.keyTail === 'string', '配置要回报密钥尾号，供面板显示"已保存····abcd"')
     console.log('连接体检: /test-connection 通过 / 错误密钥如实报错 / 网址当密钥被拒 全部通过')
@@ -250,7 +260,7 @@ async function main() {
     assert.ok(/\.yami-ai-thinking\b/.test(styleSource) && /\.yami-ai-thinking-body\b/.test(styleSource), '思考块样式必须落到 style.css')
     assert.ok(/finalizeThinking\(\)/.test(agentSource), '正文开始时必须给思考块收尾')
     assert.ok(/let currentThinkingEl = null/.test(agentSource) && /let thinkingStartedAt = 0/.test(agentSource), '思考块状态必须显式声明（严格模式下会抛错）')
-    assert.ok(/includes\(saved\) \? saved : 'preview'/.test(agentSource), '思考过程默认单行预览（想看全文点开，或到设置里切「展开」）')
+    assert.ok(/state\.thinkingView \|\| 'preview'/.test(agentSource), '思考过程默认单行预览（想看全文点开，或到设置里切「展开」）')
     assert.ok(/danjuan-ai-thinking-view/.test(agentSource), '思考显示方式必须落盘记住')
     assert.ok(/>展开<[\s\S]*>单行预览<[\s\S]*>折叠</.test(agentSource), '思考显示方式必须是 展开 / 单行预览 / 折叠 三档')
     // 位置契约：思考显示属于「设置」，不该再挂在输入框下方的快捷条里（用户明确要求）
@@ -290,15 +300,20 @@ async function main() {
     // 过程集中：思考与工具收进「执行过程」，正文干净；默认单行预览
     assert.ok(/function beginTurn\(/.test(agentSource) && /class = 'yami-ai-turn'|className = 'yami-ai-turn'/.test(agentSource), '每个回合要有独立容器')
     assert.ok(/function processArea\(/.test(agentSource) && /currentTurn\.process\.body|area\.body/.test(agentSource), '思考与工具步骤必须集中进过程区')
-    assert.ok(/includes\(saved\) \? saved : 'preview'/.test(agentSource), '思考默认单行预览，不再铺一大段灰字')
+    assert.ok(/state\.thinkingView \|\| 'preview'/.test(agentSource), '思考默认单行预览，不再铺一大段灰字')
     assert.ok(/\.yami-ai-process\b/.test(styleSource) && (/#yami-ai-send\.stop/.test(styleSource)), '过程区与停止键必须有样式')
     // 流式渲染性能：逐 token 必须按帧合并 + 增量追加（旧的每帧重设全文是 O(n²)，会把界面拖死）
     assert.ok(/window\.YamiAiRenderCore/.test(agentSource) && /createScheduler\(\)/.test(agentSource), '必须用渲染核心做帧合并')
     assert.ok(/scheduleRender\(/.test(agentSource) && /createTextBuffer\(\)/.test(agentSource), '片段必须走增量缓冲 + 按帧刷新')
-    assert.ok(!/bubble\.textContent = text\$/.test(agentSource), '不得再每帧重设全文')
+    assert.ok(!/text\$ \+= event\.content;[\s\S]{0,40}if \(bubble\) \{ bubble\.textContent = text\$/.test(agentSource), '不得再每帧重设全文（直写只允许出现在缺少渲染核心的兜底分支里）')
     assert.ok(!/reasoning\$ \+= event\.reasoning;[\s\S]{0,80}renderThinking\(reasoning\$\)/.test(agentSource), '思考也不得每个片段都整块重渲染')
     assert.ok(/historyWindow\(/.test(agentSource), '长会话必须只渲染最近若干条')
     assert.ok(/shouldStickToBottom/.test(agentSource), '滚动跟随必须先判断用户是否停在底部')
+    // 思考过程显示：本地存储 + 宿主配置双写，事件委托绑定（面板重建也不失效）
+    assert.ok(/function setThinkingView\(/.test(agentSource) && /localStorage\.setItem\('danjuan-ai-thinking-view'/.test(agentSource), '思考显示要写本地存储')
+    assert.ok(/request\('\/quick-config', \{ thinkingView: next \}\)/.test(agentSource), '同时要写宿主配置（本地存储不可写时靠它兜底）')
+    assert.ok(/settingsBox\.addEventListener\('change'/.test(agentSource), '改档要用事件委托绑定，别绑死在单个节点上')
+    assert.ok(/写不进去，已存到宿主配置/.test(agentSource), '本地存储写失败要如实回执')
     assert.ok(/已思考 /.test(agentSource), '思考块必须显示已思考时长与字数')
     console.log('前端接线检查: 流式 / 历史面板 / 上下文刻度 / 工具事件 / 思考过程显示 全部接上')
   } catch (error) {
