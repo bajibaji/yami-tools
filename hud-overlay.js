@@ -4140,7 +4140,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v0.11.0 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.0.0 (检查更新)</span>
         </div>
         <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
@@ -4327,7 +4327,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v0.11.0 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.0.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -7445,7 +7445,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '0.11.0';
+      const cur = (probe && probe.version) ? probe.version : '1.0.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -7502,7 +7502,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '0.11.0') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.0.0') + ')');
           refreshVersionBadge();
         }
       });

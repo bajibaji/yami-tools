@@ -914,6 +914,27 @@ async function callTool(name, args) {
       if (!fs.existsSync(abs)) return { ok: false, error: `文件不存在: ${rel}` }
       const stat = fs.statSync(abs)
       if (!stat.isFile()) return { ok: false, error: '暂不支持删除目录，请使用编辑器文件管理操作' }
+      const guid = parseGuidFromName(path.basename(rel))
+      if (guid && !args.force) {
+        const referencingFiles = []
+        for (const f of listResourceFiles()) {
+          if (f.path === rel || !DATA_TYPES.includes(f.type)) continue
+          const fAbs = path.join(ROOT, f.path)
+          try {
+            const fContent = fs.readFileSync(fAbs, 'utf8')
+            if (fContent.includes(guid)) referencingFiles.push(f.path)
+          } catch {}
+          if (referencingFiles.length >= 5) break
+        }
+        if (referencingFiles.length > 0) {
+          return {
+            ok: false,
+            hasReferences: true,
+            referencingFiles,
+            error: `该资源正被 ${referencingFiles.length} 个文件引用（如 ${referencingFiles[0]}），为防止工程损坏已被保护；如确认强制删除请传 force: true`
+          }
+        }
+      }
       const backupDir = path.join(ROOT, '.yami-mcp-backups')
       const backup = path.join(backupDir, `${Date.now()}-${path.basename(rel)}.deleted.bak`)
       const currentSha256 = sha256(fs.readFileSync(abs))
@@ -974,7 +995,26 @@ async function callTool(name, args) {
         return { ok: false, error: `不支持的文件类型: ${rel}（仅数据文件层 JSON 资源）` }
       }
       try {
-        return { ok: true, path: rel, content: JSON.parse(fs.readFileSync(abs, 'utf8')), sha256: sha256(fs.readFileSync(abs, 'utf8')) }
+        const raw = fs.readFileSync(abs, 'utf8')
+        const fullSha = sha256(raw)
+        const parsed = JSON.parse(raw)
+        if (args.key && parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          if (!(args.key in parsed)) return { ok: false, error: `文件中不存在指定的 key: ${args.key}` }
+          return { ok: true, path: rel, key: args.key, content: parsed[args.key], sha256: fullSha }
+        }
+        if (raw.length > 200000 && !args.forceFull) {
+          const keys = Object.keys(parsed)
+          return {
+            ok: true,
+            path: rel,
+            truncated: true,
+            sizeBytes: raw.length,
+            sha256: fullSha,
+            message: `文件体积较大 (${Math.round(raw.length / 1024)} KB)，已开启上下文截断保护。可传 key 参数精确定位子节，或传 forceFull=true 读取完整内容。`,
+            topLevelKeys: keys.slice(0, 50)
+          }
+        }
+        return { ok: true, path: rel, content: parsed, sha256: fullSha }
       } catch (e) {
         return { ok: false, error: `JSON 解析失败: ${e.message}` }
       }
@@ -1052,11 +1092,11 @@ async function callTool(name, args) {
       return await cdpClient.triggerPlaytest()
     case 'editor_action': {
       const expressions = {
-        save: "typeof File !== 'undefined' && File.save ? File.save(false).then ? File.save(false).then(() => ({ok:true, action:'save'})) : ({ok:true, action:'save'}) : ({ok:false, error:'File.save 不可用'})",
-        undo: "typeof UndoManager !== 'undefined' && UndoManager.undo ? (UndoManager.undo(), {ok:true, action:'undo'}) : ({ok:false, error:'UndoManager.undo 不可用'})",
-        redo: "typeof UndoManager !== 'undefined' && UndoManager.redo ? (UndoManager.redo(), {ok:true, action:'redo'}) : ({ok:false, error:'UndoManager.redo 不可用'})",
-        refresh: "typeof Directory !== 'undefined' && Directory.update ? Directory.update().then(() => ({ok:true, action:'refresh'})) : ({ok:false, error:'Directory.update 不可用'})",
-        playtest: "typeof Title !== 'undefined' && Title.playGame ? Title.playGame().then ? Title.playGame().then(() => ({ok:true, action:'playtest'})) : ({ok:true, action:'playtest'}) : ({ok:false, error:'Title.playGame 不可用'})"
+        save: "(() => { if (typeof File === 'undefined' || !File.save) return {ok:false, error:'File.save 不可用'}; const r = File.save(false); return Promise.resolve(r).then(() => ({ok:true, action:'save'})); })()",
+        undo: "(() => { if (typeof UndoManager === 'undefined' || !UndoManager.undo) return {ok:false, error:'UndoManager.undo 不可用'}; UndoManager.undo(); return {ok:true, action:'undo'}; })()",
+        redo: "(() => { if (typeof UndoManager === 'undefined' || !UndoManager.redo) return {ok:false, error:'UndoManager.redo 不可用'}; UndoManager.redo(); return {ok:true, action:'redo'}; })()",
+        refresh: "(() => { if (typeof Directory === 'undefined' || !Directory.update) return {ok:false, error:'Directory.update 不可用'}; return Promise.resolve(Directory.update()).then(() => ({ok:true, action:'refresh'})); })()",
+        playtest: "(() => { if (typeof Title === 'undefined' || !Title.playGame) return {ok:false, error:'Title.playGame 不可用'}; const r = Title.playGame(); return Promise.resolve(r).then(() => ({ok:true, action:'playtest'})); })()"
       }
       if (!expressions[args.action]) return { ok: false, error: `不支持的编辑器动作: ${args.action}` }
       const directActions = new Set(['save', 'undo', 'redo', 'refresh', 'playtest'])

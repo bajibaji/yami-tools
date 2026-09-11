@@ -1,0 +1,631 @@
+DanJuan妙妙插件 + yami-mcp + DeepSeek AI 全能副驾
+后续开发、验收与发布交接
+
+交接日期：2026-09-11
+交接状态：核心实现已经落地并由用户提交、推送；尚未完成最终真机全流程验收与正式版本发布。
+
+============================================================
+一、接手前必须知道的事实
+============================================================
+
+1. 必须用中文沟通。
+2. Open Yami 引擎源码只读，不要修改：
+   D:\Documents\GitHub\2
+3. DanJuan妙妙插件母仓库：
+   D:\Documents\GitHub\yami-tools
+   当前分支：extension
+   当前 HEAD：0a0a3d29b28333fe3cf82561a923c945d2690fd6
+   当前远端 origin/extension 与 HEAD 一致。
+4. 游戏工程与独立 yami-mcp 源码仓库：
+   D:\new-game
+   yami-mcp：D:\new-game\DANJUAN TOOLS\工具\yami-mcp
+   当前分支：20260902-更新引擎
+   当前 HEAD：f119e3ef2ab526e6c6c43c38d93bc0fa0801344b
+   当前远端分支与 HEAD 一致。
+5. 上述提交和推送是用户本人完成的。不要重写、回滚、压缩或重复提交这些历史。
+6. 当前两个仓库在最后一次检查时均为干净工作树。
+7. 插件安装/运行目录：
+   D:\Program Files\Open Yami RPG Editor\extension\yami-perf-extension
+   这里只是部署镜像，真实源码始终在 yami-tools 母仓库。
+8. 用户最终目标：
+   小白可以直接在 Open Yami 内使用自然语言，让大模型读取和修改游戏工程、写脚本、编事件、配置数据、控制编辑器和试玩，并且所有写操作可确认、可校验、可恢复。
+9. “所有用户可操作的操作”的验收定义：
+   - 工程内容操作优先使用结构化 MCP 工具；
+   - 当前打开的编辑器操作使用 Open Yami 原生 API；
+   - 没有结构化 API 的控件操作才使用语义选择器、输入和指针兜底；
+   - 试玩使用键盘和指针桥；
+   - 不要求机械复刻每一次鼠标轨迹，但最终工程状态和用户手动操作能达到的结果必须一致；
+   - 内置模型绝不开放任意 JavaScript eval。
+
+============================================================
+二、已经完成的架构
+============================================================
+
+最终链路：
+
+Open Yami 编辑器/试玩窗口
+  -> hud-overlay.js：原有 DanJuan 大盘与 Views 页面系统
+  -> ai-agent.js：AI 助手 UI、模型设置、对话、确认/取消
+  -> ai-host.js：隔离的本机 Agent Host
+       -> DeepSeek/OpenAI 兼容 HTTP API
+       -> 插件内置 yami-mcp 子进程（JSON-RPC stdio）
+            -> 工程文件与 TypeScript 编译器
+            -> 5967 编辑器动作桥
+            -> 5966 试玩运行时桥
+
+职责边界：
+
+1. hud-overlay.js
+   - 暴露 window.__DANJUAN_HUD_API__ 页面扩展点；
+   - AI 页面通过相同 Views 契约注册；
+   - 不承载模型和 MCP 业务逻辑。
+
+2. ai-agent.js
+   - 动态加入主页【AI 助手】入口；
+   - 提供模型地址、模型名、API Key、执行模式设置；
+   - 提供聊天、状态、等待确认、执行修改、取消修改、新对话；
+   - Enter 发送，Shift+Enter 换行；
+   - 自定义 div 按钮提供 role=button、tabindex=0、Enter/Space 激活；
+   - API Key 不保存在 localStorage。
+
+3. ai-host.js
+   - 监听 127.0.0.1:5968；
+   - 使用本机令牌保护所有请求；
+   - 调用 DeepSeek 或任意 OpenAI Chat Completions 兼容端点；
+   - 自动启动插件内置 yami-mcp；
+   - 模型最多连续执行 12 轮工具调用，防止失控循环；
+   - cdp_eval 不暴露给内置模型；
+   - 文件写操作永远要求确认；
+   - 编辑器/试玩操作在“自动模式”下可自动执行，文件修改仍必须确认；
+   - Windows 下 API Key 通过当前用户 DPAPI 加密后保存；
+   - 配置目录默认位于 %APPDATA%\DanJuanDevSuite；
+   - 模型响应和配置接口从不返回明文 API Key。
+
+4. 5966 试玩桥（probe-core.js）
+   - 只在真实游戏工程页面启动，不再让编辑器页面抢占端口；
+   - GET /live：性能、场景和运行状态；
+   - GET /report：完整诊断报告、错误与事件黑匣子；
+   - GET /token：只允许无 Origin 的本机 Node 客户端读取；
+   - POST /action：要求 x-yami-bridge-token；
+   - 允许的动作：键盘、指针、结束卡住事件、暂停诊断类别、恢复作弊状态；
+   - 不支持任意代码注入。
+
+5. 5967 编辑器桥（probe-core.js）
+   - 延迟等待 Open Yami 的 File/Data/Directory 全局对象就绪；
+   - GET /token：只允许本机 Node 客户端；
+   - POST /action：要求令牌；
+   - 固定动作：save、undo、redo、refresh、playtest；
+   - UI 动作：dumpUi、click、interact；
+   - interact 支持 input、select、click、move、down、up、drag；
+   - preflight 检查编辑器内同一资源是否有未保存修改；
+   - reload 在磁盘写入后按 Data 表/脚本/事件/场景/UI 类型刷新编辑器内存；
+   - 不开放任意 eval。
+
+6. 插件内置 yami-mcp
+   发布快照位于：
+   D:\Documents\GitHub\yami-tools\runtime\yami-mcp
+
+   独立源码位于：
+   D:\new-game\DANJUAN TOOLS\工具\yami-mcp
+
+   最后一次检查时以下 8 个文件 SHA-256 完全一致：
+   - server.js
+   - package.json
+   - modules/cdp-client.js
+   - modules/db-manager.js
+   - modules/editor-bridge.js
+   - modules/event-builder.js
+   - modules/file-ops.js
+   - modules/runtime-bridge.js
+
+============================================================
+三、yami-mcp 当前能力
+============================================================
+
+当前注册 27 个工具：
+
+资源与校验：
+1. list_resources
+2. read_resource
+3. validate_resource
+4. validate_project
+5. write_resource
+6. patch_resource
+7. delete_resource
+
+脚本：
+8. list_scripts
+9. parse_plugin_meta
+10. create_script
+11. read_script
+12. write_script
+13. compile_check
+14. generate_guid
+
+事件：
+15. list_event_commands
+16. get_event_command_examples
+17. append_event_commands
+
+Data 表：
+18. upsert_database_item
+
+编辑器：
+19. editor_action
+20. interact_editor
+21. dump_ui_hierarchy
+22. click_element
+23. trigger_playtest
+24. cdp_eval（仅外部 MCP 客户端可见，内置模型隐藏）
+
+试玩：
+25. get_runtime_state
+26. send_player_input
+27. send_player_pointer
+
+关键实现：
+
+1. 所有相对路径经过工程根包含检查，../../ 越界被拒绝。
+2. 写入使用临时文件 + 原文件备份 + 原子替换。
+3. 备份目录：当前工程根/.yami-mcp-backups。
+4. read_script/read_resource 返回 SHA-256。
+5. 确认写入时带 expectedSha256；若用户在预览后修改了文件，正式操作应拒绝覆盖。
+6. write_script 每次实际写入后强制运行真实 tsc；编译失败尝试自动恢复旧脚本。
+7. create_script：
+   - 禁止覆盖已有脚本；
+   - 自动更新 Data/plugins.json 或 Data/commands.json；
+   - 自动编译；
+   - 失败撤销脚本和注册表；
+   - 通知编辑器重载。
+8. compile_check 复用 Open Yami 自带平台原生编译器：
+   D:\Program Files\Open Yami RPG Editor\resources\app\node_modules\@typescript\typescript-win32-x64\lib\tsc.exe
+9. append_event_commands 已支持：
+   - comment/注释
+   - script/脚本
+   - wait/等待
+   - showText/显示文本/对话
+   - showChoices/显示选项/选项
+   - if/条件分支/如果
+   - callEvent/调用事件
+   - setNumber/设置数值
+   - setString/设置文本
+   - 自定义指令中文名到 GUID 映射
+   - choices/branches/commands/elseCommands/defaultCommands 递归装配
+10. 未知中文自定义指令会明确拒绝，不再将未知名称直接写进事件。
+11. list_event_commands 从 Open Yami 安装目录的 commands.json 读取 153 条内建指令目录。
+12. get_event_command_examples 从当前真实工程中提取指定指令的 params 样例。
+13. list_resources 已分页，默认 100 条，最大 500 条。
+14. upsert_database_item 实际支持 Data 表：
+   plugins、commands、teams、variables、attribute、enumeration、easings、autotiles、config、localization。
+15. 角色、技能、物品、装备、状态是 Assets 独立资源，不是 Data/actors.json；必须使用 read_resource + patch_resource/write_resource。
+16. variables.json 顶层数组结构已经修复，可更新现有变量，也可在根或指定父节点新增变量。
+
+============================================================
+四、已经执行过的验证
+============================================================
+
+以下是 2026-09-11 最后一次实测结果：
+
+1. MCP 语法和快速回归：通过
+
+   cd "D:\new-game\DANJUAN TOOLS\工具\yami-mcp"
+   node --check server.js
+   node --test test.js
+
+   结果：22/22 通过。
+
+   覆盖包括：
+   - MCP 握手和完整工具清单；
+   - 资源列表与读取；
+   - 单资源/全工程校验；
+   - dryRun；
+   - 路径越界拒绝；
+   - 指令目录和真实参数样例；
+   - 脚本读取、SHA-256 和元数据；
+   - 脚本模板；
+   - GUID；
+   - Data 表补丁；
+   - variables 顶层数组更新；
+   - 对话、选项、条件分支递归事件装配；
+   - 无 CDP/无试玩时的安全降级；
+   - 试玩键盘与指针失败路径。
+
+2. TypeScript 全工程编译：通过
+
+   cd "D:\new-game\DANJUAN TOOLS\工具\yami-mcp"
+   node test-compile.js
+
+   结果：ok=true，exitCode=0，errorCount=0。
+
+3. 插件构建门禁：通过
+
+   cd "D:\Documents\GitHub\yami-tools"
+   node build.cjs
+
+   结果：45 项锚点 + 0 Emoji + 术语 + 0 原生 button 门禁通过。
+
+4. Agent E2E：通过
+
+   cd "D:\Documents\GitHub\yami-tools"
+   node tests\test-ai-agent.cjs
+
+   结果：
+   - 5968 鉴权通过；
+   - 无令牌请求返回 401；
+   - API Key 经 DPAPI 加密且不回传；
+   - 本地伪 OpenAI 兼容模型成功驱动真实内置 MCP；
+   - 只读工具自动调用成功；
+   - 写操作停在审批状态；
+   - dryRun 阶段真实事件文件没有变化；
+   - 取消后真实事件文件保持原样。
+
+5. 插件全量测试：9/10 套通过，尚未全绿
+
+   cd "D:\Documents\GitHub\yami-tools"
+   node tests\run-all.cjs
+
+   已通过：
+   - 探针 30 项；
+   - 错误流 13 项；
+   - 场景台 25 项；
+   - 作弊还原 19 项；
+   - 缺陷回归 20 项；
+   - 工程体检 32 项；
+   - 事件黑匣子 54 项；
+   - 诊断断点 39 项；
+   - AI Agent E2E。
+
+   唯一失败：tests/test-autoupdate.mjs。
+   失败位置：performAutoUpdate 测试沙箱。
+   失败原因：生产代码新增了 path.dirname(targetPath) 用于创建 runtime/yami-mcp 子目录，但 mockPath 只有 join，没有 dirname。
+   当前错误：TypeError: path.dirname is not a function。
+   这是测试替身过时，不是生产逻辑应删除。
+
+6. 浏览器 UI 验收：只完成一半
+
+   使用真实 hud-overlay.js + ai-agent.js 的临时验收页：
+   D:\Documents\GitHub\yami-tools\.e2e-tmp\ai-ui-harness.html
+
+   已确认：
+   - DanJuan 首页正常渲染；
+   - AI 助手作为第 6 个入口出现；
+   - 入口拥有 button 语义和完整名称；
+   - 原有五个模块仍存在。
+
+   尚未确认：
+   - 点击进入 AI 页面；
+   - 设置区、聊天区和审批区视觉；
+   - 窄宽与 200% 缩放；
+   - 键盘 Tab/Enter/Space；
+   - 实际 Open Yami 真机页面。
+
+   临时浏览器自动化点击因侧栏位于测试浏览器可视区外缘而失败：
+   “No element found at point 1514,468”。
+   这不是业务断言通过，接手者必须继续真机验收。
+
+============================================================
+五、接手后必须先做的事情（按顺序）
+============================================================
+
+第一步：修复热更新回归测试，不要改生产逻辑迁就旧测试
+
+文件：
+D:\Documents\GitHub\yami-tools\tests\test-autoupdate.mjs
+
+需要修改：
+1. mockPath 增加 dirname，例如：
+   const mockPath = {
+     join: (...a) => a.join('/'),
+     dirname: (p) => String(p).replace(/[/\\][^/\\]+$/, '')
+   };
+2. mockFs 增加 mkdirSync 或确保已有可记录实现，因为生产更新器会递归创建目录。
+3. 不要再写死“下载 5 文件”和“进度 5 次”。
+4. 应从 probe-core.js 的 UPDATE_CONFIG.updateFiles 实际数量断言，或更新为当前完整文件数。
+5. 仍必须断言：
+   - probe-core.js 第一个；
+   - manifest.json 最后一个；
+   - ai-agent.js、ai-host.js 和 runtime/yami-mcp/server.js 在清单中；
+   - runtime 子目录创建；
+   - 进度次数等于 updateFiles 数量；
+   - manifest 仍是版本门闩。
+6. 重跑 node tests\run-all.cjs，必须达到 10/10。
+
+第二步：更新文档和版本事实
+
+当前问题：
+1. manifest.json 仍是 0.11.0。
+2. README.md/HANDOFF.md 没有 AI 助手和内置 MCP 的完整说明。
+3. yami-mcp README 仍写“共 18 项”，实际是 27 项。
+4. 测试说明仍可能写旧套数/旧断言数。
+
+必须更新：
+1. yami-tools/README.md：
+   - AI 助手功能；
+   - 首次设置流程；
+   - DeepSeek 云端与本地 OpenAI 兼容端点；
+   - 文件修改确认规则；
+   - DPAPI 密钥位置；
+   - 5966/5967/5968 端口职责；
+   - runtime/yami-mcp 文件结构；
+   - 新测试命令与结果。
+2. yami-tools/HANDOFF.md：
+   - 三层控制架构；
+   - Agent Host 生命周期；
+   - MCP 内置方式；
+   - 安全边界；
+   - 真机验收记录；
+   - 新踩坑：all_frames 抢端口、tsc.js panic、DPAPI 程序集、更新器目录递归。
+3. yami-mcp/README.md：
+   - 工具清单改为 27 项；
+   - 补 read_script/write_script/patch_resource/delete_resource；
+   - 补 list_event_commands/get_event_command_examples；
+   - 补 editor_action/interact_editor/send_player_pointer；
+   - 说明 cdp_eval 不暴露给内置模型；
+   - 说明原子写、备份、expectedSha256、编译回滚；
+   - 测试改为 22 项；
+   - compile_check 改成 tsc.exe，而不是安装包 tsc.js。
+4. 建议这是产品能力大升级，正式发布版本使用 1.0.0：
+   node build.cjs --bump 1.0.0
+   但必须在所有验收全绿后再执行。
+
+第三步：修复或确认以下潜在问题
+
+1. editor_action 的 CDP fallback 表达式里 playtest/save 写法可能调用两次：
+   当前三元表达式为了判断 .then 会再次调用 File.save()/Title.playGame()。
+   5967 正常时不会走这里，但 CDP fallback 可能重复执行。
+   应改成 IIFE，只调用一次并 Promise.resolve(result)。
+
+2. create_script 回滚需要再审计：
+   - Data 注册表写入成功后脚本编译失败，应恢复注册表备份；
+   - 当前逻辑已有恢复尝试，但需要用临时工程做“故意生成错误脚本”的真实测试；
+   - 验收必须确认脚本文件和 Data/commands.json 或 plugins.json 都恢复。
+
+3. write_script 编译失败回滚需要真实测试：
+   - 在临时工程复制一个脚本；
+   - 写入确定的 TS 语法错误；
+   - 断言工具返回失败；
+   - 断言文件 SHA-256 恢复为原值；
+   - 断言 .yami-mcp-backups 存在备份。
+
+4. write_resource/patch_resource/delete_resource 的 expectedSha256 并发保护需要真实测试：
+   - dryRun 获取 oldSha256；
+   - 人工改临时文件；
+   - 使用旧 SHA 正式执行；
+   - 必须返回 conflict=true 且不覆盖新内容。
+
+5. 全局 presetId 唯一性：
+   当前 validate_resource 主要保证单文件内唯一，validate_project 重点是 GUID/引用/manifest。
+   用户目标要求 scene/ui presetId 引用可靠，建议增加跨场景/同一资源范围内的明确验证，并以 Open Yami 的 Data.registerScenePresets/registerUiPresets 真实语义为准。
+
+6. 删除资源引用保护：
+   delete_resource 当前会备份，但还应在删除前检查引用入边。
+   若资源仍被引用，应默认拒绝，只有显式 force 且二次确认才能删除。
+   内置模型首版最好完全不提供 force。
+
+7. Agent 上下文尺寸：
+   read_resource 读取 Data/manifest.json 等大文件时可能返回巨量 JSON。
+   建议禁止 AI 直接读取完整 manifest，或给 read_resource 增加 JSON Pointer/字段选择/最大字符数。
+   list_resources 已分页，但 read_resource 还没有截断保护。
+
+8. ai-host 多实例：
+   编辑器和试玩窗口可能同时尝试启动 5968。
+   当前依赖端口占用后另一个窗口连接已有 Host。
+   必须真机验证：
+   - 编辑器先开 AI，再启动试玩；
+   - 试玩先打开 AI，再回编辑器；
+   - 关闭启动 Host 的窗口后，另一个窗口能自动重启 Host；
+   - 不出现会话丢失、令牌不一致和孤儿进程。
+
+9. AI 页面首次配置体验：
+   首次无 Key 时点击 AI 入口，最好自动展开设置区，而不是只显示“请配置模型”。
+   失败文案必须告诉用户下一步怎么修。
+
+10. 本地模型兼容：
+    需要至少实测一个无 Key 的 OpenAI 兼容地址。
+    部分本地模型不支持 tool_calls；遇到这种情况应明确提示“此模型不支持工具调用”，不能显示空完成。
+
+第四步：补足 MCP 能力验收
+
+必须在临时工程中实际写盘，不要直接破坏 D:\new-game：
+
+1. 复制最小工程结构到临时目录。
+2. create_script：四种类型各建一个，检查文件名/GUID/元数据/注册/编译。
+3. read_script + write_script：修改再编译，错误时回滚。
+4. append_event_commands：
+   - 对话；
+   - 两个选项；
+   - 选项内设置数值；
+   - if 分支；
+   - 自定义中文指令映射；
+   - 未知指令拒绝。
+5. patch_resource：actor/skill/item/equip/state 各做一次字段补丁。
+6. upsert_database_item：variables、teams、commands、plugins 至少各测一次。
+7. validate_project：写后仍无 GUID 冲突，引用检查不新增 error。
+8. 备份和 expectedSha256 冲突测试。
+9. 删除资源必须补引用保护后再测。
+
+第五步：Open Yami 真机验收
+
+必须部署插件后重启工程，Open Yami 没有浏览器式 Ctrl+F5。
+
+建议命令：
+cd "D:\Documents\GitHub\yami-tools"
+node build.cjs --deploy
+
+然后完全退出并重开 Open Yami，打开 D:\new-game。
+
+A. AI 面板基础
+1. 首页出现 AI 助手入口。
+2. 鼠标点击和键盘 Enter/Space 都能进入。
+3. 返回按钮正常。
+4. 设置区可展开/收起。
+5. 所有输入有可见标签。
+6. Tab 顺序：新对话 -> 设置 -> 设置字段 -> 保存 -> 聊天输入 -> 发送。
+7. 焦点环清晰可见。
+8. 440px、窄窗口、200% 缩放下不重叠、不裁剪、不横向溢出。
+9. 聊天消息长路径/长单词可换行。
+10. 审批区目标、操作摘要、执行修改、取消修改始终可见。
+
+B. 模型设置
+1. DeepSeek 云端 Key 保存后输入框清空，只显示“已安全保存”。
+2. %APPDATA%\DanJuanDevSuite\ai-config.json 中不能出现明文 Key。
+3. Agent API /config 不能回传明文 Key。
+4. 错误 Key 给出可恢复提示。
+5. 本地 HTTP OpenAI 兼容端点无需 Key可使用。
+
+C. 只读操作
+对 AI 说：
+“列出当前工程角色脚本，并告诉我获取角色 ID 指令有哪些参数，不要修改文件。”
+
+验收：
+1. 自动调用 list_scripts/read_script/parse_plugin_meta 等；
+2. 不出现审批框；
+3. 不修改任何工程文件；
+4. 中文白话回答，不裸露无意义 GUID。
+
+D. 写脚本
+在临时工程或专用测试脚本执行：
+“给这个测试指令加一个数值参数，并在执行时打印它。”
+
+验收：
+1. 先读取脚本；
+2. 弹审批框；
+3. 取消后不改文件；
+4. 再执行并确认；
+5. 自动 tsc；
+6. 编译通过才报告成功；
+7. 编辑器脚本参数界面自动刷新；
+8. 制造语法错误时自动回滚。
+
+E. 编事件
+对专用测试事件说：
+“添加一段对话，问是否领取奖励；领取给 100 金币，离开不处理。”
+
+验收：
+1. showText/showChoices/setNumber 结构正确；
+2. 子命令嵌套正确；
+3. 先预览后确认；
+4. 编辑器事件面板立即刷新；
+5. 启动试玩后实际可对话和选择；
+6. 事件黑匣子没有卡住。
+
+F. 编辑器控制（5967）
+1. “保存工程”只保存一次。
+2. “撤销刚才操作”和“重做”各一次。
+3. “刷新资源”。
+4. “启动试玩”。
+5. dump_ui_hierarchy 能返回当前可见控件。
+6. interact_editor 能输入字段、切换选项、点击和拖动。
+7. 编辑器有未保存修改时，AI 写同一文件必须被 preflight 拒绝。
+
+G. 试玩控制（5966）
+1. get_runtime_state 返回 /live + /report。
+2. 方向键按下/弹起/点击都生效。
+3. 鼠标 move/down/up/click 生效。
+4. 可结束测试用卡住事件。
+5. 非法 token 返回 401。
+6. 浏览器带 Origin 请求 /token 返回 403。
+7. 关闭试玩后 MCP 返回 running=false，不崩溃。
+
+H. 多窗口与进程
+1. 编辑器与试玩同时开 AI，只存在一个 5968 Host。
+2. 不出现多个 yami-mcp 同时修改工程。
+3. 关闭窗口后无永久孤儿子进程。
+4. Host 异常退出后下一次操作可自动恢复。
+
+============================================================
+六、发布前机器验收清单
+============================================================
+
+所有命令都必须通过：
+
+1. MCP：
+   cd "D:\new-game\DANJUAN TOOLS\工具\yami-mcp"
+   node --check server.js
+   node --test test.js
+   node test-compile.js
+
+2. MCP 源与插件内置快照哈希一致：
+   比较 D:\new-game\DANJUAN TOOLS\工具\yami-mcp
+   和 D:\Documents\GitHub\yami-tools\runtime\yami-mcp
+   的上述 8 个文件 SHA-256，必须全部 Match=True。
+
+3. 插件：
+   cd "D:\Documents\GitHub\yami-tools"
+   node build.cjs
+   node tests\run-all.cjs
+
+   要求：10/10 套通过，不能接受 9/10。
+
+4. 部署：
+   node build.cjs --deploy
+
+   要求：
+   - 顶层文件 MD5 一致；
+   - runtime/yami-mcp 已递归复制；
+   - 安装目录存在 ai-agent.js、ai-host.js；
+   - manifest 加载 ai-agent.js；
+   - 重启 Open Yami 后生效。
+
+5. 真机验收：完成第五节 A-H，不得只靠静态测试。
+
+============================================================
+七、Git 与发布步骤
+============================================================
+
+用户明确要求最终直接 Git 上去，但当前已有提交是用户本人完成的。
+接手 AI 只提交后续修复、文档、版本和测试，不要重写现有提交。
+
+推荐顺序：
+
+1. 先在 new-game 完成 yami-mcp 修复和测试。
+2. 将相同 MCP 文件同步到 yami-tools/runtime/yami-mcp。
+3. 核对 SHA-256 全一致。
+4. 完成 yami-tools 插件测试和真机验收。
+5. 最后执行版本升级：
+   cd "D:\Documents\GitHub\yami-tools"
+   node build.cjs --bump 1.0.0
+6. 再跑全部测试和 --deploy。
+7. 分别只暂存本任务相关文件。
+8. new-game 不要带入 game.yamirpg 或其它无关用户改动。
+9. 建议提交信息：
+   - new-game：feat(yami-mcp): 完善 AI 工程控制与安全写入闭环
+   - yami-tools：feat(1.0.0): 内置 AI 助手与 yami-mcp 全流程控制
+10. 推送当前已有分支：
+    - new-game -> origin/20260902-更新引擎
+    - yami-tools -> origin/extension
+11. 推送后执行 git status 和 git rev-parse，确认本地 HEAD 与远端一致。
+
+============================================================
+八、当前已知风险与不可夸大的地方
+============================================================
+
+1. 目前不能说“最终验收完成”，因为真机 AI 页面、5966/5967 和多窗口生命周期尚未走完。
+2. 目前不能说“全量测试通过”，因为 test-autoupdate.mjs 仍需更新测试替身。
+3. 当前版本仍是 0.11.0，README/HANDOFF 仍主要描述旧功能。
+4. AI 内置工具虽然覆盖工程、编辑器、试玩三层，但不能承诺任何模型都能正确规划；必须依赖审批、校验和回滚。
+5. 本地模型必须支持 OpenAI tool_calls；不支持时需要明确报错。
+6. cdp_eval 虽仍保留给外部 MCP 客户端，但内置模型已经隐藏。不要重新暴露。
+7. Open Yami 的编辑器和游戏工程本身启用了 Node 权限，插件不能提供强于宿主的沙箱；当前安全目标是防误操作、路径越界、跨站偷 token 和 API Key 明文落盘。
+8. 删除资源仍需补引用保护，这是正式发布前的高优先级项。
+9. read_resource 大文件上下文限制仍需补，这是稳定性高优先级项。
+
+============================================================
+九、最短接手路线
+============================================================
+
+接手 AI 不要重做架构，按以下顺序即可：
+
+1. 阅读本文件。
+2. 阅读 yami-tools/HANDOFF.md 的现有铁律。
+3. 查看两个仓库 git status 和最新两条提交。
+4. 修 test-autoupdate.mjs，跑到 10/10。
+5. 补临时工程真实写盘/回滚/并发测试。
+6. 修删除引用保护和大文件读取限制。
+7. 更新 README、HANDOFF、yami-mcp README。
+8. build --deploy，重启 Open Yami。
+9. 完成真机 A-H。
+10. 升级 1.0.0，再跑全量测试。
+11. 只提交后续改动并推送两个当前分支。
+
+交接完毕。

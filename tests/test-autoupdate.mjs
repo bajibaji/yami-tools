@@ -40,13 +40,21 @@ function makeSandbox() {
 // ---------- 内存 fs: 探测候选目录存在 + 写盘只进内存, 绝不触碰真实磁盘 ----------
 const writes = [];
 const memFs = new Map();
+const mkdirs = [];
 const mockFs = {
   existsSync: (p) => String(p).includes('manifest.json'),
   writeFileSync: (p, content, enc) => { memFs.set(p, content); writes.push({ p, bytes: Buffer.byteLength(content, 'utf8') }); },
   readFileSync: (p, enc) => memFs.get(p),
-  mkdirSync: () => {}
+  mkdirSync: (p, opts) => { mkdirs.push(p); }
 };
-const mockPath = { join: (...a) => a.join('/') };
+const mockPath = {
+  join: (...a) => a.join('/'),
+  dirname: (p) => {
+    const s = String(p).replace(/[/\\]+$/, '');
+    const idx = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+    return idx === -1 ? '.' : s.slice(0, idx);
+  }
+};
 const mockProcess = { cwd: () => 'C:/mock', resourcesPath: undefined };
 
 const srcClean = probeSrc.replace(/setTimeout\(function\(\) \{ checkUpdate\(\); \}, 3500\);/, '');
@@ -155,7 +163,7 @@ async function main() {
   check('currentVersion = 0.1.9', r2.currentVersion === '0.1.9');
   check('事件 update-found 已派发', sOld._events.includes('yami-perf-update-found'));
 
-  console.log('=== 4. performAutoUpdate: 下载 5 文件 + 版本门闩顺序 + 进度 ===');
+  console.log('=== 4. performAutoUpdate: 下载完整清单 + 递归建目录 + 版本门闩顺序 + 进度 ===');
   const sUp = makeSandbox();
   sUp.require = (name) => {
     if (name === 'fs') return mockFs;
@@ -169,12 +177,16 @@ async function main() {
   let progress = [];
   const res = await upProbe.performAutoUpdate((cur, total, file) => progress.push(cur + '/' + total + ':' + file));
   check('success = true', res.success === true);
-  check('更新文件数 = 5', res.updatedFiles === 5, 'files=' + res.updatedFiles);
-  check('进度回调 5 次', progress.length === 5);
+  check('更新文件数一致', res.updatedFiles === writes.length && res.updatedFiles >= 15, 'files=' + res.updatedFiles);
+  check('进度回调完整', progress.length === res.updatedFiles);
   check('目标目录 = 生产目录候选', String(res.targetDir).includes('extension/yami-perf-extension'));
   const names = writes.map(w => w.p.split('/').pop());
   check('写盘顺序: probe-core.js 最先', names[0] === 'probe-core.js', names.join(','));
   check('写盘顺序: manifest.json 最后 (版本门闩)', names[names.length - 1] === 'manifest.json', names.join(','));
+  check('清单包含 ai-agent.js', names.includes('ai-agent.js'));
+  check('清单包含 ai-host.js', names.includes('ai-host.js'));
+  check('清单包含 runtime/yami-mcp/server.js', writes.some(w => w.p.includes('runtime/yami-mcp/server.js')));
+  check('递归创建 runtime 子目录', mkdirs.some(d => String(d).includes('runtime')));
   const probeTxt = writes.find(w => w.p.endsWith('probe-core.js'));
   const manifestTxt = writes.find(w => w.p.endsWith('manifest.json'));
   check('probe-core.js 内容真实下载 (体积合理)', probeTxt && probeTxt.bytes > 10000);
