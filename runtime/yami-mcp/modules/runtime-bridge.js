@@ -147,6 +147,28 @@ class RuntimeBridge {
       return { ok: false, error: `派发按键失败: ${err.message}` }
     }
   }
+
+  async sendPointer({ action = 'move', x, y, button = 0 } = {}) {
+    if (!Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) return { ok: false, error: '鼠标坐标必须是有限数值' }
+    const token = await this.requestJson('/token')
+    if (!token.ok || !token.data || !token.data.bridgeToken) return { ok: false, error: '试玩运行时桥未启动' }
+    return await new Promise((resolve) => {
+      const payload = Buffer.from(JSON.stringify({ type: 'pointer', action, x: Number(x), y: Number(y), button: Number(button) || 0 }), 'utf8')
+      const req = http.request({
+        hostname: '127.0.0.1', port: this.port, path: '/action', method: 'POST', timeout: 1500,
+        headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length, 'x-yami-bridge-token': token.data.bridgeToken }
+      }, res => {
+        let raw = ''
+        res.on('data', chunk => { raw += chunk })
+        res.on('end', () => {
+          try { resolve(JSON.parse(raw || '{}')) } catch { resolve({ ok: false, error: '运行时鼠标响应无法解析' }) }
+        })
+      })
+      req.on('error', error => resolve({ ok: false, error: `运行时鼠标失败: ${error.message}` }))
+      req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: '运行时鼠标请求超时' }) })
+      req.end(payload)
+    })
+  }
 }
 
 module.exports = RuntimeBridge

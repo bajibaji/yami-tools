@@ -8,7 +8,7 @@
 
 const fs = require('fs')
 const path = require('path')
-const { resolveInside, writeAtomic } = require('./file-ops')
+const { resolveInside, sha256, writeAtomic } = require('./file-ops')
 
 class EventBuilder {
   constructor(projectRoot) {
@@ -259,7 +259,7 @@ class EventBuilder {
    * @param {string|number} [options.position='end'] 插入位置：'end' | 'start' | 索引数字
    * @param {boolean} [options.dryRun=true] 是否仅预览
    */
-  appendCommands({ path: relPath, commands, position = 'end', dryRun = true }) {
+  appendCommands({ path: relPath, commands, position = 'end', expectedSha256, dryRun = true }) {
     if (!relPath || typeof relPath !== 'string') {
       return { ok: false, error: '缺少 path 参数' }
     }
@@ -274,8 +274,11 @@ class EventBuilder {
     }
 
     let eventData
+    let originalText
     try {
-      eventData = JSON.parse(fs.readFileSync(absPath, 'utf8'))
+      originalText = fs.readFileSync(absPath, 'utf8')
+      if (expectedSha256 && sha256(originalText) !== expectedSha256) return { ok: false, conflict: true, error: '事件文件已被其他操作修改，请重新读取后再改' }
+      eventData = JSON.parse(originalText)
     } catch (e) {
       return { ok: false, error: `读取解析事件文件失败: ${e.message}` }
     }
@@ -308,6 +311,7 @@ class EventBuilder {
         ok: true,
         dryRun: true,
         path: relPath,
+        oldSha256: sha256(originalText),
         appendedCount: compiledCommands.length,
         totalCommands: eventData.commands.length,
         previewCommands: compiledCommands,
@@ -321,6 +325,7 @@ class EventBuilder {
         ok: true,
         dryRun: false,
         path: relPath,
+        oldSha256: sha256(originalText),
         appendedCount: compiledCommands.length,
         totalCommands: eventData.commands.length,
         ...written,

@@ -8,7 +8,7 @@
 
 const fs = require('fs')
 const path = require('path')
-const { resolveInside, writeAtomic } = require('./file-ops')
+const { resolveInside, sha256, writeAtomic } = require('./file-ops')
 
 /** Data/ 下实际存在的配置表名单 */
 const SUPPORTED_TABLES = [
@@ -99,7 +99,7 @@ class DatabaseManager {
    * @param {string} [options.parentId] 变量树专用：父节点 ID
    * @param {boolean} [options.dryRun=true] 是否仅预览
    */
-  upsertItem({ table, id, item, parentId, dryRun = true }) {
+  upsertItem({ table, id, item, parentId, expectedSha256, dryRun = true }) {
     if (!table || typeof table !== 'string') {
       return { ok: false, error: '缺少 table 参数' }
     }
@@ -119,8 +119,11 @@ class DatabaseManager {
     }
 
     let rawData
+    let originalText
     try {
-      rawData = JSON.parse(fs.readFileSync(absPath, 'utf8'))
+      originalText = fs.readFileSync(absPath, 'utf8')
+      if (expectedSha256 && sha256(originalText) !== expectedSha256) return { ok: false, conflict: true, error: '数据表已被其他操作修改，请重新读取后再改' }
+      rawData = JSON.parse(originalText)
     } catch (e) {
       return { ok: false, error: `读取解析 ${relPath} 失败: ${e.message}` }
     }
@@ -143,7 +146,9 @@ class DatabaseManager {
           value: item.value !== undefined ? item.value : 0,
           ...item
         }
-        const appended = appendVariableChild(rawData, parentId || 'root', newVar)
+        const appended = parentId === undefined && Array.isArray(rawData)
+          ? (rawData.push(newVar), true)
+          : appendVariableChild(rawData, parentId || 'root', newVar)
         if (!appended) {
           if (Array.isArray(rawData.children)) {
             rawData.children.push(newVar)
@@ -198,6 +203,7 @@ class DatabaseManager {
         table: cleanTable,
         id: targetId,
         path: relPath,
+        oldSha256: sha256(originalText),
         message: `校验通过：${action === 'created' ? '新增' : '更新'} ${cleanTable} [${targetId}]（未落盘，dryRun）`,
         preview: outputJson.slice(0, 500) + (outputJson.length > 500 ? '\n... (省略后续内容)' : '')
       }
@@ -212,6 +218,7 @@ class DatabaseManager {
         table: cleanTable,
         id: targetId,
         path: relPath,
+        oldSha256: sha256(originalText),
         ...written,
         message: `成功落盘更新 ${relPath}：${action === 'created' ? '新增' : '更新'} [${targetId}]`
       }

@@ -278,6 +278,46 @@ function listResourceFiles(type) {
   return files
 }
 
+function findCommandCatalogPath() {
+  const candidates = [
+    process.env.YAMI_COMMANDS_JSON,
+    path.join(path.dirname(process.execPath), 'resources', 'app', 'dist', 'commands.json'),
+    'D:\\Program Files\\Open Yami RPG Editor\\resources\\app\\dist\\commands.json'
+  ].filter(Boolean)
+  return candidates.find(file => fs.existsSync(file)) || null
+}
+
+function flattenCommandCatalog() {
+  const file = findCommandCatalogPath()
+  if (!file) return []
+  let tree
+  try { tree = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return [] }
+  const output = []
+  const visit = (nodes, category = '') => {
+    for (const node of Array.isArray(nodes) ? nodes : []) {
+      if (!node || typeof node !== 'object') continue
+      if (node.class === 'folder') visit(node.children, node.value || category)
+      else if (typeof node.value === 'string') output.push({ id: node.value, category, kind: node.class || '' })
+    }
+  }
+  visit(tree)
+  return output
+}
+
+function commandExamples(commandId, limit = 5) {
+  const examples = []
+  const visit = (value, source) => {
+    if (examples.length >= limit || !value || typeof value !== 'object') return
+    if (!Array.isArray(value) && value.id === commandId && value.params && typeof value.params === 'object') examples.push({ source, params: value.params })
+    for (const child of Array.isArray(value) ? value : Object.values(value)) visit(child, source)
+  }
+  for (const file of listResourceFiles()) {
+    if (examples.length >= limit || !DATA_TYPES.includes(file.type)) continue
+    try { visit(JSON.parse(fs.readFileSync(resolveInside(ROOT, file.path), 'utf8')), file.path) } catch {}
+  }
+  return examples
+}
+
 /** 读 Data/*.json（不存在返回 null） */
 function readDataJson(name) {
   const p = path.join(ROOT, 'Data', name)
@@ -408,7 +448,9 @@ const tools = [
       type: 'object',
       properties: {
         type: { type: 'string', enum: DATA_TYPES.concat(['script', 'image', 'audio']), description: '按类型过滤（event/scene/ui/trigger/actor/tileset/animation/particle/skill/item/equipment/state/script/image/audio）' },
-        filter: { type: 'string', description: '路径包含过滤（如 "插件/自定义指令"）' }
+        filter: { type: 'string', description: '路径包含过滤（如 "插件/自定义指令"）' },
+        offset: { type: 'number', description: '分页起点，默认 0' },
+        limit: { type: 'number', description: '返回数量，默认 100，最大 500' }
       }
     }
   },
@@ -488,6 +530,29 @@ const tools = [
     }
   },
   {
+    name: 'list_event_commands',
+    description: '分页列出 Open Yami 内建事件指令目录，可按 ID 或分类关键词过滤；参数结构按需调用 get_event_command_examples',
+    readOnlyHint: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        filter: { type: 'string', description: '指令 ID 或分类关键词' },
+        offset: { type: 'number', description: '分页起点，默认 0' },
+        limit: { type: 'number', description: '返回数量，默认 60，最大 200' }
+      }
+    }
+  },
+  {
+    name: 'get_event_command_examples',
+    description: '从当前真实工程中按指令 ID 提取参数样例，避免猜测 params 结构',
+    readOnlyHint: true,
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: '内建或自定义指令 ID' }, limit: { type: 'number', description: '样例数，默认 5，最大 10' } },
+      required: ['id']
+    }
+  },
+  {
     name: 'read_script',
     description: '读取一个 TS/JS 脚本的完整源码与 SHA-256，供 AI 在修改前建立准确上下文和并发保护',
     readOnlyHint: true,
@@ -534,7 +599,11 @@ const tools = [
     readOnlyHint: false,
     inputSchema: {
       type: 'object',
-      properties: { path: { type: 'string', description: '工程内资源相对路径' }, dryRun: { type: 'boolean', description: '默认 true，只预览不删除' } },
+      properties: {
+        path: { type: 'string', description: '工程内资源相对路径' },
+        expectedSha256: { type: 'string', description: '预览时返回的原文件 SHA-256，正式删除时用于防止误删新版本' },
+        dryRun: { type: 'boolean', description: '默认 true，只预览不删除' }
+      },
       required: ['path']
     }
   },
@@ -545,6 +614,22 @@ const tools = [
     inputSchema: {
       type: 'object',
       properties: { action: { type: 'string', enum: ['save', 'undo', 'redo', 'refresh', 'playtest'], description: '编辑器动作' } },
+      required: ['action']
+    }
+  },
+  {
+    name: 'interact_editor',
+    description: '在编辑器中操作具体控件：按选择器输入文本、切换选项，或按坐标移动、点击、拖动；只作结构化工具缺失时的兜底',
+    readOnlyHint: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['input', 'select', 'click', 'move', 'down', 'up', 'drag'], description: '交互动作' },
+        selector: { type: 'string', description: '目标 CSS 选择器，输入与选项操作必填' },
+        value: { description: 'input/select 的值' },
+        x: { type: 'number' }, y: { type: 'number' }, toX: { type: 'number' }, toY: { type: 'number' },
+        button: { type: 'number', description: '鼠标键，默认 0' }
+      },
       required: ['action']
     }
   },
@@ -646,6 +731,21 @@ const tools = [
       },
       required: ['key']
     }
+  },
+  {
+    name: 'send_player_pointer',
+    description: '向试玩游戏发送鼠标移动、按下、弹起或点击，用于界面和地图交互回归',
+    readOnlyHint: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['move', 'down', 'up', 'click'], description: '鼠标动作' },
+        x: { type: 'number', description: '试玩窗口客户区 X 坐标' },
+        y: { type: 'number', description: '试玩窗口客户区 Y 坐标' },
+        button: { type: 'number', description: '鼠标键，默认 0' }
+      },
+      required: ['action', 'x', 'y']
+    }
   }
 ]
 
@@ -673,6 +773,23 @@ function readText(rel) {
   const abs = resolveInside(ROOT, rel)
   if (!fs.existsSync(abs)) return null
   return fs.readFileSync(abs, 'utf8')
+}
+
+function hasForbiddenPatchKey(value) {
+  if (!value || typeof value !== 'object') return false
+  if (Array.isArray(value)) return value.some(hasForbiddenPatchKey)
+  return Object.entries(value).some(([key, child]) => key === 'terrains' || key === 'code' || hasForbiddenPatchKey(child))
+}
+
+async function ensureEditorWritable(rel) {
+  const result = await editorBridge.action('preflight', { path: rel })
+  const detail = result && result.data ? result.data : result
+  if (detail && detail.dirty) return { ok: false, error: detail.error || '编辑器里有未保存修改，请先保存或取消后重试' }
+  return { ok: true }
+}
+
+async function notifyEditorReload(rel) {
+  try { await editorBridge.action('reload', { path: rel }) } catch {}
 }
 
 async function callTool(name, args) {
@@ -705,6 +822,11 @@ async function callTool(name, args) {
       const src = buildScriptSource(args.type, args.className, args.nameZh, args.params)
       if (args.dryRun !== false) return { ok: true, dryRun: true, message: '模板已生成（未写盘，dryRun）', script: src }
       try {
+        const table = args.type === 'plugin' ? 'plugins' : args.type === 'command' ? 'commands' : null
+        if (table) {
+          const writable = await ensureEditorWritable(`Data/${table}.json`)
+          if (!writable.ok) return writable
+        }
         const written = writeAtomic(ROOT, rel, src)
         const registration = registerCreatedScript(args.type, guid)
         if (!registration.ok) {
@@ -718,6 +840,8 @@ async function callTool(name, args) {
           return { ok: false, compile, error: '新脚本编译未通过，已撤销脚本和注册表' }
         }
         eventBuilder.customCommandMap = null
+        await notifyEditorReload(rel)
+        if (table) await notifyEditorReload(`Data/${table}.json`)
         return { ok: true, dryRun: false, ...written, registration, compile, message: `已写入并编译 ${rel}` }
       } catch (e) { return { ok: false, error: `写入失败: ${e.message}` } }
     }
@@ -742,6 +866,8 @@ async function callTool(name, args) {
       const preview = { path: rel, oldSha256: sha256(oldText), newSha256: sha256(args.content), changedBytes: Buffer.byteLength(args.content) - Buffer.byteLength(oldText), meta: nextMeta }
       if (args.dryRun !== false) return { ok: true, dryRun: true, ...preview, message: '脚本校验通过，未写盘' }
       try {
+        const writable = await ensureEditorWritable(rel)
+        if (!writable.ok) return writable
         const written = writeAtomic(ROOT, rel, args.content)
         let compile = null
         compile = await runCompileCheck()
@@ -750,13 +876,14 @@ async function callTool(name, args) {
           try { if (written.backup) rollback = restoreBackup(ROOT, rel, written.backup) } catch (e) { rollback = { error: e.message } }
           return { ok: false, ...preview, compile, rollback, error: '编译未通过，已尝试自动恢复修改前脚本' }
         }
+        await notifyEditorReload(rel)
         return { ok: true, dryRun: false, ...preview, ...written, compile, message: `已写入 ${rel}` }
       } catch (e) { return { ok: false, error: `写入失败: ${e.message}` } }
     }
     case 'patch_resource': {
       const rel = normalizeRelPath(args.path)
       if (!rel.startsWith('Assets/') || !DATA_TYPES.includes(TYPE_BY_EXT[path.extname(rel).toLowerCase()])) return { ok: false, error: '只允许补丁修改 Assets 内的 JSON 资源' }
-      if (/(^|\/)(manifest\.json)$|(^|\/)(terrains|code)(?:$|\/)/i.test(JSON.stringify(args.patch))) return { ok: false, error: '禁止通过局部补丁修改 manifest 或场景压缩字段 terrains/code' }
+      if (hasForbiddenPatchKey(args.patch)) return { ok: false, error: '禁止通过局部补丁修改场景压缩字段 terrains/code' }
       const oldText = readText(rel)
       if (oldText === null) return { ok: false, error: `资源不存在: ${rel}` }
       if (args.expectedSha256 && sha256(oldText) !== args.expectedSha256) return { ok: false, conflict: true, error: '资源已被其他操作修改，expectedSha256 不匹配' }
@@ -773,7 +900,10 @@ async function callTool(name, args) {
       const preview = { path: rel, oldSha256: sha256(oldText), newSha256: sha256(nextText), changedBytes: Buffer.byteLength(nextText) - Buffer.byteLength(oldText), preview: next }
       if (args.dryRun !== false) return { ok: true, dryRun: true, ...preview, message: '资源补丁校验通过，未写盘' }
       try {
+        const writable = await ensureEditorWritable(rel)
+        if (!writable.ok) return writable
         const written = writeAtomic(ROOT, rel, nextText)
+        await notifyEditorReload(rel)
         return { ok: true, dryRun: false, ...preview, ...written, message: `已安全更新 ${rel}` }
       } catch (e) { return { ok: false, error: `写入失败: ${e.message}` } }
     }
@@ -786,8 +916,12 @@ async function callTool(name, args) {
       if (!stat.isFile()) return { ok: false, error: '暂不支持删除目录，请使用编辑器文件管理操作' }
       const backupDir = path.join(ROOT, '.yami-mcp-backups')
       const backup = path.join(backupDir, `${Date.now()}-${path.basename(rel)}.deleted.bak`)
-      if (args.dryRun !== false) return { ok: true, dryRun: true, path: rel, bytes: stat.size, message: `将删除 ${rel}，并备份到 .yami-mcp-backups` }
+      const currentSha256 = sha256(fs.readFileSync(abs))
+      if (args.expectedSha256 && currentSha256 !== args.expectedSha256) return { ok: false, conflict: true, error: '资源已被其他操作修改，拒绝删除' }
+      if (args.dryRun !== false) return { ok: true, dryRun: true, path: rel, bytes: stat.size, oldSha256: currentSha256, message: `将删除 ${rel}，并备份到 .yami-mcp-backups` }
       try {
+        const writable = await ensureEditorWritable(rel)
+        if (!writable.ok) return writable
         fs.mkdirSync(backupDir, { recursive: true })
         fs.copyFileSync(abs, backup)
         fs.unlinkSync(abs)
@@ -813,7 +947,23 @@ async function callTool(name, args) {
     case 'list_resources': {
       const all = listResourceFiles(args.type)
       const filtered = args.filter ? all.filter(f => f.path.includes(args.filter)) : all
-      return { ok: true, count: filtered.length, resources: filtered }
+      const offset = Math.max(0, Number(args.offset) || 0)
+      const limit = Math.max(1, Math.min(500, Number(args.limit) || 100))
+      return { ok: true, count: filtered.length, offset, limit, resources: filtered.slice(offset, offset + limit), hasMore: offset + limit < filtered.length }
+    }
+    case 'list_event_commands': {
+      const all = flattenCommandCatalog()
+      const keyword = String(args.filter || '').toLowerCase()
+      const filtered = keyword ? all.filter(item => (item.id + ' ' + item.category).toLowerCase().includes(keyword)) : all
+      const offset = Math.max(0, Number(args.offset) || 0)
+      const limit = Math.max(1, Math.min(200, Number(args.limit) || 60))
+      return { ok: true, count: filtered.length, offset, limit, commands: filtered.slice(offset, offset + limit), hasMore: offset + limit < filtered.length }
+    }
+    case 'get_event_command_examples': {
+      const id = String(args.id || '').trim()
+      if (!id) return { ok: false, error: '缺少指令 ID' }
+      const examples = commandExamples(id, Math.max(1, Math.min(10, Number(args.limit) || 5)))
+      return { ok: true, id, count: examples.length, examples }
     }
     case 'read_resource': {
       const rel = normalizeRelPath(args.path)
@@ -869,14 +1019,20 @@ async function callTool(name, args) {
       const errors = issues.filter(i => i.severity === 'error')
       if (errors.length > 0) return { ok: false, issues: errors, dryRun: true, message: '校验未通过，未写入' }
       const text = JSON.stringify(args.content, null, 2) + '\n'
-      if (args.dryRun !== false) return { ok: true, dryRun: true, message: '校验通过（未写盘，dryRun）', preview: text, sha256: sha256(text) }
+      const oldText = readText(rel)
+      const oldSha256 = oldText === null ? null : sha256(oldText)
+      if (args.expectedSha256 && oldSha256 !== args.expectedSha256) return { ok: false, conflict: true, error: '资源已被其他操作修改，拒绝覆盖' }
+      if (args.dryRun !== false) return { ok: true, dryRun: true, message: '校验通过（未写盘，dryRun）', preview: text, oldSha256, newSha256: sha256(text) }
       try {
+        const writable = await ensureEditorWritable(rel)
+        if (!writable.ok) return writable
         const written = writeAtomic(ROOT, rel, text)
         let memoryStatus = null
         try {
           const reloadRes = await cdpClient.reloadEditorResource(rel, guid)
           if (reloadRes && reloadRes.ok) memoryStatus = '已自动热更新进编辑器内存，阻止反向覆盖'
         } catch (e) {}
+        await notifyEditorReload(rel)
         return { ok: true, dryRun: false, ...written, message: `已写入 ${rel}（${text.length} 字节）${memoryStatus ? ' · ' + memoryStatus : ''}`, memoryReloaded: !!memoryStatus }
       } catch (e) { return { ok: false, error: `写入失败: ${e.message}` } }
     }
@@ -910,7 +1066,13 @@ async function callTool(name, args) {
       }
       return await cdpClient.eval(expressions[args.action], true, 'editor')
     }
+    case 'interact_editor':
+      return await editorBridge.action('interact', args)
     case 'append_event_commands': {
+      if (args.dryRun === false) {
+        const writable = await ensureEditorWritable(normalizeRelPath(args.path))
+        if (!writable.ok) return writable
+      }
       const appendRes = eventBuilder.appendCommands(args)
       if (appendRes.ok && args.dryRun === false) {
         try {
@@ -918,14 +1080,25 @@ async function callTool(name, args) {
           await cdpClient.reloadEditorResource(args.path, guid)
         } catch (e) {}
       }
+      if (appendRes.ok && args.dryRun === false) await notifyEditorReload(normalizeRelPath(args.path))
       return appendRes
     }
-    case 'upsert_database_item':
-      return dbManager.upsertItem(args)
+    case 'upsert_database_item': {
+      if (args.dryRun === false) {
+        const rel = `Data/${String(args.table || '').replace(/\.json$/i, '').toLowerCase()}.json`
+        const writable = await ensureEditorWritable(rel)
+        if (!writable.ok) return writable
+      }
+      const result = dbManager.upsertItem(args)
+      if (result.ok && args.dryRun === false) await notifyEditorReload(result.path)
+      return result
+    }
     case 'get_runtime_state':
       return await runtimeBridge.getLiveState()
     case 'send_player_input':
       return await runtimeBridge.sendInput(args.key, args.action)
+    case 'send_player_pointer':
+      return await runtimeBridge.sendPointer(args)
     default:
       return { ok: false, error: `未知工具: ${name}` }
   }

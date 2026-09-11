@@ -36,7 +36,10 @@ class EditorBridge {
     if (!live.ok) return live
     const token = live.data.bridgeToken
     if (!token) return { ok: false, error: '编辑器桥未返回令牌' }
-    const result = await this.request('POST', '/action', { action, ...params }, 1800, token)
+    const body = { ...params }
+    if (action === 'interact' && params.action) body.operation = params.action
+    body.action = action
+    const result = await this.request('POST', '/action', body, 1800, token)
     return result.ok ? result.data : result
   }
 
