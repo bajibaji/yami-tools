@@ -244,6 +244,64 @@
     };
   }
 
+  /** 小数字缩写：卡片上不铺长数字 */
+  function shortAmount(n) {
+    const value = Math.max(0, Number(n) || 0);
+    if (value >= 1024 * 1024) return (value / 1024 / 1024).toFixed(1) + ' MB';
+    if (value >= 1024) return (value / 1024).toFixed(1) + ' KB';
+    return String(Math.round(value));
+  }
+
+  /**
+   * 工具卡片右侧的小标签：**只说确定性事实**，没有的字段就不出标签。
+   * （对齐 DSH「卡片模型校验原始字段」的做法：前端不许从中文描述里猜数字）
+   */
+  function toolCardChips(info) {
+    const source = info || {};
+    const chips = [];
+    if (source.diffStat) {
+      chips.push('+' + (Math.max(0, Number(source.diffStat.added) || 0)) + ' / -' + (Math.max(0, Number(source.diffStat.removed) || 0)) + ' 行');
+    }
+    if (Number.isFinite(source.matches)) chips.push('命中 ' + source.matches + ' 处');
+    if (Number.isFinite(source.files)) chips.push(source.files + ' 个文件');
+    if (Number.isFinite(source.items)) chips.push(source.items + ' 项');
+    else if (Number.isFinite(source.total)) chips.push('共 ' + source.total + ' 条');
+    if (Number.isFinite(source.lines)) chips.push(source.lines + ' 行');
+    if (Number.isFinite(source.chars)) chips.push(shortAmount(source.chars) + ' 字符');
+    else if (Number.isFinite(source.bytes)) chips.push(shortAmount(source.bytes));
+    if (Number.isFinite(source.exitCode)) chips.push('退出码 ' + source.exitCode);
+    return chips;
+  }
+
+  /**
+   * 截断文案：被裁掉就说被裁掉了，落盘了就把路径给出来 ——
+   * 绝不让人以为看到的是完整输出（DSH 的 spill 语义：匹配文本不能认证其来源）。
+   */
+  function truncationText(info) {
+    const source = info || {};
+    if (!source.truncated) return '';
+    const spill = source.spill && source.spill.path ? String(source.spill.path) : '';
+    return spill
+      ? '输出过长已截断，完整原文已落盘：' + spill
+      : '输出过长已截断（只保留开头与结尾）';
+  }
+
+  /**
+   * 轮次导航轨道的高亮判据（纯逻辑，可单测）：取"阅读线"落在哪一轮里。
+   * offsets = 每一轮相对滚动容器的顶部偏移；height = 可视高度；阅读线取 1/3 处。
+   */
+  function activeTurnIndex(offsets, scrollTop, height) {
+    const list = Array.isArray(offsets) ? offsets : [];
+    if (!list.length) return -1;
+    const line = (Number(scrollTop) || 0) + Math.max(0, Number(height) || 0) / 3;
+    let index = 0;
+    for (let i = 0; i < list.length; i++) {
+      if ((Number(list[i]) || 0) <= line) index = i;
+      else break;
+    }
+    return index;
+  }
+
   return {
     createScheduler: createScheduler,
     createTextBuffer: createTextBuffer,
@@ -254,6 +312,10 @@
     createThinkingSegments: createThinkingSegments,
     processFoldTitle: processFoldTitle,
     turnProcessFold: turnProcessFold,
+    shortAmount: shortAmount,
+    toolCardChips: toolCardChips,
+    truncationText: truncationText,
+    activeTurnIndex: activeTurnIndex,
     shortTokens: shortTokens,
     formatTurnUsage: formatTurnUsage
   };

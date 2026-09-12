@@ -125,6 +125,29 @@ console.log('\n########## 2.6 轮次过程收起与每轮用量（参考 DSH 的
   check('没价目表时不编花费', usage({ complete: true, calls: 1, promptTokens: 500, completionTokens: 100 }).text === '本轮 1 次调用 · 600 tokens', usage({ complete: true, calls: 1, promptTokens: 500, completionTokens: 100 }).text)
 }
 
+console.log('\n########## 2.7 工具卡片标签 / 截断文案 / 轨道高亮（对齐 DSH 的卡片与 spill 语义）##########')
+{
+  const chips = core.toolCardChips
+  check('差异统计出 +/- 行', chips({ diffStat: { added: 12, removed: 3 } })[0] === '+12 / -3 行', JSON.stringify(chips({ diffStat: { added: 12, removed: 3 } })))
+  check('命中数 / 文件数 / 条数各出一条', JSON.stringify(chips({ matches: 7, files: 2, total: 9 })) === JSON.stringify(['命中 7 处', '2 个文件', '共 9 条']), JSON.stringify(chips({ matches: 7, files: 2, total: 9 })))
+  check('优先报字符数，没有才报字节', JSON.stringify(chips({ chars: 2048, bytes: 4096 })) === JSON.stringify(['2.0 KB 字符']), JSON.stringify(chips({ chars: 2048, bytes: 4096 })))
+  check('退出码单独一条', chips({ exitCode: 0 }).includes('退出码 0'))
+  check('没有事实就不出标签（不编数字）', chips({}).length === 0 && chips(null).length === 0)
+  check('拿不到字段时不把 undefined 写进去', JSON.stringify(chips({ total: undefined })) === '[]', JSON.stringify(chips({ total: undefined })))
+
+  const trunc = core.truncationText
+  check('没截断就没有这句话', trunc({}) === '')
+  check('截断但没落盘：如实说只留头尾', trunc({ truncated: true }) === '输出过长已截断（只保留开头与结尾）')
+  check('落盘了就把路径给出来', /完整原文已落盘：\/tmp\/x\.txt$/.test(trunc({ truncated: true, spill: { path: '/tmp/x.txt' } })), trunc({ truncated: true, spill: { path: '/tmp/x.txt' } }))
+
+  const active = core.activeTurnIndex
+  check('空轨道返回 -1', active([], 0, 300) === -1)
+  check('滚动到顶部高亮第一轮', active([0, 400, 800], 0, 300) === 0)
+  check('阅读线落在第二轮里就高亮第二轮', active([0, 400, 800], 300, 300) === 1, String(active([0, 400, 800], 300, 300)))
+  check('滚到底高亮最后一轮', active([0, 400, 800], 1200, 300) === 2)
+  check('越界不炸（返回最后一个）', active([0, 100], 99999, 300) === 1)
+}
+
 console.log('\n########## 3. 单行预览：用最后一行，不每次 split 全文 ##########')
 {
   const buf = core.createTextBuffer()

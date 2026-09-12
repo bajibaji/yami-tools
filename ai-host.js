@@ -193,7 +193,24 @@ function listSessions() {  try {
  * 工具结果裁剪：超长结果保留**开头与结尾**（结尾很重要——报错原文、命令输出结论都在末尾，
  * 只留开头会让模型看不到关键几行，进而反复重读同一个文件），中段给出明确提示而不是静默丢弃。
  */
-function clipToolResult(result) {
+/**
+ * 超长工具输出落盘（对齐 DSH 的 spill 语义）：裁剪掉的东西不能就这么没了——
+ * 完整原文写到一个可读文件里，交给模型的是路径，交给用户的是"确实被截断了"这句实话。
+ */
+function spillFullOutput(text, tag) {
+  try {
+    const dir = path.join(CONFIG_DIR, 'spills')
+    fs.mkdirSync(dir, { recursive: true })
+    const safe = String(tag || 'tool').replace(/[^\w.-]+/g, '_').slice(0, 40) || 'tool'
+    const file = path.join(dir, Date.now().toString(36) + '-' + safe + '.txt')
+    fs.writeFileSync(file, text, 'utf8')
+    return file
+  } catch {
+    return ''
+  }
+}
+
+function clipToolResult(result, tag) {
   let text
   try {
     text = JSON.stringify(result)
@@ -206,11 +223,21 @@ function clipToolResult(result) {
   const headChars = Math.max(0, TOOL_RESULT_LIMIT - tailBudget)
   const head = text.slice(0, headChars)
   const tail = tailBudget > 0 ? text.slice(-tailBudget) : ''
+  const spillPath = spillFullOutput(text, tag)
+  // 在**原对象**上盖个章：事件里的结构化摘要才知道这次被裁剪了、完整原文落在哪
+  try {
+    if (result && typeof result === 'object' && !Array.isArray(result)) {
+      result.__clip = { originalChars: text.length, spillPath: spillPath || '' }
+    }
+  } catch { /* 冻结对象之类的就算了，卡片会少一个"已截断"标记，不影响主流程 */ }
   return JSON.stringify({
     ok: result && result.ok !== false,
     truncated: true,
     originalChars: text.length,
-    note: `工具结果过长已裁剪（原 ${text.length} 字符，保留开头与结尾）。需要完整内容请用更精确的参数（如 read_resource 的 key、list_* 的分页）重新获取。`,
+    spill: spillPath ? { path: spillPath, chars: text.length } : null,
+    note: spillPath
+      ? `工具结果过长已裁剪（原 ${text.length} 字符，保留开头与结尾）。**完整原文已落盘：${spillPath}**，需要细节时请按这个路径读取（不要重复整份读取同一个文件）。`
+      : `工具结果过长已裁剪（原 ${text.length} 字符，保留开头与结尾）。需要完整内容请用更精确的参数（如 read_resource 的 key、list_* 的分页）重新获取。`,
     head: tail ? head + '\n...(中段省略)...\n' + tail : head
   })
 }
@@ -1307,15 +1334,70 @@ function turnUsageOf(session) {
   return delta
 }
 
-/** 包住一轮：结束后把本轮用量挂到结果上，前端据此决定要不要渲染"本轮 N tokens"行 */
+// ============================================================
+// 引导（steering）：用户在这一轮还在跑的时候补充的话，既不该被丢掉，也不该硬塞进
+// 正在流式的那个请求里 —— 存进队列，在**下一个步骤边界**投递给模型（对齐 DSH 的
+// steering 语义：繁忙时走 pending-steering，空闲时才进 transcript）。
+// 队列放 Map 而不是 session 上：它是运行时输入，不该跟着会话 JSON 落盘。
+// ============================================================
+const steerQueues = new Map()
+
+function queueSteer(session, text) {
+  const queue = steerQueues.get(session.id) || []
+  queue.push({ text: String(text), at: Date.now() })
+  steerQueues.set(session.id, queue)
+  return queue.length
+}
+
+/** 取出全部待投递的补充（取出即清空） */
+function drainSteer(session) {
+  const queue = steerQueues.get(session.id) || []
+  steerQueues.delete(session.id)
+  return queue
+}
+
+/** 一轮收工时还留在队列里的：模型已经收工、没机会投递 → 如实交回前端，由它当普通消息发出去 */
+function takeUndeliveredSteer(session) {
+  return drainSteer(session).map(item => item.text)
+}
+
+// 系统提示词行的去重：同一份 system 文本只上屏一次；会话重新载入后允许再来一次
+// （对齐 DSH：「即使系统文本未变，resume 也会重复该行」）
+const systemHashes = new Map()
+
+function systemTextOf(messages) {
+  return (messages || []).filter(m => m && m.role === 'system').map(m => String(m.content || '')).join('\n\n')
+}
+
+function systemHashOf(text) {
+  return crypto.createHash('sha1').update(String(text || '')).digest('hex').slice(0, 12)
+}
+
+/** 把"模型这一轮实际看到的 system 文本"如实上屏（文本变了才再上一行） */
+function noteSystemSurface(session, messages, events) {
+  if (!events || !events.onSystem) return
+  const text = systemTextOf(messages)
+  if (!text) return
+  const hash = systemHashOf(text)
+  if (systemHashes.get(session.id) === hash) return
+  systemHashes.set(session.id, hash)
+  events.onSystem({ text: text, hash: hash })
+}
+
+/** 包住一轮：结束后把本轮用量与"没送出去的补充"挂到结果上交回前端 */
 async function runTurn(session, config, events) {
   beginTurnProbe(session)
   try {
     const result = await continueSession(session, config, events)
-    if (result && typeof result === 'object') result.turnUsage = turnUsageOf(session)
+    if (result && typeof result === 'object') {
+      result.turnUsage = turnUsageOf(session)
+      const left = takeUndeliveredSteer(session)
+      if (left.length) result.undeliveredSteer = left
+    }
     return result
   } finally {
     turnProbes.delete(session.id)
+    steerQueues.delete(session.id)   // 兜底：引导内容绝不跨轮残留
   }
 }
 
@@ -1347,6 +1429,16 @@ async function continueSession(session, config, events = {}) {
   let sequenceRetryUsed = false
   for (let step = 0; step < MAX_STEPS; step++) {
     if (cancelToken && cancelToken.cancelled) return aborted()
+    // 步骤边界：把用户在这期间补充的话投递给模型（投递了才告知前端，没投递的一律不算数）
+    const steers = drainSteer(session)
+    if (steers.length) {
+      for (const item of steers) {
+        session.messages.push({ role: 'user', content: '（用户在你工作期间补充：' + item.text + '）' })
+      }
+      saveSession(session)
+      if (events.onSteer) for (const item of steers) events.onSteer({ phase: 'delivered', text: item.text })
+    }
+    noteSystemSurface(session, session.messages, events)
     if (events.onStatus) events.onStatus(step === 0 ? '正在思考' : `继续处理（第 ${step + 1} 步）`)
     let assistant
     // 记下这次请求实际发出的消息条数：响应里的 prompt_tokens 就是这批消息（含 system 与工具
@@ -1521,25 +1613,56 @@ function repeatHint(session, name) {
     + '请立刻换策略：换关键词或换工具、直接读取具体文件，或者把已确认的结论先告诉用户——不要再重复同一种调用。'
 }
 
+/**
+ * 工具卡片要用的结构化摘要：只放**确定性事实**（差异行数、字节、命中数、是否落盘、退出码），
+ * 让前端不必从中文描述里猜。字段缺失就不放，卡片也不会凭空编一个数字出来。
+ */
+function toolInfoOf(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null
+  const info = {}
+  if (result.diffStat && typeof result.diffStat === 'object') {
+    info.diffStat = { added: Number(result.diffStat.added) || 0, removed: Number(result.diffStat.removed) || 0 }
+  }
+  if (Number.isFinite(result.bytes)) info.bytes = result.bytes
+  if (Number.isFinite(result.chars)) info.chars = result.chars
+  if (Number.isFinite(result.lines)) info.lines = result.lines
+  if (Array.isArray(result.matches)) info.matches = result.matches.length
+  if (Array.isArray(result.files)) info.files = result.files.length
+  if (Array.isArray(result.items)) info.items = result.items.length
+  if (Number.isFinite(result.total)) info.total = result.total
+  if (result.exitCode !== undefined && result.exitCode !== null) info.exitCode = result.exitCode
+  if (result.truncated) info.truncated = true
+  if (result.spill && result.spill.path) info.spill = { path: String(result.spill.path), chars: Number(result.spill.chars) || 0 }
+  // 裁剪发生在这个结果被序列化的时候（见 clipToolResult 盖的章）：截断了就必须如实说，
+  // 否则卡片会显示"完整"，而模型实际只拿到头尾 —— 那正是"拿部分冒充完整"。
+  if (result.__clip) {
+    info.truncated = true
+    if (Number.isFinite(result.__clip.originalChars)) info.originalChars = result.__clip.originalChars
+    if (result.__clip.spillPath) {
+      info.spill = { path: String(result.__clip.spillPath), chars: Number(result.__clip.originalChars) || 0 }
+    }
+  }
+  delete info.__clip
+  return Object.keys(info).length ? info : null
+}
+
 /** 把提示并进工具结果（结果本身是 JSON，追加字段而不是拼字符串，免得破坏结构） */
 function withHint(result, hint) {
   if (!hint || !result || typeof result !== 'object' || Array.isArray(result)) return result
   return Object.assign({}, result, { __hint: hint })
 }
 
-/** 执行一个只读调用（不含审批路径，纯读取） */
+/**
+ * 执行一个只读调用（不含审批路径，纯读取）。
+ * 终态事件（done/fail）由调用方在**打包之后**发：只有那时才知道这次结果有没有被裁剪、
+ * 完整原文落在哪 —— 卡片上的事实必须来自最终形态，不能来自打包之前。
+ */
 async function runReadOnly(client, call, name, args, events, cancelToken) {
-  if (events.onTool) events.onTool({ phase: 'start', name, label: toolLabel(name), target: String(args.path || args.table || args.action || args.key || '') })
+  // key 用调用 id：只读批次是并发跑的，没有 key 的话前端会把 A 的结果写到 B 的卡片上
+  if (events.onTool) events.onTool({ phase: 'start', key: String(call && call.id || name), name, label: toolLabel(name), target: String(args.path || args.table || args.action || args.key || '') })
   try {
-    const result = await callToolWithCancel(client, name, args, cancelToken)
-    if (events.onTool) {
-      events.onTool(result && result.ok === false
-        ? { phase: 'fail', name, label: toolLabel(name), detail: (result && (result.error || result.message)) || '执行失败' }
-        : { phase: 'done', name, label: toolLabel(name) })
-    }
-    return result
+    return await callToolWithCancel(client, name, args, cancelToken)
   } catch (error) {
-    if (events.onTool) events.onTool({ phase: 'fail', name, label: toolLabel(name), detail: error.message })
     return { ok: false, error: error.message }
   }
 }
@@ -1573,7 +1696,14 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
         const item = batch[position]
         const result = batchResults[position]
         const hint = repeatHint(session, item.name)
-        session.messages.push({ role: 'tool', tool_call_id: item.call.id, content: clipToolResult(withHint(result, hint)) })
+        const packed = withHint(result, hint)
+        session.messages.push({ role: 'tool', tool_call_id: item.call.id, content: clipToolResult(packed, item.name) })
+        if (events.onTool) {
+          const key = String(item.call && item.call.id || item.name)
+          events.onTool(packed && packed.ok === false
+            ? { phase: 'fail', key, name: item.name, label: toolLabel(item.name), detail: (packed && (packed.error || packed.message)) || '执行失败', info: toolInfoOf(packed) }
+            : { phase: 'done', key, name: item.name, label: toolLabel(item.name), info: toolInfoOf(packed) })
+        }
         results.push({ name: item.name, result })
         if (item.name === 'todo_write' && result && result.ok !== false && result.summary && result.summary.total) {
           session.todos = result.items
@@ -1585,7 +1715,7 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
       continue
     }
 
-    if (events.onTool) events.onTool({ phase: 'start', name, label: toolLabel(name), target: String(args.path || args.table || args.action || args.key || '') })
+    if (events.onTool) events.onTool({ phase: 'start', key: String(call && call.id || name), name, label: toolLabel(name), target: String(args.path || args.table || args.action || args.key || '') })
     const isFileMutation = FILE_MUTATIONS.has(name)
     const granted = isFileMutation && isGranted(session, name, args)
     const needsApproval = !granted && (isFileMutation || (OTHER_MUTATIONS.has(name) && config.approvalMode !== 'auto'))
@@ -1595,20 +1725,21 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
     if (needsApproval) {
       const preview = isFileMutation ? await callToolWithCancel(client, name, { ...args, dryRun: true }, cancelToken) : null
       if (preview && preview.ok === false) {
-        session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(preview) })
+        session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(preview, name) })
         saveSession(session)
         results.push({ name, result: preview })
-        if (events.onTool) events.onTool({ phase: 'fail', name, label: toolLabel(name), detail: preview.error || '预览失败' })
+        if (events.onTool) events.onTool({ phase: 'fail', key: String(call && call.id || name), name, label: toolLabel(name), detail: preview.error || '预览失败', info: toolInfoOf(preview) })
         continue
       }
       session.pending = { call, name, args, preview, remaining: calls.slice(index + 1) }
       saveSession(session)
-      if (events.onTool) events.onTool({ phase: 'approval', name, label: toolLabel(name) })
+      if (events.onTool) events.onTool({ phase: 'approval', key: String(call && call.id || name), name, label: toolLabel(name) })
       return { approval: { ok: true, status: 'approval', message: assistantContent || '这一步会修改工程或控制编辑器，请确认。', approval: summarizePending(name, args, preview) }, results }
     }
     const result = await callToolWithCancel(client, name, args, cancelToken)
     const hint = repeatHint(session, name)
-    session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(withHint(result, hint)) })
+    const packedResult = withHint(result, hint)
+    session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(packedResult, name) })
     saveSession(session)
     results.push({ name, result })
     // 待办进度实时上屏：用户不必等收尾才看到做到哪一步
@@ -1619,9 +1750,10 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
       if (events.onPlan) events.onPlan(result.items, result.summary)
     }
     if (events.onTool) {
-      events.onTool(result && result.ok === false
-        ? { phase: 'fail', name, label: toolLabel(name), detail: (result && (result.error || result.message)) || '执行失败' }
-        : { phase: 'done', name, label: toolLabel(name) })
+      const key = String(call && call.id || name)
+      events.onTool(packedResult && packedResult.ok === false
+        ? { phase: 'fail', key, name, label: toolLabel(name), detail: (packedResult && (packedResult.error || packedResult.message)) || '执行失败', info: toolInfoOf(packedResult) }
+        : { phase: 'done', key, name, label: toolLabel(name), info: toolInfoOf(packedResult) })
     }
   }
   // 打断导致中途退出：剩下的调用一个都没执行，但它们已随 assistant 入了历史，必须补应答
@@ -1658,6 +1790,15 @@ async function handle(pathname, body, events = {}) {
         return { key, tool, toolLabel: toolLabel(tool), path }
       })
     }
+  }
+  if (pathname === '/steer') {
+    // 繁忙时的"引导"：把补充内容排进队列，由 Agent 循环在下一个步骤边界投递给模型。
+    // 空闲时没有可插入的边界，如实告诉前端"直接发就行"，而不是假装收下了。
+    const session = sessionFor(body.sessionId || 'default')
+    const text = String(body.message || '').trim()
+    if (!text) throw new Error('引导内容不能为空')
+    if (!session.busy) return { ok: true, busy: false, queued: 0, note: '当前没有正在跑的任务，直接发送即可' }
+    return { ok: true, busy: true, queued: queueSteer(session, text) }
   }
   if (pathname === '/quick-config') {
     // 只更新传入的字段（模型 / 思考开关 / 思考强度），其余保持原值。
@@ -1788,6 +1929,8 @@ async function handle(pathname, body, events = {}) {
     // 磁盘上的历史可能是旧版本写下的坏序列：恢复时先体检，别让用户一开口就撞 400
     healSessionMessages(restored, '恢复会话时体检')
     sessions.set(id, restored)
+    // resume 后允许「系统提示词」行再上一次（对齐 DSH：即使文本没变也会重复该行）
+    systemHashes.delete(id)
     return {
       ok: true,
       sessionId: id,
@@ -1861,6 +2004,8 @@ async function handle(pathname, body, events = {}) {
     session.pending = null
     const rejected = pathname === '/reject'
     let result
+    // 打包（裁剪 + 落盘）只做一次：事件里的"已截断/落在哪"与入历史的正文必须来自同一次打包
+    let packedApproved = ''
     if (rejected) result = { ok: false, rejected: true, message: '用户取消了这项操作' }
     else {
       const args = FILE_MUTATIONS.has(pending.name)
@@ -1872,12 +2017,14 @@ async function handle(pathname, body, events = {}) {
             ...(pending.preview && pending.preview.confirmationToken ? { confirmationToken: pending.preview.confirmationToken } : {})
           }
         : pending.args
-      if (events.onTool) events.onTool({ phase: 'start', name: pending.name, label: toolLabel(pending.name), target: String(pending.args.path || '') })
+      if (events.onTool) events.onTool({ phase: 'start', key: String(pending.call && pending.call.id || pending.name), name: pending.name, label: toolLabel(pending.name), target: String(pending.args.path || '') })
       result = await (await ensureMcp()).call(pending.name, args)
+      packedApproved = clipToolResult(result, pending.name)   // 顺带在原对象上盖"是否被裁剪"的章
       if (events.onTool) {
+        const key = String(pending.call && pending.call.id || pending.name)
         events.onTool(result && result.ok === false
-          ? { phase: 'fail', name: pending.name, label: toolLabel(pending.name), detail: (result && (result.error || result.message)) || '执行失败' }
-          : { phase: 'done', name: pending.name, label: toolLabel(pending.name) })
+          ? { phase: 'fail', key, name: pending.name, label: toolLabel(pending.name), detail: (result && (result.error || result.message)) || '执行失败', info: toolInfoOf(result) }
+          : { phase: 'done', key, name: pending.name, label: toolLabel(pending.name), info: toolInfoOf(result) })
       }
       // 用户勾选"本次任务内该文件不再逐条确认"时才授予授权（删除类永不授权）
       if (body.grantForSession === true && result && result.ok !== false) {
@@ -1885,7 +2032,7 @@ async function handle(pathname, body, events = {}) {
         if (key && events.onNotice) events.onNotice(`已记住：${toolLabel(pending.name)} · ${pending.args.path || ''} 在本次任务内不再逐条确认（随时可撤销）`)
       }
     }
-    session.messages.push({ role: 'tool', tool_call_id: pending.call.id, content: clipToolResult(result) })
+    session.messages.push({ role: 'tool', tool_call_id: pending.call.id, content: packedApproved || clipToolResult(result, pending.name) })
     saveSession(session)
     const config = readStoredConfig()
 
@@ -1957,7 +2104,9 @@ function startStream(res, req, pathname) {
     onDelta: delta => send({ type: 'delta', ...delta }),
     onTool: info => send({ type: 'tool', ...info }),
     onNotice: text => send({ type: 'notice', text }),
-    onPlan: (items, summary) => send({ type: 'plan', items, summary })
+    onPlan: (items, summary) => send({ type: 'plan', items, summary }),
+    onSteer: info => send({ type: 'steer', ...info }),
+    onSystem: info => send({ type: 'system', ...info })
   }
 }
 

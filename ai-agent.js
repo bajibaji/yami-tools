@@ -27,7 +27,10 @@
     balance: null,
     abort: null,
     thinkingView: null,
-    processFold: null
+    processFold: null,
+    // 繁忙时用户打的话：queue = 排队（本轮结束后依次发出），queueSeq 只用来给每项一个稳定 id
+    queue: [],
+    queueSeq: 0
   };
   state.token = sharedToken();
   localStorage.setItem('danjuan-ai-session', state.sessionId);
@@ -43,6 +46,8 @@
   let thinkingTotalMs = 0;      // 已封口各段的累计思考耗时（过程区头部用）
   // 当前回合容器：过程区（思考+工具）与正文槽都挂在它下面
   let currentTurn = null;
+  // 轮次导航轨道的刷新钩子（面板建好后才有值）
+  let refreshRail = null;
 
   // 逐 token 的流式渲染必须按帧合并：片段再多，一帧也只写一次 DOM。
   // 旧实现每来一个片段就重设全文 + 拉滚动条，是 O(n^2)，上下文一长整页卡死。
@@ -269,6 +274,7 @@
     root.className = 'yami-ai-turn';
     list.appendChild(root);
     currentTurn = { root, process: null, body: null };
+    if (refreshRail) refreshRail();
     return currentTurn;
   }
 
@@ -661,6 +667,7 @@
         if (message.content) addMessage(message.role === 'user' ? 'user' : 'assistant', message.content);
       }
       autoScroll(true);   // 切过来先停在最新，历史由用户自己往上翻
+      if (refreshRail) refreshRail();
       if (data.pending) renderApproval({ approval: data.pending });
       else setStatus('就绪', 'ready');
       document.getElementById('yami-ai-history')?.classList.remove('show');
@@ -701,6 +708,11 @@
       send.title = state.busy ? '停止本轮输出（也可以按 Esc）' : '发送（Enter）';
     }
     if (!state.busy) state.abort = null;
+    // 繁忙时才有意义的两颗按钮：排队（默认）与引导（立刻插话）
+    const queueBtn = document.getElementById('yami-ai-queue-btn');
+    const steerBtn = document.getElementById('yami-ai-steer-btn');
+    if (queueBtn) queueBtn.style.display = state.busy ? '' : 'none';
+    if (steerBtn) steerBtn.style.display = state.busy ? '' : 'none';
   }
 
   /** 打断本轮输出：断开 SSE，宿主会同步停掉模型请求与后续工具（不是只关界面） */
@@ -774,6 +786,7 @@
   function handleResult(data) {
     if (data.message) addMessage('assistant', data.message);
     renderTurnUsage(data.turnUsage);
+    if (Array.isArray(data.undeliveredSteer)) for (const text of data.undeliveredSteer) enqueueMessage(text);
     if (data.status === 'approval') renderApproval(data);
     else { state.pending = null; document.getElementById('yami-ai-approval')?.classList.remove('show'); setStatus('就绪', 'ready'); }
   }
@@ -787,7 +800,9 @@
     let received = false;
     let finalResult = null;
     let streamError = null;
-    let toolLine = null;
+    // 工具卡片按调用 id 匹配：只读批次是并发跑的，单槽变量会把 A 的结果写到 B 的卡片上
+    const toolCards = new Map();
+    const cardKeyOf = event => String((event && event.key) || (event && event.name) || '');
     state.abort = new AbortController();
     const response = await fetch('http://127.0.0.1:' + PORT + '/chat/stream', {
       method: 'POST',
@@ -896,15 +911,31 @@
       if (event.type === 'tool') {
         // 工具调用是轮次分界：它前面那段思考已经想完了，下一段思考必须另起一块
         sealThinking();
-        if (event.phase === 'start') { toolLine = pushNotice('执行：' + (event.label || event.name) + (event.target ? ' · ' + event.target : '')); return; }
-        if (toolLine) {
-          if (event.phase === 'done') { toolLine.textContent = '完成：' + (event.label || event.name) + (event.target ? ' · ' + event.target : ''); toolLine.classList.add('ok'); }
-          else if (event.phase === 'fail') { toolLine.textContent = '失败：' + (event.label || event.name) + ' · ' + (event.detail || '执行失败'); toolLine.classList.add('bad'); }
-          else if (event.phase === 'approval') { toolLine.textContent = '待确认：' + (event.label || event.name); toolLine.classList.add('wait'); }
-          toolLine = null;
+        // 工具卡片承担过去那条「执行/完成」过程条：状态只来自冻结的调用结果，
+        // 截断与否、差异多少、能不能定位文件，都写在卡片上（对齐 DSH 的工具展示）。
+        if (event.phase === 'start') {
+          const card = pushToolCard(event);
+          if (card) {
+            toolCards.set(cardKeyOf(event), card);
+            // 卡片表只留最近 50 张：审批卡片要跨轮等着结果，不能一轮一清，但也不能无限长
+            while (toolCards.size > 50) toolCards.delete(toolCards.keys().next().value);
+          }
+          return;
+        }
+        {
+          const key = cardKeyOf(event);
+          const card = toolCards.get(key) || toolCards.get(String(event.name || ''));
+          if (card) {
+            if (event.phase === 'done') { card.done(event); toolCards.delete(key); }
+            else if (event.phase === 'fail') { card.fail(event); toolCards.delete(key); }
+            // 审批是跨轮的：卡片留在表里，等下一轮真正执行完的 done/fail 来收尾
+            else if (event.phase === 'approval') card.wait(event);
+          }
         }
         return;
       }
+      if (event.type === 'system') { pushSystemRow(event); return; }
+      if (event.type === 'steer') { if (event.phase === 'delivered') markSteerDelivered(String(event.text || '')); return; }
       if (event.type === 'notice') { pushNotice(event.text || '', 'wait'); return; }
       if (event.type === 'plan') { renderPlan(event.items, event.summary); return; }
       if (event.type === 'result') { finalResult = event; return; }
@@ -938,6 +969,11 @@
       if (finalResult.plan) renderPlan(finalResult.plan.items, finalResult.plan.summary);
       if (finalResult.changelog) renderChangelog(finalResult.changelog);
       renderTurnUsage(finalResult.turnUsage);   // 记账不全时它自己什么都不画
+      // 引导没赶上这一轮（模型已经收工）：如实放进排队区当普通消息发，绝不假装送达
+      if (Array.isArray(finalResult.undeliveredSteer) && finalResult.undeliveredSteer.length) {
+        for (const text of finalResult.undeliveredSteer) enqueueMessage(text);
+        hudToast('有 ' + finalResult.undeliveredSteer.length + ' 条引导没赶上这一步，已放进排队区');
+      }
     }
     return finalResult;
   }
@@ -1208,23 +1244,429 @@
     return el;
   }
 
+  // ============================================================
+  // 工具卡片 / 系统提示词行 / 引导条 / 排队区 / 轮次导航轨道
+  // 对齐 DSH 的 client-ui-tool 与 client-ui-chat：卡片状态只来自冻结的调用结果、
+  // 被截断的输出必须如实标注、导航轨道给每一轮一个刻度。
+  // ============================================================
+
+  /**
+   * 面板内的轻提示：复用 HUD 那颗 toast 节点（同款样式），没有就自己建一个。
+   * 注意：**不能**直接调 hud-overlay.js 里的 showToast —— 那是另一个 IIFE 里的私有函数，
+   * 跨文件根本拿不到（静态自检抓到过这个 ReferenceError，别再犯）。
+   */
+  function hudToast(text, duration) {
+    let el = document.getElementById('yami-perf-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'yami-perf-toast';
+      el.id = 'yami-perf-toast';
+      document.body.appendChild(el);
+    }
+    el.textContent = String(text || '');
+    el.classList.add('show');
+    if (hudToast.timer) clearTimeout(hudToast.timer);
+    hudToast.timer = setTimeout(() => el.classList.remove('show'), duration || 2200);
+  }
+
+  /** 把工程内相对路径解析成绝对路径（解析不出来就不给"定位"这个动作） */
+  function absolutePathOf(rel) {
+    const text = String(rel || '').trim();
+    if (!text) return '';
+    try {
+      const path = require('path');
+      if (path.isAbsolute(text)) return text;
+      const root = editorProjectRoot();
+      return root ? path.join(root, text) : '';
+    } catch (e) { return ''; }
+  }
+
+  /** 在系统资源管理器里定位文件（与性能大盘的「定位文件」同一套做法，失败就退化成复制路径） */
+  function revealPath(rel) {
+    const full = absolutePathOf(rel);
+    if (!full) { hudToast('这个路径没能解析到工程里：' + rel); return; }
+    try {
+      const electron = require('electron');
+      if (electron && electron.shell && electron.shell.showItemInFolder) {
+        electron.shell.showItemInFolder(full);
+        hudToast('已在文件夹中定位：' + rel);
+        return;
+      }
+    } catch (e) { /* 没有 electron 就退化成复制 */ }
+    try {
+      navigator.clipboard.writeText(full);
+      hudToast('已复制完整路径：' + full);
+    } catch (e) { hudToast('定位失败：' + full); }
+  }
+
+  function toolChipsOf(info) {
+    return (renderCore && typeof renderCore.toolCardChips === 'function') ? renderCore.toolCardChips(info) : [];
+  }
+
+  function truncationOf(info) {
+    return (renderCore && typeof renderCore.truncationText === 'function') ? renderCore.truncationText(info) : '';
+  }
+
+  /**
+   * 工具卡片：一行摘要（谁 · 干了什么 · 结果如何），点开看细节。
+   * 状态只有三种，且只由**冻结的调用结果**决定：运行中 / 成功 / 失败（另有等待确认）。
+   */
+  function pushToolCard(event) {
+    const area = processArea();
+    const host = area ? area.body : document.getElementById('yami-ai-messages');
+    if (!host) return null;
+    const el = document.createElement('div');
+    el.className = 'yami-ai-tool collapsed';
+    const head = document.createElement('div');
+    head.className = 'yami-ai-tool-head';
+    head.setAttribute('role', 'button');
+    head.setAttribute('tabindex', '0');
+    const dot = document.createElement('span');
+    dot.className = 'yami-ai-tool-dot run';
+    const title = document.createElement('span');
+    title.className = 'yami-ai-tool-title';
+    title.textContent = event.label || event.name || '工具';
+    const target = document.createElement('span');
+    target.className = 'yami-ai-tool-target';
+    target.textContent = String(event.target || '');
+    const chips = document.createElement('span');
+    chips.className = 'yami-ai-tool-chips';
+    const toggle = document.createElement('span');
+    toggle.className = 'yami-ai-tool-toggle';
+    toggle.textContent = '▸';
+    head.appendChild(dot); head.appendChild(title); head.appendChild(target);
+    head.appendChild(chips); head.appendChild(toggle);
+    const body = document.createElement('div');
+    body.className = 'yami-ai-tool-body';
+    el.appendChild(head); el.appendChild(body);
+    host.appendChild(el);
+    if (area) { area.steps++; refreshProcessMeta(); }
+
+    if (event.target) {
+      target.classList.add('clickable');
+      target.title = '点击在文件夹中定位：' + event.target;
+      activate(target, e => { e.stopPropagation(); revealPath(event.target); });
+    }
+    activate(head, e => {
+      e.stopPropagation();
+      const collapsed = el.classList.toggle('collapsed');
+      toggle.textContent = collapsed ? '▸' : '▾';
+    });
+    el.querySelector('.yami-ai-tool-head').title = event.target ? '展开看细节 · ' + event.target : '展开看细节';
+
+    const writeLine = text => {
+      if (!text) return;
+      body.textContent = body.textContent ? body.textContent + '\n' + text : text;
+    };
+    const card = {
+      el: el,
+      /** 成功：标签来自结构化事实；截断就如实标注（落盘了给路径） */
+      done: payload => {
+        dot.className = 'yami-ai-tool-dot ok';
+        const info = (payload && payload.info) || null;
+        const list = toolChipsOf(info);
+        chips.textContent = list.join(' · ');
+        const trunc = truncationOf(info);
+        if (trunc) {
+          chips.textContent = chips.textContent ? chips.textContent + ' · 已截断' : '已截断';
+          writeLine(trunc);
+          if (info && info.spill && info.spill.path) {
+            const line = document.createElement('div');
+            line.className = 'yami-ai-tool-spill';
+            line.textContent = '打开落盘目录';
+            activate(line, e => { e.stopPropagation(); revealPath(info.spill.path); });
+            body.appendChild(line);
+          }
+        }
+      },
+      /** 失败：错误原文展开着给（不用用户多点一次） */
+      fail: payload => {
+        dot.className = 'yami-ai-tool-dot bad';
+        const detail = (payload && payload.detail) || '执行失败';
+        writeLine('错误：' + detail);
+        el.classList.remove('collapsed');
+        toggle.textContent = '▾';
+      },
+      /** 等待确认：卡片立刻展开，把"卡在这了"摆到眼前 */
+      wait: () => {
+        dot.className = 'yami-ai-tool-dot wait';
+        writeLine('等待你确认');
+        el.classList.remove('collapsed');
+        toggle.textContent = '▾';
+      }
+    };
+    autoScroll();
+    return card;
+  }
+
+  /**
+   * 系统提示词行：把模型这一轮**实际看到**的 system 文本摆出来（默认收起）。
+   * 文本没变就不重复上屏（宿主负责判重）；resume 之后允许再来一次。
+   */
+  function pushSystemRow(event) {
+    const list = document.getElementById('yami-ai-messages');
+    if (!list) return null;
+    const el = document.createElement('div');
+    el.className = 'yami-ai-system collapsed';
+    const head = document.createElement('div');
+    head.className = 'yami-ai-system-head';
+    head.setAttribute('role', 'button');
+    head.setAttribute('tabindex', '0');
+    const title = document.createElement('span');
+    title.className = 'yami-ai-system-title';
+    title.textContent = '系统提示词';
+    const meta = document.createElement('span');
+    meta.className = 'yami-ai-system-meta';
+    meta.textContent = (event.hash ? event.hash + ' · ' : '') + String(event.text || '').length + ' 字';
+    const toggle = document.createElement('span');
+    toggle.className = 'yami-ai-system-toggle';
+    toggle.textContent = '▸';
+    head.appendChild(title); head.appendChild(meta); head.appendChild(toggle);
+    const body = document.createElement('div');
+    body.className = 'yami-ai-system-body';
+    body.textContent = String(event.text || '');
+    el.appendChild(head); el.appendChild(body);
+    // 插在当前回合之前：这一行的语义是"这一轮请求带的系统提示词"，排在过程之上更好读
+    if (currentTurn && currentTurn.root && currentTurn.root.parentNode === list) list.insertBefore(el, currentTurn.root);
+    else list.appendChild(el);
+    activate(head, e => {
+      e.stopPropagation();
+      const collapsed = el.classList.toggle('collapsed');
+      toggle.textContent = collapsed ? '▸' : '▾';
+    });
+    autoScroll();
+    return el;
+  }
+
+  /** 引导条：告诉用户"这句话会在下一步送到模型"；宿主确认送达后翻成已送达 */
+  function pushSteerChip(text) {
+    const area = processArea();
+    const host = area ? area.body : document.getElementById('yami-ai-messages');
+    if (!host) return null;
+    const el = document.createElement('div');
+    el.className = 'yami-ai-steer wait';
+    el.textContent = '引导（将在下一步送到模型）：' + text;
+    host.appendChild(el);
+    if (area) { area.steps++; refreshProcessMeta(); }
+    autoScroll();
+    return el;
+  }
+
+  function markSteerDelivered(text) {
+    const nodes = document.querySelectorAll('.yami-ai-steer.wait');
+    for (const el of nodes) {
+      if (el.textContent.indexOf(text) !== -1) {
+        el.classList.remove('wait');
+        el.classList.add('ok');
+        el.textContent = '引导已送达模型：' + text;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // ---------------- 排队区（繁忙时打的话不再被吞掉） ----------------
+  function enqueueMessage(text) {
+    const item = { id: 'q' + (++state.queueSeq), text: String(text) };
+    state.queue.push(item);
+    renderQueueDock();
+    return item;
+  }
+
+  function dropQueued(id) {
+    state.queue = state.queue.filter(item => item.id !== id);
+    renderQueueDock();
+  }
+
+  /** 排队区：一条一行，可单条撤回；轮次结束后自动发出（不进对话记录，直到真的发出） */
+  function renderQueueDock() {
+    const dock = document.getElementById('yami-ai-queue');
+    if (!dock) return;
+    dock.textContent = '';
+    if (!state.queue.length) { dock.classList.remove('show'); return; }
+    dock.classList.add('show');
+    const head = document.createElement('div');
+    head.className = 'yami-ai-queue-head';
+    head.textContent = '排队中 ' + state.queue.length + ' 条（本轮结束后依次发出）';
+    dock.appendChild(head);
+    for (const item of state.queue) {
+      const row = document.createElement('div');
+      row.className = 'yami-ai-queue-item';
+      const text = document.createElement('span');
+      text.className = 'yami-ai-queue-text';
+      text.textContent = item.text;
+      const del = document.createElement('span');
+      del.className = 'yami-ai-queue-del';
+      del.textContent = '×';
+      del.title = '撤回这条';
+      activate(del, e => { e.stopPropagation(); dropQueued(item.id); });
+      row.appendChild(text); row.appendChild(del);
+      dock.appendChild(row);
+    }
+  }
+
+  /** 一轮结束后：把排队的第一条发出去（只发一条，剩下的等下一轮结束再发） */
+  function flushQueue() {
+    if (state.busy || !state.queue.length) return;
+    const next = state.queue.shift();
+    renderQueueDock();
+    if (!next) return;
+    // 直接发这条排队的文本：不去动输入框（用户可能正在敲下一条）
+    runMessage(next.text);
+  }
+
+  /** 输入区扩展：排队区 + 繁忙时才出现的「排队 / 引导」两颗按钮（不改原模板，降低碰坏骨架的风险） */
+  function buildComposeExtras() {
+    const compose = document.querySelector('#page-ai .yami-ai-compose');
+    if (!compose || !compose.parentNode) return;
+    if (!document.getElementById('yami-ai-queue')) {
+      const dock = document.createElement('div');
+      dock.className = 'yami-ai-queue';
+      dock.id = 'yami-ai-queue';
+      compose.parentNode.insertBefore(dock, compose);
+    }
+    if (!document.getElementById('yami-ai-queue-btn')) {
+      const queueBtn = document.createElement('div');
+      queueBtn.className = 'yami-ai-secondary';
+      queueBtn.id = 'yami-ai-queue-btn';
+      queueBtn.setAttribute('role', 'button');
+      queueBtn.setAttribute('tabindex', '0');
+      queueBtn.textContent = '排队';
+      queueBtn.title = '本轮结束后自动发出（Enter）';
+      queueBtn.style.display = 'none';
+      const steerBtn = document.createElement('div');
+      steerBtn.className = 'yami-ai-secondary';
+      steerBtn.id = 'yami-ai-steer-btn';
+      steerBtn.setAttribute('role', 'button');
+      steerBtn.setAttribute('tabindex', '0');
+      steerBtn.textContent = '引导';
+      steerBtn.title = '立刻交给模型，在下一个步骤边界读到（Ctrl+Enter）';
+      steerBtn.style.display = 'none';
+      compose.appendChild(queueBtn);
+      compose.appendChild(steerBtn);
+      activate(queueBtn, e => { e.stopPropagation(); sendMessage(); });
+      activate(steerBtn, e => { e.stopPropagation(); sendMessage('steer'); });
+    }
+    renderQueueDock();
+  }
+
+  /**
+   * 轮次导航轨道（对齐 DSH 的 turn rail）：每一轮一个刻度，滚动时高亮当前阅读的那一轮，
+   * 点刻度跳过去，悬停给一句预览。历史回放（没有 turn 容器）时按用户消息分轮。
+   */
+  function buildRail() {
+    const page = document.getElementById('page-ai');
+    const list = document.getElementById('yami-ai-messages');
+    if (!page || !list || document.getElementById('yami-ai-rail')) return;
+    const rail = document.createElement('div');
+    rail.className = 'yami-ai-rail';
+    rail.id = 'yami-ai-rail';
+    rail.setAttribute('role', 'navigation');
+    rail.setAttribute('aria-label', '轮次导航');
+    page.appendChild(rail);
+    const cache = { sig: '', ticks: [] };
+    const anchorsOf = () => {
+      const turns = list.querySelectorAll('.yami-ai-turn');
+      if (turns.length) return Array.from(turns);
+      return Array.from(list.querySelectorAll('.yami-ai-message.user'));
+    };
+    const refresh = force => {
+      const anchors = anchorsOf();
+      const sig = String(anchors.length);
+      if (!force && sig === cache.sig) return;
+      cache.sig = sig;
+      rail.textContent = '';
+      cache.ticks = anchors.map((anchor, i) => {
+        const tick = document.createElement('div');
+        tick.className = 'yami-ai-rail-tick';
+        // 预览现算：鼠标悬停时才读一遍文本（流式期间内容一直在长，提前算好必然会过期）
+        tick.addEventListener('mouseenter', () => {
+          const preview = String(anchor.textContent || '').replace(/\s+/g, ' ').trim();
+          tick.title = '第 ' + (i + 1) + ' 轮：' + (preview.slice(0, 50) || '（空）');
+        });
+        activate(tick, e => {
+          e.stopPropagation();
+          anchor.scrollIntoView({ block: 'start' });
+        });
+        rail.appendChild(tick);
+        return { tick: tick, anchor: anchor };
+      });
+      rail.classList.toggle('show', cache.ticks.length > 1);
+    };
+    const layout = () => {
+      const pageRect = page.getBoundingClientRect();
+      const listRect = list.getBoundingClientRect();
+      rail.style.top = Math.round(listRect.top - pageRect.top + 6) + 'px';
+      rail.style.height = Math.max(24, Math.round(listRect.height - 12)) + 'px';
+    };
+    const updateActive = () => {
+      refresh(false);
+      if (!cache.ticks.length) return;
+      const offsets = cache.ticks.map(item => item.anchor.offsetTop - list.offsetTop);
+      const index = (renderCore && typeof renderCore.activeTurnIndex === 'function')
+        ? renderCore.activeTurnIndex(offsets, list.scrollTop, list.clientHeight)
+        : 0;
+      cache.ticks.forEach((item, i) => item.tick.classList.toggle('active', i === index));
+    };
+    const sync = () => { layout(); updateActive(); };
+    layout();
+    updateActive();
+    list.addEventListener('scroll', () => scheduleRender(updateActive), { passive: true });
+    if (typeof ResizeObserver === 'function') {
+      try { new ResizeObserver(sync).observe(list); } catch (e) { /* 没有就算了，resize 兜底 */ }
+    }
+    window.addEventListener('resize', sync);
+    refreshRail = sync;
+  }
+
   /** 切换显示模式时，同步更新历史上所有思考块 */
   function applyThinkingModeToAll() {
     for (const el of document.querySelectorAll('.yami-ai-thinking')) applyThinkingMode(el);
   }
 
-  async function sendMessage() {
-    if (state.busy) return;
+  /** 引导：立刻交给宿主，由它在下一个步骤边界投递给模型（宿主空闲时会如实说"直接发就行"） */
+  async function sendSteer(text) {
+    try {
+      const res = await request('/steer', { sessionId: state.sessionId, message: text });
+      if (res && res.busy) {
+        pushSteerChip(text);
+        hudToast('已交给模型，会在下一个步骤边界读到');
+        return;
+      }
+      enqueueMessage(text);
+      hudToast('这一轮刚好结束了，已放进排队区');
+    } catch (e) {
+      enqueueMessage(text);
+      hudToast('引导没送出去（' + e.message + '），已放进排队区');
+    }
+  }
+
+  async function sendMessage(mode) {
+    const input = document.getElementById('yami-ai-input');
+    const text = input && input.value.trim();
+    // 繁忙时不再把用户打的字丢掉（旧行为是直接 return，字等于白打）：
+    //   默认「排队」——本轮结束后依次发出；显式「引导」——立刻交给宿主，下一步骤边界投递。
+    if (state.busy) {
+      if (!text) return;
+      input.value = '';
+      if (mode === 'steer') return await sendSteer(text);
+      enqueueMessage(text);
+      hudToast('已排队（第 ' + state.queue.length + ' 条）：本轮结束后自动发出；想让它立刻插话就点「引导」或按 Ctrl+Enter');
+      return;
+    }
     // 有未确认的修改时，用户直接发新消息 = 放弃那项修改（宿主会同步作废并给它补上"未执行"应答）。
     // 以前这里直接 return，界面看着就是"卡住了、发不出去"，用户完全不知道卡在哪。
     if (state.pending) {
       state.pending = null;
       document.getElementById('yami-ai-approval')?.classList.remove('show');
     }
-    const input = document.getElementById('yami-ai-input');
-    const text = input && input.value.trim();
     if (!text) { input?.focus(); return; }
     input.value = '';
+    await runMessage(text);
+  }
+
+  /** 真正发一条需求（输入框那条与排队接力那条都走这里；排队接力不许碰输入框里正在敲的草稿） */
+  async function runMessage(text) {
     addMessage('user', text);
     autoScroll(true);   // 用户刚发消息：无论刚才在看哪，都回到最新（这是他自己触发的）
     currentThinkingEl = null;
@@ -1261,6 +1703,7 @@
       refreshProcessMeta();
       applyTurnFold();       // 紧凑模式下把过程收起来（没有最终正文/焦点在里面时不收）
       endTurn();
+      flushQueue();          // 排队区还有的话，接着发下一条（它在 setBusy(false) 之后才可能进来）
     }
   }
 
@@ -1520,6 +1963,8 @@
     api.registerPage('ai', page, { title: 'AI 助手', showBack: true, showModeSwitch: false, showClearErrors: false, showTabs: false, showExportBtns: false, refresh() {}, destroy() {} });
     ensureJumpButton();
     bindFollowScroll();
+    buildComposeExtras();
+    buildRail();
     activate(card, async () => {
       api.switchView('ai');
       loadSettings();
@@ -1580,7 +2025,10 @@
       stopStream();
     });
     document.getElementById('yami-ai-input').addEventListener('keydown', event => {
-      if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); }
+      if (event.key !== 'Enter' || event.shiftKey) return;
+      event.preventDefault();
+      // 忙的时候：Enter = 排队，Ctrl/Cmd+Enter = 引导（立刻交给模型在下一步读）
+      sendMessage(state.busy && (event.ctrlKey || event.metaKey) ? 'steer' : undefined);
     });
   }
 

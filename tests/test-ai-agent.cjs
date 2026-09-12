@@ -100,6 +100,17 @@ const model = http.createServer(async (req, res) => {
       role: 'assistant', content: '准备修改事件描述。',
       tool_calls: [{ id: 'write-1', type: 'function', function: { name: 'patch_resource', arguments: JSON.stringify({ path: EVENT_REL, patch: { description: 'AI E2E preview only' } }) } }]
     }
+  } else if (latestUser && latestUser.content.includes('搜一下') && !hasToolAfterUser) {
+    // 检索类结果天然很长：用来验证「超长输出裁剪 + 落盘」这条路
+    message = { role: 'assistant', content: '', tool_calls: [{ id: 'search-1', type: 'function', function: { name: 'search_project', arguments: JSON.stringify({ query: 'e', scope: 'all', maxResults: 200 }) } }] }
+  } else if (latestUser && latestUser.content.includes('搜一下') && hasToolAfterUser) {
+    message = { role: 'assistant', content: '搜完了。' }
+  } else if (latestUser && latestUser.content.includes('慢一点')) {
+    // 故意慢一拍 + 走两轮：给"繁忙时引导"留出真实的步骤边界，让队列有机会被投递
+    await new Promise(resolve => setTimeout(resolve, 500))
+    message = hasToolAfterUser
+      ? { role: 'assistant', content: '慢慢想完了。' }
+      : { role: 'assistant', content: '先看一眼脚本。', tool_calls: [{ id: 'slow-1', type: 'function', function: { name: 'list_scripts', arguments: '{}' } }] }
   } else if (latestUser && latestUser.content.includes('无记账')) {
     // 故意不报 usage：用来验证"记账不全就整行不显示"，而不是拿部分总量冒充完整结果
     message = { role: 'assistant', content: '这次不报用量。' }
@@ -129,6 +140,32 @@ function request(route, method = 'GET', body = null) {
   })
 }
 
+/** 读一次 SSE 路由，把事件数组还给测试（用于断言 system / tool / steer 这些流里的事实） */
+function streamRequest(route, body) {
+  return new Promise((resolve, reject) => {
+    const payload = Buffer.from(JSON.stringify(body))
+    const req = http.request({
+      hostname: '127.0.0.1', port: AI_PORT, path: route, method: 'POST',
+      headers: Object.assign({ 'x-yami-agent-token': TOKEN }, { 'Content-Type': 'application/json', 'Content-Length': payload.length })
+    }, res => {
+      let raw = ''
+      res.on('data', chunk => { raw += chunk })
+      res.on('end', () => {
+        const events = []
+        for (const block of raw.split('\n\n')) {
+          const line = block.split('\n').find(one => one.startsWith('data:'))
+          if (!line) continue
+          try { events.push(JSON.parse(line.slice(5).trim())) } catch { /* 忽略坏块 */ }
+        }
+        resolve(events)
+      })
+    })
+    req.on('error', reject)
+    req.write(payload)
+    req.end()
+  })
+}
+
 async function waitReady() {
   for (let i = 0; i < 50; i++) {
     try {
@@ -151,6 +188,8 @@ async function main() {
       YAMI_AI_PORT: String(AI_PORT),
       YAMI_AI_TOKEN: TOKEN,
       YAMI_AI_CONFIG_DIR: CONFIG_DIR,
+      // 工具结果预算压到 400 字符：让「超长输出裁剪 + 落盘(spill)」这条路在本套件里可测
+      YAMI_AI_TOOL_LIMIT: '400',
       YAMI_PROJECT_ROOT: PROJECT
     }
   })
@@ -212,6 +251,38 @@ async function main() {
     const noUsageTurn = await request('/chat', 'POST', { sessionId: 'nousage', message: '无记账：只说一句话' })
     assert.equal(noUsageTurn.data.status, 'done', JSON.stringify(noUsageTurn.data))
     assert.equal((noUsageTurn.data.turnUsage || {}).complete, false, '有一次模型调用没报 usage，本轮用量就必须判为不完整（前端整行不显示）')
+
+    // ---- 对齐 DSH 的四项机制：系统提示词行 / 工具卡片事实 / 超长输出落盘 / 引导投递 ----
+    const surface = await streamRequest('/chat/stream', { sessionId: 'surface', message: '多轮思考：先列脚本再总结' })
+    const sysEvents = surface.filter(event => event.type === 'system')
+    assert.equal(sysEvents.length, 1, '第一轮要上一行「系统提示词」：' + JSON.stringify(surface.map(e => e.type)))
+    assert.ok(String(sysEvents[0].text || '').length > 100 && /^[0-9a-f]{12}$/.test(String(sysEvents[0].hash)), '系统提示词要带原文与指纹：' + JSON.stringify(sysEvents[0]).slice(0, 120))
+    const doneTool = surface.find(event => event.type === 'tool' && event.phase === 'done')
+    const factKeys = ['files', 'items', 'total', 'matches', 'lines', 'bytes', 'chars', 'diffStat', 'exitCode', 'truncated', 'spill']
+    assert.ok(doneTool && doneTool.info && factKeys.some(key => doneTool.info[key] !== undefined),
+      '工具完成事件要带结构化事实（卡片不许从中文描述里猜数字）：' + JSON.stringify(doneTool && doneTool.info))
+    const again = await streamRequest('/chat/stream', { sessionId: 'surface', message: '只读检查' })
+    assert.equal(again.filter(event => event.type === 'system').length, 0, '系统文本没变时不许重复上屏（DSH 的去重语义）')
+
+    const spilled = await streamRequest('/chat/stream', { sessionId: 'spill', message: '搜一下：定位相关脚本' })
+    const spillTool = spilled.find(event => event.type === 'tool' && event.phase === 'done' && event.info && event.info.spill)
+    assert.ok(spillTool, '超长工具结果要如实标注截断并落盘：' + JSON.stringify(spilled.filter(e => e.type === 'tool').map(e => e.info)))
+    assert.equal(spillTool.info.truncated, true, '截断标记不能少')
+    assert.ok(fs.existsSync(spillTool.info.spill.path), '落盘文件必须真的在：' + spillTool.info.spill.path)
+    assert.ok(spillTool.info.spill.chars > 400, '落盘的是完整原文：' + spillTool.info.spill.chars)
+
+    const running = request('/chat', 'POST', { sessionId: 'steer', message: '慢一点：先列脚本' })
+    await new Promise(resolve => setTimeout(resolve, 200))
+    const steer = await request('/steer', 'POST', { sessionId: 'steer', message: '顺带把主菜单也看一眼' })
+    assert.equal(steer.data.ok, true, JSON.stringify(steer.data))
+    assert.equal(steer.data.busy, true, '繁忙时引导必须被收下：' + JSON.stringify(steer.data))
+    const steered = await running
+    assert.equal(steered.data.status, 'done', JSON.stringify(steered.data).slice(0, 160))
+    assert.equal(steered.data.undeliveredSteer, undefined, '赶上了步骤边界就不该退回排队区')
+    const steerSession = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, 'sessions', 'steer.json'), 'utf8'))
+    assert.ok(steerSession.messages.some(m => m.role === 'user' && /顺带把主菜单也看一眼/.test(String(m.content))), '引导内容必须真的进了模型可见的历史')
+    const idleSteer = await request('/steer', 'POST', { sessionId: 'steer', message: '空闲时说一句' })
+    assert.equal(idleSteer.data.busy, false, '空闲时引导要如实回"直接发就行"，不许假装收下')
 
 
     // Base URL 口径（官方文档：BASE URL = https://api.deepseek.com，对话接口是 base + /chat/completions）
@@ -397,6 +468,30 @@ async function main() {
     assert.ok(/noteModelAttempt\(session, !!\(assistant && assistant\.__usage\)\)/.test(hostSource), '每次模型调用都要记一笔（没报 usage 的那次会让整行不显示）')
     assert.ok(/async function runTurn\(session, config, events\)/.test(hostSource) && /turnUsageOf\(session\)/.test(hostSource), '每轮用量要挂在结果上交给前端')
     assert.ok(/\.yami-ai-turn-usage \{/.test(hudSource), '用量行要有样式（否则前端建了也看不见）')
+
+    // ---- 对齐 DSH 的四项机制：工具卡片 / 系统提示词行 / 排队与引导 / 轮次导航轨道 ----
+    assert.ok(/function pushToolCard\(/.test(agentSource) && /'yami-ai-tool collapsed'/.test(agentSource), '工具调用要渲染成卡片（一行摘要 + 可展开细节），不再是一行过程条')
+    assert.ok(/revealPath\(event\.target\)/.test(agentSource) && /showItemInFolder/.test(agentSource), '卡片上的路径要能一键定位到文件夹（失败退化成复制路径）')
+    assert.ok(/toolCardChips\(info\)/.test(agentSource) && /toolCardChips: toolCardChips/.test(coreSource), '卡片标签必须来自渲染核心那份纯逻辑（只说确定性事实，不编数字）')
+    assert.ok(/function spillFullOutput\(/.test(hostSource) && /__clip/.test(hostSource), '超长工具输出要落盘，并在事件里带"已截断 + 落在哪"')
+    assert.ok(/truncationText\(info\)/.test(agentSource) && /truncated: true/.test(hostSource), '被截断就必须如实标注，不许让人以为看到的是完整输出')
+    assert.ok(/if \(event\.type === 'system'\)/.test(agentSource) && /function pushSystemRow\(/.test(agentSource), '要有一行可折叠的「系统提示词」（模型这一轮实际看到的原文）')
+    assert.ok(/noteSystemSurface\(session, session\.messages, events\)/.test(hostSource) && /systemHashes/.test(hostSource), '系统提示词上屏要按文本指纹去重，文本没变不重复刷')
+    assert.ok(/queue: \[\]/.test(agentSource) && /function enqueueMessage\(/.test(agentSource) && /function flushQueue\(/.test(agentSource), '繁忙时打的话要进排队区、本轮结束后发出，不许再被吞掉')
+    assert.ok(/sendMessage\(state\.busy && \(event\.ctrlKey \|\| event\.metaKey\) \? 'steer' : undefined\)/.test(agentSource), '忙时 Enter=排队、Ctrl+Enter=引导，键盘上要能分开')
+    assert.ok(/async function sendSteer\(/.test(agentSource) && /request\('\/steer'/.test(agentSource), '前端要能走引导通道')
+    assert.ok(/pathname === '\/steer'/.test(hostSource) && /drainSteer\(session\)/.test(hostSource), '宿主必须有引导通道，并在步骤边界投递（不是假装收下）')
+    assert.ok(/undeliveredSteer/.test(hostSource) && /undeliveredSteer/.test(agentSource), '没赶上这一轮的引导要如实退回排队区')
+    assert.ok(/function buildRail\(/.test(agentSource) && /activeTurnIndex/.test(agentSource), '轮次导航轨道要按阅读线高亮当前轮（判据来自渲染核心）')
+    assert.ok(/const toolCards = new Map\(\)/.test(agentSource) && /key: String\(call && call\.id \|\| name\)/.test(hostSource), '工具卡片要按调用 id 匹配：只读批次并发跑，单槽变量会把结果写到别人的卡片上')
+    assert.ok(/async function runMessage\(text\)/.test(agentSource) && !/input\.value = next\.text/.test(agentSource), '排队接力不许动输入框：用户可能正在敲下一条')
+    // 跨 IIFE 调私有函数是运行时 ReferenceError（静态自检抓到过一次）：面板要用自己的 hudToast
+    assert.ok(!/\bshowToast\(/.test(agentSource), 'ai-agent.js 不许直接调 hud-overlay 的 showToast（那是另一个 IIFE 的私有函数），要用自己的 hudToast')
+    assert.ok(/function hudToast\(/.test(agentSource) && /getElementById\('yami-perf-toast'\)/.test(agentSource), '面板轻提示要复用 HUD 那颗 toast 节点（同款样式）')
+    for (const cls of ['yami-ai-tool', 'yami-ai-system', 'yami-ai-steer', 'yami-ai-queue', 'yami-ai-rail']) {
+      assert.ok(new RegExp('\\.' + cls + ' \\{').test(hudSource), cls + ' 必须有样式（src/style.css 经构建注入 HUD）')
+    }
+    assert.ok(/\.yami-ai-system-body::-webkit-scrollbar/.test(hudSource) && /\.yami-ai-queue::-webkit-scrollbar/.test(hudSource), '新增的滚动容器必须纳入滚动条单一事实源（构建门禁会拦）')
     assert.ok(/let reasoningBuffer = renderCore \? renderCore\.createTextBuffer\(\) : null/.test(agentSource) && /reasoningBuffer = renderCore \? renderCore\.createTextBuffer\(\) : null;/.test(agentSource), '每段必须换一个思考缓冲：共用一个缓冲会让第二段把第一段的字一起吞进去')
 
     // 滚动跟随：生成时自动停在最新，用户往上翻历史时一个字都不许动他的视口
@@ -421,7 +516,7 @@ async function main() {
     assert.ok(/let near = isNearBottom\(body\)/.test(agentSource), '贴底判定必须发生在写入之前（写完 scrollHeight 就变大，必然误判）')
     assert.ok(/previewLine/.test(coreSource), '最后一行取值规则本身要在渲染核心里')
     assert.ok(/function appendThinkingBlock\(/.test(agentSource), '历史与流式共用同一个思考块构造函数')
-    console.log('前端接线检查: 流式 / 历史面板 / 上下文刻度 / 工具事件 / 思考过程显示 全部接上')
+    console.log('前端接线检查: 流式 / 历史面板 / 上下文刻度 / 工具卡片 / 思考过程显示 / 过程收起 / 每轮用量 / 系统提示词行 / 排队与引导 / 轮次导航 全部接上')
   } catch (error) {
     error.message += '\nAI host stderr:\n' + stderr
     throw error

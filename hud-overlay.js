@@ -3919,6 +3919,126 @@
         .yami-ai-compose .yami-ai-primary { justify-self: end !important; }
       }
       /* ============================================================
+         AI 助手：工具卡片 / 系统提示词行 / 引导条 / 排队区 / 轮次导航轨道
+         (对齐 DSH 的 client-ui-tool 与 client-ui-chat)
+         ============================================================ */
+      .yami-ai-page { position: relative !important; }
+      .yami-ai-messages { padding-inline-end: 12px !important; }
+
+      .yami-ai-tool {
+        align-self: stretch !important;
+        border: 1px solid #2f2f38 !important;
+        border-radius: 4px !important;
+        background: #1c1c20 !important;
+        overflow: hidden !important;
+      }
+      .yami-ai-tool-head {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        padding: 4px 7px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        font-size: 12px !important;
+      }
+      .yami-ai-tool-dot { width: 6px !important; height: 6px !important; border-radius: 50% !important; flex: 0 0 auto !important; }
+      .yami-ai-tool-dot.run { background: #0080c0 !important; animation: yami-pulse 1.2s infinite !important; }
+      .yami-ai-tool-dot.ok { background: #1cff9b !important; }
+      .yami-ai-tool-dot.bad { background: #ff4040 !important; }
+      .yami-ai-tool-dot.wait { background: #ffb020 !important; }
+      .yami-ai-tool-title { color: #d0d0dc !important; font-weight: 600 !important; flex: 0 0 auto !important; }
+      .yami-ai-tool-target {
+        color: #7a8a9a !important;
+        font-family: Consolas, monospace !important;
+        font-size: 11px !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        min-width: 0 !important;
+      }
+      .yami-ai-tool-target.clickable { cursor: pointer !important; text-decoration: underline dotted !important; }
+      .yami-ai-tool-target.clickable:hover { color: #00a0f0 !important; }
+      .yami-ai-tool-chips { margin-inline-start: auto !important; color: #8899a8 !important; font-size: 11px !important; font-family: Consolas, monospace !important; white-space: nowrap !important; }
+      .yami-ai-tool-toggle { color: #6a6a78 !important; font-size: 11px !important; line-height: 1 !important; }
+      .yami-ai-tool-head:hover .yami-ai-tool-toggle { color: #d0d0e0 !important; }
+      .yami-ai-tool-body {
+        display: none !important;
+        padding: 0 8px 6px !important;
+        color: #98a0ac !important;
+        font-size: 11px !important;
+        font-family: Consolas, monospace !important;
+        white-space: pre-wrap !important;
+        word-break: break-all !important;
+      }
+      .yami-ai-tool:not(.collapsed) .yami-ai-tool-body { display: block !important; }
+      .yami-ai-tool-spill { color: #00a0f0 !important; cursor: pointer !important; text-decoration: underline !important; margin-top: 3px !important; }
+
+      .yami-ai-system {
+        align-self: stretch !important;
+        border: 1px dashed #3a3a46 !important;
+        border-radius: 4px !important;
+        padding: 4px 8px !important;
+      }
+      .yami-ai-system-head { display: flex !important; align-items: center !important; gap: 8px !important; cursor: pointer !important; user-select: none !important; }
+      .yami-ai-system-title { color: #8a8a9a !important; font-size: 12px !important; font-weight: 600 !important; }
+      .yami-ai-system-meta { color: #6a6a78 !important; font-size: 11px !important; font-family: Consolas, monospace !important; }
+      .yami-ai-system-toggle { margin-inline-start: auto !important; color: #6a6a78 !important; font-size: 11px !important; }
+      .yami-ai-system-body {
+        display: none !important;
+        margin-top: 4px !important;
+        max-height: 220px !important;
+        overflow-y: auto !important;
+        color: #9098a4 !important;
+        font-size: 11px !important;
+        font-family: Consolas, monospace !important;
+        white-space: pre-wrap !important;
+        word-break: break-word !important;
+      }
+      .yami-ai-system:not(.collapsed) .yami-ai-system-body { display: block !important; }
+
+      .yami-ai-steer {
+        align-self: stretch !important;
+        border-inline-start: 3px solid #ffb020 !important;
+        background: #20201a !important;
+        border-radius: 3px !important;
+        padding: 3px 8px !important;
+        color: #d8c08a !important;
+        font-size: 11px !important;
+      }
+      .yami-ai-steer.ok { border-inline-start-color: #1cff9b !important; background: #17201a !important; color: #8fd8b0 !important; }
+
+      .yami-ai-queue { display: none !important; flex-direction: column !important; gap: 3px !important; margin-bottom: 6px !important; max-height: 120px !important; overflow-y: auto !important; }
+      .yami-ai-queue.show { display: flex !important; }
+      .yami-ai-queue-head { color: #8899a8 !important; font-size: 11px !important; }
+      .yami-ai-queue-item { display: flex !important; align-items: center !important; gap: 6px !important; background: #23232b !important; border-radius: 3px !important; padding: 3px 7px !important; }
+      .yami-ai-queue-text { color: #c0c0cc !important; font-size: 11px !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; min-width: 0 !important; flex: 1 1 auto !important; }
+      .yami-ai-queue-del { color: #7a7a8a !important; cursor: pointer !important; font-size: 13px !important; line-height: 1 !important; flex: 0 0 auto !important; }
+      .yami-ai-queue-del:hover { color: #ff4040 !important; }
+
+      .yami-ai-rail {
+        display: none !important;
+        position: absolute !important;
+        right: 0 !important;
+        width: 10px !important;
+        flex-direction: column !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        padding: 2px 0 !important;
+        z-index: 3 !important;
+      }
+      .yami-ai-rail.show { display: flex !important; }
+      .yami-ai-rail-tick {
+        width: 6px !important;
+        height: 2px !important;
+        border-radius: 1px !important;
+        background: #3a3a46 !important;
+        cursor: pointer !important;
+        transition: background 0.12s ease, width 0.12s ease !important;
+      }
+      .yami-ai-rail-tick:hover { background: #8899a8 !important; width: 9px !important; }
+      .yami-ai-rail-tick.active { background: #0080c0 !important; width: 9px !important; }
+
+      /* ============================================================
          滚动条单一事实源 (颜色只在这里定义)
          ------------------------------------------------------------
          历史教训: 滚动条样式此前是「谁新加滚动容器谁自己补一条」, 于是每加一个模块
@@ -3945,7 +4065,9 @@
       .yami-ai-history::-webkit-scrollbar-track,
       .yami-ai-undo::-webkit-scrollbar-track,
       .yami-ai-thinking-body::-webkit-scrollbar-track,
-      .yami-ai-approval-diff::-webkit-scrollbar-track {
+      .yami-ai-approval-diff::-webkit-scrollbar-track,
+      .yami-ai-system-body::-webkit-scrollbar-track,
+      .yami-ai-queue::-webkit-scrollbar-track {
         background: #181818 !important;
       }
       .yami-perf-dock-body::-webkit-scrollbar-thumb,
@@ -3965,7 +4087,9 @@
       .yami-ai-history::-webkit-scrollbar-thumb,
       .yami-ai-undo::-webkit-scrollbar-thumb,
       .yami-ai-thinking-body::-webkit-scrollbar-thumb,
-      .yami-ai-approval-diff::-webkit-scrollbar-thumb {
+      .yami-ai-approval-diff::-webkit-scrollbar-thumb,
+      .yami-ai-system-body::-webkit-scrollbar-thumb,
+      .yami-ai-queue::-webkit-scrollbar-thumb {
         background: #383838 !important;
         border-radius: 2px !important;
       }
@@ -3984,7 +4108,9 @@
       .yami-ghost-list::-webkit-scrollbar-thumb:hover,
       .yami-ai-messages::-webkit-scrollbar-thumb:hover,
       .yami-ai-approval-diff::-webkit-scrollbar-thumb:hover,
-      .yami-ai-thinking-body::-webkit-scrollbar-thumb:hover {
+      .yami-ai-thinking-body::-webkit-scrollbar-thumb:hover,
+      .yami-ai-system-body::-webkit-scrollbar-thumb:hover,
+      .yami-ai-queue::-webkit-scrollbar-thumb:hover {
         background: #4a4a4a !important;
       }
       .yami-perf-dock-body::-webkit-scrollbar-corner,
@@ -4009,6 +4135,8 @@
       .yami-ai-undo::-webkit-scrollbar,
       .yami-ai-thinking-body::-webkit-scrollbar,
       .yami-ai-approval-diff::-webkit-scrollbar,
+      .yami-ai-system-body::-webkit-scrollbar,
+      .yami-ai-queue::-webkit-scrollbar,
       .yami-ai-messages::-webkit-scrollbar {
         width: 4px !important;
         height: 4px !important;
@@ -4603,7 +4731,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.4.0 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.5.0 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
@@ -4798,7 +4926,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.4.0 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.5.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -8040,7 +8168,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.4.0';
+      const cur = (probe && probe.version) ? probe.version : '1.5.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -8106,7 +8234,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.4.0') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.5.0') + ')');
           refreshVersionBadge();
         }
       });
