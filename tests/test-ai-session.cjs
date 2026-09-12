@@ -77,6 +77,8 @@ const model = http.createServer((req, res) => {
     } else {
       const reply = hugeResult ? '压缩验证：' + '长'.repeat(400) : '好的，这是流式回复的第一段。'
       if (body.stream) return sse(res, [
+        { choices: [{ delta: { reasoning_content: '先看看工程结构，再决定读哪个文件。' } }] },
+        { choices: [{ delta: { reasoning_content: '先看 Assets 下的脚本目录。' } }] },
         { choices: [{ delta: { content: '好的，' } }] },
         { choices: [{ delta: { content: '这是流式回复的' } }] },
         { choices: [{ delta: { content: '第一段。' } }] }
@@ -216,6 +218,8 @@ async function main() {
   check('/session/load 返回历史消息', loaded.data.ok === true && Array.isArray(loaded.data.messages))
   check('历史包含用户消息', loaded.data.messages.some(message => message.role === 'user' && message.content === '你好'))
   check('历史包含助手回复', loaded.data.messages.some(message => message.role === 'assistant' && /流式回复/.test(message.content || '')))
+  check('历史回放带上当时的思考过程', loaded.data.messages.some(message => /先看看工程结构/.test(String(message.reasoning || ''))),
+    loaded.data.messages.filter(m => m.reasoning).length + ' 条带思考')
 
   console.log('\n########## 4. 上下文压缩 ##########')
   // 造一段很长的历史：连续多轮用户消息，触发预算压缩

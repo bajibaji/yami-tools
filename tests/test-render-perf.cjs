@@ -91,6 +91,43 @@ console.log('\n########## 4. 滚动跟随：用户往上翻时不许把他拽回
   check('停在底部 → 跟随', core.shouldStickToBottom(bottom) === true)
   check('往上翻看历史 → 不跟随', core.shouldStickToBottom(scrolledUp) === false)
   check('离底部很近仍算跟随（阈值内）', core.shouldStickToBottom(nearBottom) === true)
+  // 前端实际用的是收紧后的 24px：80px 的旧阈值会让"刚往上滚一点"的用户仍被算作在底部，
+  // 于是每来一段新内容就被拽回去一次，历史根本看不成
+  check('阈值收紧后，离底 30px 不再跟随', core.shouldStickToBottom({ scrollHeight: 1000, scrollTop: 900, clientHeight: 70 }, 24) === false)
+  check('阈值收紧后，贴底仍然跟随', core.shouldStickToBottom({ scrollHeight: 1000, scrollTop: 900, clientHeight: 95 }, 24) === true)
+}
+
+console.log('\n########## 4b. 滚动跟随状态机：判据来自用户意图，不看事后距离 ##########')
+{
+  const follow = core.createFollowState(24)
+  const atBottom = { scrollHeight: 1000, scrollTop: 900, clientHeight: 100 }
+  const scrolledUp = { scrollHeight: 1000, scrollTop: 300, clientHeight: 100 }
+  check('默认跟随最新内容', follow.onAppend() === 'scroll' && follow.follow === true)
+  follow.onUserScrollUp()
+  check('滚轮一上滚就停止跟随', follow.follow === false)
+  check('暂停后追加内容不动视口', follow.onAppend() === 'hold' && follow.pending === true, 'pending=' + follow.pending)
+  check('暂停期间再次追加仍是 hold（提示"有新内容"）', follow.onAppend() === 'hold' && follow.pending === true)
+  follow.onScroll(atBottom)
+  check('滚回底部自动恢复跟随并清掉提示', follow.follow === true && follow.pending === false)
+  check('恢复后追加内容继续跟随', follow.onAppend() === 'scroll')
+  follow.onScroll(scrolledUp)
+  check('拖动滚动条上翻同样停止跟随', follow.follow === false)
+  check('force 强制回到最新（发消息/切会话用）', follow.force() === 'scroll' && follow.follow === true && follow.pending === false)
+  // 关键回归：内容追加会让 scrollHeight 变大，若"追加后再算距离"就会把一直待在底部的用户
+  // 误判成在看历史——判据必须来自滚动事件，而不是事后距离
+  const f2 = core.createFollowState(24)
+  f2.onScroll(atBottom)
+  const grew = { scrollHeight: 4000, scrollTop: 900, clientHeight: 100 }   // 追加后：内容变长、scrollTop 未变
+  check('内容变长不会被误判成"在看历史"', f2.follow === true && f2.onAppend() === 'scroll', 'distance=' + (grew.scrollHeight - grew.scrollTop - grew.clientHeight))
+}
+
+console.log('\n########## 4c. 思考单行预览：显示最后一行（此刻在想什么） ##########')
+{
+  check('取最后一行而不是开头', core.previewLine('先看工程结构\n再看脚本目录\n最后决定读取主菜单的界面资源文件') === '最后决定读取主菜单的界面资源文件')
+  check('跳过空行', core.previewLine('甲\n\n\n乙'.repeat(1)) === '甲 乙' || core.previewLine('甲\n\n\n乙') === '乙', JSON.stringify(core.previewLine('甲\n\n\n乙')))
+  check('末行太短时往前并一行', core.previewLine('这是一句比较长的思考内容\n工具名').includes('这是一句比较长的思考内容'))
+  check('过长时保留末尾最新那段', core.previewLine('开头'.repeat(200)).charAt(0) === '…')
+  check('空文本返回空串', core.previewLine('') === '' && core.previewLine(null) === '')
 }
 
 console.log('\n########## 5. 历史窗口：长会话只渲染最近若干条 ##########')

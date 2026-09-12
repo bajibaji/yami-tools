@@ -222,6 +222,7 @@ async function main() {
     const agentSource = fs.readFileSync(path.join(ROOT, 'ai-agent.js'), 'utf8')
     const hostSource = fs.readFileSync(path.join(ROOT, 'ai-host.js'), 'utf8')
     const hudSource = fs.readFileSync(path.join(ROOT, 'hud-overlay.js'), 'utf8')
+    const coreSource = fs.readFileSync(path.join(ROOT, 'ai-render-core.js'), 'utf8')
     assert.ok(/\/chat\/stream/.test(agentSource), '前端必须走流式 /chat/stream')
     assert.ok(/getReader\(\)/.test(agentSource), '前端必须逐块读取流式响应')
     assert.ok(/id="yami-ai-history"/.test(agentSource), '必须存在会话历史面板容器')
@@ -308,13 +309,34 @@ async function main() {
     assert.ok(!/text\$ \+= event\.content;[\s\S]{0,40}if \(bubble\) \{ bubble\.textContent = text\$/.test(agentSource), '不得再每帧重设全文（直写只允许出现在缺少渲染核心的兜底分支里）')
     assert.ok(!/reasoning\$ \+= event\.reasoning;[\s\S]{0,80}renderThinking\(reasoning\$\)/.test(agentSource), '思考也不得每个片段都整块重渲染')
     assert.ok(/historyWindow\(/.test(agentSource), '长会话必须只渲染最近若干条')
-    assert.ok(/shouldStickToBottom/.test(agentSource), '滚动跟随必须先判断用户是否停在底部')
+    assert.ok(/shouldStickToBottom/.test(coreSource), '贴底判定必须在渲染核心里有实现（前端只做接线）')
     // 思考过程显示：本地存储 + 宿主配置双写，事件委托绑定（面板重建也不失效）
     assert.ok(/function setThinkingView\(/.test(agentSource) && /localStorage\.setItem\('danjuan-ai-thinking-view'/.test(agentSource), '思考显示要写本地存储')
     assert.ok(/request\('\/quick-config', \{ thinkingView: next \}\)/.test(agentSource), '同时要写宿主配置（本地存储不可写时靠它兜底）')
     assert.ok(/settingsBox\.addEventListener\('change'/.test(agentSource), '改档要用事件委托绑定，别绑死在单个节点上')
     assert.ok(/写不进去，已存到宿主配置/.test(agentSource), '本地存储写失败要如实回执')
     assert.ok(/已思考 /.test(agentSource), '思考块必须显示已思考时长与字数')
+    // 思考过程要能"回放"：磁盘上一直存着 reasoning_content，回显链路两头都得接上
+    assert.ok(/reasoning: message\.reasoning_content/.test(hostSource), '宿主回显历史必须带上思考过程，否则切回旧会话就像思考凭空消失')
+    assert.ok(/appendThinkingBlock\(message\.reasoning/.test(agentSource), '切回历史会话时要回放当时的思考块')
+
+    // 滚动跟随：生成时自动停在最新，用户往上翻历史时一个字都不许动他的视口
+    assert.ok(/createFollowState/.test(coreSource) && /createFollowState/.test(agentSource), '滚动跟随状态机要放在渲染核心里实现（纯逻辑可单测）')
+    assert.ok(/TAIL_THRESHOLD = 24/.test(agentSource), '贴底阈值要收紧到一行左右（80px 会让刚上滚的用户仍被拽回底部）')
+    assert.ok(/addEventListener\('wheel'/.test(agentSource), '要用滚轮事件识别"用户在看历史"的意图，不能只靠事后距离判定')
+    assert.ok(/function autoScroll\(force\)/.test(agentSource) && /autoScroll\(true\)/.test(agentSource), '发消息与切会话要强制回到最新')
+    assert.ok(/bindFollowScroll\(\)/.test(agentSource), '面板建好后要绑上滚动意图监听')
+    assert.ok(/id = 'yami-ai-jump'/.test(agentSource), '暂停跟随时要有「回到最新」提示入口')
+    assert.ok(/\.yami-ai-jump\s*\{/.test(hudSource), '「回到最新」提示必须有样式（否则前端建了也不显示）')
+    assert.ok(/renderCore\.previewLine|typeof renderCore\.previewLine/.test(agentSource), '思考单行预览要用渲染核心的最后一行取值')
+    // 思考块显示：内容取最后一行只是"取对了"，还得保证"看得见"
+    assert.ok(/justify-content: flex-end !important/.test(hudSource), '单行预览必须右对齐 + 左侧裁切，否则最新的字被右侧省略号吃掉')
+    assert.ok(/yami-ai-thinking\.preview \.yami-ai-thinking-body > span/.test(hudSource), '单行预览的文本要用 span 承载（flex 的匿名文本项会被压缩，裁不到左边）')
+    assert.ok(/function isNearBottom\(/.test(agentSource), '思考块内部要复用同一套贴底判定')
+    assert.ok(/if \(near\) body\.scrollTop = body\.scrollHeight/.test(agentSource), '展开模式下思考块自身要跟随到最新一行（它有 max-height:30vh 的滚动区，不会自己跟着长）')
+    assert.ok(/let near = isNearBottom\(body\)/.test(agentSource), '贴底判定必须发生在写入之前（写完 scrollHeight 就变大，必然误判）')
+    assert.ok(/previewLine/.test(coreSource), '最后一行取值规则本身要在渲染核心里')
+    assert.ok(/function appendThinkingBlock\(/.test(agentSource), '历史与流式共用同一个思考块构造函数')
     console.log('前端接线检查: 流式 / 历史面板 / 上下文刻度 / 工具事件 / 思考过程显示 全部接上')
   } catch (error) {
     error.message += '\nAI host stderr:\n' + stderr

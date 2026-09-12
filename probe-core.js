@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.1.0';
+  const PROBE_VERSION = '1.2.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -2920,6 +2920,18 @@
     const intervalList = state.samples.map(function (s) { return s.interval; });
     const computeSum = computeList.reduce(function (a, b) { return a + b; }, 0);
     const computeAvg = computeList.length ? computeSum / computeList.length : 0;
+    // 分位数不必全量精确：样本上限 12000，等距抽 1000 个算 p95/p99，误差远小于面板显示精度。
+    // 旧实现每次刷新都要对 12000 个样本做 3 趟全量排序（约 48 万次比较器调用），而这个报告
+    // 被 150ms 心跳拉着跑——性能大盘自己成了卡顿源，实测每个 tick 有 5~10ms 主线程尖峰。
+    const sampled = function (list) {
+      const MAX = 1000;
+      if (list.length <= MAX) return list;
+      const step = list.length / MAX;
+      const out = new Array(MAX);
+      for (let i = 0; i < MAX; i++) out[i] = list[Math.floor(i * step)];
+      return out;
+    };
+    const computeSample = sampled(computeList);
     
     return {
       kind: 'yami-probe',
@@ -2943,13 +2955,14 @@
       activeEvents: getActiveEventsDetails(),
       compute: {
         avg: round2(computeAvg),
-        p95: round2(percentile(computeList, 0.95)),
-        p99: round2(percentile(computeList, 0.99)),
+        p95: round2(percentile(computeSample, 0.95)),
+        p99: round2(percentile(computeSample, 0.99)),
         max: round2(computeList.reduce(function (max, v) { return Math.max(max, v); }, 0)),
         overBudgetCount: state.overBudgetFrames.length
       },
+      // 这里原本还有一个 frame.p95（对 intervalList 再来一趟全量排序），但全仓库没有任何
+      // 消费方——纯属白烧 CPU，已删除；frame.max 由 O(n) 的 reduce 得出，保留。
       frame: {
-        p95: round2(percentile(intervalList, 0.95)),
         max: round2(intervalList.reduce(function (max, v) { return Math.max(max, v); }, 0))
       },
       updaters: formatList(state.updaterTotal),

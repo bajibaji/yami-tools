@@ -124,8 +124,13 @@ function candidateEngineRoots() {
   const roots = []
   if (process.env.YAMI_ENGINE_ROOT) roots.push(process.env.YAMI_ENGINE_ROOT)
   if (process.execPath) roots.push(path.dirname(process.execPath))
+  // 插件装在 <引擎根>/extension/<插件名>/runtime/yami-mcp 下：往上四级正好是引擎根。
+  // 旧实现写成往上三级再拼字符串 '2'，只有目录恰好叫 "2" 时才碰巧成立——Linux 源码版
+  // 就是被这行坑掉的：引擎根永远找不到，编译门禁整体失效（详见铁律㊲）。
+  roots.push(path.resolve(__dirname, '..', '..', '..', '..'))
+  // 打包版可能少一层（<安装目录>/resources/app/extension/...），多给一个候选不亏
+  roots.push(path.resolve(__dirname, '..', '..', '..'))
   roots.push('D:\\Program Files\\Open Yami RPG Editor')
-  roots.push(path.resolve(__dirname, '..', '..', '..', '2'))
   return roots.filter(Boolean)
 }
 
@@ -306,19 +311,54 @@ function generateGuid() {
   return crypto.randomBytes(8).toString('hex')
 }
 
-/** 定位 tsc.js（编译检查用）：YAMI_TSC_JS 环境变量 > 项目根 node_modules > server 同层 */
+/** 当前平台的 tsc 包名与二进制名：引擎自带的是 @typescript/typescript-<平台>-<架构> */
+function platformTscNames() {
+  const platform = process.platform
+  const arch = process.arch
+  return {
+    pkg: `typescript-${platform}-${arch}`,            // linux-x64 / win32-x64 / darwin-arm64
+    binary: platform === 'win32' ? 'tsc.exe' : 'tsc'
+  }
+}
+
+/**
+ * 在某个引擎根下找当前平台自带的 tsc。
+ * 旧实现把包名写死成 typescript-win32-x64，于是 Linux / macOS 上永远找不到编译器——
+ * 而写盘门禁是「编译不过就回滚」，找不到编译器等于「每次改代码都被回滚」，
+ * AI 在非 Windows 平台上完全无法改脚本（铁律㊲）。
+ */
+function platformCompilerIn(engineRoot) {
+  const { pkg, binary } = platformTscNames()
+  const candidates = [
+    path.join(engineRoot, 'node_modules', '@typescript', pkg, 'lib', binary),
+    path.join(engineRoot, 'resources', 'app', 'node_modules', '@typescript', pkg, 'lib', binary),
+    path.join(engineRoot, 'resources', 'app.asar.unpacked', 'node_modules', '@typescript', pkg, 'lib', binary)
+  ]
+  for (const candidate of candidates) if (fs.existsSync(candidate)) return candidate
+  // pnpm：顶层 @typescript/<包> 常常只是 .pnpm 里的硬链接，链接缺失时直接进存储目录找
+  const store = path.join(engineRoot, 'node_modules', '.pnpm')
+  try {
+    const hit = fs.readdirSync(store)
+      .filter(name => name.startsWith(`@typescript+${pkg}@`))
+      .sort()
+      .pop()
+    if (hit) {
+      const stored = path.join(store, hit, 'node_modules', '@typescript', pkg, 'lib', binary)
+      if (fs.existsSync(stored)) return stored
+    }
+  } catch (e) { /* 没有 .pnpm 目录就继续找别的 */ }
+  return ''
+}
+
+/** 定位 tsc 编译器：YAMI_TSC_EXE > 引擎自带（按当前平台） > YAMI_TSC_JS > node_modules/typescript */
 function findCompiler() {
   if (process.env.YAMI_TSC_EXE && fs.existsSync(process.env.YAMI_TSC_EXE)) {
     return { command: process.env.YAMI_TSC_EXE, args: [] }
   }
-  const exeCandidates = []
   for (const engineRoot of candidateEngineRoots()) {
-    exeCandidates.push(
-      path.join(engineRoot, 'resources', 'app', 'node_modules', '@typescript', 'typescript-win32-x64', 'lib', 'tsc.exe'),
-      path.join(engineRoot, 'resources', 'app', 'node_modules', '@typescript', 'typescript-win32-x64', 'lib', 'tsc')
-    )
+    const found = platformCompilerIn(engineRoot)
+    if (found) return { command: found, args: [] }
   }
-  for (const c of exeCandidates) if (fs.existsSync(c)) return { command: c, args: [] }
 
   if (process.env.YAMI_TSC_JS && fs.existsSync(process.env.YAMI_TSC_JS)) {
     return { command: process.execPath, args: [process.env.YAMI_TSC_JS] }
@@ -392,9 +432,10 @@ function findCommandCatalogPath() {
       path.join(engineRoot, 'resources', 'app', 'Project', 'commands.json')
     )
   }
-  // 源码仓库同层（开发者在本机直接跑源码时的兜底）
+  // 源码仓库同层（开发者在本机直接跑源码时的兜底）：同样从插件位置往上推引擎根，
+  // 别再拼死目录名——旧写法只在仓库目录恰好叫 "2" 时成立，Linux 源码版上指令目录永远是空的
   candidates.push(
-    path.resolve(__dirname, '..', '..', '..', '2', 'Project', 'commands.json'),
+    path.resolve(__dirname, '..', '..', '..', '..', 'Project', 'commands.json'),
     path.join(process.cwd(), 'Project', 'commands.json')
   )
   return candidates.filter(Boolean).find(file => fs.existsSync(file)) || null
@@ -439,7 +480,7 @@ function readDataJson(name) {
 }
 
 /** 收集磁盘上所有 GUID → 文件（跨 Assets + Data） */
-function collectAllGuids() {
+function collectAllGuids(files) {
   const map = new Map()
   const add = (relPath) => {
     const g = parseGuidFromName(path.basename(relPath))
@@ -448,7 +489,7 @@ function collectAllGuids() {
       map.get(g).push(relPath)
     }
   }
-  for (const f of listResourceFiles()) add(f.path)
+  for (const f of files || listResourceFiles()) add(f.path)
   for (const f of walk(path.join(ROOT, 'Data'))) add(path.relative(ROOT, f).replace(/\\/g, '/'))
   return map
 }
@@ -513,14 +554,17 @@ function validateResourceFile(relPath) {
 /** 全工程校验：GUID 唯一性 + 数据文件引用完整性 + manifest 一致性 */
 function validateProject() {
   const issues = []
-  const guidMap = collectAllGuids()
+  // 一次性扫描：这段逻辑此前把整棵 Assets 递归 + 逐文件 stat 跑了四遍
+  // （collectAllGuids / 引用完整性 / manifest 一致性 / 统计各来一次），工程越大越明显。
+  const files = listResourceFiles()
+  const guidMap = collectAllGuids(files)
   // 1) GUID 唯一性
   for (const [g, files] of guidMap) {
     if (files.length > 1) issues.push({ severity: 'error', code: 'duplicate-guid', guid: g, message: `GUID 重复（${files.length} 个文件）: ${g}`, files })
   }
   // 2) 数据文件引用完整性：所有 16hex 引用须能在磁盘找到
   const known = new Set(guidMap.keys())
-  for (const f of listResourceFiles()) {
+  for (const f of files) {
     if (!DATA_TYPES.includes(f.type)) continue
     const abs = path.join(ROOT, f.path)
     let data
@@ -542,12 +586,12 @@ function validateProject() {
       if (!Array.isArray(v)) continue
       for (const item of v) if (item && typeof item.path === 'string') manifestPaths.add(item.path.replace(/\\/g, '/'))
     }
-    for (const f of listResourceFiles()) {
+    for (const f of files) {
       if (f.type === 'script' || f.type === 'image' || f.type === 'audio' || f.type === 'video' || f.type === 'font') continue
       if (!manifestPaths.has(f.path)) issues.push({ severity: 'warning', code: 'not-in-manifest', message: `磁盘文件不在 manifest 中（编辑器会重建）: ${f.path}` })
     }
   }
-  return { ok: issues.every(i => i.severity !== 'error'), issues, stats: { files: listResourceFiles().length, duplicateGuids: [...guidMap.values()].filter(a => a.length > 1).length } }
+  return { ok: issues.every(i => i.severity !== 'error'), issues, stats: { files: files.length, duplicateGuids: [...guidMap.values()].filter(a => a.length > 1).length } }
 }
 
 /* ============================== 工具定义 ============================== */
@@ -689,7 +733,6 @@ const tools = [
         path: { type: 'string', description: '工程内脚本相对路径' },
         content: { type: 'string', description: '完整脚本源码' },
         expectedSha256: { type: 'string', description: '修改前源码 SHA-256；省略则不做并发版本保护' },
-        compileAfter: { type: 'boolean', description: '写入后运行 tsc --noEmit，默认 false' },
         dryRun: { type: 'boolean', description: '默认 true，只预览不写盘' }
       },
       required: ['path', 'content']
@@ -1016,6 +1059,11 @@ async function ensureEditorWritable(rel) {
   const result = await editorBridge.action('preflight', { path: rel })
   const detail = result && result.data ? result.data : result
   if (detail && detail.dirty) return { ok: false, error: detail.error || '编辑器里有未保存修改，请先保存或取消后重试' }
+  // 桥不可用 = 查不到编辑器里有没有未保存改动。此时仍放行（否则桥一挂就完全不能改文件），
+  // 但必须把"这次没查"如实带出去，别让调用方以为脏检查通过了。
+  if (!result || result.ok === false) {
+    return { ok: true, warning: '编辑器桥不可用，未能检查编辑器内的未保存改动' }
+  }
   return { ok: true }
 }
 
@@ -1066,7 +1114,7 @@ async function callTool(name, args) {
           return { ok: false, registration, error: '脚本注册失败，已撤销脚本文件：' + registration.error }
         }
         const compile = await runCompileCheck()
-        if (!compile.ok) {
+        if (!compile.ok && !compile.unavailable) {
           try { fs.unlinkSync(resolveInside(ROOT, rel)) } catch {}
           try { if (registration.backup) restoreBackup(ROOT, `Data/${registration.table}.json`, registration.backup) } catch {}
           return { ok: false, compile, error: '新脚本编译未通过，已撤销脚本和注册表' }
@@ -1074,7 +1122,11 @@ async function callTool(name, args) {
         eventBuilder.customCommandMap = null
         await notifyEditorReload(rel)
         if (table) await notifyEditorReload(`Data/${table}.json`)
-        return { ok: true, dryRun: false, ...written, registration, compile, message: `已写入并编译 ${rel}` }
+        return {
+          ok: true, dryRun: false, ...written, registration, compile,
+          compileSkipped: !!compile.unavailable,
+          message: `已写入 ${rel}${compile.unavailable ? '（未能编译校验：本机没找到引擎自带的 tsc）' : '并编译通过'}`
+        }
       } catch (e) { return { ok: false, error: `写入失败: ${e.message}` } }
     }
     case 'read_script': {
@@ -1103,7 +1155,7 @@ async function callTool(name, args) {
         const written = writeAtomic(ROOT, rel, args.content, { tool: 'write_script' })
         let compile = null
         compile = await runCompileCheck()
-        if (compile && !compile.ok) {
+        if (compile && !compile.ok && !compile.unavailable) {
           let rollback = null
           try { if (written.backup) rollback = restoreBackup(ROOT, rel, written.backup) } catch (e) { rollback = { error: e.message } }
           rememberWrite({ path: rel, tool: 'edit_script', ok: false, compileOk: false, errorCount: compile.errorCount || 0, firstError: firstCompileError(compile), rolledBack: !!rollback && !rollback.error })
@@ -1111,7 +1163,11 @@ async function callTool(name, args) {
         }
         await notifyEditorReload(rel)
         rememberWrite({ path: rel, tool: 'write_script', ok: true, compileOk: compile ? compile.ok : undefined, errorCount: compile ? (compile.errorCount || 0) : 0 })
-        return { ok: true, dryRun: false, ...preview, ...written, compile, message: `已写入 ${rel}` }
+        return {
+          ok: true, dryRun: false, ...preview, ...written, compile,
+          compileSkipped: !!(compile && compile.unavailable),
+          message: `已写入 ${rel}`
+        }
       } catch (e) { return { ok: false, error: `写入失败: ${e.message}` } }
     }
     case 'edit_script': {
@@ -1169,14 +1225,18 @@ async function callTool(name, args) {
         if (!writable.ok) return writable
         const written = writeAtomic(ROOT, rel, nextText, { tool: 'edit_script' })
         const compile = await runCompileCheck()
-        if (compile && !compile.ok) {
+        if (compile && !compile.ok && !compile.unavailable) {
           let rollback = null
           try { if (written.backup) rollback = restoreBackup(ROOT, rel, written.backup) } catch (e) { rollback = { error: e.message } }
           return { ok: false, ...preview, compile, rollback, error: '编译未通过，已尝试自动恢复修改前脚本' }
         }
         await notifyEditorReload(rel)
         rememberWrite({ path: rel, tool: 'edit_script', ok: true, compileOk: compile ? compile.ok : undefined, errorCount: compile ? (compile.errorCount || 0) : 0, firstError: compile && !compile.ok ? firstCompileError(compile) : '' })
-        return { ok: true, dryRun: false, ...preview, ...written, compile, message: `已精确修改 ${rel}（第 ${line} 行）` }
+        return {
+          ok: true, dryRun: false, ...preview, ...written, compile,
+          compileSkipped: !!(compile && compile.unavailable),
+          message: `已精确修改 ${rel}（第 ${line} 行）`
+        }
       } catch (e) { return { ok: false, error: `写入失败: ${e.message}` } }
     }
     case 'search_project': {
@@ -1508,8 +1568,13 @@ async function callTool(name, args) {
         const direct = await editorBridge.clickElement(args)
         return direct.ok !== false ? direct : await cdpClient.clickElement(args)
       }
-    case 'trigger_playtest':
+    case 'trigger_playtest': {
+      // 与 editor_action(playtest) 一致：先走 5967 桥（编辑器进程内直接调引擎），
+      // 桥不在才退 CDP。此前这里只走 CDP，等于要求用户必须开 9222 调试端口才能启动试玩。
+      const direct = await editorBridge.action('playtest')
+      if (direct.ok !== false) return direct
       return await cdpClient.triggerPlaytest()
+    }
     case 'editor_action': {
       // 取引擎接口：源码版停在 window.YamiEngine 下，老打包版直接挂全局，两套都认。
       const pick = "const E = (window.YamiEngine || {});"
@@ -1723,9 +1788,19 @@ function runCompiler(extraArgs = []) {
  */
 async function runCompileCheck() {
   const compiler = findCompiler()
-  if (!compiler) return { ok: false, error: '未找到 Open Yami tsc 编译器：请设置 YAMI_TSC_EXE，或确认引擎安装目录存在 @typescript/typescript-win32-x64/lib/tsc.exe' }
+  // 「找不到编译器」和「代码没通过编译」是两件事。前者不该触发回滚——否则在没装对 tsc 的机器上
+  // 每次改代码都会被撤销，AI 彻底改不了脚本（Linux 源码版就是这么废掉的，铁律㊲）；
+  // 但也绝不能静默放过：结果里标 unavailable，让模型与界面都知道"这一步没校验"。
+  if (!compiler) {
+    return {
+      ok: false,
+      unavailable: true,
+      error: `未找到 Open Yami 自带的 tsc 编译器（当前平台 ${process.platform}-${process.arch}）。`
+        + '可设置 YAMI_TSC_EXE 指向 tsc 可执行文件，或在工程根安装 typescript。'
+    }
+  }
   const first = await runCompiler()
-  if (!first) return { ok: false, error: '未找到 Open Yami tsc 编译器' }
+  if (!first) return { ok: false, unavailable: true, error: '未找到 Open Yami tsc 编译器' }
   if (first.timeout) return { ok: false, error: '编译超时（>120s）', output: first.output.slice(0, 4000) }
   const collect = (output) => {
     const all = output.match(/error TS\d+/g) || []

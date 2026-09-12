@@ -32,6 +32,7 @@ const SUITE = [
   ['test-interrupt.cjs',      '打断输出(真停模型请求+工具不再执行+会话落盘)'],
   ['test-message-pairs.cjs',  '消息序列自愈(悬挂调用补应答+坏会话自动治好)'],
   ['test-context-meter.cjs',  '上下文计量与自动压缩(1M窗口+80%阈值+检查点结构)'],
+  ['test-compiler-lookup.cjs','编译器查找与降级语义(跨平台tsc+没得校验不回滚)'],
   ['test-parallel-tools.cjs', '只读工具并发执行(按注册表声明+写盘独占)'],
   ['test-acceptance.cjs',     '整体验收(工作流串联+真实工程只读体检)'],
   ['test-autoupdate.mjs',   '热更新端到端 (需联网)'],

@@ -134,8 +134,11 @@ function loadSessionFromDisk(id) {
 
 /** 会话里适合回显给前端的消息（跳过 system 与纯工具结果，长内容截断）
  *  压缩检查点单独处理：剥掉引导语与标签，只把摘要正文当一条助手消息回显，
- *  否则用户会在历史里看到一大段「这是自动生成的检查点…」的机器话。 */
+ *  否则用户会在历史里看到一大段「这是自动生成的检查点…」的机器话。
+ *  思考过程（reasoning_content）一并回传：它一直好好地存在会话文件里，只是以前回显时被
+ *  丢掉了，于是切回旧会话看起来就像"当时的思考凭空消失"。 */
 function visibleMessages(session, limit = 4000) {
+  const reasoningLimit = limit * 2   // 思考通常比正文长，给两倍额度
   return session.messages
     .filter(message => message.role === 'user' || (message.role === 'assistant' && message.content))
     .map(message => {
@@ -143,9 +146,13 @@ function visibleMessages(session, limit = 4000) {
         const summary = String(message.content)
           .replace(/[\s\S]*?<compacted-summary>\s*/, '')
           .replace(/\s*<\/compacted-summary>[\s\S]*$/, '')
-        return { role: 'assistant', content: ('【早前对话已压缩，以下是要点】\n\n' + summary).slice(0, limit) }
+        return { role: 'assistant', content: ('【早前对话已压缩，以下是要点】\n\n' + summary).slice(0, limit), reasoning: '' }
       }
-      return { role: message.role, content: String(message.content || '').slice(0, limit) }
+      return {
+        role: message.role,
+        content: String(message.content || '').slice(0, limit),
+        reasoning: message.reasoning_content ? String(message.reasoning_content).slice(0, reasoningLimit) : ''
+      }
     })
 }
 
@@ -1104,6 +1111,9 @@ function compileFailureOf(name, result) {
   if (!result || result.ok !== false) return null
   const compile = result.compile
   if (!compile || compile.ok === true) return null
+  // 「本机没找到 tsc」不等于「代码没通过编译」：当成错误会让模型被反复要求去修一个
+  // 根本不存在的语法问题（而且永远修不好）。这种情况只在界面上如实说明"这次没校验"。
+  if (compile.unavailable) return null
   const output = String(compile.output || '').trim()
   const firstLine = output.split('\n').map(line => line.trim()).find(line => line.includes('error TS')) || ''
   return {

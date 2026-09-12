@@ -1,6 +1,11 @@
 (() => {
   'use strict';
 
+  // 自重入守卫：另外三个被注入的脚本都有，唯独 HUD 没有——而它的 150ms 心跳连 id 都不留存，
+  // 一旦被注入两次就会得到两套面板 + 两个心跳且无法回收。潜在风险，先堵上。
+  if (window.__YAMI_PERF_HUD__) return;
+  window.__YAMI_PERF_HUD__ = true;
+
   // HTML 转义统一工具 (IIFE 顶层公共作用域): 游戏数据/报错信息一律先转义再进 innerHTML
   // (防 XSS 与 UI 破坏)。esc 与 escapeHtml 是同一函数的两个别名, 全文件唯一事实源。
   function esc(v) {
@@ -3439,6 +3444,25 @@
         gap: 8px !important;
         padding: 2px !important;
       }
+      /* 「有新内容」提示：只在用户上滚看历史时出现（点一下回到最新）。
+         order 让它永远排在消息末尾，后续 appendChild 不会把它挤到中间；
+         sticky 让它吸在可视区底部，不随内容滚走。 */
+      .yami-ai-jump {
+        order: 9999 !important;
+        position: sticky !important;
+        bottom: 4px !important;
+        align-self: center !important;
+        padding: 3px 10px !important;
+        border: 1px solid #4a4a5a !important;
+        border-radius: 11px !important;
+        background: #2f2f3a !important;
+        color: #cfcfe4 !important;
+        font-size: 11px !important;
+        line-height: 1.4 !important;
+        cursor: pointer !important;
+        user-select: none !important;
+      }
+      .yami-ai-jump:hover { border-color: #6a6a8a !important; color: #ffffff !important; }
       .yami-ai-message {
         max-width: 90% !important;
         padding: 8px 10px !important;
@@ -3633,12 +3657,20 @@
         user-select: text !important;
       }
       .yami-ai-thinking.collapsed .yami-ai-thinking-body { display: none !important; }
+      /* 单行预览要显示思考的**最后一行**（此刻在想什么）。文本块右对齐、溢出的部分从左边裁掉，
+         这样最新的字永远落在可见区——早先用 text-overflow: ellipsis 裁的是右边，
+         结果用户看到的永远是最新内容之前的那一截。 */
       .yami-ai-thinking.preview .yami-ai-thinking-body {
         max-height: none !important;
         overflow: hidden !important;
-        white-space: nowrap !important;
-        text-overflow: ellipsis !important;
+        display: flex !important;
+        justify-content: flex-end !important;
         opacity: 0.85 !important;
+      }
+      .yami-ai-thinking.preview .yami-ai-thinking-body > span {
+        flex: 0 0 auto !important;
+        white-space: nowrap !important;
+        text-overflow: clip !important;
       }
       /* 输入框下方的快捷调节条：模型 / Thinking / 强度 */
       .yami-ai-devbar {
@@ -4549,7 +4581,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.1.0 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.2.0 (检查更新)</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
         <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
@@ -4743,7 +4775,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.1.0 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.2.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -6916,6 +6948,28 @@
         this.render();
       },
 
+      /**
+       * 存档目录指纹（文件名 + 大小 + 修改时间）。
+       * 这一页每次刷新都要：readdir + 逐文件 stat + 读整个存档 JSON（可能内嵌 base64 截图，
+       * 几百 KB 到数 MB）+ 整页 innerHTML 重建 + 全量重绑事件——150ms 一次等于每秒 6.7 遍。
+       * 先用指纹挡掉绝大多数调用，只有目录真的变了才走后面那串重活。
+       */
+      saveDirSignature() {
+        try {
+          if (typeof require === 'undefined') return '';
+          const fs = require('fs');
+          const path = require('path');
+          const saveDir = path.join(this.getGameDir(), 'Save');
+          if (!fs.existsSync(saveDir)) return 'missing';
+          return fs.readdirSync(saveDir).sort().map(name => {
+            try {
+              const st = fs.statSync(path.join(saveDir, name));
+              return name + ':' + st.size + ':' + st.mtimeMs;
+            } catch (e) { return name + ':?'; }
+          }).join('|');
+        } catch (e) { return ''; }
+      },
+
       refresh(ctx, force) {
         if (ctx) this.ctx = ctx;
         // 150ms 心跳会无条件调用本方法：有未保存改动、或用户正在面板内输入时跳过，
@@ -6924,6 +6978,14 @@
           if (this.dirty) return;
           const root = document.getElementById('yami-save-root');
           if (root && root.contains(document.activeElement) && document.activeElement !== root) return;
+          // 时间闸：非强制刷新最快 2 秒一次（存档不是秒级变化的东西）
+          const now = Date.now();
+          if (now - (this.dirCheckedAt || 0) < 2000) return;
+          this.dirCheckedAt = now;
+          // 内容闸：目录指纹没变就只更新了时间戳，读盘 / 解析 / 重建整页全部跳过
+          const sig = this.saveDirSignature();
+          if (sig === this.dirSig) return;
+          this.dirSig = sig;
         }
         this.scanSaveFiles();
         this.loadCurrentSave();
@@ -7778,12 +7840,19 @@
     }
 
     // 普通小白模式数据刷新函数
+    let simpleDiagSig = '';
     function refreshSimpleDiagnosis() {
       try {
         const probe = window.__YAMI_PERF_PROBE__;
         if (!probe || !probe.getDiagnosisReport) return;
         const diag = probe.getDiagnosisReport();
         if (!diag) return;
+        // 真凶卡片是整段 innerHTML 重建：会打断选中、滚动与过渡。这个函数由 150ms 心跳调用，
+        // 所以先比指纹——分数与真凶列表都没变就整块跳过。
+        const sig = [diag.score, diag.status, diag.statusText, diag.fps, diag.computeAvg, diag.drawCalls, diag.actors,
+          (diag.culprits || []).map(function (c) { return c.title + c.level; }).join(',')].join('|');
+        if (sig === simpleDiagSig) return;
+        simpleDiagSig = sig;
 
         const scoreEl = document.getElementById('diag-score');
         const titleEl = document.getElementById('diag-status-title');
@@ -7861,7 +7930,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.1.0';
+      const cur = (probe && probe.version) ? probe.version : '1.2.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -7918,7 +7987,7 @@
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.1.0') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.2.0') + ')');
           refreshVersionBadge();
         }
       });
@@ -7964,11 +8033,19 @@
     // 刷新数据函数
     const OBJ_KIND_LABEL = { actors: '角色', animations: '动画', emitters: '粒子', triggers: '触发器', ui: '界面', events: '事件' };
 
+    let dockDataAt = 0;
+    let dockDataSig = '';
     function refreshDockData() {
       if (currentMode === "simple") {
         refreshSimpleDiagnosis();
         return;
       }
+      // 这一页刷新要重建 6 个列表的 innerHTML（含内联宽度，每次都会触发样式重算），
+      // 数据一秒内变不了几次。旧实现跟着 150ms 心跳全量重来：选中被清、滚动被打断、
+      // 布局反复抖。这里两道闸：≥800ms 才可能刷新 + 数据指纹没变直接跳过。
+      const now = Date.now();
+      if (now - dockDataAt < 800) return;
+      dockDataAt = now;
       try {
         const probe = window.__YAMI_PERF_PROBE__;
         if (!probe) return;
@@ -7978,6 +8055,12 @@
         const mem = probe.getMemoryInfo ? probe.getMemoryInfo() : { used: 0, total: 0 };
         const scene = probe.getSceneDetails ? probe.getSceneDetails() : {};
         const eventsData = probe.getActiveEvents ? probe.getActiveEvents() : { active: [], history: [], totalRegistered: 0 };
+        const dockSig = [report.samples, (report.compute || {}).avg, (report.compute || {}).p99,
+          (report.compute || {}).overBudgetCount, mem.used, (report.updaters || []).length,
+          (report.events || []).length, (eventsData.active || []).length,
+          (report.objects || []).length].join('|');
+        if (dockSig === dockDataSig) return;
+        dockDataSig = dockSig;
         if (susRow && susRow.querySelectorAll('.yami-perf-sus-pill').length === 0) renderSusPills();
         const gl = report.webgl || {};
         const comp = report.compute || { avg: 0, p99: 0, overBudgetCount: 0 };
@@ -8308,10 +8391,13 @@
       PinnedWidget.render();
     }
 
+    let pinnedTick = 0;
     setInterval(() => {
       try {
-        // 变量监视小窗实时刷新 (不依赖 probe 采样)
-        if (typeof PinnedWidget !== 'undefined' && PinnedWidget.render) {
+        // 变量监视小窗刷新 (不依赖 probe 采样)：它每次 render 都要读一遍 localStorage，
+        // 而变量挂件的可见变化远没有 150ms 那么快——降到约 600ms 一次，省掉 3/4 的白读。
+        pinnedTick++;
+        if (pinnedTick % 4 === 0 && typeof PinnedWidget !== 'undefined' && PinnedWidget.render) {
           PinnedWidget.render();
         }
 

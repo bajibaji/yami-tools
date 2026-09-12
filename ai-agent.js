@@ -52,12 +52,97 @@
     fn();
   }
 
-  /** 只有用户本来就在底部附近才自动跟随；往上翻看历史时不要把他拽回来 */
-  function autoScroll() {
+  /* ------------------------------ 滚动跟随 ------------------------------
+   * 状态机在 ai-render-core.js（纯逻辑、可单测），这里只负责接线：
+   * scroll/wheel 事件喂意图，内容追加后按它的裁决决定滚不滚。
+   * 核心缺失时退回等价的最小实现，保证降级模式下行为一致。 */
+  const TAIL_THRESHOLD = 24;   // 距底一行以内算"贴着底"（旧值 80px 会让刚上滚的用户仍被拽回）
+  const follow = (renderCore && typeof renderCore.createFollowState === 'function')
+    ? renderCore.createFollowState(TAIL_THRESHOLD)
+    : {
+        follow: true,
+        pending: false,
+        nearBottom: function (m) { return m.scrollHeight - m.scrollTop - m.clientHeight <= TAIL_THRESHOLD; },
+        onScroll: function (m) { this.follow = this.nearBottom(m); if (this.follow) this.pending = false; return this.follow; },
+        onUserScrollUp: function () { this.follow = false; return this.follow; },
+        onAppend: function () { if (this.follow) { this.pending = false; return 'scroll'; } this.pending = true; return 'hold'; },
+        force: function () { this.follow = true; this.pending = false; return 'scroll'; }
+      };
+  const scrollMetrics = list => ({ scrollHeight: list.scrollHeight, scrollTop: list.scrollTop, clientHeight: list.clientHeight });
+
+  /** 某个滚动容器此刻是否贴着底（思考块内部与主消息区共用同一套阈值） */
+  function isNearBottom(el) {
+    const metrics = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop, clientHeight: el.clientHeight };
+    if (renderCore && typeof renderCore.shouldStickToBottom === 'function') {
+      return renderCore.shouldStickToBottom(metrics, TAIL_THRESHOLD);
+    }
+    return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <= TAIL_THRESHOLD;
+  }
+
+  /** 自动跟随最新内容；force=true 用于刚发消息、切会话、清空这类"就该看最新"的时机 */
+  function autoScroll(force) {
     const list = messageList();
     if (!list) return;
-    if (renderCore && !renderCore.shouldStickToBottom({ scrollHeight: list.scrollHeight, scrollTop: list.scrollTop, clientHeight: list.clientHeight })) return;
-    list.scrollTop = list.scrollHeight;
+    const action = force ? follow.force() : follow.onAppend();
+    if (action === 'scroll') list.scrollTop = list.scrollHeight;
+    updateJumpButton();
+  }
+
+  /** 「有新内容」提示：暂停跟随时才出现，点一下回到最新 */
+  function updateJumpButton() {
+    const btn = document.getElementById('yami-ai-jump');
+    if (!btn) return;
+    // 这段流式期间每帧都会被调到：只在真的变化时才碰 DOM
+    const visible = !follow.follow;
+    const display = visible ? 'block' : 'none';
+    if (btn.style.display !== display) btn.style.display = display;
+    if (!visible) return;
+    const text = follow.pending ? '↓ 有新内容' : '↓ 回到最新';
+    if (btn.textContent !== text) btn.textContent = text;
+  }
+
+  function ensureJumpButton() {
+    const list = messageList();
+    if (!list) return null;
+    const existing = document.getElementById('yami-ai-jump');
+    if (existing && existing.isConnected) return existing;
+    const btn = document.createElement('div');
+    btn.id = 'yami-ai-jump';
+    btn.className = 'yami-ai-jump';
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('tabindex', '0');
+    btn.setAttribute('aria-label', '回到最新内容');
+    btn.textContent = '↓ 回到最新';
+    btn.style.display = 'none';
+    activate(btn, () => autoScroll(true));
+    // order 样式把它永远排在消息末尾，不受后续 appendChild 影响
+    list.appendChild(btn);
+    return btn;
+  }
+
+  /** 绑定滚动意图：用户一往上滚就暂停跟随，滚回底部再自动恢复（面板常驻，只需绑一次） */
+  function bindFollowScroll() {
+    const list = messageList();
+    if (!list || list.dataset.followBound === '1') return;
+    list.dataset.followBound = '1';
+    ensureJumpButton();
+    list.addEventListener('scroll', () => {
+      const before = follow.follow;
+      follow.onScroll(scrollMetrics(list));   // 程序滚到底时这里判定为"贴底"，跟随状态不变
+      if (before !== follow.follow) updateJumpButton();
+    }, { passive: true });
+    // 滚轮是最早、最准的"人要看历史"信号：不等滚出阈值就先松开跟随，
+    // 否则刚开始上滚那一下就会被新内容拽回去
+    list.addEventListener('wheel', event => {
+      if (event.deltaY < 0 && follow.follow) { follow.onUserScrollUp(); updateJumpButton(); }
+    }, { passive: true });
+    list.addEventListener('touchmove', () => {
+      if (follow.follow && !follow.nearBottom(scrollMetrics(list))) { follow.onUserScrollUp(); updateJumpButton(); }
+    }, { passive: true });
+    list.addEventListener('keydown', event => {
+      if (['PageUp', 'ArrowUp', 'Home'].includes(event.key)) { follow.onUserScrollUp(); updateJumpButton(); }
+      else if (['PageDown', 'ArrowDown', 'End'].includes(event.key)) autoScroll(true);
+    });
   }
 
   function editorProjectRoot() {
@@ -283,7 +368,10 @@
     const list = document.getElementById('yami-ai-messages');
     if (!list) return;
     list.innerHTML = '';
+    // 清空会把「回到最新」提示一起清掉，重建一个（否则上滚后就没有回去的入口了）
+    ensureJumpButton();
     if (placeholder) addMessage('assistant', placeholder);
+    autoScroll(true);
   }
 
   /** 撤销面板：只列本次对话里 AI 改过的文件，一点即可退回它动手之前 */
@@ -518,7 +606,13 @@
       const all = data.messages || [];
       const win = renderCore ? renderCore.historyWindow(all, 60) : { shown: all, hiddenCount: 0 };
       if (win.hiddenCount) pushNotice('更早的 ' + win.hiddenCount + ' 条消息已折叠（完整记录仍在历史面板里，可随时切回）');
-      for (const message of win.shown) addMessage(message.role === 'user' ? 'user' : 'assistant', message.content);
+      for (const message of win.shown) {
+        // 历史回放也要带上当时的思考过程：磁盘里一直存着，只回放正文会让人以为思考被丢了。
+        // 历史块没有"耗时"可算，如实只报字数，不编造秒数。
+        if (message.reasoning) appendThinkingBlock(message.reasoning, '共 ' + message.reasoning.length + ' 字');
+        addMessage(message.role === 'user' ? 'user' : 'assistant', message.content);
+      }
+      autoScroll(true);   // 切过来先停在最新，历史由用户自己往上翻
       if (data.pending) renderApproval({ approval: data.pending });
       else setStatus('就绪', 'ready');
       document.getElementById('yami-ai-history')?.classList.remove('show');
@@ -684,13 +778,19 @@
       if (thinkingView() === 'expand') {
         const body = currentThinkingEl.querySelector('.yami-ai-thinking-body');
         if (body) {
+          // 判断"是否贴着底"必须在写入**之前**：写完 scrollHeight 就变大了，明明贴着底的
+          // 也会被判成"用户在看历史"，于是最新那几行永远沉在下面。
+          let near = isNearBottom(body);
           if (!thinkingTextNode || !thinkingTextNode.isConnected) {
             body.textContent = '';
             thinkingTextNode = document.createTextNode(reasoningBuffer.toString());
             body.appendChild(thinkingTextNode);
+            near = true;
           } else if (thinkingTextNode.data.length !== reasoningBuffer.length()) {
             thinkingTextNode.appendData(reasoningBuffer.toString().slice(thinkingTextNode.data.length));
           }
+          // 思考块自身是滚动容器（max-height:30vh），它不会自己跟着长
+          if (near) body.scrollTop = body.scrollHeight;
         }
       }
       const meta = currentThinkingEl.querySelector('.yami-ai-thinking-meta');
@@ -804,6 +904,12 @@
     return persisted;
   }
 
+  // 单行预览的取值规则放在渲染核心里（纯逻辑、可单测）：显示思考的最后一行，
+  // 太长保留最新那段、太短往前并一行。核心缺失时退回"取最后一行"的简化版。
+  const previewLine = (renderCore && typeof renderCore.previewLine === 'function')
+    ? renderCore.previewLine
+    : text => String(text || '').split('\n').map(line => line.trim()).filter(Boolean).pop() || '';
+
   function applyThinkingMode(el) {
     if (!el) return;
     const mode = thinkingView();
@@ -817,56 +923,75 @@
       toggle.title = mode === 'expand' ? '收起思考过程' : '展开思考过程';
     }
     if (body && mode === 'preview') {
-      const lines = String(el.dataset.text || '').split('\n').filter(Boolean);
-      body.textContent = lines.length ? lines[lines.length - 1].slice(0, 160) : '';
+      // 单行预览必须让**最新**的字落在可见区：文本块右对齐、超出的部分从左边裁掉。
+      // （以前用 text-overflow: ellipsis，裁的是右边——于是用户看到的永远是靠前的旧内容。）
+      const text = previewLine(el.dataset.text);
+      let span = body.firstElementChild;
+      if (!span || span.tagName !== 'SPAN') {
+        body.textContent = '';
+        span = document.createElement('span');
+        body.appendChild(span);
+      }
+      if (span.textContent !== text) span.textContent = text;
     } else if (body) {
-      body.textContent = el.dataset.text || '';
+      // 展开模式：内容一致就别重写。整段 textContent 赋值会把用户手动滚到的位置重置回顶部
+      // （思考收尾、切换档位都会走到这里，而那时用户很可能正在读上面的内容）。
+      const text = el.dataset.text || '';
+      if (body.textContent !== text) body.textContent = text;
     }
+  }
+
+  /** 建一个思考块：流式与历史回放共用同一套结构、折叠交互与显示档位 */
+  function appendThinkingBlock(text, metaText) {
+    const list = document.getElementById('yami-ai-messages');
+    if (!list) return null;
+    const el = document.createElement('div');
+    el.className = 'yami-ai-thinking';
+    el.dataset.text = String(text || '');
+    const head = document.createElement('div');
+    head.className = 'yami-ai-thinking-head';
+    const title = document.createElement('span');
+    title.className = 'yami-ai-thinking-title';
+    title.textContent = '思考过程';
+    const meta = document.createElement('span');
+    meta.className = 'yami-ai-thinking-meta';
+    meta.textContent = metaText || '';
+    const toggle = document.createElement('div');
+    toggle.className = 'yami-ai-thinking-toggle';
+    toggle.setAttribute('role', 'button');
+    toggle.setAttribute('tabindex', '0');
+    toggle.setAttribute('aria-label', '展开或收起思考过程');
+    // 闭包里绑定本元素（而不是模块级的 currentThinkingEl），历史回放的块才能独立折叠
+    activate(toggle, event => {
+      event.stopPropagation();
+      // 手动点击：展开 <-> 折叠（单行预览状态下点击直接展开），并让全局开关跟随
+      const next = el.classList.contains('collapsed') || el.classList.contains('preview') ? 'expand' : 'collapse';
+      localStorage.setItem('danjuan-ai-thinking-view', next);
+      const select = document.getElementById('yami-ai-thinking-view');
+      if (select) select.value = next;
+      applyThinkingMode(el);
+    });
+    const body = document.createElement('div');
+    body.className = 'yami-ai-thinking-body';
+    head.appendChild(title);
+    head.appendChild(meta);
+    head.appendChild(toggle);
+    el.appendChild(head);
+    el.appendChild(body);
+    // 思考条进「执行过程」区，和工具步骤集中在一起；没有活跃回合（历史回放）才退回列表
+    const area = processArea();
+    (area ? area.body : list).appendChild(el);
+    applyThinkingMode(el);
+    return el;
   }
 
   /** 创建或更新思考块（流式过程中反复调用） */
   function renderThinking(fullText) {
-    const list = document.getElementById('yami-ai-messages');
-    if (!list) return;
     if (!currentThinkingEl || !currentThinkingEl.isConnected) {
-      currentThinkingEl = document.createElement('div');
-      currentThinkingEl.className = 'yami-ai-thinking';
-      const head = document.createElement('div');
-      head.className = 'yami-ai-thinking-head';
-      const title = document.createElement('span');
-      title.className = 'yami-ai-thinking-title';
-      title.textContent = '思考过程';
-      const meta = document.createElement('span');
-      meta.className = 'yami-ai-thinking-meta';
-      const toggle = document.createElement('div');
-      toggle.className = 'yami-ai-thinking-toggle';
-      toggle.setAttribute('role', 'button');
-      toggle.setAttribute('tabindex', '0');
-      toggle.setAttribute('aria-label', '展开或收起思考过程');
-      activate(toggle, event => {
-        event.stopPropagation();
-        // 手动点击：展开 <-> 折叠（单行预览状态下点击直接展开），并让全局开关跟随
-        const target = currentThinkingEl;
-        if (!target) return;
-        const next = target.classList.contains('collapsed') || target.classList.contains('preview') ? 'expand' : 'collapse';
-        localStorage.setItem('danjuan-ai-thinking-view', next);
-        const select = document.getElementById('yami-ai-thinking-view');
-        if (select) select.value = next;
-        applyThinkingMode(target);
-      });
-      const body = document.createElement('div');
-      body.className = 'yami-ai-thinking-body';
-      head.appendChild(title);
-      head.appendChild(meta);
-      head.appendChild(toggle);
-      currentThinkingEl.appendChild(head);
-      currentThinkingEl.appendChild(body);
-      // 思考条进「执行过程」区，和工具步骤集中在一起；没有活跃回合（历史回放）才退回列表
-      const area = processArea();
-      (area ? area.body : list).appendChild(currentThinkingEl);
+      currentThinkingEl = appendThinkingBlock(fullText, '');
       thinkingStartedAt = Date.now();
-      refreshProcessMeta();
     }
+    if (!currentThinkingEl) return;
     currentThinkingEl.dataset.text = fullText;
     const meta = currentThinkingEl.querySelector('.yami-ai-thinking-meta');
     if (meta) {
@@ -901,6 +1026,7 @@
     if (!text) { input?.focus(); return; }
     input.value = '';
     addMessage('user', text);
+    autoScroll(true);   // 用户刚发消息：无论刚才在看哪，都回到最新（这是他自己触发的）
     currentThinkingEl = null;
     thinkingStartedAt = 0;
     beginTurn();
@@ -1179,6 +1305,8 @@
     page.innerHTML = '<div class="yami-ai-toolbar"><div class="yami-ai-status idle" id="yami-ai-status" role="status">尚未启动</div><div class="yami-ai-context" id="yami-ai-context" role="status"></div><div class="yami-ai-tool-btn" id="yami-ai-undo-toggle" role="button" tabindex="0">撤销</div><div class="yami-ai-tool-btn" id="yami-ai-history-toggle" role="button" tabindex="0">历史</div><div class="yami-ai-tool-btn" id="yami-ai-clear" role="button" tabindex="0">新对话</div><div class="yami-ai-tool-btn" id="yami-ai-settings-toggle" role="button" tabindex="0">设置</div></div><div class="yami-ai-undo" id="yami-ai-undo"></div><div class="yami-ai-history" id="yami-ai-history"></div><div class="yami-ai-settings" id="yami-ai-settings"><label for="yami-ai-endpoint">BASE URL（OpenAI 格式）</label><input id="yami-ai-endpoint" type="url" value="https://api.deepseek.com" placeholder="https://api.deepseek.com"><label for="yami-ai-key">API Key</label><input id="yami-ai-key" type="password" autocomplete="off" placeholder="DeepSeek API Key"><label class="yami-ai-check"><input id="yami-ai-mode" type="checkbox"><span>编辑器操作自动执行，工程文件仍需确认</span></label><div class="yami-ai-hint" id="yami-ai-key-state"></div><label for="yami-ai-thinking-view">思考过程显示</label><select id="yami-ai-thinking-view" title="思考过程在对话里的显示方式"><option value="expand" selected>展开</option><option value="preview">单行预览</option><option value="collapse">折叠</option></select><div class="yami-ai-model-row"><div class="yami-ai-secondary" id="yami-ai-test" role="button" tabindex="0">测试连接</div><div class="yami-ai-secondary" id="yami-ai-balance" role="button" tabindex="0">查余额</div><div class="yami-ai-hint" id="yami-ai-money"></div></div><div class="yami-ai-primary" id="yami-ai-save-settings" role="button" tabindex="0">保存设置</div></div><div class="yami-ai-messages" id="yami-ai-messages" role="log" aria-live="polite"><div class="yami-ai-message assistant">告诉我你想做什么。我会先查看工程，涉及文件修改时会让你确认。</div></div><div class="yami-ai-approval" id="yami-ai-approval" role="alert"><div class="yami-ai-approval-title">确认执行</div><div class="yami-ai-approval-stat" id="yami-ai-approval-stat"></div><pre id="yami-ai-approval-detail"></pre><div class="yami-ai-approval-diff" id="yami-ai-approval-diff"></div><label class="yami-ai-check yami-ai-grant"><input id="yami-ai-grant" type="checkbox"><span>本次任务内，这个文件不再逐条确认（随时可撤销）</span></label><div class="yami-ai-approval-actions"><div class="yami-ai-secondary" id="yami-ai-reject" role="button" tabindex="0">取消修改</div><div class="yami-ai-primary" id="yami-ai-approve" role="button" tabindex="0">执行修改</div></div></div><div class="yami-ai-compose"><label for="yami-ai-input">你的需求</label><textarea id="yami-ai-input" rows="3" placeholder="例如：检查当前工程报错，并修复相关脚本"></textarea><div class="yami-ai-devbar"><label for="yami-ai-model">模型</label><select id="yami-ai-model" title="模型（可点【拉取模型】刷新列表）"></select><div class="yami-ai-tool-btn" id="yami-ai-fetch-models" role="button" tabindex="0" title="从服务端拉取可用模型">↻</div><label class="yami-ai-check"><input id="yami-ai-thinking" type="checkbox" checked><span>Thinking</span></label><select id="yami-ai-effort" title="思考强度"><option value="low">Low</option><option value="high" selected>High</option><option value="max">Max</option></select></div><div class="yami-ai-primary" id="yami-ai-send" role="button" tabindex="0" aria-disabled="false">发送</div></div>';
     document.querySelector('.yami-perf-dock-body').appendChild(page);
     api.registerPage('ai', page, { title: 'AI 助手', showBack: true, showModeSwitch: false, showClearErrors: false, showTabs: false, showExportBtns: false, refresh() {}, destroy() {} });
+    ensureJumpButton();
+    bindFollowScroll();
     activate(card, async () => {
       api.switchView('ai');
       loadSettings();

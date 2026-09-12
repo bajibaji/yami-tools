@@ -383,6 +383,19 @@ function main() {
   assert.ok(css, 'src/style.css 必须存在')
   console.log('CSS 结构检查: 花括号配平、无规则块嵌套')
 
+  // 心跳开销守卫（2026-09-12 性能体检发现：150ms 统一心跳上挂着三件重活）
+  const hud = fs.readFileSync(path.join(ROOT, 'hud-overlay.js'), 'utf8')
+  const probeSrc = fs.readFileSync(path.join(ROOT, 'probe-core.js'), 'utf8')
+  const mcpSrc = fs.readFileSync(path.join(ROOT, 'runtime/yami-mcp/server.js'), 'utf8')
+  assert.ok(/__YAMI_PERF_HUD__/.test(hud), 'HUD 必须加自重入守卫：重复注入会得到两套面板 + 两个无法回收的 150ms 心跳')
+  assert.ok(/dockDataSig/.test(hud) && /now - dockDataAt < 800/.test(hud), '专业模式刷新必须节流 + 数据指纹，否则 150ms 重建 6 处列表 innerHTML')
+  assert.ok(/simpleDiagSig/.test(hud), '普通模式真凶卡必须有指纹守卫（默认模式也在跑，重建会打断选中与滚动）')
+  assert.ok(/saveDirSignature/.test(hud) && /dirCheckedAt/.test(hud), '存档台必须时间闸 + 目录指纹，否则 150ms 同步读盘并解析整个存档 JSON')
+  assert.ok(/const sampled = function/.test(probeSrc), '报告分位数必须抽样计算：12000 样本 × 3 趟全量排序 × 6.7Hz 会把主线程拖住')
+  assert.ok(!/p95: round2\(percentile\(intervalList/.test(probeSrc), '未使用的 frame.p95 不得复活（没有消费方，纯白烧 CPU）')
+  assert.ok(/const files = listResourceFiles\(\)\n  const guidMap = collectAllGuids\(files\)/.test(mcpSrc), 'validate_project 必须单次扫描复用（此前一次调用把 Assets 递归并逐文件 stat 扫了 4 遍）')
+  console.log('心跳开销守卫: HUD 重入 / 双指纹 / 存档降频 / 抽样分位数 / 单次扫描 全部就位')
+
   const wiring = checkPluginWiring()
   console.log(`插件装配检查: 主世界装载器 -> 3 个脚本 / manifest / 热更新清单 / 部署清单 (${wiring.files} 个发布文件 + ${wiring.modules} 个运行时模块) 全部咬合`)
 

@@ -93,6 +93,55 @@
   }
 
   /**
+   * 滚动跟随状态机（纯逻辑，便于单测）。
+   *
+   * 判据必须来自「用户意图」，不能是「此刻离底部多远」：内容一追加 scrollHeight 就变大，
+   * 追加完再算距离，老老实实待在底部的用户也会被判成"翻上去看历史了"；
+   * 阈值给大了更糟——用户刚上滚一点仍算在底部，于是每来一段新内容就被拽回去一次。
+   * 所以这里把状态单独拎出来：滚动事件喂 onScroll，滚轮上滚喂 onUserScrollUp，
+   * 追加内容后问 onAppend，只有返回 'scroll' 才真的去滚。
+   */
+  function createFollowState(threshold) {
+    const state = {
+      follow: true,     // 是否跟随最新内容
+      pending: false,   // 暂停跟随期间，下方是否又长了新内容
+      nearBottom: function (metrics) { return shouldStickToBottom(metrics, threshold); },
+      onScroll: function (metrics) {
+        state.follow = shouldStickToBottom(metrics, threshold);
+        if (state.follow) state.pending = false;
+        return state.follow;
+      },
+      onUserScrollUp: function () { state.follow = false; return state.follow; },
+      onAppend: function () {
+        if (state.follow) { state.pending = false; return 'scroll'; }
+        state.pending = true;
+        return 'hold';
+      },
+      force: function () { state.follow = true; state.pending = false; return 'scroll'; }
+    };
+    return state;
+  }
+
+  /**
+   * 单行预览取哪一行：显示**最后一行**——用户想知道的是它此刻在想什么，而不是几分钟前的开场白。
+   * 末尾过长时保留最新那段（从尾部截）；最后一行太短（一个词、一个工具名）就往前并上一行，
+   * 凑成一句读得懂的。
+   */
+  function previewLine(text, options) {
+    const opts = options || {};
+    const limit = opts.limit || 160;
+    const minChars = opts.minChars || 16;
+    const lines = String(text == null ? '' : text).split('\n')
+      .map(function (line) { return line.trim(); })
+      .filter(Boolean);
+    if (!lines.length) return '';
+    let line = lines[lines.length - 1];
+    let index = lines.length - 2;
+    while (line.length < minChars && index >= 0) { line = lines[index] + ' ' + line; index--; }
+    return line.length > limit ? '…' + line.slice(-(limit - 1)) : line;
+  }
+
+  /**
    * 历史消息窗口：只渲染最近 limit 条，更早的用一行提示代替。
    * 会话长了以后，几千个 DOM 节点会让每次滚动和插入都变慢。
    */
@@ -106,7 +155,9 @@
   return {
     createScheduler: createScheduler,
     createTextBuffer: createTextBuffer,
+    createFollowState: createFollowState,
     shouldStickToBottom: shouldStickToBottom,
+    previewLine: previewLine,
     historyWindow: historyWindow
   };
 });

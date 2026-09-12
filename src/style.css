@@ -3369,6 +3369,25 @@
         gap: 8px !important;
         padding: 2px !important;
       }
+      /* 「有新内容」提示：只在用户上滚看历史时出现（点一下回到最新）。
+         order 让它永远排在消息末尾，后续 appendChild 不会把它挤到中间；
+         sticky 让它吸在可视区底部，不随内容滚走。 */
+      .yami-ai-jump {
+        order: 9999 !important;
+        position: sticky !important;
+        bottom: 4px !important;
+        align-self: center !important;
+        padding: 3px 10px !important;
+        border: 1px solid #4a4a5a !important;
+        border-radius: 11px !important;
+        background: #2f2f3a !important;
+        color: #cfcfe4 !important;
+        font-size: 11px !important;
+        line-height: 1.4 !important;
+        cursor: pointer !important;
+        user-select: none !important;
+      }
+      .yami-ai-jump:hover { border-color: #6a6a8a !important; color: #ffffff !important; }
       .yami-ai-message {
         max-width: 90% !important;
         padding: 8px 10px !important;
@@ -3563,12 +3582,20 @@
         user-select: text !important;
       }
       .yami-ai-thinking.collapsed .yami-ai-thinking-body { display: none !important; }
+      /* 单行预览要显示思考的**最后一行**（此刻在想什么）。文本块右对齐、溢出的部分从左边裁掉，
+         这样最新的字永远落在可见区——早先用 text-overflow: ellipsis 裁的是右边，
+         结果用户看到的永远是最新内容之前的那一截。 */
       .yami-ai-thinking.preview .yami-ai-thinking-body {
         max-height: none !important;
         overflow: hidden !important;
-        white-space: nowrap !important;
-        text-overflow: ellipsis !important;
+        display: flex !important;
+        justify-content: flex-end !important;
         opacity: 0.85 !important;
+      }
+      .yami-ai-thinking.preview .yami-ai-thinking-body > span {
+        flex: 0 0 auto !important;
+        white-space: nowrap !important;
+        text-overflow: clip !important;
       }
       /* 输入框下方的快捷调节条：模型 / Thinking / 强度 */
       .yami-ai-devbar {
