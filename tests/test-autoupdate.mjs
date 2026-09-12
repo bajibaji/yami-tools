@@ -341,7 +341,7 @@ async function main() {
   if (realErr && /拒绝降级/.test(realErr.message)) {
     // 本地源码版本比远端分支还新（本轮改动尚未 push）——属正常开发时序，
     // 用 allowDowngrade 继续把"传输 + 解包 + 校验 + 落盘"这条链路验证完，别整个 SKIP 掉。
-    console.log('  注: 远端分支版本仍低于本地源码 (' + localVer + ')，以 allowDowngrade 继续验证整包链路');
+    console.log('  注: 这一次抓到的整包版本低于本地源码 (' + localVer + ')，' + realErr.message + ' —— 反代通道对分支快照有短暂缓存，属正常现象；以 allowDowngrade 继续把链路验证完');
     realErr = null;
     try { realRes = await probeReal.performAutoUpdate(null, { targetDir: realDst, allowDowngrade: true }); } catch (e) { realErr = e; }
   }
