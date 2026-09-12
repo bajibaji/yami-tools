@@ -156,14 +156,14 @@ if (fs.existsSync(readmePath)) {
 const handoffPath = path.join(ROOT_DIR, 'HANDOFF.md');
 if (fs.existsSync(handoffPath)) {
   let handoffRaw = fs.readFileSync(handoffPath, 'utf8');
-  const handoffVerRe = /(当前版本：`v)\d+\.\d+\.\d+(`)/;
-  if (handoffVerRe.test(handoffRaw)) {
-    const curHandoffVer = handoffRaw.match(handoffVerRe)[0];
-    if (!curHandoffVer.includes(`v${manifestVer}`)) {
-      handoffRaw = handoffRaw.replace(handoffVerRe, `$1${manifestVer}$2`);
-      fs.writeFileSync(handoffPath, handoffRaw, 'utf8');
-      syncedList.push('HANDOFF.md');
-    }
+  // 注意 \*{0,2}：HANDOFF 里同时存在 `**当前版本**：` 与 `当前版本：` 两种写法，
+  // 老正则只认后者，于是文件头那行版本号长期漏改（SSOT 形同虚设），这里一次覆盖全部出现处。
+  const handoffVerRe = /(当前版本\*{0,2}：`v)\d+\.\d+\.\d+(`)/g;
+  const handoffHits = handoffRaw.match(handoffVerRe) || [];
+  if (handoffHits.length > 0 && handoffHits.some((hit) => !hit.includes(`v${manifestVer}`))) {
+    handoffRaw = handoffRaw.replace(handoffVerRe, `$1${manifestVer}$2`);
+    fs.writeFileSync(handoffPath, handoffRaw, 'utf8');
+    syncedList.push('HANDOFF.md');
   }
 }
 
@@ -333,6 +333,34 @@ for (const [name, pattern] of aiAnchors) {
     failedCount++;
   }
 }
+
+// 铁律㊵: 更新必须是「整包快照」。
+// 逐文件更新把写盘清单烧死在客户端里, 老用户的清单永远不认识新版新增的文件,
+// 而 manifest.json 又总是最后落盘 —— 结果是「新门牌 + 没有门」, 重启后插件凭空消失
+// (v1.0.0 -> v1.2.0 真实事故)。下面这些锚点把新机制钉死, 防止有人"顺手改回去"。
+const updaterAnchors = [
+  ['更新主通道 = GitHub 分支整包快照 (tar.gz)', /archiveUrl: 'https:\/\/github\.com\/[^']+\/archive\/refs\/heads\/[^']+\.tar\.gz'/],
+  ['反代兜底通道 (大陆直连可用)', /mirrorPrefixes: \['https:\/\/gh-proxy\.com\/', 'https:\/\/ghproxy\.net\/'\]/],
+  ['版本探测首通道不是直连 raw (实测被墙)', /versionChannels: \[\s*\n\s*'https:\/\/gh-proxy\.com\/https:\/\/raw\.githubusercontent\.com\//],
+  ['整包解包器 (gunzip + tar 解析)', /function parseTarGz\(bytes\) \{/],
+  ['整包完整性校验: manifest 声明的文件必须在包里', /不在包里, 拒绝安装/],
+  ['安装前先备份旧版本 (可回滚)', /backupDirName: '_backup'/],
+  ['manifest.json 最后落盘 (版本门闩)', /order\.push\('manifest\.json'\)/],
+  ['写盘失败自动回滚', /rollbackInstall\(fs, path, targetDir, backups, created\)/],
+  ['校验先于写盘 (失败即零改动)', /const manifest = validateSnapshot\(files\);/],
+  ['离线兜底: 本地整包安装通道', /performLocalUpdate: performLocalUpdate/]
+];
+for (const [name, pattern] of updaterAnchors) {
+  if (!pattern.test(probeContent)) {
+    console.error(`❌ [断言失败] 整包更新缺失: ${name}`);
+    failedCount++;
+  }
+}
+if (/updateFiles/.test(probeContent)) {
+  console.error('❌ [断言失败] 逐文件更新清单 updateFiles 又复活了 —— 那正是把用户插件更没的机制');
+  failedCount++;
+}
+console.log(`  [整包更新] ${updaterAnchors.length} 项快照更新锚点全部就位 (含反代兜底 / 完整性校验 / 备份回滚)`);
 
 // 铁律㉒: style.css 结构自检 —— 花括号必须配平, 且普通规则块内不得再嵌套规则
 // (历史教训: 手工给滚动条选择器组追加容器时把 `A:hover,` 写成 `A:hover {`, 变成

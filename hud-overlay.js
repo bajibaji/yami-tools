@@ -797,6 +797,15 @@
       .yami-update-btn:hover {
         background: #00a0f0 !important;
       }
+      /* 次要动作 (本地安装): 不许比主按钮更抢眼 */
+      .yami-update-btn.ghost {
+        background: #303030 !important;
+        color: #b0c0d0 !important;
+      }
+      .yami-update-btn.ghost:hover {
+        background: #404040 !important;
+        color: #ffffff !important;
+      }
       .yami-update-btn[disabled],
       .yami-update-btn.disabled {
         background: #384858 !important;
@@ -4079,13 +4088,14 @@
         </div>
       </div>
 
-      <!-- 新版本升级提醒条 (有新版时自动浮现) -->
+      <!-- 新版本升级提醒条 (有新版或更新失败时自动浮现) -->
       <div class="yami-update-banner" id="yami-update-banner" style="margin: 0 12px 10px 12px;">
         <div style="display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1;">
           <span style="font-weight: 600; color: #ffffff;">[新版本] 发现更新组件 <span id="yami-latest-ver" style="color: #1cff9b;">--</span></span>
-          <span style="color: #88a0b0; font-size: 10px;">与 GitHub 最新代码同步</span>
+          <span style="color: #88a0b0; font-size: 10px;" id="yami-update-hint">整包快照更新 (下完校验通过才落盘)</span>
         </div>
         <div class="yami-update-btn" id="btn-do-update" role="button">一键热更新</div>
+        <div class="yami-update-btn ghost" id="btn-local-update" role="button" title="网络不通时: 手动下载整包并解压, 再选解压出来的文件夹">本地安装</div>
       </div>
 
       <div class="yami-perf-tabs" id="yami-tabs-bar" style="display: none !important;">
@@ -4581,7 +4591,8 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.2.0 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.3.0 (检查更新)</span>
+          <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
         <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
@@ -4775,7 +4786,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.2.0 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.3.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -7927,10 +7938,97 @@
     const updateBtn = document.getElementById('btn-do-update');
     const versionBadge = document.getElementById('yami-version-badge');
 
+    function setUpdateHint(text, color) {
+      const hint = document.getElementById('yami-update-hint');
+      if (!hint) return;
+      hint.textContent = text;
+      hint.style.color = color || '#88a0b0';
+    }
+
+    // 整包更新的四段进度 -> 人话 (下载 / 校验 / 写入 / 完成)
+    function updatePhaseLabel(p) {
+      if (!p) return '更新中...';
+      if (p.phase === 'download') return p.percent >= 0 ? '下载 ' + p.percent + '%' : '下载中';
+      if (p.phase === 'verify') return '校验整包';
+      if (p.phase === 'write') return '写入 ' + p.current + '/' + p.total;
+      if (p.phase === 'done') return '完成';
+      return '更新中...';
+    }
+
+    function onUpdateProgress(p) {
+      if (!p) return;
+      if (updateBtn) updateBtn.textContent = updatePhaseLabel(p);
+      if (p.detail && p.phase === 'write') setUpdateHint('正在写入 ' + p.detail);
+      else if (p.detail && (p.phase === 'download' || p.phase === 'verify')) setUpdateHint(p.detail);
+    }
+
+    function onUpdateDone(res, trigger) {
+      if (trigger) trigger.textContent = '[完成] 更新成功';
+      setUpdateHint('已更新到 v' + res.version + ' (' + res.updatedFiles + ' 个文件, 旧版本备份在 _backup/previous)', '#1cff9b');
+      showToast('[已同步] v' + res.version + ' 已就位, 重启工程即可生效', 4500);
+      setTimeout(function() {
+        if (updateBanner) updateBanner.classList.remove('show');
+      }, 3500);
+    }
+
+    // 更新失败不许静默: 横幅留在原地, 并把「本地安装」这条命脉通道摆到用户眼前
+    function onUpdateFail(err, trigger) {
+      const msg = err && err.message ? err.message : String(err);
+      if (trigger) { trigger.classList.remove('disabled'); trigger.textContent = '重试更新'; }
+      if (updateBanner) updateBanner.classList.add('show');
+      setUpdateHint('更新失败: ' + msg, '#ff4040');
+      showToast('更新失败: ' + msg, 4000);
+    }
+
+    // 离线兜底通道: 选一个已解压的整包文件夹 (网络全挂时唯一的活路)
+    function pickLocalSnapshot(onPicked) {
+      let fs, path;
+      try { fs = require('fs'); path = require('path'); }
+      catch (err) { showToast('当前环境没有 Node 文件权限, 无法本地安装'); return; }
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.webkitdirectory = true;
+      input.multiple = true;
+      input.style.display = 'none';
+      input.addEventListener('change', function() {
+        const picked = Array.from(input.files || []);
+        try { input.remove(); } catch (err) {}
+        if (!picked.length) return;
+        const first = picked[0].path || '';
+        if (!first) { onPicked(''); return; }
+        // 用户可能选到外层下载目录, 从文件路径往上找到含 manifest.json 的那一层
+        let dir = path.dirname(first);
+        for (let i = 0; i < 4; i++) {
+          if (fs.existsSync(path.join(dir, 'manifest.json'))) break;
+          const up = path.dirname(dir);
+          if (!up || up === dir) break;
+          dir = up;
+        }
+        onPicked(dir);
+      });
+      document.body.appendChild(input);
+      input.click();
+    }
+
+    function runLocalInstall() {
+      const probe = window.__YAMI_PERF_PROBE__;
+      if (!probe || !probe.performLocalUpdate) return;
+      pickLocalSnapshot(async function(dir) {
+        if (!dir) { showToast('没读到文件夹路径, 请选择解压出来的插件文件夹 (不是 zip 文件本身)'); return; }
+        if (updateBanner) updateBanner.classList.add('show');
+        if (updateBtn) { updateBtn.classList.add('disabled'); updateBtn.textContent = '安装中...'; }
+        setUpdateHint('本地整包目录: ' + dir);
+        try {
+          const res = await probe.performLocalUpdate(dir, onUpdateProgress);
+          onUpdateDone(res, updateBtn);
+        } catch (err) { onUpdateFail(err, updateBtn); }
+      });
+    }
+
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.2.0';
+      const cur = (probe && probe.version) ? probe.version : '1.3.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -7942,6 +8040,7 @@
       if (updateBanner) updateBanner.classList.add('show');
       if (updateVerSpan) updateVerSpan.textContent = 'v' + info.latestVersion;
       if (versionBadge) versionBadge.textContent = '发现新版 v' + info.latestVersion;
+      setUpdateHint('整包快照更新 · 版本探测通道 ' + (info.channel || '未知'));
     });
 
     // 监听无新版本事件 (确保横幅隐匿)
@@ -7958,23 +8057,27 @@
 
         updateBtn.classList.add('disabled');
         updateBtn.textContent = '连接中...';
+        setUpdateHint('正在连接整包更新通道...');
 
         try {
-          const res = await probe.performAutoUpdate(function(cur, total, file) {
-            updateBtn.textContent = '更新中 ' + cur + '/' + total;
-          });
-          updateBtn.textContent = '[完成] 更新成功';
-          showToast('[已同步] 最新代码已拉取！重启工程即可生效', 4500);
-          setTimeout(function() {
-            if (updateBanner) updateBanner.classList.remove('show');
-          }, 3500);
+          const res = await probe.performAutoUpdate(onUpdateProgress);
+          onUpdateDone(res, updateBtn);
         } catch (err) {
-          updateBtn.classList.remove('disabled');
-          updateBtn.textContent = '重试更新';
-          showToast('更新失败: ' + err.message, 3000);
+          onUpdateFail(err, updateBtn);
         }
       });
     }
+
+    // 本地安装两条入口 (横幅按钮 + 页脚链接) 走同一个处理
+    const localUpdateBtn = document.getElementById('btn-local-update');
+    const localInstallLink = document.getElementById('yami-local-install-link');
+    [localUpdateBtn, localInstallLink].forEach(function(el) {
+      if (!el) return;
+      el.addEventListener('click', function(e) {
+        e.stopPropagation();
+        runLocalInstall();
+      });
+    });
 
     // 点击版本号手动检查更新
     if (versionBadge) {
@@ -7982,12 +8085,16 @@
         e.stopPropagation();
         const probe = window.__YAMI_PERF_PROBE__;
         if (!probe || !probe.checkUpdate) return;
-        showToast('正在检测 GitHub 仓库最新版本...');
+        showToast('正在检测最新版本 (四通道自动降级)...');
         const res = await probe.checkUpdate();
         if (res.hasUpdate) {
           showToast('发现新版本 v' + res.latestVersion + '，请点击顶部一键更新！');
+        } else if (res.error) {
+          if (updateBanner) updateBanner.classList.add('show');
+          setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
+          showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.2.0') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.3.0') + ')');
           refreshVersionBadge();
         }
       });

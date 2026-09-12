@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.2.0';
+  const PROBE_VERSION = '1.3.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -3741,43 +3741,44 @@
 
   
   // ============================================================
-  // 自动化版本管理与一键热更新引擎 (依托 GitHub + jsDelivr 免费全球加速生态)
+  // 整包快照更新引擎 (Snapshot Updater)
   // ============================================================
+  // 为什么不再「逐文件下载」: 写盘清单是烧死在客户端里的, 老用户的清单永远不认识
+  // 下一版新增的文件, 而 manifest.json 又总是最后落盘 —— 结果是「新门牌 + 没有门」,
+  // 重启编辑器后插件凭空消失 (v1.0.0 -> v1.2.0 真实事故, 详见 HANDOFF 铁律㊵)。
+  // 现在改为整包快照: 一次下完 tar.gz -> 内存解包 -> 校验 -> 备份 -> 原子落盘。
+  // 通道实测 (中国大陆 2026-09): raw.githubusercontent.com 直连被墙 (4s 超时),
+  // 而 codeload 的分支快照直连可用 (588KB / 2.2s), 所以主通道用整包快照,
+  // 第三方反代前缀只做兜底 (实测 gh-proxy.com / ghproxy.net 均 2s 级可用)。
   const UPDATE_CONFIG = {
     currentVersion: PROBE_VERSION,
     repo: 'bajibaji/yami-tools',
-    branch: 'extension',
-    cdnBase: 'https://cdn.jsdelivr.net/gh/bajibaji/yami-tools@extension/',
-    rawBase: 'https://raw.githubusercontent.com/bajibaji/yami-tools/extension/',
-    // 写盘顺序: manifest.json 必须最后落盘——它是版本门闩,
-    // 若中途失败旧 manifest 仍在,下次 checkUpdate 版本判定可继续重试,避免半更新状态。
-    updateFiles: [
-      'bootstrap.js',
-      'ai-render-core.js',
-      'probe-core.js',
-      'hud-overlay.js',
-      'ai-agent.js',
-      'ai-host.js',
-      'runtime/yami-mcp/package.json',
-      'runtime/yami-mcp/server.js',
-      'runtime/yami-mcp/modules/cdp-client.js',
-      'runtime/yami-mcp/modules/db-manager.js',
-      'runtime/yami-mcp/modules/changelog.js',
-      'runtime/yami-mcp/modules/diff.js',
-      'runtime/yami-mcp/modules/editor-bridge.js',
-      'runtime/yami-mcp/modules/event-builder.js',
-      'runtime/yami-mcp/modules/file-ops.js',
-      'runtime/yami-mcp/modules/playtest.js',
-      'runtime/yami-mcp/modules/pricing.js',
-      'runtime/yami-mcp/modules/message-pairs.js',
-      'runtime/yami-mcp/modules/context-meter.js',
-      'runtime/yami-mcp/modules/todos.js',
-      'runtime/yami-mcp/modules/runtime-bridge.js',
-      'HANDOFF.md',
-      'README.md',
-      'manifest.json'
-    ]
+    ref: 'extension',
+    archiveUrl: 'https://github.com/bajibaji/yami-tools/archive/refs/heads/extension.tar.gz',
+    mirrorPrefixes: ['https://gh-proxy.com/', 'https://ghproxy.net/'],
+    // 轻量版本探测通道 (只取 691 字节的 manifest.json, 不下整包):
+    // ① 反代直取 raw (1.8s, 无限流) ② GitHub 内容接口 (0.33s, 直连, 有匿名限流)
+    // ③ raw 直连 (开了系统代理时可用) ④ jsDelivr (分支引用有缓存, 可能滞后)
+    versionChannels: [
+      'https://gh-proxy.com/https://raw.githubusercontent.com/bajibaji/yami-tools/extension/manifest.json',
+      'https://api.github.com/repos/bajibaji/yami-tools/contents/manifest.json?ref=extension',
+      'https://raw.githubusercontent.com/bajibaji/yami-tools/extension/manifest.json',
+      'https://cdn.jsdelivr.net/gh/bajibaji/yami-tools@extension/manifest.json'
+    ],
+    probeTimeout: 3500,
+    downloadTimeout: 30000,
+    maxFileBytes: 20 * 1024 * 1024,
+    backupDirName: '_backup',
+    // 整包安装的排除项: 只放「绝不可能是运行时依赖」的开发物料。
+    // 反过来写白名单是不行的 —— 白名单漏一个新文件, 就是又一次「新门牌没有门」;
+    // 黑名单漏一个开发目录, 只是往插件目录多放几个不参与加载的文件, 代价不对称。
+    devOnlyDirs: ['src', 'tests', 'tools', 'docs', 'node_modules', 'dist', '.git', '.github', '.vscode', '.agents', '.reasonix', '.remember', '.e2e-tmp'],
+    devOnlyFiles: ['build.cjs', 'bump.cmd'],
+    devOnlyPrefixes: ['AI全能副驾-']
   };
+
+  // 入口脚本按依赖顺序先落盘, manifest.json 永远最后落盘 (版本门闩: 中途失败旧门牌还在)
+  const SNAPSHOT_ENTRY_ORDER = ['bootstrap.js', 'ai-render-core.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js', 'ai-host.js'];
 
   // 语义化版本比对: v1 > v2 返回 1, v1 < v2 返回 -1, 相等返回 0
   function compareVersion(v1, v2) {
@@ -3792,157 +3793,482 @@
     return 0;
   }
 
-  // 单通道安全下载 (3.5 秒超时兜底), 失败返回 null
-  async function tryFetch(url) {
-    try {
-      let signal = undefined;
-      if (typeof AbortController !== 'undefined') {
-        const c = new AbortController();
-        setTimeout(function() { c.abort(); }, 3500);
-        signal = c.signal;
-      }
-      const resp = await fetch(url, { cache: 'no-cache', signal: signal });
-      if (resp.ok) return await resp.text();
-    } catch (e) {}
+  function shortHost(url) {
+    const m = String(url).match(/^https?:\/\/([^\/]+)/);
+    return m ? m[1] : String(url).slice(0, 40);
+  }
+
+  function updateArchiveChannels() {
+    const list = [UPDATE_CONFIG.archiveUrl];
+    for (let i = 0; i < UPDATE_CONFIG.mirrorPrefixes.length; i++) {
+      list.push(UPDATE_CONFIG.mirrorPrefixes[i] + UPDATE_CONFIG.archiveUrl);
+    }
+    return list;
+  }
+
+  // 供面板/诊断展示当前更新通道
+  function getUpdateChannels() {
+    return {
+      archive: UPDATE_CONFIG.archiveUrl,
+      mirrors: UPDATE_CONFIG.mirrorPrefixes.slice(),
+      channels: updateArchiveChannels(),
+      versionChannels: UPDATE_CONFIG.versionChannels.slice()
+    };
+  }
+
+  function requireNode(name) {
+    if (typeof require !== 'function') {
+      throw new Error('当前运行环境缺失 Node.js 模块权限, 无法更新文件系统。');
+    }
+    return require(name);
+  }
+
+  function fatalError(message) {
+    const e = new Error(message);
+    e.fatal = true;
+    return e;
+  }
+
+  // 整包里的哪些路径不进插件目录 (开发物料)
+  function isDevOnlyPath(rel) {
+    const clean = String(rel).replace(/\\/g, '/').replace(/^\.\//, '');
+    if (!clean) return true;
+    const slash = clean.indexOf('/');
+    const top = slash === -1 ? clean : clean.slice(0, slash);
+    if (UPDATE_CONFIG.devOnlyDirs.indexOf(top) !== -1) return true;
+    if (slash === -1 && UPDATE_CONFIG.devOnlyFiles.indexOf(clean) !== -1) return true;
+    for (let i = 0; i < UPDATE_CONFIG.devOnlyPrefixes.length; i++) {
+      if (clean.indexOf(UPDATE_CONFIG.devOnlyPrefixes[i]) === 0) return true;
+    }
+    const segs = clean.split('/');
+    for (let i = 0; i < segs.length; i++) {
+      if (segs[i] === UPDATE_CONFIG.backupDirName || segs[i].slice(-4) === '.tmp') return true;
+    }
+    return false;
+  }
+
+  function filterSnapshotFiles(files) {
+    const shipped = new Map();
+    files.forEach(function (buf, rel) {
+      if (!isDevOnlyPath(rel)) shipped.set(rel, buf);
+    });
+    return shipped;
+  }
+
+  function emitProgress(onProgress, payload) {
+    if (typeof onProgress !== 'function') return;
+    try { onProgress(payload); } catch (e) {}
+  }
+
+  function snapshotBytes(files) {
+    let total = 0;
+    files.forEach(function (buf) { total += buf.length; });
+    return total;
+  }
+
+  function formatKB(bytes) {
+    if (!bytes) return '0 KB';
+    if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  // ---------- tar 解析 (ustar + GNU 长名 + pax 扩展头) ----------
+  function readCString(buf, start, len) {
+    let end = start;
+    const stop = Math.min(start + len, buf.length);
+    while (end < stop && buf[end] !== 0) end++;
+    return buf.toString('utf8', start, end);
+  }
+
+  function readOctal(buf, start, len) {
+    const text = readCString(buf, start, len).replace(/[^0-7]/g, '');
+    return text ? parseInt(text, 8) : 0;
+  }
+
+  function readPaxPath(text) {
+    const lines = String(text).split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const at = lines[i].indexOf(' path=');
+      if (at !== -1) return lines[i].slice(at + 6);
+    }
     return null;
   }
 
-  // 下载远端文件文本 (raw 优先串行: 直达 GitHub 无 CDN 缓存, 内容永远最新;
-  // jsDelivr 边缘缓存会滞留旧版本且 ?t= 参数无法绕过, 实测曾长期卡在 v0.1.0, 仅作网络兜底)
-  async function fetchRemoteText(filename) {
-    const ts = Date.now();
-    const text = await tryFetch(UPDATE_CONFIG.rawBase + filename)
-      || await tryFetch(UPDATE_CONFIG.cdnBase + filename + '?t=' + ts);
-    if (text === null) throw new Error('无法从远端拉取文件: ' + filename);
-    return text;
-  }
-
-  // 双通道并行探测远端最新版本: 各自拉取 manifest 后取版本号更高者,
-  // 规避 CDN 陈旧缓存(返回旧版但响应成功)与 raw 单点网络故障两类缺陷。
-  async function fetchLatestManifest() {
-    const ts = Date.now();
-    const [rawText, cdnText] = await Promise.all([
-      tryFetch(UPDATE_CONFIG.rawBase + 'manifest.json'),
-      tryFetch(UPDATE_CONFIG.cdnBase + 'manifest.json?t=' + ts)
-    ]);
-    const parsed = [];
-    if (rawText !== null) { try { parsed.push({ text: rawText, m: JSON.parse(rawText) }); } catch (e) {} }
-    if (cdnText !== null) { try { parsed.push({ text: cdnText, m: JSON.parse(cdnText) }); } catch (e) {} }
-    if (parsed.length === 0) throw new Error('无法从远端拉取文件: manifest.json');
-    parsed.sort(function(a, b) { return compareVersion(b.m.version, a.m.version); });
-    if (parsed.length === 1) {
-      console.warn('[自动更新] 仅单通道可用(可能为 jsDelivr 缓存), 版本判定可能滞后。');
-    }
-    return parsed[0].text;
-  }
-
-  // 检查是否有新版本
-  async function checkUpdate() {
-    try {
-      const remoteManifestText = await fetchLatestManifest();
-      const remoteManifest = JSON.parse(remoteManifestText);
-      const remoteVer = remoteManifest.version;
-      const hasUpdate = compareVersion(remoteVer, UPDATE_CONFIG.currentVersion) > 0;
-      const result = {
-        hasUpdate: hasUpdate,
-        currentVersion: UPDATE_CONFIG.currentVersion,
-        latestVersion: remoteVer,
-        description: remoteManifest.description || '发现新版本组件'
-      };
-      if (hasUpdate) {
-        window.dispatchEvent(new CustomEvent('yami-perf-update-found', { detail: result }));
+  function parseTar(buffer) {
+    const raw = new Map();
+    let offset = 0;
+    let longName = null;
+    let paxName = null;
+    while (offset + 512 <= buffer.length) {
+      if (buffer[offset] === 0) break;   // 归档结束块
+      const type = String.fromCharCode(buffer[offset + 156] || 48);
+      const size = readOctal(buffer, offset + 124, 12);
+      if (size > UPDATE_CONFIG.maxFileBytes) {
+        throw new Error('整包里出现异常大的文件 (' + formatKB(size) + '), 拒绝解包');
+      }
+      const dataStart = offset + 512;
+      const body = buffer.slice(dataStart, dataStart + size);
+      if (type === 'L') {
+        longName = body.toString('utf8').replace(/\0+$/, '');
+      } else if (type === 'x') {
+        paxName = readPaxPath(body.toString('utf8'));
+      } else if (type === '0') {
+        const prefix = readCString(buffer, offset + 345, 155);
+        const shortName = readCString(buffer, offset, 100);
+        const full = paxName || longName || (prefix ? prefix + '/' + shortName : shortName);
+        if (full && full.slice(-1) !== '/') raw.set(full, body);
+        longName = null;
+        paxName = null;
       } else {
-        window.dispatchEvent(new CustomEvent('yami-perf-update-none', { detail: result }));
-        console.log('[自动更新] 检查通道正常, 当前已是最新版本 ' + result.currentVersion + '。');
+        if (type !== 'g') { longName = null; paxName = null; }
       }
-      return result;
-    } catch (e) {
-      return { hasUpdate: false, error: e.message };
+      offset = dataStart + Math.ceil(size / 512) * 512;
+    }
+    // GitHub 的快照会把整个仓库塞进一个顶层目录 (yami-tools-extension/…), 统一剥掉。
+    // null = 还没定论, '' = 已判定"没有统一顶层目录"; 两者必须分开 —— 用 '' 当初始值的话,
+    // 一个"根目录文件排在前面"的包会把 '' 又改回某个顶层目录, 于是路径被多剥一层。
+    let rootPrefix = null;
+    raw.forEach(function (buf, name) {
+      const slash = name.indexOf('/');
+      const top = slash === -1 ? '' : name.slice(0, slash + 1);
+      if (top === '') { rootPrefix = ''; return; }
+      if (rootPrefix === null) rootPrefix = top;
+      else if (rootPrefix !== top) rootPrefix = '';
+    });
+    if (rootPrefix === null) rootPrefix = '';
+    const files = new Map();
+    raw.forEach(function (buf, name) {
+      const rel = rootPrefix && name.indexOf(rootPrefix) === 0 ? name.slice(rootPrefix.length) : name;
+      if (rel) files.set(rel, buf);
+    });
+    return files;
+  }
+
+  function parseTarGz(bytes) {
+    const zlib = requireNode('zlib');
+    const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+    if (!buf.length) throw new Error('整包内容为空');
+    if (buf[0] !== 0x1f || buf[1] !== 0x8b) throw new Error('整包不是 gzip 格式 (下载可能被截断或被劫持)');
+    let plain;
+    try { plain = zlib.gunzipSync(buf); }
+    catch (e) { throw new Error('整包解压失败: ' + e.message); }
+    return parseTar(plain);
+  }
+
+  // ---------- 校验: 宁可原地不动, 也不落一个跑不起来的插件 ----------
+  function validateSnapshot(files) {
+    const manifestBuf = files.get('manifest.json');
+    if (!manifestBuf) throw fatalError('整包里没有 manifest.json, 拒绝安装 (未改动任何文件)');
+    let manifest = null;
+    try { manifest = JSON.parse(manifestBuf.toString('utf8')); }
+    catch (e) { throw fatalError('整包里的 manifest.json 解析失败: ' + e.message + ' (未改动任何文件)'); }
+    if (!manifest || !manifest.version) throw fatalError('整包里的 manifest.json 缺少 version 字段 (未改动任何文件)');
+
+    const declared = SNAPSHOT_ENTRY_ORDER.slice();
+    (manifest.content_scripts || []).forEach(function (entry) {
+      (entry.js || []).forEach(function (f) { declared.push(f); });
+    });
+    (manifest.web_accessible_resources || []).forEach(function (entry) {
+      (entry.resources || []).forEach(function (f) { declared.push(f); });
+    });
+    // 这条断言就是那次事故的墓碑: manifest 声明的文件必须都在包里
+    const missing = [];
+    declared.forEach(function (f) { if (!files.has(f) && missing.indexOf(f) === -1) missing.push(f); });
+    if (missing.length) {
+      throw fatalError('整包不完整: manifest/入口需要的 ' + missing.join('、') + ' 不在包里, 拒绝安装 (未改动任何文件)');
+    }
+    const vm = requireNode('vm');
+    files.forEach(function (buf, rel) {
+      if (rel.slice(-3) !== '.js') return;
+      try { new vm.Script(buf.toString('utf8'), { filename: rel }); }
+      catch (e) { throw fatalError('整包里的 ' + rel + ' 语法损坏: ' + e.message + ' (未改动任何文件)'); }
+    });
+    return manifest;
+  }
+
+  function installOrder(files) {
+    const names = [];
+    files.forEach(function (buf, name) { names.push(name); });
+    names.sort();
+    const head = SNAPSHOT_ENTRY_ORDER.filter(function (f) { return files.has(f); });
+    const rest = names.filter(function (n) { return head.indexOf(n) === -1 && n !== 'manifest.json'; });
+    const order = head.concat(rest);
+    if (files.has('manifest.json')) order.push('manifest.json');
+    return order;
+  }
+
+  // 定位插件安装目录: 逐个候选必须真的能读到 manifest.json 才认
+  function resolveInstallDir() {
+    const fs = requireNode('fs');
+    const path = requireNode('path');
+    const candidates = [];
+    try { if (process.env && process.env.YAMI_DEPLOY_DIR) candidates.push(process.env.YAMI_DEPLOY_DIR); } catch (e) {}
+    candidates.push('D:/Program Files/Open Yami RPG Editor/extension/yami-perf-extension');
+    try { if (process.execPath) candidates.push(path.join(path.dirname(process.execPath), 'extension', 'yami-perf-extension')); } catch (e) {}
+    try { if (process.cwd) candidates.push(path.join(process.cwd(), 'extension', 'yami-perf-extension')); } catch (e) {}
+    try { if (process.resourcesPath) candidates.push(path.join(process.resourcesPath, '..', 'extension', 'yami-perf-extension')); } catch (e) {}
+    for (let i = 0; i < candidates.length; i++) {
+      try { if (fs.existsSync(path.join(candidates[i], 'manifest.json'))) return candidates[i]; } catch (e) {}
+    }
+    return candidates[0];
+  }
+
+  function removeFileQuietly(fs, target) {
+    try { if (fs.rmSync) fs.rmSync(target, { force: true }); else fs.unlinkSync(target); } catch (e) {}
+  }
+
+  function rollbackInstall(fs, path, targetDir, backups, created) {
+    for (let i = backups.length - 1; i >= 0; i--) {
+      try { fs.writeFileSync(path.join(targetDir, backups[i].rel.split('/').join(path.sep)), backups[i].prev); } catch (e) {}
+    }
+    for (let i = 0; i < created.length; i++) {
+      try { removeFileQuietly(fs, path.join(targetDir, created[i].split('/').join(path.sep))); } catch (e) {}
     }
   }
 
-  // 执行一键热更新覆盖本地文件
-  async function performAutoUpdate(onProgress) {
-    if (typeof require !== 'function') {
-      throw new Error('当前运行环境缺失 Node.js 模块权限，无法直接写入文件系统。');
+  // 落盘: 先备份旧内容 -> 写 .tmp -> rename 原子替换 -> manifest.json 最后
+  function installSnapshot(files, options, onProgress, sourceLabel) {
+    const fs = requireNode('fs');
+    const path = requireNode('path');
+    options = options || {};
+    const manifest = validateSnapshot(files);
+    const nextVersion = String(manifest.version);
+    const curVersion = String(UPDATE_CONFIG.currentVersion || PROBE_VERSION);
+    if (compareVersion(nextVersion, curVersion) < 0 && !options.allowDowngrade) {
+      throw fatalError('远端快照 v' + nextVersion + ' 低于当前 v' + curVersion + ', 已拒绝降级安装');
     }
-    const fs = require('fs');
-    const path = require('path');
-
-    // 智能定位本地插件安装物理目录 (多级探测)
-    const candidateDirs = [
-      'D:/Program Files/Open Yami RPG Editor/extension/yami-perf-extension',
-      path.join(process.cwd(), 'extension/yami-perf-extension')
-    ];
+    const targetDir = options.targetDir ? String(options.targetDir) : resolveInstallDir();
+    if (!fs.existsSync(targetDir)) throw fatalError('插件安装目录不存在: ' + targetDir);
+    // 「更新前版本」以盘上那份 manifest 为准 —— 用户要看的是"从 v1.0.0 更到 v1.2.0",
+    // 而不是内存里跑着的这份代码的版本号 (源码版联调时两者本来就不一样)。
+    let diskVersion = curVersion;
     try {
-      if (process.resourcesPath) {
-        candidateDirs.push(path.join(process.resourcesPath, '../extension/yami-perf-extension'));
-      }
+      const diskManifest = JSON.parse(fs.readFileSync(path.join(targetDir, 'manifest.json'), 'utf8'));
+      if (diskManifest && diskManifest.version) diskVersion = String(diskManifest.version);
     } catch (e) {}
-
-    let localDir = null;
-    for (const d of candidateDirs) {
-      if (fs.existsSync(path.join(d, 'manifest.json'))) {
-        localDir = d;
-        break;
-      }
-    }
-    if (!localDir) {
-      localDir = candidateDirs[0];
-    }
-
-    const files = UPDATE_CONFIG.updateFiles;
-    const missing = [];
+    const order = installOrder(files);
+    const total = order.length;
+    const backupDir = path.join(targetDir, UPDATE_CONFIG.backupDirName, 'previous');
+    const backups = [];
+    const created = [];
+    emitProgress(onProgress, { phase: 'verify', current: 0, total: total, percent: 0, detail: '准备安装 ' + total + ' 个文件' });
     let written = 0;
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (typeof onProgress === 'function') {
-        onProgress(i + 1, files.length, file);
-      }
-      let text = null;
-      try {
-        text = await fetchRemoteText(file);
-      } catch (e) {
-        // 单个文件拉不到不能让整次热更新失败：
-        //  · 新增文件在推送落地前的短暂窗口内，远端确实还没有；
-        //  · 期间如果直接抛错，用户会卡在"更新失败"且旧版本文件已被部分覆盖。
-        // 因此改为跳过并记入 missing，最后如实报告（版本号门闩仍是 manifest.json 最后写）。
-        missing.push(file);
-        continue;
-      }
-      const targetPath = path.join(localDir, file);
-      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-      fs.writeFileSync(targetPath, text, 'utf8');
-      written++;
-    }
-    // 关键文件缺失说明这次更新不完整，不能报成功（否则会留下跑不起来的插件）
-    if (missing.includes('probe-core.js') || missing.includes('manifest.json') || missing.includes('runtime/yami-mcp/server.js')) {
-      throw new Error('关键文件未能下载，已停止更新：' + missing.join('、') + '（请稍后重试，远端可能还在同步）');
-    }
-
-    // 成功后同步更新内存中的版本号
     try {
-      const manifestPath = path.join(localDir, 'manifest.json');
-      if (fs.existsSync(manifestPath)) {
-        const updatedManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-        if (updatedManifest && updatedManifest.version) {
-          UPDATE_CONFIG.currentVersion = updatedManifest.version;
-          if (window.__YAMI_PERF_PROBE__) window.__YAMI_PERF_PROBE__.version = updatedManifest.version;
+      for (let i = 0; i < total; i++) {
+        const rel = order[i];
+        const dest = path.join(targetDir, rel.split('/').join(path.sep));
+        const dir = path.dirname(dest);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const body = files.get(rel);
+        if (fs.existsSync(dest)) {
+          const prev = fs.readFileSync(dest);
+          const bak = path.join(backupDir, rel.split('/').join(path.sep));
+          const bakDir = path.dirname(bak);
+          if (!fs.existsSync(bakDir)) fs.mkdirSync(bakDir, { recursive: true });
+          fs.writeFileSync(bak, prev);
+          backups.push({ rel: rel, prev: prev });
+        } else {
+          created.push(rel);
         }
+        const tmp = dest + '.tmp';
+        fs.writeFileSync(tmp, body);
+        if (typeof fs.renameSync === 'function') fs.renameSync(tmp, dest);
+        else { fs.writeFileSync(dest, body); removeFileQuietly(fs, tmp); }
+        written++;
+        emitProgress(onProgress, { phase: 'write', current: written, total: total, percent: Math.round(written / total * 100), detail: rel });
       }
-    } catch (e) {}
-
+    } catch (err) {
+      rollbackInstall(fs, path, targetDir, backups, created);
+      throw fatalError('写入失败, 已回滚到更新前状态: ' + err.message);
+    }
+    UPDATE_CONFIG.currentVersion = nextVersion;
+    if (window.__YAMI_PERF_PROBE__) window.__YAMI_PERF_PROBE__.version = nextVersion;
     return {
       success: true,
-      version: UPDATE_CONFIG.currentVersion,
+      version: nextVersion,
+      previousVersion: diskVersion,
       updatedFiles: written,
-      totalFiles: files.length,
-      missingFiles: missing,
-      targetDir: localDir,
-      message: missing.length
-        ? `已更新 ${written}/${files.length} 个文件；以下文件远端暂未提供，稍后再检查一次更新即可补齐：${missing.join('、')}`
-        : undefined
+      totalFiles: total,
+      missingFiles: [],
+      targetDir: targetDir,
+      backupDir: backups.length ? backupDir : '',
+      backedUp: backups.length,
+      bytes: snapshotBytes(files),
+      source: sourceLabel || 'snapshot'
     };
+  }
+
+  // ---------- 下载 ----------
+  async function fetchWithTimeout(url, timeoutMs, cacheMode) {
+    let signal;
+    if (typeof AbortController !== 'undefined') {
+      const c = new AbortController();
+      setTimeout(function () { c.abort(); }, timeoutMs);
+      signal = c.signal;
+    }
+    return await fetch(url, { cache: cacheMode || 'no-store', signal: signal });
+  }
+
+  async function downloadArchive(url, onProgress) {
+    const resp = await fetchWithTimeout(url, UPDATE_CONFIG.downloadTimeout, 'no-store');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const declaredLength = resp.headers && resp.headers.get ? (Number(resp.headers.get('content-length')) || 0) : 0;
+    if (resp.body && typeof resp.body.getReader === 'function') {
+      const reader = resp.body.getReader();
+      const chunks = [];
+      let got = 0;
+      let lastReport = 0;
+      for (;;) {
+        const step = await reader.read();
+        if (step.done) break;
+        if (step.value && step.value.length) {
+          chunks.push(Buffer.from(step.value));
+          got += step.value.length;
+          if (got - lastReport > 65536) {
+            lastReport = got;
+            emitProgress(onProgress, {
+              phase: 'download', current: got, total: declaredLength,
+              percent: declaredLength ? Math.min(99, Math.round(got / declaredLength * 100)) : -1,
+              detail: '下载整包 ' + formatKB(got)
+            });
+          }
+        }
+      }
+      if (!got) throw new Error('响应为空');
+      return Buffer.concat(chunks);
+    }
+    const arrayBuf = await resp.arrayBuffer();
+    if (!arrayBuf || !arrayBuf.byteLength) throw new Error('响应为空');
+    return Buffer.from(arrayBuf);
+  }
+
+  // 一键热更新: 逐通道尝试整包快照
+  async function performAutoUpdate(onProgress, options) {
+    options = options || {};
+    requireNode('fs');
+    const channels = updateArchiveChannels();
+    const failures = [];
+    for (let i = 0; i < channels.length; i++) {
+      const url = channels[i];
+      try {
+        emitProgress(onProgress, {
+          phase: 'download', current: 0, total: 0, percent: 0,
+          detail: '连接通道 ' + (i + 1) + '/' + channels.length + ' (' + shortHost(url) + ')'
+        });
+        const bytes = await downloadArchive(url, onProgress);
+        const files = filterSnapshotFiles(parseTarGz(bytes));
+        if (!files.size) throw new Error('整包里没有任何文件');
+        const result = installSnapshot(files, options, onProgress, shortHost(url));
+        result.channel = url;
+        result.channelsTried = i + 1;
+        emitProgress(onProgress, {
+          phase: 'done', current: result.updatedFiles, total: result.totalFiles, percent: 100,
+          detail: '已更新到 v' + result.version
+        });
+        return result;
+      } catch (err) {
+        if (err && err.fatal) throw err;
+        failures.push(shortHost(url) + ': ' + (err && err.message ? err.message : String(err)));
+      }
+    }
+    throw new Error('全部 ' + channels.length + ' 个更新通道均失败 -> ' + failures.join(' | '));
+  }
+
+  // ---------- 本地整包安装 (网络全挂时的兜底通道) ----------
+  function resolveSnapshotRoot(fs, path, rawDir) {
+    const dir = String(rawDir || '').trim().replace(/^"|"$/g, '');
+    if (!dir) throw new Error('没有指定本地快照目录');
+    if (fs.existsSync(path.join(dir, 'manifest.json'))) return dir;
+    let children = [];
+    try { children = fs.readdirSync(dir); }
+    catch (e) { throw new Error('读不到这个目录: ' + dir + ' (' + e.message + ')'); }
+    const hits = [];
+    for (let i = 0; i < children.length; i++) {
+      const child = path.join(dir, children[i]);
+      try {
+        if (fs.statSync(child).isDirectory() && fs.existsSync(path.join(child, 'manifest.json'))) hits.push(child);
+      } catch (e) {}
+    }
+    if (hits.length === 1) return hits[0];
+    throw new Error('这个目录里没有 manifest.json —— 若选的是 zip 压缩包, 请先解压, 再选解压出来的文件夹');
+  }
+
+  function readLocalSnapshot(fs, path, root) {
+    const files = new Map();
+    const walk = function (dir, rel) {
+      const names = fs.readdirSync(dir);
+      for (let i = 0; i < names.length; i++) {
+        const name = names[i];
+        const childRel = rel ? rel + '/' + name : name;
+        if (isDevOnlyPath(childRel)) continue;
+        const full = path.join(dir, name);
+        const info = fs.statSync(full);
+        if (info.isDirectory()) { walk(full, childRel); continue; }
+        if (!info.isFile()) continue;
+        if (info.size > UPDATE_CONFIG.maxFileBytes) throw new Error(childRel + ' 体积异常, 拒绝安装');
+        files.set(childRel, fs.readFileSync(full));
+      }
+    };
+    walk(root, '');
+    return files;
+  }
+
+  function performLocalUpdate(sourceDir, onProgress, options) {
+    const fs = requireNode('fs');
+    const path = requireNode('path');
+    const root = resolveSnapshotRoot(fs, path, sourceDir);
+    const files = filterSnapshotFiles(readLocalSnapshot(fs, path, root));
+    const result = installSnapshot(files, options, onProgress, root);
+    emitProgress(onProgress, {
+      phase: 'done', current: result.updatedFiles, total: result.totalFiles, percent: 100,
+      detail: '已安装 v' + result.version
+    });
+    return result;
+  }
+
+  // ---------- 版本探测 ----------
+  function manifestFromProbe(url, text) {
+    let raw = text;
+    if (url.indexOf('api.github.com') !== -1) {
+      const payload = JSON.parse(text);
+      if (payload && payload.content && payload.encoding === 'base64') {
+        raw = Buffer.from(String(payload.content).replace(/\s/g, ''), 'base64').toString('utf8');
+      }
+    }
+    return JSON.parse(raw);
+  }
+
+  async function checkUpdate() {
+    const failures = [];
+    for (let i = 0; i < UPDATE_CONFIG.versionChannels.length; i++) {
+      const url = UPDATE_CONFIG.versionChannels[i];
+      try {
+        const resp = await fetchWithTimeout(url, UPDATE_CONFIG.probeTimeout, 'no-store');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const remoteManifest = manifestFromProbe(url, await resp.text());
+        const remoteVer = remoteManifest && remoteManifest.version;
+        if (!remoteVer) throw new Error('远端 manifest 缺少 version');
+        const hasUpdate = compareVersion(remoteVer, UPDATE_CONFIG.currentVersion) > 0;
+        const result = {
+          hasUpdate: hasUpdate,
+          currentVersion: UPDATE_CONFIG.currentVersion,
+          latestVersion: remoteVer,
+          description: remoteManifest.description || '发现新版本组件',
+          channel: shortHost(url)
+        };
+        if (hasUpdate) {
+          window.dispatchEvent(new CustomEvent('yami-perf-update-found', { detail: result }));
+        } else {
+          window.dispatchEvent(new CustomEvent('yami-perf-update-none', { detail: result }));
+          console.log('[自动更新] 检查通道正常 (' + result.channel + '), 当前已是最新版本 ' + result.currentVersion + '。');
+        }
+        return result;
+      } catch (e) {
+        failures.push(shortHost(url) + ': ' + (e && e.message ? e.message : String(e)));
+      }
+    }
+    console.warn('[自动更新] 全部版本探测通道均失败 -> ' + failures.join(' | '));
+    return { hasUpdate: false, currentVersion: UPDATE_CONFIG.currentVersion, error: '全部版本探测通道均失败 -> ' + failures.join(' | ') };
   }
 
   window.__YAMI_PERF_PROBE__ = {
@@ -3952,6 +4278,8 @@
     getReport: buildReport,
     checkUpdate: checkUpdate,
     performAutoUpdate: performAutoUpdate,
+    performLocalUpdate: performLocalUpdate,
+    getUpdateChannels: getUpdateChannels,
     compareVersion: compareVersion,
     getDiagnosisReport: getDiagnosisReport,
     getErrors: function() { return state.errorHistory.slice(); },

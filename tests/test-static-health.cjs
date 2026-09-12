@@ -327,20 +327,29 @@ function checkPluginWiring() {
     assert.ok(war.includes(file), `web_accessible_resources 必须放行 ${file}（主世界按扩展基址取脚本）`)
   }
 
+  // 整包快照更新：装机范围由「整包内容 - 开发目录黑名单」决定，不再有人工清单。
+  // 历史事故：逐文件清单烧死在客户端里，老用户永远拉不到新版新增的文件，却会把新版
+  // manifest.json 落盘 —— 新门牌 + 没有门，重启编辑器后插件凭空消失（铁律㊵）。
   const probe = fs.readFileSync(path.join(ROOT, 'probe-core.js'), 'utf8')
-  const declared = (probe.match(/updateFiles:\s*\[([\s\S]*?)\]/) || ['', ''])[1]
-  for (const file of shipped) {
-    assert.ok(declared.includes(`'${file}'`), `热更新清单 updateFiles 必须包含 ${file}，否则老用户热更新后缺文件`)
+  assert.ok(/function parseTarGz\(/.test(probe), '整包更新必须自带 tar.gz 解包器（零依赖，靠 Node 内置 zlib）')
+  assert.ok(!/updateFiles/.test(probe), '逐文件清单 updateFiles 不许复活——那正是把用户插件更没的机制')
+  const archiveUrl = (probe.match(/archiveUrl: '([^']+)'/) || [])[1] || ''
+  assert.ok(/^https:\/\/github\.com\/.+\/archive\/refs\/heads\/.+\.tar\.gz$/.test(archiveUrl), `更新主通道必须是分支整包快照，当前: ${archiveUrl}`)
+  const mirrors = (probe.match(/mirrorPrefixes: \[([^\]]*)\]/) || ['', ''])[1]
+  assert.ok(/gh-proxy\.com/.test(mirrors), '整包更新必须有大陆可直连的反代兜底通道')
+  const versionChannels = (probe.match(/versionChannels: \[([\s\S]*?)\]/) || ['', ''])[1]
+  const firstVersionChannel = (versionChannels.match(/'([^']+)'/) || [])[1] || ''
+  assert.ok(!/^https:\/\/raw\.githubusercontent\.com/.test(firstVersionChannel), `版本探测首通道不能是直连 raw（实测大陆被墙，会让每次检查先白等一次超时），当前: ${firstVersionChannel}`)
+  assert.ok(/api\.github\.com/.test(versionChannels), '版本探测要保留 GitHub 内容接口这条直连快通道')
+  const devOnly = (probe.match(/devOnlyDirs: \[([^\]]*)\]/) || ['', ''])[1]
+  for (const dir of ['src', 'tests', 'tools', 'docs']) {
+    assert.ok(devOnly.includes(`'${dir}'`), `整包安装必须排除开发目录 ${dir}/（只放"绝不可能是运行时依赖"的物料）`)
   }
+  assert.ok(!devOnly.includes("'runtime'"), "整包安装不许排除 runtime/：整包模式正是靠" + '"不在黑名单里就进包"' + "来保证新增模块自动带上")
 
-  // 新增模块最容易漏登记：宿主 require 它们，漏一个就是"老用户热更新后宿主直接起不来"。
-  // 不靠人记，直接扫目录对清单（历史上 updateFiles 是靠人工维护的 15 文件列表）。
   const moduleDir = path.join(ROOT, 'runtime', 'yami-mcp', 'modules')
   const moduleFiles = fs.readdirSync(moduleDir).filter(name => name.endsWith('.js')).sort()
   assert.ok(moduleFiles.length > 0, 'runtime/yami-mcp/modules 下应当有工具模块')
-  for (const name of moduleFiles) {
-    assert.ok(declared.includes(`modules/${name}`), `热更新清单 updateFiles 必须包含 runtime/yami-mcp/modules/${name}（宿主会 require 它，漏了会让老用户热更新后宿主起不来）`)
-  }
 
   // 引擎接口兼容：源码版把内部对象挂在 window.YamiEngine 下（打包版才是裸全局），
   // 插件三处取值点都必须认这个命名空间，否则「保存/撤销/刷新/试玩」在源码版又全废。
@@ -393,7 +402,8 @@ function main() {
   assert.ok(/saveDirSignature/.test(hud) && /dirCheckedAt/.test(hud), '存档台必须时间闸 + 目录指纹，否则 150ms 同步读盘并解析整个存档 JSON')
   assert.ok(/const sampled = function/.test(probeSrc), '报告分位数必须抽样计算：12000 样本 × 3 趟全量排序 × 6.7Hz 会把主线程拖住')
   assert.ok(!/p95: round2\(percentile\(intervalList/.test(probeSrc), '未使用的 frame.p95 不得复活（没有消费方，纯白烧 CPU）')
-  assert.ok(/const files = listResourceFiles\(\)\n  const guidMap = collectAllGuids\(files\)/.test(mcpSrc), 'validate_project 必须单次扫描复用（此前一次调用把 Assets 递归并逐文件 stat 扫了 4 遍）')
+  // 注意 \r?：工作区是 CRLF（core.autocrlf=true），只写 \n 的断言在 Windows 上必然误报
+  assert.ok(/const files = listResourceFiles\(\)\r?\n  const guidMap = collectAllGuids\(files\)/.test(mcpSrc), 'validate_project 必须单次扫描复用（此前一次调用把 Assets 递归并逐文件 stat 扫了 4 遍）')
   console.log('心跳开销守卫: HUD 重入 / 双指纹 / 存档降频 / 抽样分位数 / 单次扫描 全部就位')
 
   // 文档一致性：README 里声明的数字必须与实际一致。
@@ -402,7 +412,8 @@ function main() {
   const readmeSrc = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8')
   const handoffSrc = fs.readFileSync(path.join(ROOT, 'HANDOFF.md'), 'utf8')
   const declaredRules = Number((readmeSrc.match(/(\d+)\s*条血泪避坑档案/) || [])[1] || 0)
-  const actualRules = (handoffSrc.match(/^### [①-⑳㉑-㉟㊱-㊴]/gm) || []).length
+  // 圈码范围要一路覆盖到 ㊿（㊵=U+32B5 曾落在旧的 ㊱-㊴ 之外，导致新增铁律时计数少 1）
+  const actualRules = (handoffSrc.match(/^### [①-⑳㉑-㉟㊱-㊿]/gm) || []).length
   assert.ok(declaredRules > 0 && declaredRules === actualRules,
     `README 声明 ${declaredRules} 条铁律，HANDOFF 实际 ${actualRules} 条——数字对不上（新增铁律时要同步 README）`)
   const declaredSuites = Number((readmeSrc.match(/run-all\.cjs:?\s*(\d+)\s*套/) || [])[1] || 0)
@@ -413,7 +424,7 @@ function main() {
   console.log(`文档一致性: 铁律 ${actualRules} 条 / 测试 ${actualSuites} 套，README 声明与实际一致`)
 
   const wiring = checkPluginWiring()
-  console.log(`插件装配检查: 主世界装载器 -> 3 个脚本 / manifest / 热更新清单 / 部署清单 (${wiring.files} 个发布文件 + ${wiring.modules} 个运行时模块) 全部咬合`)
+  console.log(`插件装配检查: 主世界装载器 -> 3 个脚本 / manifest / 整包快照更新 / 部署清单 (${wiring.files} 个发布文件 + ${wiring.modules} 个运行时模块) 全部咬合`)
 
   console.log('静态健康检查: 隐式全局 / CSS 结构 / 插件装配 全部通过')
 }

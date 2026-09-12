@@ -722,6 +722,15 @@
       .yami-update-btn:hover {
         background: #00a0f0 !important;
       }
+      /* 次要动作 (本地安装): 不许比主按钮更抢眼 */
+      .yami-update-btn.ghost {
+        background: #303030 !important;
+        color: #b0c0d0 !important;
+      }
+      .yami-update-btn.ghost:hover {
+        background: #404040 !important;
+        color: #ffffff !important;
+      }
       .yami-update-btn[disabled],
       .yami-update-btn.disabled {
         background: #384858 !important;

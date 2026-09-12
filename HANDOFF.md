@@ -7,7 +7,7 @@
 > - **第二层 · 记忆与经验**：项目经历了什么、踩过哪些坑、为什么这样设计——读它能少走弯路。
 > - **第三层 · 当前进度**：推进到哪里了、什么已完成、什么没做完、下一步做什么。
 >
-> **当前版本**：`v1.2.0`　**最近更新**：2026-09-12 上午
+> **当前版本**：`v1.3.0`　**最近更新**：2026-09-12 上午
 
 ---
 
@@ -75,7 +75,7 @@
 │  │  - 帧循环与对象级耗时计算: Hook Game.updaters / Game.renderers        │  │
 │  │  - 原型链级嫌疑拦截器: Actor / Emitter / Event / Audio / UI (放行主角) │  │
 │  │  - 100分制健康度与真凶定位引擎: 精确到 .event 步数 与 .actor 实例耗时 │  │
-│  │  - 0 成本热更新器: jsDelivr 全球加速比对 + Node 原生本地物理路径覆盖  │  │
+│  │  - 0 成本整包快照更新: tar.gz 直连 + 校验 + 原子落盘                    │  │
 │  │  - 本地 5966 端口微服务: 原生 HTTP/SSE 服务 (跨域 /live, /stream, 输入) │  │
 │  └──────────────────┬───────────────────┬────────────────────────────────┘  │
 │                     │                   │ 5966 推流 / 试玩控制              │
@@ -152,14 +152,16 @@
    - **迷你胶囊 HUD**：实时显示 FPS、耗时与 DC，双模自适应展示，全屏任意拖拽并记忆坐标；
    - **官方原生防走位**：鼠标移入侧边栏时调用 `Scene.preventInput()` 并置零 `Input.buttons`，离开时调用 `Scene.restoreInput()`。DOM 仅在 `mousedown` 拦截冒泡，`click` 与 `mouseup` 完全放行，杜绝点击死锁。
 
-### 1.4.3 自动化版本管理与 0 成本热更新架构
+### 1.4.3 自动化版本管理与整包快照更新架构
 1. **0 服务器成本架构**：
    - 依托 GitHub 仓库（`bajibaji/yami-tools@extension`）为唯一真实源码源；
-   - 依托 jsDelivr 全球免费开源 CDN（`cdn.jsdelivr.net/gh/bajibaji/yami-tools@extension/`）加速分发，免翻墙、免服务器、免流量费；
+   - 更新载荷 = **分支整包快照**（`github.com/bajibaji/yami-tools/archive/refs/heads/extension.tar.gz`，2026-09 实测大陆直连 588 KB / 2.2 秒），第三方反代前缀（`gh-proxy.com` / `ghproxy.net`）只做兜底，免服务器、免流量费；
+   - 版本探测（只取 691 字节的 `manifest.json`）四通道自动降级：反代取 raw → `api.github.com` 内容接口（0.33 秒，有匿名限流）→ raw 直连（开了系统代理时可用）→ jsDelivr；
 2. **前端纯类驱动显隐机制**：
-   - 采用纯 `.show` 类驱动横幅，默认 `display: none !important;`，只有在检测到远端版本更高时才激活展示，并监听 `yami-perf-update-none` 消除误报；
-3. **Node.js 原生一键原子覆盖**：
-   - 探测本地插件物理路径（`D:/Program Files/Open Yami RPG Editor/extension/yami-perf-extension`），直接下载更新文件原子覆盖本地，提示用户“重启工程即可生效”。
+   - 采用纯 `.show` 类驱动横幅，默认 `display: none !important;`，在「发现远端版本更高」或「更新失败 / 通道全部不可达」时激活展示，并监听 `yami-perf-update-none` 消除误报；
+3. **整包安装流水线**（`probe-core.js`）：下载 tar.gz → `zlib.gunzipSync` + 自写 tar 解析（零依赖，兼容 GNU 长名与 pax 扩展头）→ **校验**（manifest 声明的每一个文件必须在包里、每个 `.js` 必须过一遍 `vm.Script` 语法解析）→ 备份旧版本到 `_backup/previous/` → 先写 `.tmp` 再 `rename` 原子替换，`manifest.json` 最后落盘（版本门闩）。任何一项校验不过就**原地不动**（如实报"未改动任何文件"）；写盘中途失败自动回滚。
+4. **装机范围 = 整包内容 − 开发目录黑名单**（`src/ tests/ tools/ docs/ build.cjs bump.cmd` 等「绝不可能是运行时依赖」的物料）：不在黑名单里的新增文件（例如新加的 `runtime/yami-mcp/modules/*.js`）自动进包——这就是"新增模块不需要人工登记"的机制来源，历史事故见铁律㊵。
+5. **离线兜底通道**：面板常驻「本地安装」（横幅按钮 + 页脚链接，两条入口同一处理），选择手动下载并解压好的整包文件夹即可升级或重装同版本，全程不依赖任何外网。
 
 ### 1.4.4 AI 全能副驾内核与 yami-mcp 工具枢纽 (`ai-agent.js` / `ai-host.js` / `runtime/yami-mcp`)
 1. **无 9222 端口依赖的本地双桥架构（Dual-Bridge Architecture）**：
@@ -230,9 +232,9 @@ YAMI_DEPLOY_DIR="<引擎仓库>/extension/yami-perf-extension" node build.cjs --
 node tests/run-all.cjs                            # 全量套件（单个套件建议 timeout ≤60，整套会超过命令行时限）
 ```
 
-- 门禁覆盖：46 项核心锚点、零彩色 Emoji、术语合规、`src/style.css` 花括号与嵌套结构、滚动容器必须有滚动条样式、插件装配（manifest↔bootstrap↔热更新清单↔部署清单四处咬合）。
+- 门禁覆盖：46 项核心锚点 + 10 项整包更新锚点、零彩色 Emoji、术语合规、`src/style.css` 花括号与嵌套结构、滚动容器必须有滚动条样式、插件装配（manifest↔bootstrap↔整包快照更新↔部署清单四处咬合）。
 - 测试套件（节选）：AI Agent E2E、AI 会话与上下文、上下文计量与自动压缩、消息序列自愈、编译器查找与降级语义、MCP 特色工具、编译自动修复、审批差异、试玩冒烟、变更小结、待办、价目、思考模式、只读并发、打断输出、渲染性能、工具提示一致性、静态健康、整体验收、热更新。
-- 「静态健康」套件额外承担三类守卫断言：隐式全局 / CSS 结构 / 插件装配（含热更新清单扫目录）；**心跳开销**（HUD 自重入、专业页与普通模式双指纹、存档台时间闸+目录指纹、抽样分位数、单次扫描）；**文档一致性**（README 声明的铁律条数与测试套件数必须与 HANDOFF / run-all.cjs 一致——这两个数字历史上漂移过多次）。
+- 「静态健康」套件额外承担三类守卫断言：隐式全局 / CSS 结构 / 插件装配（含整包更新锚点与开发目录黑名单，且 `updateFiles` 一旦复活即判失败）；**心跳开销**（HUD 自重入、专业页与普通模式双指纹、存档台时间闸+目录指纹、抽样分位数、单次扫描）；**文档一致性**（README 声明的铁律条数与测试套件数必须与 HANDOFF / run-all.cjs 一致——这两个数字历史上漂移过多次）。
 - 常用环境变量：`YAMI_TEST_PROJECT`、`YAMI_AI_PORT` / `YAMI_AI_TOKEN` / `YAMI_AI_CONFIG_DIR` / `YAMI_AI_SESSION_DIR` / `YAMI_AI_MAX_STEPS`、`YAMI_AI_CONTEXT_WINDOW`（默认 1000000，即 1M token）/ `YAMI_AI_COMPACT_THRESHOLD`（默认 0.8）/ `YAMI_AI_COMPACT_RETAIN`（默认 0.16）/ `YAMI_AI_CONTEXT_KEEP`（最少保留消息条数，默认 16）/ `YAMI_AI_TOOL_LIMIT`（工具结果入上下文的字符上限，默认 24000）/ `YAMI_AI_TOOL_TAIL`（其中尾部预留，默认 4000）/ `YAMI_AI_REPAIR_LIMIT`、`YAMI_AI_DEBUG`（=1 时打开宿主的取消链路追踪，默认关）、`YAMI_RUNTIME_BRIDGE_PORT`、`YAMI_MCP_GUARDED`。
 
 ## 1.8 引擎接口暴露契约（`window.YamiEngine`）
@@ -800,6 +802,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
   1. `UPDATE_CONFIG.updateFiles` 必须与仓库源码结构完整同步（当前 15 个关键文件，包括 `runtime/yami-mcp/` 下的 MCP 工具链）；
   2. 写盘必须强制递归创建目录，并坚守“`probe-core.js` 首位写盘、`manifest.json` 末位写盘（版本门闩锁）”安全顺序；
   3. `test-autoupdate.mjs` 必须常态化断言清单文件总数与子目录递归创建能力。
+- **注（2026-09-12 起由铁律㊵取代）**：`updateFiles` 逐文件清单这套机制**已整体删除**——它每加一个文件就得人工登记一次，最终在 v1.0.0 → v1.2.0 跨版本更新时把用户插件更没了（见㊵）。现在装机范围由「整包快照 − 开发目录黑名单」决定，本条的第 1 条不再适用；第 2 条的**写盘顺序（manifest.json 最后）与递归建目录**仍然有效。
 
 ---
 
@@ -916,6 +919,21 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
   4. 同一工具在一轮里反复调用要给模型一句提示（`__hint`），帮它自己收敛——模型看不到调用次数，用户却看得见刷屏。
 - **验证**：`test-interrupt.cjs` 新增「打断后立刻恢复」场景（假 MCP 故意慢 1.5 秒）：打断后**第 1 次请求即被接受，耗时 4ms**（旧行为是永久卡住）。
 
+### ㊵ 更新器不许把写盘清单烧死在客户端里（老用户永远拉不到新版新增的文件）
+
+- **现象**：用户在 Open Yami 里点「一键热更新」，界面如实提示成功（15/15 个文件）；当时面板照常能用，**重启编辑器后插件彻底消失**——面板、HUD、AI 副驾全没了，控制台里连一条插件报错都没有。
+- **根因**（三件事叠在一起）：
+  1. 老客户端（v1.0.0）的 `UPDATE_CONFIG.updateFiles` 是**烧死在它自己代码里**的 15 文件清单，而远端 v1.2.0 把入口从「内容脚本直挂三个脚本」改成了主世界装载器 `bootstrap.js`；新增的 `bootstrap.js` / `ai-render-core.js` 不在老清单里，**永远不会被下载**；
+  2. 清单里 `manifest.json` 排在最后（本意是版本门闩），于是那次更新把**新版 manifest.json 落了盘**，而它声明的入口文件根本不在盘上——「新门牌 + 没有门」，Electron 加载扩展时找不到内容脚本，插件等于不存在；
+  3. 没有任何落地校验，也没有自愈路径：manifest 版本号已等于远端最新，再点检查更新只会回「已是最新」；插件不加载 → `probe-core.js` 不跑 → 连更新按钮本身都不存在（鸡生蛋）。
+- **铁律**：
+  1. **更新载荷必须自洽**：一次只下一份**整包快照**（`archive/refs/heads/extension.tar.gz`），装机范围 = 整包内容 − 开发目录黑名单，黑名单只放「绝不可能是运行时依赖」的物料。**漏一个开发目录只是多放几个不参与加载的文件，漏一个白名单条目就是把插件更没**——代价不对称，所以只能是黑名单。
+  2. **校验先于写盘**：解包后先断言 manifest 声明的每个文件都在包里、每个 `.js` 都能过 `vm.Script`；任何一条不过就**原地不动**，绝不允许半更新落地。
+  3. `manifest.json` 仍最后落盘（版本门闩），但写入前必须先备份旧版本到 `_backup/previous/`，写盘失败要能自动回滚。
+  4. **通道按实测选，不按名气选**：`raw.githubusercontent.com` 在大陆直连被墙（4 秒超时）却曾是首选通道，而 `codeload` 整包、`api.github.com`、`gh-proxy.com` 都是直连可用的；改通道顺序前先跑一遍实测（含"关了代理"这一态）。
+  5. 网络可以被墙，但**用户必须永远有一条活路**：面板常驻「本地安装」（选一个手动下载并解压好的整包目录），它不依赖任何外网。
+- **验证**：`tests/test-autoupdate.mjs` 重写为整包口径（52 项）：含"新增模块自动纳入"、"缺文件 / 语法坏 / 降级一律零改动"、"写盘失败自动回滚"、"主通道被墙自动降级"、"真实网络整包安装到临时目录后 runtime 模块一个不少"；`build.cjs` 增 10 项整包更新锚点，`updateFiles` 一旦复活直接构建失败。
+
 ## 2.3 关键设计决策与取舍
 
 | 决策 | 理由 | 代价 / 备注 |
@@ -941,7 +959,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 
 # 第三层 · 当前进度（Where We Are）
 
-> 更新日期：2026-09-12 上午 · 当前版本：`v1.2.0`
+> 更新日期：2026-09-12 晚 · 当前版本：`v1.3.0`
 
 ## 3.1 能力清单与完成度
 
@@ -981,6 +999,8 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 
 15. **「无限思考 / 停不下来」修复（2026-09-12 用户实测反馈）**：用户报告 AI 反复执行「工程内检索」且打断后无法继续对话（「上一条需求还在处理中」）。追踪日志定位到真凶：取消时 `req.destroy()` 不触发 error，模型请求的 Promise 永不兑现 → 任务悬在 await → `busy` 永不释放；同时工具执行阶段是裸 await、取消令牌只在工具之间检查。修复：① 两处取消点改为 destroy 后**显式 finish**；② 新增 `callToolWithCancel`（取消即放行，覆盖只读批处理/独占执行/审批预览）；③ `/chat` 遇到"已取消但还在收尾"时先等 `activeRun`（1 秒硬超时）再放行；④ 新增 `repeatHint`／`__hint`：同一工具一轮内调用 ≥5 次时给模型一句收敛提示；⑤ 新增 `YAMI_AI_DEBUG=1` 的取消链路追踪开关。回归：`test-interrupt.cjs` 扩到 8 项（含"打断后第 1 次请求即被接受"）。
 
+16. **整包快照更新改造（v1.3.0，用户报「插件在 Open Yami 里打不开」的事故修复 + 通道国产化）**：① 定位到事故真因——用户机器上装的是 v1.0.0，点一键热更新后老客户端按**自己烧死的 15 文件清单**下载，却把远端 v1.2.0 的 manifest.json 落盘，而新入口 `bootstrap.js` 不在老清单里，重启编辑器后插件凭空消失（详见铁律㊵）；已用 `node build.cjs --deploy` 从母仓库单向镜像补齐 `bootstrap.js` / `ai-render-core.js` 与 7 个缺失的 runtime 模块。② 更新器整体换成**整包快照**：主通道 `archive/refs/heads/extension.tar.gz`、反代前缀兜底，下载 → `zlib.gunzipSync` + 自写 tar 解析 → 完整性校验（manifest 声明文件齐全 + 每个 JS 过 `vm.Script`）→ 备份 `_backup/previous/` → `.tmp` + `rename` 原子替换、manifest 最后落盘，失败即零改动并可自动回滚。③ 版本探测改四通道降级（**不再把被墙的 raw 直连放在首位**），面板横幅显示当前探测通道，失败时不再静默。④ 新增「本地安装」离线兜底（横幅按钮 + 页脚链接），可整包重装同版本用于修复。⑤ 实测：主通道 588 KB / 2.2 秒直连可用；`tests/test-autoupdate.mjs` 重写为 52 项（含真实网络整包安装到临时目录），`build.cjs` 增 10 项整包更新锚点，静态健康增"黑名单/锚点/清单不许复活"断言，并修掉一条对 CRLF 敏感的旧断言（HEAD 上本就在 Windows 误报）。
+
 ## 3.3 未完成 / 未验证 / 已知限制
 
 | 项目 | 状态 | 说明 |
@@ -989,7 +1009,8 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 | `playtest_smoke` 真实试玩链路 | 待真机验证 | 需要编辑器 + 启动试玩窗口（自动化只能覆盖桩） |
 | 界面细节验收（思考块 / 过程区 / 成本行 / 打断手感） | 待用户确认 | 助手不启动编辑器、不截图，一律由用户看 |
 | 子代理委派（把子任务派给独立 agent） | 未做（P2） | 现有「任务计划」已能显示步骤；委派本身收益待评估 |
-| 热更新通道 | 3 处已声明但线上推送未做 | 清单完整性有断言守着；远端 manifest 版本需用户决定何时推 |
+| 热更新通道 | 已改为整包快照 + 本地安装兜底 | 主通道 `codeload` 直连实测 2.2 秒；发布只需 push `extension` 分支（不必另发 Release）；面板「本地安装」为断网兜底 |
+| 整包更新的真机试用 | 待用户确认 | 需要用户在 Open Yami 里点一次「一键热更新」（或「本地安装」）并重启工程验收；助手不启动编辑器 |
 | 引擎仓库的本地补丁 | 未提交 | Linux 移植补丁 + `YamiEngine` 暴露，均为本地改动，是否上游由用户决定 |
 
 ## 3.4 下一步建议
@@ -1001,6 +1022,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 ## 3.5 回滚与应急
 
 - 插件母仓库任一文件被改坏：`git diff` 查看未提交改动，必要时 `git checkout -- <file>`（母仓库有完整提交历史）。
+- **插件生产目录被更新坏**：更新器在写盘前会把旧版本整份备份到 `<插件目录>/_backup/previous/`，把里面内容覆盖回插件目录即可；也可以直接 `node build.cjs --deploy` 用母仓库重新单向镜像（母仓库永远是唯一真实源）。
 - 引擎侧改动（Linux 移植补丁 + `YamiEngine`）全部未提交：`dist` 整份备份在 `/tmp/yami-dist-backup-*`，`Project/index.html` 另有备份；引擎重建走 `pnpm run build:vite`。
 - 插件运行镜像出问题：重新执行 `node build.cjs --deploy` 用母仓库覆盖即可（镜像永远是母仓库的单向拷贝）。
 - AI 会话记录：`~/DanJuanDevSuite/sessions/*.json`，删除某段对话用面板「历史」里的删除按钮，或直接删文件。
