@@ -89,6 +89,7 @@ function serializeSession(session) {
     grants: session.grants || [],
     // 真实用量锚点一并落盘：重启后刻度仍然贴近真实值，不必重新估一遍
     tokenAnchor: session.tokenAnchor || null,
+    toolTally: session.toolTally || {},
     messages: session.messages,
     pending: session.pending
       ? {
@@ -124,6 +125,7 @@ function loadSessionFromDisk(id) {
       grants: Array.isArray(data.grants) ? data.grants : [],
       pending: data.pending || null,
       tokenAnchor: data.tokenAnchor || null,
+      toolTally: data.toolTally || {},
       seen: new Set(),
       busy: false
     }
@@ -886,6 +888,10 @@ function requestModel(config, apiKey, messages, tools) {
  * 取消令牌：前端点「停止」（或直接断开 SSE）时，用它把信号一路传到
  * 上游模型请求与工具执行循环，做到真正停下而不是只断开界面。
  */
+/** 取消/收尾链路的追踪开关（默认关；YAMI_AI_DEBUG=1 时打到 stderr，用于定位"停不下来"这类问题） */
+const DEBUG_TRACE = process.env.YAMI_AI_DEBUG === '1'
+function trace(...args) { if (DEBUG_TRACE) process.stderr.write('[trace] ' + args.join(' ') + '\n') }
+
 function createCancelToken() {
   const listeners = []
   const token = {
@@ -922,7 +928,13 @@ function requestModelStream(config, apiKey, messages, tools, onDelta, cancelToke
     }
 
     const req = transport.request({ protocol: url.protocol, hostname: url.hostname, port: url.port || undefined, path: url.pathname + url.search, method: 'POST', headers, timeout: 180000 }, res => {
-      if (cancelToken) cancelToken.onCancel(() => { try { res.destroy() } catch (e) {} })
+      // 取消时必须**手工兑现这个 Promise**：Node 里主动 destroy 只会触发 close，
+      // 不一定触发 error，光靠 req.on('error') 收尾会让任务永远悬在 await 上——
+      // 表现就是"按了停止，界面还说上一条需求还在处理中"（实测抓到的根因）。
+      if (cancelToken) cancelToken.onCancel(() => {
+        try { res.destroy() } catch (e) {}
+        finish(new Error(cancelToken.reason || '已打断'))
+      })
       if (res.statusCode < 200 || res.statusCode >= 300) {
         let raw = ''
         res.on('data', chunk => { raw += chunk })
@@ -1011,7 +1023,12 @@ function requestModelStream(config, apiKey, messages, tools, onDelta, cancelToke
         finish(null, message)
       })
     })
-    if (cancelToken) cancelToken.onCancel(() => { try { req.destroy() } catch (e) {} })
+    // 同上：destroy 之后必须自己 finish，否则 continueSession 会一直 await 下去，
+    // busy 永远不清，用户按了停止反而再也不能说话。
+    if (cancelToken) cancelToken.onCancel(() => {
+      try { req.destroy() } catch (e) {}
+      finish(new Error(cancelToken.reason || '已打断'))
+    })
     req.on('error', error => finish(cancelToken && cancelToken.cancelled ? new Error(cancelToken.reason) : error))
     req.on('timeout', () => { req.destroy(); finish(new Error('模型请求超时，请检查网络或模型地址')) })
     req.end(body)
@@ -1388,11 +1405,58 @@ function isExclusiveCall(name) {
   return !READ_ONLY_TOOLS.has(name)
 }
 
+/**
+ * 等一个工具返回，但用户按停止时**立刻**放行。
+ *
+ * MCP 是 stdio 的请求-响应协议，没有取消语义：请求已经发出，子进程会继续跑完。
+ * 但我们不该继续干等——旧实现是裸 await，用户按了停止界面还得等工具跑完（最坏 180 秒，
+ * 而模型陷入重复检索时每一步都在等），这期间会话一直是 busy，下一句话直接被
+ * 「上一条需求还在处理中」顶回去。现在改成取消即收尾；迟到的响应由 onData 丢弃
+ * （pending 表里已经没有它，不会串到别的请求上）。
+ */
+function callToolWithCancel(client, name, args, cancelToken) {
+  trace('工具开始 ' + name)
+  const pending = client.call(name, args)
+  if (!cancelToken) return pending
+  return new Promise(resolve => {
+    let settled = false
+    const finish = value => {
+      if (!settled) { settled = true; trace('工具结束 ' + name + (value && value.cancelled ? '（被取消，不再等待）' : '')); resolve(value) }
+    }
+    cancelToken.onCancel(() => finish({
+      ok: false,
+      cancelled: true,
+      message: '用户打断了这次操作：这个工具的结果不再等待（已发出的请求会在后台跑完并被丢弃）'
+    }))
+    pending.then(finish, error => finish({ ok: false, error: error.message }))
+  })
+}
+
+/**
+ * 同一工具在一轮任务里被反复调用时，往结果里塞一句提示，让模型自己收敛。
+ * 这不是硬止损（换关键词检索是合理行为），而是把"你已经查了很多遍了"这个事实告诉它——
+ * 模型看不到调用次数，而工具条上刷屏的「执行：工程内检索」用户是看得见的。
+ */
+function repeatHint(session, name) {
+  if (!session.toolTally) session.toolTally = {}
+  session.toolTally[name] = (session.toolTally[name] || 0) + 1
+  const count = session.toolTally[name]
+  if (count < 5) return null
+  return `这是本次任务里第 ${count} 次调用「${toolLabel(name)}」。如果前面几次的结果没能推进任务，`
+    + '请立刻换策略：换关键词或换工具、直接读取具体文件，或者把已确认的结论先告诉用户——不要再重复同一种调用。'
+}
+
+/** 把提示并进工具结果（结果本身是 JSON，追加字段而不是拼字符串，免得破坏结构） */
+function withHint(result, hint) {
+  if (!hint || !result || typeof result !== 'object' || Array.isArray(result)) return result
+  return Object.assign({}, result, { __hint: hint })
+}
+
 /** 执行一个只读调用（不含审批路径，纯读取） */
-async function runReadOnly(client, call, name, args, events) {
+async function runReadOnly(client, call, name, args, events, cancelToken) {
   if (events.onTool) events.onTool({ phase: 'start', name, label: toolLabel(name), target: String(args.path || args.table || args.action || args.key || '') })
   try {
-    const result = await client.call(name, args)
+    const result = await callToolWithCancel(client, name, args, cancelToken)
     if (events.onTool) {
       events.onTool(result && result.ok === false
         ? { phase: 'fail', name, label: toolLabel(name), detail: (result && (result.error || result.message)) || '执行失败' }
@@ -1428,12 +1492,13 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
       }
       index = cursor - 1
       const batchResults = batch.length === 1
-        ? [await runReadOnly(client, batch[0].call, batch[0].name, batch[0].args, events)]
-        : await Promise.all(batch.map(item => runReadOnly(client, item.call, item.name, item.args, events)))
+        ? [await runReadOnly(client, batch[0].call, batch[0].name, batch[0].args, events, cancelToken)]
+        : await Promise.all(batch.map(item => runReadOnly(client, item.call, item.name, item.args, events, cancelToken)))
       for (let position = 0; position < batch.length; position++) {
         const item = batch[position]
         const result = batchResults[position]
-        session.messages.push({ role: 'tool', tool_call_id: item.call.id, content: clipToolResult(result) })
+        const hint = repeatHint(session, item.name)
+        session.messages.push({ role: 'tool', tool_call_id: item.call.id, content: clipToolResult(withHint(result, hint)) })
         results.push({ name: item.name, result })
         if (item.name === 'todo_write' && result && result.ok !== false && result.summary && result.summary.total) {
           session.todos = result.items
@@ -1453,7 +1518,7 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
       events.onNotice(`已授权：${toolLabel(name)} · ${String(args.path || '')}（本次任务内不再逐条确认，随时可撤销）`)
     }
     if (needsApproval) {
-      const preview = isFileMutation ? await client.call(name, { ...args, dryRun: true }) : null
+      const preview = isFileMutation ? await callToolWithCancel(client, name, { ...args, dryRun: true }, cancelToken) : null
       if (preview && preview.ok === false) {
         session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(preview) })
         saveSession(session)
@@ -1466,8 +1531,9 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
       if (events.onTool) events.onTool({ phase: 'approval', name, label: toolLabel(name) })
       return { approval: { ok: true, status: 'approval', message: assistantContent || '这一步会修改工程或控制编辑器，请确认。', approval: summarizePending(name, args, preview) }, results }
     }
-    const result = await client.call(name, args)
-    session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(result) })
+    const result = await callToolWithCancel(client, name, args, cancelToken)
+    const hint = repeatHint(session, name)
+    session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(withHint(result, hint)) })
     saveSession(session)
     results.push({ name, result })
     // 待办进度实时上屏：用户不必等收尾才看到做到哪一步
@@ -1664,6 +1730,21 @@ async function handle(pathname, body, events = {}) {
     const text = String(body.message || '').trim()
     if (!text) throw new Error('请输入要完成的事情')
     const session = sessionFor(body.sessionId || 'default')
+    if (session.busy) {
+      // 上一次任务已经按过停止、只是还没收完尾（取消令牌已触发，但工具调用的收尾需要一个事件循环）：
+      // 等它一下再放行。不这样做，用户按了停止、任务其实已经停了，却还要对着
+      // 「上一条需求还在处理中」干瞪眼——这正是"停了却发不出下一句"的来源。
+      if (session.activeCancel && session.activeCancel.cancelled && session.activeRun) {
+        // 硬超时兜底：等收尾最多 1 秒。收尾通常几十毫秒就完成，但万一它卡在某个
+        // 不可取消的收尾步骤上，也绝不能把新需求一起拖死（宁可放行并发，也不能让界面失去响应）。
+        try {
+          await Promise.race([
+            Promise.resolve(session.activeRun).catch(() => {}),
+            new Promise(resolve => setTimeout(resolve, 1000))
+          ])
+        } catch (e) { /* 收尾出错不该拖住新任务 */ }
+      }
+    }
     if (session.busy) throw new Error('上一条需求还在处理中，请稍候')
     if (session.pending) {
       // 用户没理会挂起的那张确认卡，直接说了新需求：视为放弃那项修改。
@@ -1680,12 +1761,21 @@ async function handle(pathname, body, events = {}) {
     healSessionMessages(session, '发送前体检')
     session.messages.push({ role: 'user', content: text })
     session.busy = true
-    session.repairs = 0   // 每条新需求重新给自动修复预算
+    session.repairs = 0     // 每条新需求重新给自动修复预算
+    session.toolTally = {}  // 以及重新开始统计工具调用次数（重复提示按轮计）
     saveSession(session)
+    // 留一个可等待的句柄 + 取消令牌：下一条需求进来时若发现"已取消但还在收尾"，就能等它收完
+    const running = continueSession(session, readStoredConfig(), events)
+    session.activeRun = running
+    session.activeCancel = events.cancelToken || null
+    trace('任务启动 session=' + session.id)
     try {
-      return await continueSession(session, readStoredConfig(), events)
+      return await running
     } finally {
+      trace('任务收尾 session=' + session.id)
       session.busy = false
+      session.activeRun = null
+      session.activeCancel = null
       saveSession(session)
     }
   }
@@ -1778,6 +1868,7 @@ function startStream(res, req, pathname) {
   // 注意只认 res 的 close：Node 里 req 的 close 在请求体读完就会触发，
   // 拿它当断开信号会导致每次对话刚发出就被自己取消（实测踩过）。
   const onAbort = () => {
+    trace('SSE close，writableEnded=' + res.writableEnded)
     if (res.writableEnded) return  // 我们主动收尾的正常结束，不算打断
     cancelToken.cancel('已打断')
   }

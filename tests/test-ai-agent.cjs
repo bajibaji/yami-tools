@@ -295,7 +295,10 @@ async function main() {
     assert.ok(/event\.key !== 'Escape'/.test(agentSource), '必须支持 Esc 打断')
     assert.ok(/status: 'aborted'/.test(hostSource) && /interrupted: true/.test(hostSource), '宿主必须如实回报已打断')
     assert.ok(/function createCancelToken\(/.test(hostSource), '宿主必须有贯穿模型请求与工具循环的取消令牌')
-    assert.ok(/cancelToken\.onCancel\(\(\) => \{ try \{ req\.destroy\(\)/.test(hostSource), '取消时要真正销毁上游模型请求')
+    // 取消不只是 destroy 上游请求：Node 里主动 destroy 只触发 close、不一定触发 error，
+    // 光靠 req.on('error') 收尾会让任务永远悬在 await 上（"按了停止还说上一条在处理中"的根因）
+    assert.ok(/cancelToken\.onCancel\(\(\) => \{[\s\S]{0,120}req\.destroy\(\)[\s\S]{0,160}finish\(new Error\(cancelToken\.reason/.test(hostSource),
+      '取消时必须先销毁上游模型请求，再手工兑现 Promise（否则任务悬空、busy 永不释放）')
     assert.ok(/if \(cancelToken && cancelToken\.cancelled\) break/.test(hostSource), '取消后剩余工具一个都不许再执行')
     assert.ok(/res\.writableEnded\) return/.test(hostSource), '正常收尾不能被误判成打断（req 的 close 在请求读完就触发）')
     // 过程集中：思考与工具收进「执行过程」，正文干净；默认单行预览
@@ -333,6 +336,11 @@ async function main() {
     assert.ok(/justify-content: flex-end !important/.test(hudSource), '单行预览必须右对齐 + 左侧裁切，否则最新的字被右侧省略号吃掉')
     assert.ok(/yami-ai-thinking\.preview \.yami-ai-thinking-body > span/.test(hudSource), '单行预览的文本要用 span 承载（flex 的匿名文本项会被压缩，裁不到左边）')
     assert.ok(/function isNearBottom\(/.test(agentSource), '思考块内部要复用同一套贴底判定')
+    // 停止必须真的"停得下来"：MCP 没有取消语义，裸 await 会让界面一直卡在 busy
+    assert.ok(/function callToolWithCancel\(/.test(hostSource), '工具调用必须可取消（否则按下停止还要等工具跑完，期间新消息被 busy 顶回）')
+    assert.ok(/const result = await callToolWithCancel\(client, name, args, cancelToken\)/.test(hostSource), '独占工具执行必须走可取消路径')
+    assert.ok(/events, cancelToken\)\]/.test(hostSource) && /item\.args, events, cancelToken\)/.test(hostSource), '只读批处理也要把取消令牌传下去')
+    assert.ok(/function repeatHint\(/.test(hostSource) && /__hint/.test(hostSource), '同一工具反复调用时要给模型一句提示，帮它自己收敛')
     assert.ok(/if \(near\) body\.scrollTop = body\.scrollHeight/.test(agentSource), '展开模式下思考块自身要跟随到最新一行（它有 max-height:30vh 的滚动区，不会自己跟着长）')
     assert.ok(/let near = isNearBottom\(body\)/.test(agentSource), '贴底判定必须发生在写入之前（写完 scrollHeight 就变大，必然误判）')
     assert.ok(/previewLine/.test(coreSource), '最后一行取值规则本身要在渲染核心里')

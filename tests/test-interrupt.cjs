@@ -63,7 +63,8 @@ rl.on('line', line => {
   const reply = r => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: r }) + '\\n')
   if (m.method === 'initialize') return reply({ protocolVersion: '2024-11-05', capabilities: {}, serverInfo: {} })
   if (m.method === 'tools/list') return reply({ tools: [{ name: 'list_scripts', description: 'r', readOnlyHint: true, inputSchema: { type: 'object', properties: {} } }] })
-  if (m.method === 'tools/call') return reply({ content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] })
+  // 工具故意慢 1.5 秒返回：复现"用户按停止时宿主正卡在工具里"的场景
+  if (m.method === 'tools/call') return setTimeout(() => reply({ content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] }), 1500)
   reply({})
 })
 `
@@ -72,7 +73,7 @@ function request(route, method = 'GET', body = null) {
   return new Promise((resolve, reject) => {
     const payload = body === null ? null : Buffer.from(JSON.stringify(body))
     const req = http.request({
-      hostname: '127.0.0.1', port: AI_PORT, path: route, method,
+      hostname: '127.0.0.1', port: AI_PORT, path: route, method, timeout: 10000,
       headers: Object.assign({ 'x-yami-agent-token': TOKEN }, payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {})
     }, res => {
       let raw = ''
@@ -80,6 +81,7 @@ function request(route, method = 'GET', body = null) {
       res.on('end', () => { try { resolve(JSON.parse(raw || '{}')) } catch (e) { resolve({}) } })
     })
     req.on('error', reject)
+    req.on('timeout', () => { req.destroy(); resolve({ error: '请求超时（10 秒）' }) })
     if (payload) req.write(payload)
     req.end()
   })
@@ -112,6 +114,32 @@ function startThenAbort(sessionId) {
   })
 }
 
+/** 发一条流式请求，只关心"是否被接受"：收到 start 事件即算通过，随后立刻断开。
+ *  （不能用非流式的 /chat 来测——那要等整个任务跑完，把"被接受"和"任务跑完"混为一谈。） */
+function acceptedOnly(sessionId, message) {
+  return new Promise(resolve => {
+    const payload = Buffer.from(JSON.stringify({ sessionId, message }))
+    let done = false
+    const req = http.request({
+      hostname: '127.0.0.1', port: AI_PORT, path: '/chat/stream', method: 'POST', timeout: 8000,
+      headers: { 'x-yami-agent-token': TOKEN, 'Content-Type': 'application/json', 'Content-Length': payload.length }
+    }, res => {
+      res.setEncoding('utf8')
+      res.on('data', chunk => {
+        if (done) return
+        done = true
+        resolve({ accepted: res.statusCode === 200 && chunk.includes('"start"'), status: res.statusCode, error: /还在处理中/.test(chunk) ? '上一条需求还在处理中，请稍候' : '' })
+        try { req.destroy() } catch (e) { /* 已断开 */ }
+      })
+      res.on('end', () => { if (!done) { done = true; resolve({ accepted: false, status: res.statusCode, error: '流已结束' }) } })
+    })
+    req.on('error', () => { if (!done) { done = true; resolve({ accepted: false, status: 0, error: '连接失败' }) } })
+    req.on('timeout', () => { if (!done) { done = true; resolve({ accepted: false, status: 0, error: '请求超时' }); req.destroy() } })
+    req.write(payload)
+    req.end()
+  })
+}
+
 async function main() {
   await new Promise(r => model.listen(MODEL_PORT, '127.0.0.1', r))
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'yami-interrupt-host-'))
@@ -135,6 +163,7 @@ async function main() {
       YAMI_AI_PORT: String(AI_PORT),
       YAMI_AI_TOKEN: TOKEN,
       YAMI_AI_CONFIG_DIR: CONFIG_DIR,
+      YAMI_AI_DEBUG: '1',
       YAMI_PROJECT_ROOT: project
     }
   })
@@ -170,6 +199,28 @@ async function main() {
     const before = requests.length
     await request('/chat/stream', 'POST', { sessionId: 'interrupt-2', message: '看看工程' })
     check('不打断时模型照常被调用（说明上面的停止不是假象）', requests.length > before, `${before} → ${requests.length} 次`)
+
+    console.log('\n########## 4. 打断后立刻恢复：不能再被「上一条需求还在处理中」顶回来 ##########')
+    // 先制造一次"宿主正卡在慢工具里"的打断（假 MCP 的工具要 1.5 秒才回）
+    const during = await startThenAbort('interrupt-3')
+    check('在工具执行期间断开了连接', during.aborted === true)
+    // 不等任何超时，立刻说下一句
+    // 宿主感知 SSE 断开本身是异步的，所以给一两次重试的余量；
+    // 但整体必须明显快于"干等慢工具跑完"（1.5 秒）和旧实现的 180 秒超时
+    let recovered = false
+    let lastErr = ''
+    let attempts = 0
+    const started = Date.now()
+    for (let attempt = 0; attempt < 10 && !recovered; attempt++) {
+      attempts = attempt + 1
+      const probe = await acceptedOnly('interrupt-3', '打断之后马上说下一句')
+      recovered = probe.accepted
+      lastErr = probe.error || ''
+      if (!recovered) await new Promise(r => setTimeout(r, 120))
+    }
+    const total = Date.now() - started
+    check('打断后宿主恢复可用（不再被 busy 顶回）', recovered, lastErr || `第 ${attempts} 次即被接受`)
+    check('恢复得很快（没有干等慢工具跑完）', total < 1500, total + 'ms')
   } finally {
     if (process.env.YAMI_DEBUG) {
       const sf = path.join(CONFIG_DIR, 'sessions', 'interrupt-1.json')
