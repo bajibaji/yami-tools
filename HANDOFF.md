@@ -231,8 +231,9 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 ```
 
 - 门禁覆盖：46 项核心锚点、零彩色 Emoji、术语合规、`src/style.css` 花括号与嵌套结构、滚动容器必须有滚动条样式、插件装配（manifest↔bootstrap↔热更新清单↔部署清单四处咬合）。
-- 测试套件（节选）：AI Agent E2E、AI 会话与上下文、上下文计量与自动压缩、消息序列自愈、MCP 特色工具、编译自动修复、审批差异、试玩冒烟、变更小结、待办、价目、思考模式、只读并发、打断输出、渲染性能、工具提示一致性、静态健康、整体验收、热更新。
-- 常用环境变量：`YAMI_TEST_PROJECT`、`YAMI_AI_PORT` / `YAMI_AI_TOKEN` / `YAMI_AI_CONFIG_DIR` / `YAMI_AI_SESSION_DIR` / `YAMI_AI_MAX_STEPS`、`YAMI_AI_CONTEXT_WINDOW`（默认 1000000，即 1M token）/ `YAMI_AI_COMPACT_THRESHOLD`（默认 0.8）/ `YAMI_AI_COMPACT_RETAIN`（默认 0.16）/ `YAMI_AI_CONTEXT_KEEP`（最少保留消息条数，默认 16）/ `YAMI_AI_TOOL_LIMIT`（工具结果入上下文的字符上限，默认 24000）/ `YAMI_AI_TOOL_TAIL`（其中尾部预留，默认 4000）、`YAMI_RUNTIME_BRIDGE_PORT`、`YAMI_MCP_GUARDED`。
+- 测试套件（节选）：AI Agent E2E、AI 会话与上下文、上下文计量与自动压缩、消息序列自愈、编译器查找与降级语义、MCP 特色工具、编译自动修复、审批差异、试玩冒烟、变更小结、待办、价目、思考模式、只读并发、打断输出、渲染性能、工具提示一致性、静态健康、整体验收、热更新。
+- 「静态健康」套件额外承担三类守卫断言：隐式全局 / CSS 结构 / 插件装配（含热更新清单扫目录）；**心跳开销**（HUD 自重入、专业页与普通模式双指纹、存档台时间闸+目录指纹、抽样分位数、单次扫描）；**文档一致性**（README 声明的铁律条数与测试套件数必须与 HANDOFF / run-all.cjs 一致——这两个数字历史上漂移过多次）。
+- 常用环境变量：`YAMI_TEST_PROJECT`、`YAMI_AI_PORT` / `YAMI_AI_TOKEN` / `YAMI_AI_CONFIG_DIR` / `YAMI_AI_SESSION_DIR` / `YAMI_AI_MAX_STEPS`、`YAMI_AI_CONTEXT_WINDOW`（默认 1000000，即 1M token）/ `YAMI_AI_COMPACT_THRESHOLD`（默认 0.8）/ `YAMI_AI_COMPACT_RETAIN`（默认 0.16）/ `YAMI_AI_CONTEXT_KEEP`（最少保留消息条数，默认 16）/ `YAMI_AI_TOOL_LIMIT`（工具结果入上下文的字符上限，默认 24000）/ `YAMI_AI_TOOL_TAIL`（其中尾部预留，默认 4000）/ `YAMI_AI_REPAIR_LIMIT`、`YAMI_AI_DEBUG`（=1 时打开宿主的取消链路追踪，默认关）、`YAMI_RUNTIME_BRIDGE_PORT`、`YAMI_MCP_GUARDED`。
 
 ## 1.8 引擎接口暴露契约（`window.YamiEngine`）
 

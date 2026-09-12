@@ -396,6 +396,22 @@ function main() {
   assert.ok(/const files = listResourceFiles\(\)\n  const guidMap = collectAllGuids\(files\)/.test(mcpSrc), 'validate_project 必须单次扫描复用（此前一次调用把 Assets 递归并逐文件 stat 扫了 4 遍）')
   console.log('心跳开销守卫: HUD 重入 / 双指纹 / 存档降频 / 抽样分位数 / 单次扫描 全部就位')
 
+  // 文档一致性：README 里声明的数字必须与实际一致。
+  // （铁律条数从 37 变成 39 时 README 没跟上、套件数也多次漂移——靠人记准迟早漏第二次，
+  //   这里把两个最容易失配的数字钉住：铁律条数与测试套件数。）
+  const readmeSrc = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8')
+  const handoffSrc = fs.readFileSync(path.join(ROOT, 'HANDOFF.md'), 'utf8')
+  const declaredRules = Number((readmeSrc.match(/(\d+)\s*条血泪避坑档案/) || [])[1] || 0)
+  const actualRules = (handoffSrc.match(/^### [①-⑳㉑-㉟㊱-㊴]/gm) || []).length
+  assert.ok(declaredRules > 0 && declaredRules === actualRules,
+    `README 声明 ${declaredRules} 条铁律，HANDOFF 实际 ${actualRules} 条——数字对不上（新增铁律时要同步 README）`)
+  const declaredSuites = Number((readmeSrc.match(/run-all\.cjs:?\s*(\d+)\s*套/) || [])[1] || 0)
+  const runAllSrc = fs.readFileSync(path.join(ROOT, 'tests', 'run-all.cjs'), 'utf8')
+  const actualSuites = (runAllSrc.match(/^\s*\['(?:test|verify)-/gm) || []).length
+  assert.ok(declaredSuites > 0 && declaredSuites === actualSuites,
+    `README 声明 ${declaredSuites} 套测试，run-all 实际注册 ${actualSuites} 套——数字对不上`)
+  console.log(`文档一致性: 铁律 ${actualRules} 条 / 测试 ${actualSuites} 套，README 声明与实际一致`)
+
   const wiring = checkPluginWiring()
   console.log(`插件装配检查: 主世界装载器 -> 3 个脚本 / manifest / 热更新清单 / 部署清单 (${wiring.files} 个发布文件 + ${wiring.modules} 个运行时模块) 全部咬合`)
 
