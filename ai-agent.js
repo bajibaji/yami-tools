@@ -28,6 +28,8 @@
     abort: null,
     thinkingView: null,
     processFold: null,
+    // 繁忙时按发送的行为：queue 排队（默认）/ interrupt 打断当前轮再发这条
+    busySend: null,
     // 繁忙时用户打的话：queue = 排队（本轮结束后依次发出），queueSeq 只用来给每项一个稳定 id
     queue: [],
     queueSeq: 0
@@ -708,11 +710,6 @@
       send.title = state.busy ? '停止本轮输出（也可以按 Esc）' : '发送（Enter）';
     }
     if (!state.busy) state.abort = null;
-    // 繁忙时才有意义的两颗按钮：排队（默认）与引导（立刻插话）
-    const queueBtn = document.getElementById('yami-ai-queue-btn');
-    const steerBtn = document.getElementById('yami-ai-steer-btn');
-    if (queueBtn) queueBtn.style.display = state.busy ? '' : 'none';
-    if (steerBtn) steerBtn.style.display = state.busy ? '' : 'none';
   }
 
   /** 打断本轮输出：断开 SSE，宿主会同步停掉模型请求与后续工具（不是只关界面） */
@@ -987,6 +984,27 @@
     let saved = '';
     try { saved = localStorage.getItem('danjuan-ai-process-fold') || ''; } catch (e) { saved = ''; }
     return saved === 'standard' ? 'standard' : 'compact';
+  }
+
+  /**
+   * 繁忙时按发送怎么处理：queue 排队（默认，本轮结束后依次发出）/ interrupt 打断当前轮再发这条。
+   * 用户明确要求"一个发送按钮就够了，别让人每次选" —— 所以这是个设置项，不是按钮。
+   */
+  function busySendMode() {
+    if (state.busySend === 'queue' || state.busySend === 'interrupt') return state.busySend;
+    let saved = '';
+    try { saved = localStorage.getItem('danjuan-ai-busy-send') || ''; } catch (e) { saved = ''; }
+    return saved === 'interrupt' ? 'interrupt' : 'queue';
+  }
+
+  function setBusySendMode(mode) {
+    const next = mode === 'interrupt' ? 'interrupt' : 'queue';
+    state.busySend = next;
+    try { localStorage.setItem('danjuan-ai-busy-send', next); } catch (e) {}
+    const select = document.getElementById('yami-ai-busy-send');
+    if (select && select.value !== next) select.value = next;
+    request('/quick-config', { busySend: next }).catch(() => {});
+    return next;
   }
 
   /** 改「过程收起」：内存 + localStorage + 宿主配置三处都写（与思考显示同一套套路） */
@@ -1525,28 +1543,8 @@
       dock.id = 'yami-ai-queue';
       compose.parentNode.insertBefore(dock, compose);
     }
-    if (!document.getElementById('yami-ai-queue-btn')) {
-      const queueBtn = document.createElement('div');
-      queueBtn.className = 'yami-ai-secondary';
-      queueBtn.id = 'yami-ai-queue-btn';
-      queueBtn.setAttribute('role', 'button');
-      queueBtn.setAttribute('tabindex', '0');
-      queueBtn.textContent = '排队';
-      queueBtn.title = '本轮结束后自动发出（Enter）';
-      queueBtn.style.display = 'none';
-      const steerBtn = document.createElement('div');
-      steerBtn.className = 'yami-ai-secondary';
-      steerBtn.id = 'yami-ai-steer-btn';
-      steerBtn.setAttribute('role', 'button');
-      steerBtn.setAttribute('tabindex', '0');
-      steerBtn.textContent = '引导';
-      steerBtn.title = '立刻交给模型，在下一个步骤边界读到（Ctrl+Enter）';
-      steerBtn.style.display = 'none';
-      compose.appendChild(queueBtn);
-      compose.appendChild(steerBtn);
-      activate(queueBtn, e => { e.stopPropagation(); sendMessage(); });
-      activate(steerBtn, e => { e.stopPropagation(); sendMessage('steer'); });
-    }
+    // 输入区不放任何额外按钮：繁忙时的行为由「设置 → 繁忙时发送」决定（排队 / 打断），
+    // 用户不需要每次都在按钮之间做选择。
     renderQueueDock();
   }
 
@@ -1624,6 +1622,17 @@
     for (const el of document.querySelectorAll('.yami-ai-thinking')) applyThinkingMode(el);
   }
 
+  /**
+   * 繁忙时发送 = 打断：先真停当前轮（断开 SSE，宿主会停掉模型请求与工具），等它收尾后再发这条。
+   * 等待是必要的：宿主那边 busy 还没释放，硬发会被"上一条还在处理"顶回来（那正是老故障）。
+   */
+  async function interruptThenSend(text) {
+    hudToast('已打断本轮，正在发出这条消息');
+    stopStream();
+    for (let i = 0; i < 50 && state.busy; i++) await new Promise(resolve => setTimeout(resolve, 100));
+    await runMessage(text);
+  }
+
   /** 引导：立刻交给宿主，由它在下一个步骤边界投递给模型（宿主空闲时会如实说"直接发就行"） */
   async function sendSteer(text) {
     try {
@@ -1649,9 +1658,11 @@
     if (state.busy) {
       if (!text) return;
       input.value = '';
+      // Ctrl+Enter 是保留的快捷键（不占按钮）：把这句话插进正在跑的这一轮，不打断它
       if (mode === 'steer') return await sendSteer(text);
+      if (busySendMode() === 'interrupt') return await interruptThenSend(text);
       enqueueMessage(text);
-      hudToast('已排队（第 ' + state.queue.length + ' 条）：本轮结束后自动发出；想让它立刻插话就点「引导」或按 Ctrl+Enter');
+      hudToast('已排队（第 ' + state.queue.length + ' 条）：本轮结束后依次发出；可在设置里改成「打断」立刻发');
       return;
     }
     // 有未确认的修改时，用户直接发新消息 = 放弃那项修改（宿主会同步作废并给它补上"未执行"应答）。
@@ -1929,6 +1940,15 @@
           if (sel) sel.value = config.thinkingView;
         }
       }
+      if (!state.busySend && config && ['queue', 'interrupt'].includes(config.busySend)) {
+        let local = '';
+        try { local = localStorage.getItem('danjuan-ai-busy-send') || ''; } catch (e) { local = ''; }
+        if (!local) {
+          state.busySend = config.busySend;
+          const sel = document.getElementById('yami-ai-busy-send');
+          if (sel) sel.value = config.busySend;
+        }
+      }
       if (!state.processFold && config && ['compact', 'standard'].includes(config.processFold)) {
         let local = '';
         try { local = localStorage.getItem('danjuan-ai-process-fold') || ''; } catch (e) { local = ''; }
@@ -1958,7 +1978,7 @@
     page.className = 'yami-suite-page yami-ai-page';
     page.id = 'page-ai';
     page.style.setProperty('display', 'none', 'important');
-    page.innerHTML = '<div class="yami-ai-toolbar"><div class="yami-ai-status idle" id="yami-ai-status" role="status">尚未启动</div><div class="yami-ai-context" id="yami-ai-context" role="status"></div><div class="yami-ai-tool-btn" id="yami-ai-undo-toggle" role="button" tabindex="0">撤销</div><div class="yami-ai-tool-btn" id="yami-ai-history-toggle" role="button" tabindex="0">历史</div><div class="yami-ai-tool-btn" id="yami-ai-clear" role="button" tabindex="0">新对话</div><div class="yami-ai-tool-btn" id="yami-ai-settings-toggle" role="button" tabindex="0">设置</div></div><div class="yami-ai-undo" id="yami-ai-undo"></div><div class="yami-ai-history" id="yami-ai-history"></div><div class="yami-ai-settings" id="yami-ai-settings"><label for="yami-ai-endpoint">BASE URL（OpenAI 格式）</label><input id="yami-ai-endpoint" type="url" value="https://api.deepseek.com" placeholder="https://api.deepseek.com"><label for="yami-ai-key">API Key</label><input id="yami-ai-key" type="password" autocomplete="off" placeholder="DeepSeek API Key"><label class="yami-ai-check"><input id="yami-ai-mode" type="checkbox"><span>编辑器操作自动执行，工程文件仍需确认</span></label><div class="yami-ai-hint" id="yami-ai-key-state"></div><label for="yami-ai-thinking-view">思考过程显示</label><select id="yami-ai-thinking-view" title="思考过程在对话里的显示方式"><option value="expand" selected>展开</option><option value="preview">单行预览</option><option value="collapse">折叠</option></select><label for="yami-ai-process-fold">执行过程收起</label><select id="yami-ai-process-fold" title="一轮结束后，思考与工具这些过程行要不要自动收起"><option value="compact" selected>紧凑（结束后自动收起）</option><option value="standard">标准（过程始终展开）</option></select><div class="yami-ai-model-row"><div class="yami-ai-secondary" id="yami-ai-test" role="button" tabindex="0">测试连接</div><div class="yami-ai-secondary" id="yami-ai-balance" role="button" tabindex="0">查余额</div><div class="yami-ai-hint" id="yami-ai-money"></div></div><div class="yami-ai-primary" id="yami-ai-save-settings" role="button" tabindex="0">保存设置</div></div><div class="yami-ai-messages" id="yami-ai-messages" role="log" aria-live="polite"><div class="yami-ai-message assistant">告诉我你想做什么。我会先查看工程，涉及文件修改时会让你确认。</div></div><div class="yami-ai-approval" id="yami-ai-approval" role="alert"><div class="yami-ai-approval-title">确认执行</div><div class="yami-ai-approval-stat" id="yami-ai-approval-stat"></div><pre id="yami-ai-approval-detail"></pre><div class="yami-ai-approval-diff" id="yami-ai-approval-diff"></div><label class="yami-ai-check yami-ai-grant"><input id="yami-ai-grant" type="checkbox"><span>本次任务内，这个文件不再逐条确认（随时可撤销）</span></label><div class="yami-ai-approval-actions"><div class="yami-ai-secondary" id="yami-ai-reject" role="button" tabindex="0">取消修改</div><div class="yami-ai-primary" id="yami-ai-approve" role="button" tabindex="0">执行修改</div></div></div><div class="yami-ai-compose"><label for="yami-ai-input">你的需求</label><textarea id="yami-ai-input" rows="3" placeholder="例如：检查当前工程报错，并修复相关脚本"></textarea><div class="yami-ai-devbar"><label for="yami-ai-model">模型</label><select id="yami-ai-model" title="模型（可点【拉取模型】刷新列表）"></select><div class="yami-ai-tool-btn" id="yami-ai-fetch-models" role="button" tabindex="0" title="从服务端拉取可用模型">↻</div><label class="yami-ai-check"><input id="yami-ai-thinking" type="checkbox" checked><span>Thinking</span></label><select id="yami-ai-effort" title="思考强度"><option value="low">Low</option><option value="high" selected>High</option><option value="max">Max</option></select></div><div class="yami-ai-primary" id="yami-ai-send" role="button" tabindex="0" aria-disabled="false">发送</div></div>';
+    page.innerHTML = '<div class="yami-ai-toolbar"><div class="yami-ai-status idle" id="yami-ai-status" role="status">尚未启动</div><div class="yami-ai-context" id="yami-ai-context" role="status"></div><div class="yami-ai-tool-btn" id="yami-ai-undo-toggle" role="button" tabindex="0">撤销</div><div class="yami-ai-tool-btn" id="yami-ai-history-toggle" role="button" tabindex="0">历史</div><div class="yami-ai-tool-btn" id="yami-ai-clear" role="button" tabindex="0">新对话</div><div class="yami-ai-tool-btn" id="yami-ai-settings-toggle" role="button" tabindex="0">设置</div></div><div class="yami-ai-undo" id="yami-ai-undo"></div><div class="yami-ai-history" id="yami-ai-history"></div><div class="yami-ai-settings" id="yami-ai-settings"><label for="yami-ai-endpoint">BASE URL（OpenAI 格式）</label><input id="yami-ai-endpoint" type="url" value="https://api.deepseek.com" placeholder="https://api.deepseek.com"><label for="yami-ai-key">API Key</label><input id="yami-ai-key" type="password" autocomplete="off" placeholder="DeepSeek API Key"><label class="yami-ai-check"><input id="yami-ai-mode" type="checkbox"><span>编辑器操作自动执行，工程文件仍需确认</span></label><div class="yami-ai-hint" id="yami-ai-key-state"></div><label for="yami-ai-thinking-view">思考过程显示</label><select id="yami-ai-thinking-view" title="思考过程在对话里的显示方式"><option value="expand" selected>展开</option><option value="preview">单行预览</option><option value="collapse">折叠</option></select><label for="yami-ai-process-fold">执行过程收起</label><select id="yami-ai-process-fold" title="一轮结束后，思考与工具这些过程行要不要自动收起"><option value="compact" selected>紧凑（结束后自动收起）</option><option value="standard">标准（过程始终展开）</option></select><label for="yami-ai-busy-send">繁忙时发送</label><select id="yami-ai-busy-send" title="AI 正在干活时你按发送 / 回车：排队等它做完，还是打断它立刻发这条"><option value="queue" selected>排队（等这一轮跑完再发）</option><option value="interrupt">打断（停掉这一轮，立刻发）</option></select><div class="yami-ai-model-row"><div class="yami-ai-secondary" id="yami-ai-test" role="button" tabindex="0">测试连接</div><div class="yami-ai-secondary" id="yami-ai-balance" role="button" tabindex="0">查余额</div><div class="yami-ai-hint" id="yami-ai-money"></div></div><div class="yami-ai-primary" id="yami-ai-save-settings" role="button" tabindex="0">保存设置</div></div><div class="yami-ai-messages" id="yami-ai-messages" role="log" aria-live="polite"><div class="yami-ai-message assistant">告诉我你想做什么。我会先查看工程，涉及文件修改时会让你确认。</div></div><div class="yami-ai-approval" id="yami-ai-approval" role="alert"><div class="yami-ai-approval-title">确认执行</div><div class="yami-ai-approval-stat" id="yami-ai-approval-stat"></div><pre id="yami-ai-approval-detail"></pre><div class="yami-ai-approval-diff" id="yami-ai-approval-diff"></div><label class="yami-ai-check yami-ai-grant"><input id="yami-ai-grant" type="checkbox"><span>本次任务内，这个文件不再逐条确认（随时可撤销）</span></label><div class="yami-ai-approval-actions"><div class="yami-ai-secondary" id="yami-ai-reject" role="button" tabindex="0">取消修改</div><div class="yami-ai-primary" id="yami-ai-approve" role="button" tabindex="0">执行修改</div></div></div><div class="yami-ai-compose"><label for="yami-ai-input">你的需求</label><textarea id="yami-ai-input" rows="3" placeholder="例如：检查当前工程报错，并修复相关脚本"></textarea><div class="yami-ai-devbar"><label for="yami-ai-model">模型</label><select id="yami-ai-model" title="模型（可点【拉取模型】刷新列表）"></select><div class="yami-ai-tool-btn" id="yami-ai-fetch-models" role="button" tabindex="0" title="从服务端拉取可用模型">↻</div><label class="yami-ai-check"><input id="yami-ai-thinking" type="checkbox" checked><span>Thinking</span></label><select id="yami-ai-effort" title="思考强度"><option value="low">Low</option><option value="high" selected>High</option><option value="max">Max</option></select></div><div class="yami-ai-primary" id="yami-ai-send" role="button" tabindex="0" aria-disabled="false">发送</div></div>';
     document.querySelector('.yami-perf-dock-body').appendChild(page);
     api.registerPage('ai', page, { title: 'AI 助手', showBack: true, showModeSwitch: false, showClearErrors: false, showTabs: false, showExportBtns: false, refresh() {}, destroy() {} });
     ensureJumpButton();
@@ -1998,6 +2018,8 @@
     if (viewSelect) viewSelect.value = thinkingView();
     const foldSelect = document.getElementById('yami-ai-process-fold');
     if (foldSelect) foldSelect.value = processFoldMode();
+    const busySelect = document.getElementById('yami-ai-busy-send');
+    if (busySelect) busySelect.value = busySendMode();
     // 事件委托绑在设置面板上：面板内容重建也不会失效
     const settingsBox = document.getElementById('yami-ai-settings');
     if (settingsBox) {
@@ -2006,6 +2028,10 @@
         else if (event.target && event.target.id === 'yami-ai-process-fold') {
           setProcessFold(event.target.value);
           addMessage('system', '执行过程收起：' + (state.processFold === 'standard' ? '标准（始终展开）' : '紧凑（结束后自动收起）'));
+        }
+        else if (event.target && event.target.id === 'yami-ai-busy-send') {
+          setBusySendMode(event.target.value);
+          addMessage('system', '繁忙时发送：' + (state.busySend === 'interrupt' ? '打断当前一轮并立刻发出' : '排队，等这一轮跑完依次发出'));
         }
       });
     }
@@ -2027,7 +2053,7 @@
     document.getElementById('yami-ai-input').addEventListener('keydown', event => {
       if (event.key !== 'Enter' || event.shiftKey) return;
       event.preventDefault();
-      // 忙的时候：Enter = 排队，Ctrl/Cmd+Enter = 引导（立刻交给模型在下一步读）
+      // Enter = 发送（忙时的行为由设置决定：排队 / 打断）；Ctrl/Cmd+Enter = 保留的"引导"快捷键
       sendMessage(state.busy && (event.ctrlKey || event.metaKey) ? 'steer' : undefined);
     });
   }

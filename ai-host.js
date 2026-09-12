@@ -579,13 +579,15 @@ function readStoredConfig() {
       thinkingView: ['expand', 'preview', 'collapse'].includes(data.thinkingView) ? data.thinkingView : 'preview',
       // 轮次结束后过程行要不要自动收起（紧凑）/ 始终可见（标准），默认紧凑
       processFold: data.processFold === 'standard' ? 'standard' : 'compact',
+      // 繁忙时按发送：queue 排队 / interrupt 打断当前轮再发这条（默认排队）
+      busySend: data.busySend === 'interrupt' ? 'interrupt' : 'queue',
       encryptedKey: data.encryptedKey || '',
       keyTail: data.keyTail || '',
       keyInvalidReason: data.keyInvalidReason || '',
       approvalMode: data.approvalMode === 'auto' ? 'auto' : 'confirm'
     }
   } catch {
-    return { endpoint: DEFAULT_BASE_URL, model: DEFAULT_MODEL, thinkingMode: 'enabled', thinkingEffort: 'high', thinkingView: 'preview', processFold: 'compact', encryptedKey: '', keyTail: '', keyInvalidReason: '', approvalMode: 'confirm' }
+    return { endpoint: DEFAULT_BASE_URL, model: DEFAULT_MODEL, thinkingMode: 'enabled', thinkingEffort: 'high', thinkingView: 'preview', processFold: 'compact', busySend: 'queue', encryptedKey: '', keyTail: '', keyInvalidReason: '', approvalMode: 'confirm' }
   }
 }
 
@@ -716,6 +718,7 @@ async function saveConfig(input) {
     thinkingEffort: ['low', 'high', 'max'].includes(input.thinkingEffort) ? input.thinkingEffort : (current.thinkingEffort || 'high'),
     thinkingView: ['expand', 'preview', 'collapse'].includes(input.thinkingView) ? input.thinkingView : (current.thinkingView || 'preview'),
     processFold: ['compact', 'standard'].includes(input.processFold) ? input.processFold : (current.processFold || 'compact'),
+    busySend: ['queue', 'interrupt'].includes(input.busySend) ? input.busySend : (current.busySend || 'queue'),
     approvalMode: input.approvalMode === 'auto' ? 'auto' : 'confirm',
     encryptedKey: current.encryptedKey
   }
@@ -741,6 +744,7 @@ function publicConfig(config = readStoredConfig()) {
     model: config.model, thinkingMode: config.thinkingMode, thinkingEffort: config.thinkingEffort,
     thinkingView: config.thinkingView,
     processFold: config.processFold === 'standard' ? 'standard' : 'compact',
+    busySend: config.busySend === 'interrupt' ? 'interrupt' : 'queue',
     approvalMode: config.approvalMode,
     hasApiKey: !!(config.encryptedKey || process.env.DEEPSEEK_API_KEY),
     keyTail: config.keyTail || '',
@@ -1804,7 +1808,7 @@ async function handle(pathname, body, events = {}) {
     // 只更新传入的字段（模型 / 思考开关 / 思考强度），其余保持原值。
     // 快捷调节条每次改动都调它，不能用 /config —— 那会把未传字段按默认值覆盖掉。
     const patch = {}
-    for (const key of ['model', 'thinkingMode', 'thinkingEffort', 'thinkingView', 'processFold']) {
+    for (const key of ['model', 'thinkingMode', 'thinkingEffort', 'thinkingView', 'processFold', 'busySend']) {
       if (body[key] !== undefined) patch[key] = body[key]
     }
     const config = await saveConfig(patch)
