@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.3.0';
+  const PROBE_VERSION = '1.3.1';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -3766,6 +3766,9 @@
       'https://cdn.jsdelivr.net/gh/bajibaji/yami-tools@extension/manifest.json'
     ],
     probeTimeout: 3500,
+    // 首字节预算与整包预算分开: 实测直连通道会偶发"连得上但半天不回" (curl 三次里两次 6 秒超时),
+    // 用一个 30 秒的总超时兜着的话用户要干等半分钟才轮到反代; 拿到响应头之后就换成整包预算。
+    connectTimeout: 8000,
     downloadTimeout: 30000,
     maxFileBytes: 20 * 1024 * 1024,
     backupDirName: '_backup',
@@ -4110,8 +4113,26 @@
   }
 
   async function downloadArchive(url, onProgress) {
-    const resp = await fetchWithTimeout(url, UPDATE_CONFIG.downloadTimeout, 'no-store');
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    let timer = null;
+    const arm = function (ms) {
+      if (!ctrl) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function () { ctrl.abort(); }, ms);
+    };
+    let resp;
+    try {
+      arm(UPDATE_CONFIG.connectTimeout);
+      resp = await fetch(url, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      arm(UPDATE_CONFIG.downloadTimeout);
+      return await readArchiveBody(resp, onProgress);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  async function readArchiveBody(resp, onProgress) {
     const declaredLength = resp.headers && resp.headers.get ? (Number(resp.headers.get('content-length')) || 0) : 0;
     if (resp.body && typeof resp.body.getReader === 'function') {
       const reader = resp.body.getReader();
