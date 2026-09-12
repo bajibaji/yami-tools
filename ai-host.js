@@ -142,7 +142,10 @@ function loadSessionFromDisk(id) {
 function visibleMessages(session, limit = 4000) {
   const reasoningLimit = limit * 2   // 思考通常比正文长，给两倍额度
   return session.messages
-    .filter(message => message.role === 'user' || (message.role === 'assistant' && message.content))
+    // 纯工具轮（有思考、没正文）也要回放：实时看到的是「思考① → 执行 → 思考② → …」，
+    // 只回放带正文的那一条，用户切回旧会话就会以为"当时的思考和步骤都丢了"。
+    .filter(message => message.role === 'user'
+      || (message.role === 'assistant' && (message.content || message.reasoning_content || (Array.isArray(message.tool_calls) && message.tool_calls.length))))
     .map(message => {
       if (isCheckpoint(message)) {
         const summary = String(message.content)
@@ -150,10 +153,13 @@ function visibleMessages(session, limit = 4000) {
           .replace(/\s*<\/compacted-summary>[\s\S]*$/, '')
         return { role: 'assistant', content: ('【早前对话已压缩，以下是要点】\n\n' + summary).slice(0, limit), reasoning: '' }
       }
+      const calls = Array.isArray(message.tool_calls) ? message.tool_calls : []
       return {
         role: message.role,
         content: String(message.content || '').slice(0, limit),
-        reasoning: message.reasoning_content ? String(message.reasoning_content).slice(0, reasoningLimit) : ''
+        reasoning: message.reasoning_content ? String(message.reasoning_content).slice(0, reasoningLimit) : '',
+        // 工具步骤一并回放（中文名与实时工具条用同一张表），前端照着还原「执行：xxx」行
+        steps: calls.map(call => toolLabel(call.function && call.function.name)).filter(Boolean)
       }
     })
 }
@@ -544,13 +550,15 @@ function readStoredConfig() {
       // 思考过程显示方式属于界面偏好，前端 localStorage 之外再存一份到宿主配置，
       // 免得换了窗口/清了站点数据后又"设置没保存"
       thinkingView: ['expand', 'preview', 'collapse'].includes(data.thinkingView) ? data.thinkingView : 'preview',
+      // 轮次结束后过程行要不要自动收起（紧凑）/ 始终可见（标准），默认紧凑
+      processFold: data.processFold === 'standard' ? 'standard' : 'compact',
       encryptedKey: data.encryptedKey || '',
       keyTail: data.keyTail || '',
       keyInvalidReason: data.keyInvalidReason || '',
       approvalMode: data.approvalMode === 'auto' ? 'auto' : 'confirm'
     }
   } catch {
-    return { endpoint: DEFAULT_BASE_URL, model: DEFAULT_MODEL, thinkingMode: 'enabled', thinkingEffort: 'high', thinkingView: 'preview', encryptedKey: '', keyTail: '', keyInvalidReason: '', approvalMode: 'confirm' }
+    return { endpoint: DEFAULT_BASE_URL, model: DEFAULT_MODEL, thinkingMode: 'enabled', thinkingEffort: 'high', thinkingView: 'preview', processFold: 'compact', encryptedKey: '', keyTail: '', keyInvalidReason: '', approvalMode: 'confirm' }
   }
 }
 
@@ -680,6 +688,7 @@ async function saveConfig(input) {
     thinkingMode: (input.thinkingMode || current.thinkingMode) === 'disabled' ? 'disabled' : 'enabled',
     thinkingEffort: ['low', 'high', 'max'].includes(input.thinkingEffort) ? input.thinkingEffort : (current.thinkingEffort || 'high'),
     thinkingView: ['expand', 'preview', 'collapse'].includes(input.thinkingView) ? input.thinkingView : (current.thinkingView || 'preview'),
+    processFold: ['compact', 'standard'].includes(input.processFold) ? input.processFold : (current.processFold || 'compact'),
     approvalMode: input.approvalMode === 'auto' ? 'auto' : 'confirm',
     encryptedKey: current.encryptedKey
   }
@@ -704,6 +713,7 @@ function publicConfig(config = readStoredConfig()) {
     endpoint: config.endpoint, baseUrl: config.endpoint, chatUrl: chatCompletionsUrl(config.endpoint),
     model: config.model, thinkingMode: config.thinkingMode, thinkingEffort: config.thinkingEffort,
     thinkingView: config.thinkingView,
+    processFold: config.processFold === 'standard' ? 'standard' : 'compact',
     approvalMode: config.approvalMode,
     hasApiKey: !!(config.encryptedKey || process.env.DEEPSEEK_API_KEY),
     keyTail: config.keyTail || '',
@@ -955,7 +965,12 @@ function requestModelStream(config, apiKey, messages, tools, onDelta, cancelToke
             const data = JSON.parse(raw)
             const message = data.choices && data.choices[0] && data.choices[0].message
             if (!message) return finish(new Error('模型没有返回消息'))
+            // 忽略 stream 参数的本地推理服务：整段 JSON 里同样有 usage 与思考，别当没有
+            // （漏读 usage 会让"本轮用量行"永远显示不出来；漏读思考则会让思考块一片空白）
+            if (data.usage) message.__usage = normalizeUsage(config.model, data.usage)
             if (message.content && onDelta) onDelta({ content: message.content })
+            const wholeReasoning = message.reasoning_content || message.reasoning
+            if (wholeReasoning && onDelta) onDelta({ reasoning: String(wholeReasoning) })
             finish(null, message)
           } catch {
             finish(new Error('模型响应无法解析（既不是 SSE 也不是 JSON）'))
@@ -1245,6 +1260,65 @@ function addGrant(session, pending) {
   return key
 }
 
+// ============================================================
+// 每轮用量记账（对齐 DSH 的轮次用量行语义：记账不全就整行不显示，
+// 不拿"部分总量"冒充完整结果）。探针挂在 session 之外的 Map 上：
+// 会话 JSON 是用户数据，不该混进运行时计数器。
+// ============================================================
+const turnProbes = new Map()
+
+function snapshotUsage(usage) {
+  return {
+    promptTokens: Number((usage && usage.promptTokens) || 0),
+    completionTokens: Number((usage && usage.completionTokens) || 0),
+    cachedTokens: Number((usage && usage.cachedTokens) || 0),
+    cost: Number((usage && usage.cost) || 0),
+    calls: Number((usage && usage.calls) || 0)
+  }
+}
+
+function beginTurnProbe(session) {
+  turnProbes.set(session.id, { before: snapshotUsage(session.usage), attempts: 0, reported: 0 })
+}
+
+/** 记一次模型调用：reported 只在这次调用真的带回了 usage 时 +1 */
+function noteModelAttempt(session, hasUsage) {
+  const probe = session && turnProbes.get(session.id)
+  if (!probe) return
+  probe.attempts += 1
+  if (hasUsage) probe.reported += 1
+}
+
+function turnUsageOf(session) {
+  const probe = turnProbes.get(session.id)
+  if (!probe) return { complete: false }
+  const after = snapshotUsage(session.usage)
+  const delta = {
+    calls: after.calls - probe.before.calls,
+    promptTokens: after.promptTokens - probe.before.promptTokens,
+    completionTokens: after.completionTokens - probe.before.completionTokens,
+    cachedTokens: after.cachedTokens - probe.before.cachedTokens,
+    cost: Number((after.cost - probe.before.cost).toFixed(6))
+  }
+  // 「完整」= 本轮每一次 Agent 循环的模型调用都报告了 usage。
+  // 允许 delta.calls 大于 attempts：上下文压缩等旁路模型调用也是这一轮的真实花费，
+  // 算进去才对得起"本轮花了多少"这个问题；但只要有一次调用没报 usage，整行就不显示。
+  delta.complete = probe.attempts > 0 && probe.reported === probe.attempts && delta.calls > 0
+  return delta
+}
+
+/** 包住一轮：结束后把本轮用量挂到结果上，前端据此决定要不要渲染"本轮 N tokens"行 */
+async function runTurn(session, config, events) {
+  beginTurnProbe(session)
+  try {
+    const result = await continueSession(session, config, events)
+    if (result && typeof result === 'object') result.turnUsage = turnUsageOf(session)
+    return result
+  } finally {
+    turnProbes.delete(session.id)
+  }
+}
+
 async function continueSession(session, config, events = {}) {
   const cancelToken = events.cancelToken || null
   const aborted = () => {
@@ -1299,6 +1373,7 @@ async function continueSession(session, config, events = {}) {
       throw error
     }
     assistant.role = 'assistant'
+    noteModelAttempt(session, !!(assistant && assistant.__usage))
     if (assistant.__usage) {
       session.usage = pricing.addUsage(session.usage, assistant.__usage)
       // 真实用量锚点：prompt_tokens 覆盖了 system、工具 schema 与刚发出的这批消息，
@@ -1588,7 +1663,7 @@ async function handle(pathname, body, events = {}) {
     // 只更新传入的字段（模型 / 思考开关 / 思考强度），其余保持原值。
     // 快捷调节条每次改动都调它，不能用 /config —— 那会把未传字段按默认值覆盖掉。
     const patch = {}
-    for (const key of ['model', 'thinkingMode', 'thinkingEffort', 'thinkingView']) {
+    for (const key of ['model', 'thinkingMode', 'thinkingEffort', 'thinkingView', 'processFold']) {
       if (body[key] !== undefined) patch[key] = body[key]
     }
     const config = await saveConfig(patch)
@@ -1765,7 +1840,7 @@ async function handle(pathname, body, events = {}) {
     session.toolTally = {}  // 以及重新开始统计工具调用次数（重复提示按轮计）
     saveSession(session)
     // 留一个可等待的句柄 + 取消令牌：下一条需求进来时若发现"已取消但还在收尾"，就能等它收完
-    const running = continueSession(session, readStoredConfig(), events)
+    const running = runTurn(session, readStoredConfig(), events)
     session.activeRun = running
     session.activeCancel = events.cancelToken || null
     trace('任务启动 session=' + session.id)
@@ -1838,7 +1913,7 @@ async function handle(pathname, body, events = {}) {
       const outcome = await processToolCalls(session, pending.remaining, config, '', events)
       if (outcome.approval) return outcome.approval
     }
-    return await continueSession(session, config, events)
+    return await runTurn(session, config, events)
   }
   if (pathname === '/clear') {
     const id = safeSessionId(body.sessionId || 'default')

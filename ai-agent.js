@@ -26,7 +26,8 @@
     mounted: false,
     balance: null,
     abort: null,
-    thinkingView: null
+    thinkingView: null,
+    processFold: null
   };
   state.token = sharedToken();
   localStorage.setItem('danjuan-ai-session', state.sessionId);
@@ -34,12 +35,33 @@
   // 当前这一轮的思考过程块与起始时刻（严格模式下必须显式声明，否则出现隐式全局）
   let currentThinkingEl = null;
   let thinkingStartedAt = 0;
+  // 思考按「模型轮次」分段：工具调用或正文一到，本段就封口，下一次思考增量另起一段。
+  // 以前整回合只有一块，多轮推理（思考→调工具→再思考→…）糊成一堵墙，用户看到的就是
+  // "只有一个思考窗口"。分段只影响视图，会话落盘本来就是每轮一条助手消息、各带自己的
+  // reasoning_content，所以回放能一一对上。
+  // 分段状态机（accept/seal/round）放在渲染核心里：纯逻辑、可单测，面板只负责建块与换缓冲
+  let thinkingTotalMs = 0;      // 已封口各段的累计思考耗时（过程区头部用）
   // 当前回合容器：过程区（思考+工具）与正文槽都挂在它下面
   let currentTurn = null;
 
   // 逐 token 的流式渲染必须按帧合并：片段再多，一帧也只写一次 DOM。
   // 旧实现每来一个片段就重设全文 + 拉滚动条，是 O(n^2)，上下文一长整页卡死。
   const renderCore = (typeof window !== 'undefined' && window.YamiAiRenderCore) || null;
+  // 核心缺失（注入顺序异常/文件缺了）时用同一套语义的内联兜底，绝不能因为少个文件就分不了段
+  const createThinkingSegments = (renderCore && typeof renderCore.createThinkingSegments === 'function')
+    ? renderCore.createThinkingSegments
+    : function () {
+        let round = 0;
+        let sealed = true;
+        return {
+          accept: function () { if (!sealed) return 0; sealed = false; round += 1; return round; },
+          seal: function () { if (sealed) return false; sealed = true; return true; },
+          round: function () { return round; },
+          sealed: function () { return sealed; },
+          reset: function () { round = 0; sealed = true; }
+        };
+      };
+  const thinkingSegments = createThinkingSegments();
   if (!renderCore) {
     // 缺了它不能让对话变空白：下面所有渲染都会退回直写模式，同时把原因说清楚
     console.warn('[DanJuan AI] 渲染核心 ai-render-core.js 未加载，已退回直写模式（重启编辑器可恢复并拿回性能优化）');
@@ -295,10 +317,23 @@
     if (!currentTurn || !currentTurn.process) return;
     // 这段在流式过程中每帧都会被调到：计数走变量，绝不去遍历 DOM
     const area = currentTurn.process;
-    const parts = [];
-    if (thinkingStartedAt) parts.push('思考 ' + Math.max(1, Math.round((Date.now() - thinkingStartedAt) / 1000)) + ' 秒');
-    if (area.steps) parts.push(area.steps + ' 步');
-    const text = parts.join(' · ');
+    // 累计口径：已封口各段之和 + 正在写的那段。分段后单看"当前段"的秒数会越来越小，
+    // 用户读到的是"这个任务一共想了多久"。
+    const liveMs = thinkingStartedAt ? (Date.now() - thinkingStartedAt) : 0;
+    const info = {
+      seconds: Math.round((thinkingTotalMs + liveMs) / 1000),
+      rounds: thinkingSegments.round(),
+      steps: area.steps
+    };
+    // 标题口径与"收起后"共用渲染核心那一份（纯逻辑可单测），免得两处说法不一致；
+    // 核心缺失时退回本地拼接 —— 用空标题而不是「已思考」：回合刚开始不该说"已思考"。
+    const text = (renderCore && typeof renderCore.processFoldTitle === 'function')
+      ? renderCore.processFoldTitle({ seconds: info.seconds, rounds: info.rounds, steps: info.steps, empty: '' })
+      : [
+          info.seconds > 0 ? '思考 ' + info.seconds + ' 秒' : '',
+          info.rounds > 1 ? info.rounds + ' 段' : '',
+          info.steps > 0 ? info.steps + ' 步' : ''
+        ].filter(Boolean).join(' · ');
     if (area.meta.textContent !== text) area.meta.textContent = text;
   }
 
@@ -606,11 +641,24 @@
       const all = data.messages || [];
       const win = renderCore ? renderCore.historyWindow(all, 60) : { shown: all, hiddenCount: 0 };
       if (win.hiddenCount) pushNotice('更早的 ' + win.hiddenCount + ' 条消息已折叠（完整记录仍在历史面板里，可随时切回）');
+      // 回放要跟实时长得一样：一段思考一块、中间的工具步骤一行不少。
+      // 磁盘上每一轮模型调用都是一条助手消息（各带自己的 reasoning_content 与 tool_calls），
+      // 所以段边界现成就有；历史块没有"耗时"可算，如实只报字数，不编造秒数。
+      let replayRound = 0;
+      let lastReplayThinking = null;
       for (const message of win.shown) {
-        // 历史回放也要带上当时的思考过程：磁盘里一直存着，只回放正文会让人以为思考被丢了。
-        // 历史块没有"耗时"可算，如实只报字数，不编造秒数。
-        if (message.reasoning) appendThinkingBlock(message.reasoning, '共 ' + message.reasoning.length + ' 字');
-        addMessage(message.role === 'user' ? 'user' : 'assistant', message.content);
+        if (message.role === 'user') { replayRound = 0; lastReplayThinking = null; }
+        if (message.reasoning) {
+          labelThinkingRound(lastReplayThinking, replayRound);   // 上一段此刻才确定"后面还有段"，补编号
+          replayRound += 1;
+          lastReplayThinking = appendThinkingBlock(message.reasoning, replayThinkingMeta(replayRound, message.reasoning.length));
+          markThinkingLabeled(lastReplayThinking, replayRound >= 2);
+        }
+        if (Array.isArray(message.steps)) {
+          for (const step of message.steps) pushNotice('执行：' + step);
+        }
+        // 纯工具轮没有正文，不能凭空塞一个空气泡
+        if (message.content) addMessage(message.role === 'user' ? 'user' : 'assistant', message.content);
       }
       autoScroll(true);   // 切过来先停在最新，历史由用户自己往上翻
       if (data.pending) renderApproval({ approval: data.pending });
@@ -725,6 +773,7 @@
 
   function handleResult(data) {
     if (data.message) addMessage('assistant', data.message);
+    renderTurnUsage(data.turnUsage);
     if (data.status === 'approval') renderApproval(data);
     else { state.pending = null; document.getElementById('yami-ai-approval')?.classList.remove('show'); setStatus('就绪', 'ready'); }
   }
@@ -755,9 +804,9 @@
     let buffer = '';
     // 正文与思考都走增量缓冲：append 只拼接新片段，避免每帧复制全文
     const contentBuffer = renderCore ? renderCore.createTextBuffer() : null;
-    const reasoningBuffer = renderCore ? renderCore.createTextBuffer() : null;
+    // 思考缓冲按「段」重建：一段一块，缓冲也必须跟着换，否则第二段会把第一段的文字一起吞进去
+    let reasoningBuffer = renderCore ? renderCore.createTextBuffer() : null;
     let bubbleTextNode = null;
-    let thinkingTextNode = null;
 
     const flushContent = () => {
       if (!bubble) return;
@@ -774,49 +823,69 @@
     const flushThinking = () => {
       if (!currentThinkingEl) return;
       if (!reasoningBuffer) { renderThinking(reasoning$); return; }
-      currentThinkingEl.dataset.text = reasoningBuffer.toString();
-      if (thinkingView() === 'expand') {
-        const body = currentThinkingEl.querySelector('.yami-ai-thinking-body');
-        if (body) {
-          // 判断"是否贴着底"必须在写入**之前**：写完 scrollHeight 就变大了，明明贴着底的
-          // 也会被判成"用户在看历史"，于是最新那几行永远沉在下面。
-          let near = isNearBottom(body);
-          if (!thinkingTextNode || !thinkingTextNode.isConnected) {
-            body.textContent = '';
-            thinkingTextNode = document.createTextNode(reasoningBuffer.toString());
-            body.appendChild(thinkingTextNode);
-            near = true;
-          } else if (thinkingTextNode.data.length !== reasoningBuffer.length()) {
-            thinkingTextNode.appendData(reasoningBuffer.toString().slice(thinkingTextNode.data.length));
-          }
-          // 思考块自身是滚动容器（max-height:30vh），它不会自己跟着长
-          if (near) body.scrollTop = body.scrollHeight;
+      const full = reasoningBuffer.toString();
+      currentThinkingEl.dataset.text = full;
+      const body = currentThinkingEl.querySelector('.yami-ai-thinking-body');
+      const mode = thinkingView();
+      if (body && mode === 'preview') {
+        // 单行预览也要**实时**跟着走：以前只在段末刷一次，于是"刚出来的那个思考窗口"
+        // 在整个思考期间都是空的（用户报的就是这个）。取值走缓冲的 lastLine（增量维护），
+        // 不每帧 split 全文 —— 那正是这条流水线当初要消灭的开销。
+        let span = body.firstElementChild;
+        if (!span || span.tagName !== 'SPAN') {
+          body.textContent = '';
+          span = document.createElement('span');
+          body.appendChild(span);
         }
+        const line = typeof reasoningBuffer.lastLine === 'function' ? reasoningBuffer.lastLine(160) : previewLine(full);
+        if (span.textContent !== line) span.textContent = line;
+      } else if (body && mode === 'expand') {
+        // 判断"是否贴着底"必须在写入**之前**：写完 scrollHeight 就变大了，明明贴着底的
+        // 也会被判成"用户在看历史"，于是最新那几行永远沉在下面。
+        let near = isNearBottom(body);
+        // 文本节点必须从**当前这一块**里取。以前用的是 streamChat 的闭包变量，
+        // 开新段时它仍指向上一块（而且 connected），于是新段的字全灌进了旧块、
+        // 新块的正文永远是空的 —— 这就是"再次出现的思考窗口没有文字"的根因。
+        const node = body.firstChild && body.firstChild.nodeType === 3 ? body.firstChild : null;
+        if (!node) {
+          body.textContent = '';
+          body.appendChild(document.createTextNode(full));
+          near = true;
+        } else if (node.data.length !== full.length) {
+          node.appendData(full.slice(node.data.length));
+        }
+        // 思考块自身是滚动容器（max-height:30vh），它不会自己跟着长
+        if (near) body.scrollTop = body.scrollHeight;
       }
-      const meta = currentThinkingEl.querySelector('.yami-ai-thinking-meta');
-      if (meta) {
-        const seconds = Math.max(1, Math.round((Date.now() - thinkingStartedAt) / 1000));
-        meta.textContent = '已思考 ' + seconds + ' 秒 · ' + reasoningBuffer.length() + ' 字';
-      }
+      const seconds = Math.max(1, Math.round((Date.now() - thinkingStartedAt) / 1000));
+      setThinkingMeta(currentThinkingEl, thinkingSegments.round(), seconds, reasoningBuffer.length());
     };
 
     const handleEvent = event => {
       if (!event || !event.type) return;
       if (event.type === 'status') { setStatus(event.text || '正在处理', 'working'); return; }
       if (event.type === 'delta') {
-        // 思考过程（reasoning_content）：单独一块，流式追加，默认展开
+        // 思考过程（reasoning_content）：一段一块，流式追加，默认展开
         if (event.reasoning) {
           hasReasoning = true;
+          // 上一段已封口（中间发生过工具调用或已开始写正文）→ 这是新一轮的思考：另起一段，
+          // 并且**先**把累加缓冲换成新的，再写入这一段的字。
+          const segment = thinkingSegments.accept();
+          if (segment || !currentThinkingEl || !currentThinkingEl.isConnected) {
+            beginThinkingRound(segment - 1);
+            reasoningBuffer = renderCore ? renderCore.createTextBuffer() : null;
+            reasoning$ = '';
+          }
           if (reasoningBuffer) reasoningBuffer.append(event.reasoning);
           else reasoning$ += event.reasoning;
-          if (!currentThinkingEl || !currentThinkingEl.isConnected) renderThinking('');
           scheduleRender(() => { flushThinking(); refreshProcessMeta(); autoScroll(); });
           return;
         }
         if (!event.content) return;
         received = true;
         if (!bubble) {
-          finalizeThinking();   // 正文开始 → 思考块收尾（补上耗时与字数）
+          sealThinking();       // 正文开始 → 思考到此为止（工具调用之间的思考是各自独立的段）
+          finalizeThinking();
           bubble = addMessage('assistant', '');
         }
         if (contentBuffer) contentBuffer.append(event.content);
@@ -825,6 +894,8 @@
         return;
       }
       if (event.type === 'tool') {
+        // 工具调用是轮次分界：它前面那段思考已经想完了，下一段思考必须另起一块
+        sealThinking();
         if (event.phase === 'start') { toolLine = pushNotice('执行：' + (event.label || event.name) + (event.target ? ' · ' + event.target : '')); return; }
         if (toolLine) {
           if (event.phase === 'done') { toolLine.textContent = '完成：' + (event.label || event.name) + (event.target ? ' · ' + event.target : ''); toolLine.classList.add('ok'); }
@@ -866,8 +937,31 @@
       else if ((finalResult.status === 'stuck' || finalResult.status === 'compile-failed') && finalResult.message) pushNotice(finalResult.message, 'bad');
       if (finalResult.plan) renderPlan(finalResult.plan.items, finalResult.plan.summary);
       if (finalResult.changelog) renderChangelog(finalResult.changelog);
+      renderTurnUsage(finalResult.turnUsage);   // 记账不全时它自己什么都不画
     }
     return finalResult;
+  }
+
+  /**
+   * 轮次过程收起方式：compact 紧凑（默认，轮次结束自动收起过程行）/
+   * standard 标准（过程行始终可见）。参考 DSH 的「紧凑/标准」两档。
+   */
+  function processFoldMode() {
+    if (state.processFold === 'compact' || state.processFold === 'standard') return state.processFold;
+    let saved = '';
+    try { saved = localStorage.getItem('danjuan-ai-process-fold') || ''; } catch (e) { saved = ''; }
+    return saved === 'standard' ? 'standard' : 'compact';
+  }
+
+  /** 改「过程收起」：内存 + localStorage + 宿主配置三处都写（与思考显示同一套套路） */
+  function setProcessFold(mode) {
+    const next = mode === 'standard' ? 'standard' : 'compact';
+    state.processFold = next;
+    try { localStorage.setItem('danjuan-ai-process-fold', next); } catch (e) {}
+    const select = document.getElementById('yami-ai-process-fold');
+    if (select && select.value !== next) select.value = next;
+    request('/quick-config', { processFold: next }).catch(() => {});
+    return next;
   }
 
   /** 思考过程显示模式：expand 展开（默认）/ collapse 折叠 / preview 单行预览 */
@@ -985,6 +1079,69 @@
     return el;
   }
 
+  /** 段头文字：多段时才带「第 N 段」编号（单段的任务不需要编号噪音）。
+   *  编号只从**已知段号**来（第 1 段要等到"确实存在第 2 段"那一刻才敢加），
+   *  所以第 2 段起由创建时就带上，第 1 段由 labelThinkingRound 事后补。 */
+  function thinkingMetaText(index, seconds, chars) {
+    return (index >= 2 ? '第 ' + index + ' 段 · ' : '') + '已思考 ' + seconds + ' 秒 · ' + chars + ' 字';
+  }
+
+  /** 回放用的段头（历史块没有"耗时"可算，如实只报字数，不编造秒数） */
+  function replayThinkingMeta(index, chars) {
+    return (index >= 2 ? '第 ' + index + ' 段 · ' : '') + '共 ' + chars + ' 字';
+  }
+
+  /** 带编号的块打上标记，避免后面再被加一次前缀 */
+  function markThinkingLabeled(el, labeled) {
+    if (!el || !labeled) return;
+    const meta = el.querySelector('.yami-ai-thinking-meta');
+    if (meta) meta.dataset.labeled = '1';
+  }
+
+  /** 刷新段头（流式中的每一帧都会走到，所以只写 textContent，不重建节点） */
+  function setThinkingMeta(el, index, seconds, chars) {
+    const meta = el && el.querySelector('.yami-ai-thinking-meta');
+    if (!meta) return;
+    meta.textContent = thinkingMetaText(index, seconds, chars);
+    markThinkingLabeled(el, index >= 2);
+  }
+
+  /** 给已经定型的段补上「第 N 段」：只有"这一段的后面确实还有段"时才调用 */
+  function labelThinkingRound(el, index) {
+    if (!el || index < 1) return;
+    const meta = el.querySelector('.yami-ai-thinking-meta');
+    if (!meta || meta.dataset.labeled === '1') return;
+    meta.dataset.labeled = '1';
+    meta.textContent = '第 ' + index + ' 段 · ' + meta.textContent;
+  }
+
+  /** 封段：这一轮想完了（工具调用 / 正文开始 / 回合结束都会走到），耗时与字数就此定格 */
+  function sealThinking() {
+    thinkingSegments.seal();
+    if (!currentThinkingEl || !currentThinkingEl.isConnected || !thinkingStartedAt) return;
+    const elapsed = Math.max(1, Math.round((Date.now() - thinkingStartedAt) / 1000));
+    thinkingTotalMs += Date.now() - thinkingStartedAt;
+    thinkingStartedAt = 0;
+    setThinkingMeta(currentThinkingEl, thinkingSegments.round(), elapsed, (currentThinkingEl.dataset.text || '').length);
+    applyThinkingMode(currentThinkingEl);
+    refreshProcessMeta();
+  }
+
+  /** 开新一段思考：上一段必然已封口，此刻才知道它后面还有段，正好补上编号 */
+  function beginThinkingRound(previousIndex) {
+    labelThinkingRound(currentThinkingEl, previousIndex);
+    // 必须先置空：上一个块还是 connected 的，renderThinking 只在"没有块"时才新建，
+    // 不置空的话新一段的字会继续灌进上一段里（分段等于没分）。
+    currentThinkingEl = null;
+    renderThinking('');
+    refreshProcessMeta();
+  }
+
+  /** 回合计尾：最后一段也要定稿（正在写的那段不能一直挂着计时） */
+  function endThinkingRounds() {
+    sealThinking();
+  }
+
   /** 创建或更新思考块（流式过程中反复调用） */
   function renderThinking(fullText) {
     if (!currentThinkingEl || !currentThinkingEl.isConnected) {
@@ -993,11 +1150,8 @@
     }
     if (!currentThinkingEl) return;
     currentThinkingEl.dataset.text = fullText;
-    const meta = currentThinkingEl.querySelector('.yami-ai-thinking-meta');
-    if (meta) {
-      const seconds = Math.max(1, Math.round((Date.now() - thinkingStartedAt) / 1000));
-      meta.textContent = '已思考 ' + seconds + ' 秒 · ' + fullText.length + ' 字';
-    }
+    const seconds = Math.max(1, Math.round((Date.now() - thinkingStartedAt) / 1000));
+    setThinkingMeta(currentThinkingEl, thinkingSegments.round(), seconds, fullText.length);
     applyThinkingMode(currentThinkingEl);
     refreshProcessMeta();
     autoScroll();
@@ -1006,6 +1160,52 @@
   /** 思考结束（正文开始或本轮收尾时调用） */
   function finalizeThinking() {
     if (currentThinkingEl) applyThinkingMode(currentThinkingEl);
+  }
+
+  /**
+   * 轮次结束：紧凑模式下把过程行收起来（参考 DSH 的 turn process folding）。
+   * 判据全在渲染核心里（纯逻辑可单测），这里只负责执行 DOM 与焦点保护：
+   * 自动收起若会把键盘焦点藏掉，就保持展开 —— 整洁不能以"焦点莫名其妙没了"为代价。
+   */
+  function applyTurnFold() {
+    if (!currentTurn || !currentTurn.process) return;
+    const area = currentTurn.process;
+    const hasAnswer = !!(currentTurn.body && currentTurn.body.textContent.trim());
+    const focusInside = !!(document.activeElement && area.box.contains(document.activeElement));
+    const info = (renderCore && typeof renderCore.turnProcessFold === 'function')
+      ? renderCore.turnProcessFold({
+          mode: processFoldMode(),
+          hasAnswer: hasAnswer,
+          focusInside: focusInside,
+          seconds: Math.round(thinkingTotalMs / 1000),
+          rounds: thinkingSegments.round(),
+          steps: area.steps
+        })
+      : { fold: false, title: '' };
+    if (!info.fold) return;
+    area.box.classList.add('collapsed');
+    area.meta.textContent = info.title;
+    const toggle = area.box.querySelector('.yami-ai-process-toggle');
+    if (toggle) toggle.textContent = '▸';
+    const head = area.box.querySelector('.yami-ai-process-head');
+    if (head) head.title = '展开执行过程';
+  }
+
+  /** 每轮用量行：记账不全就整行不出现（"完整"由渲染核心判定） */
+  function renderTurnUsage(usage) {
+    const info = (renderCore && typeof renderCore.formatTurnUsage === 'function')
+      ? renderCore.formatTurnUsage(usage)
+      : { show: false };
+    if (!info.show) return null;
+    const host = currentTurn ? currentTurn.root : document.getElementById('yami-ai-messages');
+    if (!host) return null;
+    const el = document.createElement('div');
+    el.className = 'yami-ai-turn-usage';
+    el.textContent = info.text;
+    if (info.detail) el.title = info.detail;
+    host.appendChild(el);
+    autoScroll();
+    return el;
   }
 
   /** 切换显示模式时，同步更新历史上所有思考块 */
@@ -1029,6 +1229,8 @@
     autoScroll(true);   // 用户刚发消息：无论刚才在看哪，都回到最新（这是他自己触发的）
     currentThinkingEl = null;
     thinkingStartedAt = 0;
+    thinkingSegments.reset();
+    thinkingTotalMs = 0;
     beginTurn();
     setBusy(true);
     setStatus('正在处理', 'working');
@@ -1055,7 +1257,9 @@
       }
     } finally {
       setBusy(false);
+      endThinkingRounds();   // 最后一段也要定稿（耗时/字数定格，多段任务补全编号）
       refreshProcessMeta();
+      applyTurnFold();       // 紧凑模式下把过程收起来（没有最终正文/焦点在里面时不收）
       endTurn();
     }
   }
@@ -1282,6 +1486,15 @@
           if (sel) sel.value = config.thinkingView;
         }
       }
+      if (!state.processFold && config && ['compact', 'standard'].includes(config.processFold)) {
+        let local = '';
+        try { local = localStorage.getItem('danjuan-ai-process-fold') || ''; } catch (e) { local = ''; }
+        if (!local) {
+          state.processFold = config.processFold;
+          const sel = document.getElementById('yami-ai-process-fold');
+          if (sel) sel.value = config.processFold;
+        }
+      }
       setStatus(config.hasApiKey || !/api\.deepseek\.com/i.test(config.endpoint) ? '就绪' : '请配置模型', config.hasApiKey ? 'ready' : 'waiting');
     } catch (e) { setStatus('尚未启动', 'idle'); }
   }
@@ -1302,7 +1515,7 @@
     page.className = 'yami-suite-page yami-ai-page';
     page.id = 'page-ai';
     page.style.setProperty('display', 'none', 'important');
-    page.innerHTML = '<div class="yami-ai-toolbar"><div class="yami-ai-status idle" id="yami-ai-status" role="status">尚未启动</div><div class="yami-ai-context" id="yami-ai-context" role="status"></div><div class="yami-ai-tool-btn" id="yami-ai-undo-toggle" role="button" tabindex="0">撤销</div><div class="yami-ai-tool-btn" id="yami-ai-history-toggle" role="button" tabindex="0">历史</div><div class="yami-ai-tool-btn" id="yami-ai-clear" role="button" tabindex="0">新对话</div><div class="yami-ai-tool-btn" id="yami-ai-settings-toggle" role="button" tabindex="0">设置</div></div><div class="yami-ai-undo" id="yami-ai-undo"></div><div class="yami-ai-history" id="yami-ai-history"></div><div class="yami-ai-settings" id="yami-ai-settings"><label for="yami-ai-endpoint">BASE URL（OpenAI 格式）</label><input id="yami-ai-endpoint" type="url" value="https://api.deepseek.com" placeholder="https://api.deepseek.com"><label for="yami-ai-key">API Key</label><input id="yami-ai-key" type="password" autocomplete="off" placeholder="DeepSeek API Key"><label class="yami-ai-check"><input id="yami-ai-mode" type="checkbox"><span>编辑器操作自动执行，工程文件仍需确认</span></label><div class="yami-ai-hint" id="yami-ai-key-state"></div><label for="yami-ai-thinking-view">思考过程显示</label><select id="yami-ai-thinking-view" title="思考过程在对话里的显示方式"><option value="expand" selected>展开</option><option value="preview">单行预览</option><option value="collapse">折叠</option></select><div class="yami-ai-model-row"><div class="yami-ai-secondary" id="yami-ai-test" role="button" tabindex="0">测试连接</div><div class="yami-ai-secondary" id="yami-ai-balance" role="button" tabindex="0">查余额</div><div class="yami-ai-hint" id="yami-ai-money"></div></div><div class="yami-ai-primary" id="yami-ai-save-settings" role="button" tabindex="0">保存设置</div></div><div class="yami-ai-messages" id="yami-ai-messages" role="log" aria-live="polite"><div class="yami-ai-message assistant">告诉我你想做什么。我会先查看工程，涉及文件修改时会让你确认。</div></div><div class="yami-ai-approval" id="yami-ai-approval" role="alert"><div class="yami-ai-approval-title">确认执行</div><div class="yami-ai-approval-stat" id="yami-ai-approval-stat"></div><pre id="yami-ai-approval-detail"></pre><div class="yami-ai-approval-diff" id="yami-ai-approval-diff"></div><label class="yami-ai-check yami-ai-grant"><input id="yami-ai-grant" type="checkbox"><span>本次任务内，这个文件不再逐条确认（随时可撤销）</span></label><div class="yami-ai-approval-actions"><div class="yami-ai-secondary" id="yami-ai-reject" role="button" tabindex="0">取消修改</div><div class="yami-ai-primary" id="yami-ai-approve" role="button" tabindex="0">执行修改</div></div></div><div class="yami-ai-compose"><label for="yami-ai-input">你的需求</label><textarea id="yami-ai-input" rows="3" placeholder="例如：检查当前工程报错，并修复相关脚本"></textarea><div class="yami-ai-devbar"><label for="yami-ai-model">模型</label><select id="yami-ai-model" title="模型（可点【拉取模型】刷新列表）"></select><div class="yami-ai-tool-btn" id="yami-ai-fetch-models" role="button" tabindex="0" title="从服务端拉取可用模型">↻</div><label class="yami-ai-check"><input id="yami-ai-thinking" type="checkbox" checked><span>Thinking</span></label><select id="yami-ai-effort" title="思考强度"><option value="low">Low</option><option value="high" selected>High</option><option value="max">Max</option></select></div><div class="yami-ai-primary" id="yami-ai-send" role="button" tabindex="0" aria-disabled="false">发送</div></div>';
+    page.innerHTML = '<div class="yami-ai-toolbar"><div class="yami-ai-status idle" id="yami-ai-status" role="status">尚未启动</div><div class="yami-ai-context" id="yami-ai-context" role="status"></div><div class="yami-ai-tool-btn" id="yami-ai-undo-toggle" role="button" tabindex="0">撤销</div><div class="yami-ai-tool-btn" id="yami-ai-history-toggle" role="button" tabindex="0">历史</div><div class="yami-ai-tool-btn" id="yami-ai-clear" role="button" tabindex="0">新对话</div><div class="yami-ai-tool-btn" id="yami-ai-settings-toggle" role="button" tabindex="0">设置</div></div><div class="yami-ai-undo" id="yami-ai-undo"></div><div class="yami-ai-history" id="yami-ai-history"></div><div class="yami-ai-settings" id="yami-ai-settings"><label for="yami-ai-endpoint">BASE URL（OpenAI 格式）</label><input id="yami-ai-endpoint" type="url" value="https://api.deepseek.com" placeholder="https://api.deepseek.com"><label for="yami-ai-key">API Key</label><input id="yami-ai-key" type="password" autocomplete="off" placeholder="DeepSeek API Key"><label class="yami-ai-check"><input id="yami-ai-mode" type="checkbox"><span>编辑器操作自动执行，工程文件仍需确认</span></label><div class="yami-ai-hint" id="yami-ai-key-state"></div><label for="yami-ai-thinking-view">思考过程显示</label><select id="yami-ai-thinking-view" title="思考过程在对话里的显示方式"><option value="expand" selected>展开</option><option value="preview">单行预览</option><option value="collapse">折叠</option></select><label for="yami-ai-process-fold">执行过程收起</label><select id="yami-ai-process-fold" title="一轮结束后，思考与工具这些过程行要不要自动收起"><option value="compact" selected>紧凑（结束后自动收起）</option><option value="standard">标准（过程始终展开）</option></select><div class="yami-ai-model-row"><div class="yami-ai-secondary" id="yami-ai-test" role="button" tabindex="0">测试连接</div><div class="yami-ai-secondary" id="yami-ai-balance" role="button" tabindex="0">查余额</div><div class="yami-ai-hint" id="yami-ai-money"></div></div><div class="yami-ai-primary" id="yami-ai-save-settings" role="button" tabindex="0">保存设置</div></div><div class="yami-ai-messages" id="yami-ai-messages" role="log" aria-live="polite"><div class="yami-ai-message assistant">告诉我你想做什么。我会先查看工程，涉及文件修改时会让你确认。</div></div><div class="yami-ai-approval" id="yami-ai-approval" role="alert"><div class="yami-ai-approval-title">确认执行</div><div class="yami-ai-approval-stat" id="yami-ai-approval-stat"></div><pre id="yami-ai-approval-detail"></pre><div class="yami-ai-approval-diff" id="yami-ai-approval-diff"></div><label class="yami-ai-check yami-ai-grant"><input id="yami-ai-grant" type="checkbox"><span>本次任务内，这个文件不再逐条确认（随时可撤销）</span></label><div class="yami-ai-approval-actions"><div class="yami-ai-secondary" id="yami-ai-reject" role="button" tabindex="0">取消修改</div><div class="yami-ai-primary" id="yami-ai-approve" role="button" tabindex="0">执行修改</div></div></div><div class="yami-ai-compose"><label for="yami-ai-input">你的需求</label><textarea id="yami-ai-input" rows="3" placeholder="例如：检查当前工程报错，并修复相关脚本"></textarea><div class="yami-ai-devbar"><label for="yami-ai-model">模型</label><select id="yami-ai-model" title="模型（可点【拉取模型】刷新列表）"></select><div class="yami-ai-tool-btn" id="yami-ai-fetch-models" role="button" tabindex="0" title="从服务端拉取可用模型">↻</div><label class="yami-ai-check"><input id="yami-ai-thinking" type="checkbox" checked><span>Thinking</span></label><select id="yami-ai-effort" title="思考强度"><option value="low">Low</option><option value="high" selected>High</option><option value="max">Max</option></select></div><div class="yami-ai-primary" id="yami-ai-send" role="button" tabindex="0" aria-disabled="false">发送</div></div>';
     document.querySelector('.yami-perf-dock-body').appendChild(page);
     api.registerPage('ai', page, { title: 'AI 助手', showBack: true, showModeSwitch: false, showClearErrors: false, showTabs: false, showExportBtns: false, refresh() {}, destroy() {} });
     ensureJumpButton();
@@ -1338,11 +1551,17 @@
     document.getElementById('yami-ai-thinking').addEventListener('change', event => quickUpdate({ thinkingMode: event.target.checked ? 'enabled' : 'disabled' }));
     const viewSelect = document.getElementById('yami-ai-thinking-view');
     if (viewSelect) viewSelect.value = thinkingView();
+    const foldSelect = document.getElementById('yami-ai-process-fold');
+    if (foldSelect) foldSelect.value = processFoldMode();
     // 事件委托绑在设置面板上：面板内容重建也不会失效
     const settingsBox = document.getElementById('yami-ai-settings');
     if (settingsBox) {
       settingsBox.addEventListener('change', event => {
         if (event.target && event.target.id === 'yami-ai-thinking-view') setThinkingView(event.target.value);
+        else if (event.target && event.target.id === 'yami-ai-process-fold') {
+          setProcessFold(event.target.value);
+          addMessage('system', '执行过程收起：' + (state.processFold === 'standard' ? '标准（始终展开）' : '紧凑（结束后自动收起）'));
+        }
       });
     }
     activate(document.getElementById('yami-ai-clear'), async () => {

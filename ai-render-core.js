@@ -152,12 +152,109 @@
     return { shown: list.slice(list.length - max), hiddenCount: list.length - max };
   }
 
+  /**
+   * 思考分段状态机：一个用户回合里的多轮推理各成一段。
+   * 判据只有两条 —— 中间发生过工具调用，或者正文已经开始（调用方在那些时刻调 seal()）；
+   * 同一轮的连续增量不换段。以前整回合只有一块，多轮推理糊成一堵墙，用户看到的就是
+   * "只有一个思考窗口"。放这里是为了能单测（DOM 那一层只负责建块与换缓冲）。
+   */
+  function createThinkingSegments() {
+    let round = 0;
+    let sealed = true;   // true = 下一条思考增量要开新段
+    return {
+      /** 收到一条思考增量：要开新段就返回**新段号**（>=1），同一段内继续追加返回 0 */
+      accept: function () {
+        if (!sealed) return 0;
+        sealed = false;
+        round += 1;
+        return round;
+      },
+      /** 封段（工具调用 / 正文开始 / 回合结束）：本次真的从"开着"变成"封上"才返回 true */
+      seal: function () {
+        if (sealed) return false;
+        sealed = true;
+        return true;
+      },
+      round: function () { return round; },
+      sealed: function () { return sealed; },
+      reset: function () { round = 0; sealed = true; }
+    };
+  }
+
+  /**
+   * 轮次过程汇总标题：过程区头部（实时）与收起后的控制条共用同一套口径，
+   * 免得"实时一个说法、收起后另一个说法"。三项全为 0 时给「已思考」，
+   * 不留一个空标题在那里（调用方传 empty: '' 可以关掉这个兜底）。
+   */
+  function processFoldTitle(info) {
+    const source = info || {};
+    const seconds = Math.max(0, Math.round(Number(source.seconds) || 0));
+    const rounds = Math.max(0, Math.round(Number(source.rounds) || 0));
+    const steps = Math.max(0, Math.round(Number(source.steps) || 0));
+    const parts = [];
+    if (seconds > 0) parts.push('思考 ' + seconds + ' 秒');
+    if (rounds > 1) parts.push(rounds + ' 段');
+    if (steps > 0) parts.push(steps + ' 步');
+    if (!parts.length) return source.empty === undefined ? '已思考' : String(source.empty);
+    return parts.join(' · ');
+  }
+
+  /**
+   * 轮次结束要不要把过程收起来（纯判据，DOM 那一层只负责执行）。
+   * 三条任一不满足就不收：
+   *   ① 标准模式：过程行始终可见（用户明确选了"我都要看"）；
+   *   ② 没有最终正文：整轮只有过程证据（被打断/只调了工具），收起等于把仅有的信息藏了；
+   *   ③ 键盘焦点还在过程里：收起会把焦点成员藏掉，先留焦点再谈整洁。
+   */
+  function turnProcessFold(options) {
+    const source = options || {};
+    const mode = source.mode === 'standard' ? 'standard' : 'compact';
+    const rounds = Math.max(0, Math.round(Number(source.rounds) || 0));
+    const steps = Math.max(0, Math.round(Number(source.steps) || 0));
+    const seconds = Math.max(0, Math.round(Number(source.seconds) || 0));
+    const fold = mode === 'compact' && !!source.hasAnswer && !source.focusInside && (rounds > 0 || steps > 0);
+    return { fold: fold, title: processFoldTitle({ seconds: seconds, rounds: rounds, steps: steps }) };
+  }
+
+  /** token 数缩写：13.5k / 1.2M，行内不铺长数字 */
+  function shortTokens(n) {
+    const value = Math.max(0, Number(n) || 0);
+    if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
+    if (value >= 1000) return (value / 1000).toFixed(1) + 'k';
+    return String(Math.round(value));
+  }
+
+  /**
+   * 每轮用量行：**记账不全就整行不显示**（宁可不出行，也不把部分总量冒充完整结果）。
+   * complete 由宿主判定（本轮每一次模型调用都报告了 usage 才算全）。
+   */
+  function formatTurnUsage(usage) {
+    const source = usage || {};
+    const calls = Math.max(0, Math.round(Number(source.calls) || 0));
+    const prompt = Math.max(0, Number(source.promptTokens) || 0);
+    const completion = Math.max(0, Number(source.completionTokens) || 0);
+    const cached = Math.max(0, Number(source.cachedTokens) || 0);
+    const cost = Math.max(0, Number(source.cost) || 0);
+    const total = prompt + completion;
+    if (source.complete !== true || calls <= 0 || total <= 0) return { show: false, text: '', detail: '' };
+    return {
+      show: true,
+      text: '本轮 ' + calls + ' 次调用 · ' + shortTokens(total) + ' tokens' + (cost > 0 ? ' · 约 ' + cost.toFixed(4) + ' 元' : ''),
+      detail: '输入 ' + prompt + ' tokens（缓存命中 ' + cached + '）· 输出 ' + completion + ' tokens' + (cost > 0 ? ' · 估算花费 ' + cost.toFixed(4) + ' 元' : '')
+    };
+  }
+
   return {
     createScheduler: createScheduler,
     createTextBuffer: createTextBuffer,
     createFollowState: createFollowState,
     shouldStickToBottom: shouldStickToBottom,
     previewLine: previewLine,
-    historyWindow: historyWindow
+    historyWindow: historyWindow,
+    createThinkingSegments: createThinkingSegments,
+    processFoldTitle: processFoldTitle,
+    turnProcessFold: turnProcessFold,
+    shortTokens: shortTokens,
+    formatTurnUsage: formatTurnUsage
   };
 });

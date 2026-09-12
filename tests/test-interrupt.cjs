@@ -229,8 +229,16 @@ async function main() {
     }
     host.kill()
     model.close()
-    fs.rmSync(CONFIG_DIR, { recursive: true, force: true })
-    fs.rmSync(sandbox, { recursive: true, force: true })
+    // Windows 上刚 kill 的子进程可能还握着目录句柄，rmSync 会抛 EPERM；
+    // 清理失败不该把一个全绿的套件判成失败 —— 重试几次，仍失败就如实记一行警告。
+    for (const dir of [CONFIG_DIR, sandbox]) {
+      let cleaned = false
+      for (let i = 0; i < 5 && !cleaned; i++) {
+        try { fs.rmSync(dir, { recursive: true, force: true }); cleaned = true }
+        catch (e) { await new Promise(resolve => setTimeout(resolve, 150)) }
+      }
+      if (!cleaned) console.warn('提示: 临时目录未能清理（Windows 句柄占用，不影响结论）: ' + dir)
+    }
     const sess = fs.existsSync(path.join(CONFIG_DIR, 'sessions', 'interrupt-1.json')) ? fs.readFileSync(path.join(CONFIG_DIR, 'sessions', 'interrupt-1.json'), 'utf8') : '(无)'
     if (process.env.YAMI_DEBUG) console.log('\n宿主 stderr:\n' + stderr.slice(-1200) + '\n会话:\n' + sess.slice(0, 600))
   }

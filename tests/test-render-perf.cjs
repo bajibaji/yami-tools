@@ -67,6 +67,64 @@ console.log('\n########## 2. 增量缓冲：只拼接新片段，不复制全文
   check('内容仍然一致', fresh.toString().length === n)
 }
 
+console.log('\n########## 2.4 缓冲的"最后一行"（思考实时预览靠它，不许每帧 split 全文）##########')
+{
+  const buf = core.createTextBuffer()
+  buf.append('第一行')
+  check('没有换行时最后一行就是全部', buf.lastLine() === '第一行', buf.lastLine())
+  buf.append('\n第二行')
+  check('换行后取到新的一行', buf.lastLine() === '第二行', buf.lastLine())
+  buf.append('\n\n')
+  check('空行不算最后一行', buf.lastLine() === '第二行', JSON.stringify(buf.lastLine()))
+  buf.append('x'.repeat(400))
+  check('超长只保留末尾（预览靠右侧看最新）', buf.lastLine(50).length === 50 && buf.lastLine(50) === 'x'.repeat(50))
+  const fresh = core.createTextBuffer()
+  check('空缓冲不炸', fresh.lastLine() === '')
+  fresh.append('a\nb\nc')
+  check('反复读结果稳定（增量维护不漂移）', fresh.lastLine() === 'c' && fresh.lastLine() === 'c')
+}
+
+console.log('\n########## 2.5 思考分段：一个回合里的多轮推理各成一段 ##########')
+{
+  const seg = core.createThinkingSegments()
+  check('回合开始时第一条思考增量开第 1 段', seg.accept() === 1 && seg.round() === 1)
+  check('同一轮内的连续增量仍归第 1 段（不换块）', seg.accept() === 0 && seg.accept() === 0 && seg.round() === 1)
+  check('工具调用把这一段封上', seg.seal() === true && seg.sealed() === true)
+  check('工具跑完后的思考增量开第 2 段', seg.accept() === 2 && seg.round() === 2)
+  check('重复封段不重复计数（工具 start/done 都会调）', seg.seal() === true && seg.seal() === false && seg.round() === 2)
+  check('已在封口状态再封一次是空操作（封段幂等）', seg.seal() === false && seg.sealed() === true)
+  check('正文开始封段后，下一轮思考另起第 3 段', seg.accept() === 3 && seg.round() === 3 && seg.sealed() === false)
+  seg.reset()
+  check('新回合归零', seg.round() === 0 && seg.sealed() === true && seg.accept() === 1)
+}
+
+console.log('\n########## 2.6 轮次过程收起与每轮用量（参考 DSH 的紧凑模式语义）##########')
+{
+  const title = core.processFoldTitle
+  check('标题按「思考秒数 · 段数 · 步数」拼', title({ seconds: 12, rounds: 3, steps: 5 }) === '思考 12 秒 · 3 段 · 5 步', title({ seconds: 12, rounds: 3, steps: 5 }))
+  check('单段任务不报段数（单段没有编号噪音）', title({ seconds: 4, rounds: 1, steps: 0 }) === '思考 4 秒', title({ seconds: 4, rounds: 1, steps: 0 }))
+  check('零活动给「已思考」而不是空标题', title({ seconds: 0, rounds: 0, steps: 0 }) === '已思考')
+  check('调用方可以关掉兜底文案', title({ seconds: 0, rounds: 0, steps: 0, empty: '' }) === '')
+
+  const fold = core.turnProcessFold
+  check('紧凑模式 + 有最终正文 → 收起', fold({ mode: 'compact', hasAnswer: true, rounds: 2, steps: 3, seconds: 9 }).fold === true)
+  check('收起后标题就是汇总', fold({ mode: 'compact', hasAnswer: true, rounds: 2, steps: 3, seconds: 9 }).title === '思考 9 秒 · 2 段 · 3 步')
+  check('标准模式永不自动收起', fold({ mode: 'standard', hasAnswer: true, rounds: 2, steps: 3 }).fold === false)
+  check('没有最终正文时不收起（保留全部过程证据）', fold({ mode: 'compact', hasAnswer: false, rounds: 2, steps: 3 }).fold === false)
+  check('焦点还在过程里时不收起', fold({ mode: 'compact', hasAnswer: true, rounds: 1, steps: 1, focusInside: true }).fold === false)
+  check('整轮什么都没发生时不收起（没什么可收的）', fold({ mode: 'compact', hasAnswer: true, rounds: 0, steps: 0 }).fold === false)
+  check('模式缺省按紧凑（默认就是紧凑）', fold({ hasAnswer: true, rounds: 1, steps: 1 }).fold === true)
+
+  const usage = core.formatTurnUsage
+  check('记账完整才出行', usage({ complete: true, calls: 2, promptTokens: 11000, completionTokens: 2500, cost: 0.0042 }).show === true)
+  check('行内用 k 缩写', usage({ complete: true, calls: 2, promptTokens: 11000, completionTokens: 2500, cost: 0.0042 }).text === '本轮 2 次调用 · 13.5k tokens · 约 0.0042 元', usage({ complete: true, calls: 2, promptTokens: 11000, completionTokens: 2500, cost: 0.0042 }).text)
+  check('详情给原始 token 与缓存命中', /输入 11000 tokens（缓存命中 \d+）/.test(usage({ complete: true, calls: 1, promptTokens: 11000, completionTokens: 2500 }).detail))
+  check('记账不全 → 整行不显示（不拿部分总量冒充完整）', usage({ complete: false, calls: 2, promptTokens: 11000, completionTokens: 2500 }).show === false)
+  check('零调用不显示', usage({ complete: true, calls: 0, promptTokens: 0, completionTokens: 0 }).show === false)
+  check('拿不到 tokens 不显示', usage({ complete: true, calls: 1 }).show === false)
+  check('没价目表时不编花费', usage({ complete: true, calls: 1, promptTokens: 500, completionTokens: 100 }).text === '本轮 1 次调用 · 600 tokens', usage({ complete: true, calls: 1, promptTokens: 500, completionTokens: 100 }).text)
+}
+
 console.log('\n########## 3. 单行预览：用最后一行，不每次 split 全文 ##########')
 {
   const buf = core.createTextBuffer()

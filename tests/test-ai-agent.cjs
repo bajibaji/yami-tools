@@ -84,17 +84,30 @@ const model = http.createServer(async (req, res) => {
   const latestUser = messages[latestUserIndex]
   const hasToolAfterUser = latestUserIndex >= 0 && messages.slice(latestUserIndex + 1).some(message => message.role === 'tool')
   let message
-  if (latestUser && latestUser.content.includes('只读') && !hasToolAfterUser) {
+  // 多轮思考场景：第一轮只有思考 + 只读工具调用（没有正文），第二轮再思考并给正文。
+  // 历史回放必须把这种"只有思考没正文"的轮次也带出来，否则回放比实时少内容。
+  if (latestUser && latestUser.content.includes('多轮思考') && !hasToolAfterUser) {
+    message = {
+      role: 'assistant', content: '', reasoning_content: '第一轮思考：先看看有哪些脚本。',
+      tool_calls: [{ id: 'rounds-1', type: 'function', function: { name: 'list_scripts', arguments: '{}' } }]
+    }
+  } else if (latestUser && latestUser.content.includes('多轮思考') && hasToolAfterUser) {
+    message = { role: 'assistant', content: '两轮都跑完了。', reasoning_content: '第二轮思考：看到结果了，可以收尾。' }
+  } else if (latestUser && latestUser.content.includes('只读') && !hasToolAfterUser) {
     message = { role: 'assistant', content: '', tool_calls: [{ id: 'read-1', type: 'function', function: { name: 'list_scripts', arguments: '{}' } }] }
   } else if (latestUser && latestUser.content.includes('修改') && !hasToolAfterUser) {
     message = {
       role: 'assistant', content: '准备修改事件描述。',
       tool_calls: [{ id: 'write-1', type: 'function', function: { name: 'patch_resource', arguments: JSON.stringify({ path: EVENT_REL, patch: { description: 'AI E2E preview only' } }) } }]
     }
+  } else if (latestUser && latestUser.content.includes('无记账')) {
+    // 故意不报 usage：用来验证"记账不全就整行不显示"，而不是拿部分总量冒充完整结果
+    message = { role: 'assistant', content: '这次不报用量。' }
+    return json(res, 200, { choices: [{ message }] })
   } else {
     message = { role: 'assistant', content: latestUser && latestUser.content.includes('修改') ? '修改已取消，工程未变化。' : '只读工具调用完成。' }
   }
-  json(res, 200, { choices: [{ message }] })
+  json(res, 200, { choices: [{ message }], usage: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 } })
 })
 
 function request(route, method = 'GET', body = null) {
@@ -175,6 +188,30 @@ async function main() {
     assert.equal(rejected.data.status, 'done', JSON.stringify(rejected.data))
     assert.match(rejected.data.message, /取消/)
     assert.equal(fs.readFileSync(EVENT_PATH, 'utf8'), originalEvent, '取消后工程不得变化')
+
+    // 回放与实时同构：一个回合里的多轮思考各成一条（含"只有思考没正文"的工具轮），
+    // 工具步骤也要还原成中文名 —— 否则切回旧会话就是"思考丢了、步骤也没了"。
+    const rounds = await request('/chat', 'POST', { sessionId: 'rounds', message: '多轮思考：先列脚本再总结' })
+    assert.equal(rounds.data.status, 'done', JSON.stringify(rounds.data))
+    const replayed = await request('/session/load', 'POST', { sessionId: 'rounds' })
+    assert.equal(replayed.data.ok, true, JSON.stringify(replayed.data))
+    const assistants = replayed.data.messages.filter(item => item.role === 'assistant')
+    assert.ok(assistants.some(item => /第一轮思考/.test(String(item.reasoning || ''))), '第一轮（只有思考没正文）的思考必须回放出来')
+    assert.ok(assistants.some(item => /第二轮思考/.test(String(item.reasoning || ''))), '后续轮次的思考也必须回放出来')
+    const stepped = assistants.find(item => Array.isArray(item.steps) && item.steps.length)
+    assert.ok(stepped && stepped.steps.includes('列出脚本'), '工具步骤要随回放还原成中文名：' + JSON.stringify(stepped && stepped.steps))
+
+    // 每轮用量行：记账完整才上报（前端据此决定渲染那一行）
+    const usageTurn = await request('/chat', 'POST', { sessionId: 'usage', message: '多轮思考：先列脚本再总结' })
+    assert.equal(usageTurn.data.status, 'done', JSON.stringify(usageTurn.data))
+    const turnUsage = usageTurn.data.turnUsage || {}
+    assert.equal(turnUsage.complete, true, '本轮每一次模型调用都报了 usage 时，用量必须是完整的：' + JSON.stringify(turnUsage))
+    assert.ok(turnUsage.promptTokens > 0 && turnUsage.calls >= 1, '要给出本轮增量而不是累计：' + JSON.stringify(turnUsage))
+    assert.ok(turnUsage.completionTokens > 0, JSON.stringify(turnUsage))
+    // 借道非 SSE 降级路径（假模型返回整段 JSON）：usage 与思考都必须被读到
+    const noUsageTurn = await request('/chat', 'POST', { sessionId: 'nousage', message: '无记账：只说一句话' })
+    assert.equal(noUsageTurn.data.status, 'done', JSON.stringify(noUsageTurn.data))
+    assert.equal((noUsageTurn.data.turnUsage || {}).complete, false, '有一次模型调用没报 usage，本轮用量就必须判为不完整（前端整行不显示）')
 
 
     // Base URL 口径（官方文档：BASE URL = https://api.deepseek.com，对话接口是 base + /chat/completions）
@@ -322,6 +359,45 @@ async function main() {
     // 思考过程要能"回放"：磁盘上一直存着 reasoning_content，回显链路两头都得接上
     assert.ok(/reasoning: message\.reasoning_content/.test(hostSource), '宿主回显历史必须带上思考过程，否则切回旧会话就像思考凭空消失')
     assert.ok(/appendThinkingBlock\(message\.reasoning/.test(agentSource), '切回历史会话时要回放当时的思考块')
+
+    // 思考按「模型轮次」分段（用户反馈：整回合只有一块，多轮推理糊成一堵墙）
+    assert.ok(/function sealThinking\(/.test(agentSource) && /function beginThinkingRound\(/.test(agentSource), '思考必须能封段与开段：一个回合里的多轮推理各成一段')
+    assert.ok(/if \(event\.type === 'tool'\) \{[\s\S]{0,200}?sealThinking\(\)/.test(agentSource), '工具调用是轮次分界：收到工具事件必须把当前段封口，下一段思考才会另起一块')
+    assert.ok(/const segment = thinkingSegments\.accept\(\)/.test(agentSource) && /beginThinkingRound\(segment - 1\)/.test(agentSource), '封段之后的下一条思考增量必须另起一段（否则又并回上一块）')
+    assert.ok(/renderCore\.createThinkingSegments/.test(agentSource) && /createThinkingSegments: createThinkingSegments/.test(coreSource), '分段状态机必须用渲染核心那一份（纯逻辑可单测），面板不许再写第二套判据')
+    assert.ok(/function \(\) \{\s*let round = 0;/.test(agentSource), '渲染核心缺失时要有同语义的内联兜底（少个文件也不能就不分段了）')
+    assert.ok(/labelThinkingRound\(currentThinkingEl, previousIndex\)/.test(agentSource) && /function labelThinkingRound\(/.test(agentSource), '第 1 段要等到"确实还有第 2 段"时才补编号，不然单段任务会挂个没意义的"第 1 段"')
+    assert.ok(/function beginThinkingRound\(previousIndex\) \{[\s\S]{0,220}?currentThinkingEl = null;[\s\S]{0,80}?renderThinking\(''\)/.test(agentSource), '开新段前必须把 currentThinkingEl 置空：旧块还 connected，不置空 renderThinking 不会新建，新一段会灌进上一段')
+    assert.ok(/setThinkingMeta\(currentThinkingEl, thinkingSegments\.round\(\), seconds/.test(agentSource), '每段自己的计时与字数必须写进段头')
+    assert.ok(/thinkingSegments\.reset\(\)/.test(agentSource) && /thinkingTotalMs/.test(agentSource), '新回合要归零段计数，累计耗时也必须显式声明（严格模式下未声明赋值会抛错）')
+    assert.ok(/endThinkingRounds\(\)/.test(agentSource), '回合结束要把最后一段也定稿，不能挂着一直计时')
+    assert.ok(/renderCore\.processFoldTitle/.test(agentSource) && /rounds: thinkingSegments\.round\(\)/.test(agentSource), '过程区头部要报"想了几段"（口径与收起后共用渲染核心那一份）')
+    assert.ok(/rounds > 1\) parts\.push\(rounds \+ ' 段'\)/.test(coreSource), '段数文案在渲染核心里（单段任务不报段数）')
+    // 回放要与实时同构：段落边界、编号、工具步骤一个都不能少
+    assert.ok(/labelThinkingRound\(lastReplayThinking, replayRound\)/.test(agentSource) && /replayThinkingMeta\(/.test(agentSource), '历史回放也要按段落分块并编号')
+    assert.ok(/message\.content \|\| message\.reasoning_content/.test(hostSource), '宿主回显必须把"只有思考没正文"的工具轮也带上，否则回放比实时少内容')
+    assert.ok(/steps: calls\.map\(call => toolLabel/.test(hostSource) && /Array\.isArray\(message\.steps\)/.test(agentSource), '工具步骤要随回放一起还原（回放与实时的过程区必须长得一样）')
+    assert.ok(/if \(message\.content\) addMessage\(/.test(agentSource), '纯工具轮没有正文，不许塞空气泡')
+
+    // 轮次过程收起（参考 DSH 的紧凑模式）+ 每轮用量行
+    assert.ok(/function applyTurnFold\(/.test(agentSource) && /applyTurnFold\(\);/.test(agentSource), '轮次结束要按偏好决定收不收过程行')
+    assert.ok(/renderCore\.turnProcessFold/.test(agentSource) && /turnProcessFold: turnProcessFold/.test(coreSource), '收起判据必须用渲染核心那一份（纯逻辑可单测），面板不许自己再写一套')
+    assert.ok(/area\.box\.contains\(document\.activeElement\)/.test(agentSource), '自动收起若会把键盘焦点藏掉，必须保持展开（焦点不能莫名其妙消失）')
+    assert.ok(/currentTurn\.body && currentTurn\.body\.textContent\.trim\(\)/.test(agentSource), '没有最终正文时不得收起：那轮只剩过程证据，收了等于把信息藏了')
+    assert.ok(/function processFoldMode\(/.test(agentSource) && /danjuan-ai-process-fold/.test(agentSource), '紧凑/标准两档要能落盘记住')
+    assert.ok(/id="yami-ai-process-fold"/.test(agentSource) && /setProcessFold\(event\.target\.value\)/.test(agentSource), '设置面板要有「执行过程收起」档并能改')
+    assert.ok(/processFold: \['compact', 'standard'\]\.includes/.test(hostSource) && /processFold: config\.processFold === 'standard'/.test(hostSource), '宿主配置要校验并回传该档（换窗口后设置不丢）')
+    // 「再次出现的思考窗口没有文字」的两个根因，各自钉一条断言
+    assert.ok(!/thinkingTextNode/.test(agentSource), '思考的文本节点不许再用 streamChat 的闭包变量：开新段时它仍指向上一块（还 connected），新段的字会全灌进旧块、新块永远是空的')
+    assert.ok(/body\.firstChild && body\.firstChild\.nodeType === 3/.test(agentSource), '展开模式的文本节点必须从当前块里取（一段一块，块与块不能共用节点）')
+    assert.ok(/mode === 'preview'[\s\S]{0,560}?reasoningBuffer\.lastLine\(160\)/.test(agentSource), '单行预览必须实时刷新那一行（用缓冲的 lastLine，不许每帧 split 全文），否则刚出现的思考窗口整段都是空的')
+    assert.ok(/let span = body\.firstElementChild[\s\S]{0,600}?span\.textContent !== line/.test(agentSource), '预览行要就地更新，别每帧重建节点')
+    assert.ok(/renderTurnUsage\(finalResult\.turnUsage\)/.test(agentSource) && /renderTurnUsage\(data\.turnUsage\)/.test(agentSource), '流式与审批两条路径都要渲染每轮用量行')
+    assert.ok(/formatTurnUsage/.test(agentSource) && /formatTurnUsage: formatTurnUsage/.test(coreSource), '用量行的"记账不全就不显示"要用渲染核心那一份')
+    assert.ok(/noteModelAttempt\(session, !!\(assistant && assistant\.__usage\)\)/.test(hostSource), '每次模型调用都要记一笔（没报 usage 的那次会让整行不显示）')
+    assert.ok(/async function runTurn\(session, config, events\)/.test(hostSource) && /turnUsageOf\(session\)/.test(hostSource), '每轮用量要挂在结果上交给前端')
+    assert.ok(/\.yami-ai-turn-usage \{/.test(hudSource), '用量行要有样式（否则前端建了也看不见）')
+    assert.ok(/let reasoningBuffer = renderCore \? renderCore\.createTextBuffer\(\) : null/.test(agentSource) && /reasoningBuffer = renderCore \? renderCore\.createTextBuffer\(\) : null;/.test(agentSource), '每段必须换一个思考缓冲：共用一个缓冲会让第二段把第一段的字一起吞进去')
 
     // 滚动跟随：生成时自动停在最新，用户往上翻历史时一个字都不许动他的视口
     assert.ok(/createFollowState/.test(coreSource) && /createFollowState/.test(agentSource), '滚动跟随状态机要放在渲染核心里实现（纯逻辑可单测）')

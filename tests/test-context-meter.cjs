@@ -308,8 +308,16 @@ async function main() {
     if (process.env.YAMI_DEBUG) console.log('\n[宿主 stderr]\n' + stderr.slice(-2000))
     host.kill()
     model.close()
-    fs.rmSync(CONFIG_DIR, { recursive: true, force: true })
-    fs.rmSync(sandbox, { recursive: true, force: true })
+    // Windows 上刚 kill 的子进程可能还握着目录句柄，rmSync 会抛 EPERM；
+    // 清理失败不该把一个全绿的套件判成失败 —— 重试几次，仍失败就如实记一行警告。
+    for (const dir of [CONFIG_DIR, sandbox]) {
+      let cleaned = false
+      for (let i = 0; i < 5 && !cleaned; i++) {
+        try { fs.rmSync(dir, { recursive: true, force: true }); cleaned = true }
+        catch (e) { await new Promise(resolve => setTimeout(resolve, 150)) }
+      }
+      if (!cleaned) console.warn('提示: 临时目录未能清理（Windows 句柄占用，不影响结论）: ' + dir)
+    }
   }
 
   console.log(`\n########## 上下文计量与压缩: ${passed} PASS / ${failed} FAIL ##########`)

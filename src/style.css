@@ -3517,6 +3517,18 @@
         background: #1e1e22 !important;
         overflow: hidden !important;
       }
+      /* 收起后的过程行：只留一行控制条，别再占正文的地盘 */
+      .yami-ai-process.collapsed {
+        background: #1a1a1e !important;
+      }
+      /* 每轮用量行：贴在轮次末尾的一行小字，记账不全时根本不会出现 */
+      .yami-ai-turn-usage {
+        color: #6a6a78 !important;
+        font-size: 11px !important;
+        font-family: Consolas, monospace !important;
+        padding-inline-start: 2px !important;
+        cursor: default !important;
+      }
       .yami-ai-process-head {
         display: flex !important;
         align-items: center !important;
