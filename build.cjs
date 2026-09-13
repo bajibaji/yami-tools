@@ -246,7 +246,12 @@ const requiredAnchors = [
   { name: '体检按级别汇总', pattern: /stats\.levels/ },
   { name: '滚动条单一事实源', pattern: /滚动条单一事实源/ },
   { name: 'AI 助手页面扩展点', pattern: /__DANJUAN_HUD_API__/ },
-  { name: 'AI 余额与花费位（版本号一行）', pattern: /id="yami-ai-footer-cost"/ }
+  { name: 'AI 余额与花费位（版本号一行）', pattern: /id="yami-ai-footer-cost"/ },
+  { name: '界面操作演出引擎浮层', pattern: /yami-ai-ring/ },
+  { name: '常显上下文行容器', pattern: /yami-ai-scope/ },
+  { name: '意图对齐卡容器', pattern: /yami-ai-align/ },
+  { name: '收束边框零重排动画', pattern: /yami-ai-ring-in/ },
+  { name: '界面演示撤销入口', pattern: /yami-ai-step-undo/ }
 ];
 
 let failedCount = 0;
@@ -325,10 +330,16 @@ const aiAnchors = [
   ['AI 写入确认按钮', /执行修改/],
   ['AI 取消修改按钮', /取消修改/],
   ['AI Agent 工具审批', /status: 'approval'/],
-  ['AI 内置 MCP 路径', /runtime.*yami-mcp.*server\.js/]
+  ['AI 内置 MCP 路径', /runtime.*yami-mcp.*server\.js/],
+  ['AI 界面操作执行器', /uiSteps/],
+  ['AutoReload 竞态防踩判定', /hasPendingInput/],
+  ['双实例握手防串工程', /whoami/],
+  ['界面演示工具接线', /ui_steps/],
+  ['急停动作白名单', /'cancel'/],
+  ['开工前对齐卡协议', /alignment-card/]
 ];
 for (const [name, pattern] of aiAnchors) {
-  if (!pattern.test(aiAgentContent + '\n' + aiHostContent)) {
+  if (!pattern.test(aiAgentContent + '\n' + aiHostContent + '\n' + probeRaw)) {
     console.error(`❌ [断言失败] 缺失关键锚点: ${name}`);
     failedCount++;
   }

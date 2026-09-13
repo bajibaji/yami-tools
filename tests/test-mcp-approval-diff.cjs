@@ -19,7 +19,7 @@ const { spawn } = require('child_process')
 
 const ROOT = path.resolve(__dirname, '..')
 const MCP = path.join(ROOT, 'runtime', 'yami-mcp', 'server.js')
-const FIXTURE = process.env.YAMI_TEST_PROJECT || '/home/deck/yami-fixture'
+const FIXTURE = require('./resolve-project.cjs').resolveProject()
 const SCRIPT_REL = 'Assets/插件/全局插件/Steamworks.2aafc4d56d4590d8.ts'
 const CODE_ANCHOR = 'const regexp = /^--app-path=(.+)$/'
 

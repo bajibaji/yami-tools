@@ -11,6 +11,8 @@ const { spawn } = require('child_process')
 const pricing = require('./runtime/yami-mcp/modules/pricing')
 const messagePairs = require('./runtime/yami-mcp/modules/message-pairs')
 const contextMeter = require('./runtime/yami-mcp/modules/context-meter')
+const EditorBridge = require('./runtime/yami-mcp/modules/editor-bridge')
+const editorBridge = new EditorBridge()
 
 const PORT = Number(process.env.YAMI_AI_PORT || 5968)
 const TOKEN = process.env.YAMI_AI_TOKEN || crypto.randomBytes(24).toString('hex')
@@ -1158,7 +1160,30 @@ const SYSTEM_PROMPT = `你是 Open Yami RPG Editor 内置开发副驾。用简�
     需要先在编辑器里启动试玩；如果没在试玩中，如实告诉用户"请先点试玩"，不要假装跑过。
 16. 用户说"改回去 / 撤销 / 恢复原样 / 刚才那个不要了"时：用 list_backups 找到要回退的文件与时间点，
     再用 restore_backup 回退（不传 backup 即回到最早那次，也就是你动手之前）；回退前先 dryRun 让用户看到差异。
-    回退本身也会留一份安全备份，所以不必担心"退错了就回不去"。`
+    回退本身也会留一份安全备份，所以不必担心"退错了就回不去"。
+
+【界面演示：能在界面上做的，就让用户看着你做】
+17. 当用户要调的某个东西在编辑器界面上有对应控件（属性面板里的一格、某个按钮、某个工作页）时，
+    优先用 ui_steps 在界面上**演出来**，而不是闷头改文件：用户能看着你一步一步点，心里才有底。
+    steps 里每一步写清 kind（focus/set/click/goto/wait）、target（CSS 选择器，如 #fileItem-attack）、
+    不确定控件选择器时先用 dump_ui_hierarchy 拿到界面上真实存在的 id 与选择器，不要凭空猜（猜错会当场熔断）；
+    label（一句白话，会显示在高亮框旁边，别写代码术语）；
+    同一次需求里相关的几步填同一个 mergeGroup，演出会合并成一轮，不会一顿一顿。
+18. ui_steps 走的是引擎公开入口，等价于"用户自己点了那里"，不是鼠标模拟；
+    用户随时可以按停，所以每一步都要能独立看懂，做完了用一句白话交代刚才动了哪几步、结果如何。
+19. 不是所有活儿都能演：canvas 里的对象、脚本内容这类没有界面控件可圈的，就不要硬凑，
+    如实说一句"这个我只能在后台改"，然后照常走文件工具。
+20. ui_steps 是**唯一**会动用户界面的工具；不要用 interact_editor 去模拟鼠标点属性面板，那是兜底手段。
+21. 界面操作失败时（某一步找不到控件、或用户按了停）不要假装成功、也不要立刻重试同一批步骤：
+    如实说清是第几步卡住的、前面哪几步已经生效，再问用户要不要换个做法。
+
+【开工前先对齐：需求有影响做法的歧义就问，没有就别凑数】
+22. 如果用户的需求里存在**会改变你下一步怎么做**的关键歧义（比如"这个技能强一点"到底改哪一项、改成多少），
+    不要自己拍板开工，先在回复里给出一张对齐卡。对齐卡必须独占一段、前后不要夹别的内容，格式：
+    <alignment-card>{"summary":"我理解你要把木剑改强","questions":[{"title":"攻击力改成多少？","options":["25","40"]}],"defaults":["其余属性不动"]}</alignment-card>
+    面板会把它渲染成可点的选项卡，用户点「开工」之后你才会收到确认，那之前不要动手。
+23. 只问"答案会改变你下一步做法"的问题，数量不设上限但也不要凑数；需求已经明确时直接开工，不要为了显得严谨硬发一张卡。
+    给出 questions 时每个选项都要是具体可执行的取值，不要写"你决定"这种空转选项。`
 
 
 
@@ -1611,7 +1636,8 @@ const TOOL_LABELS = {
   dump_ui_hierarchy: '读取界面结构', click_element: '点击界面元素', trigger_playtest: '启动试玩',
   get_runtime_state: '读取运行状态', playtest_smoke: '试玩冒烟测试', send_player_input: '发送按键', send_player_pointer: '发送鼠标',
   search_project: '工程内检索', edit_script: '精确改脚本', diagnose_runtime: '读取运行诊断',
-  project_changelog: '生成改动小结', todo_write: '更新待办清单'
+  project_changelog: '生成改动小结', todo_write: '更新待办清单',
+  ui_steps: '在界面上演示操作'
 }
 
 function toolLabel(name) {
@@ -1702,6 +1728,11 @@ function toolInfoOf(result) {
       info.spill = { path: String(result.__clip.spillPath), chars: Number(result.__clip.originalChars) || 0 }
     }
   }
+  // 界面演示：把"演了几步"带给卡片，面板据此给「撤销这一步」入口（不给具体步骤，省上下文）
+  if (result.action === 'uiSteps' || result.action === 'ui_steps') {
+    info.uiSteps = true
+    info.done = Array.isArray(result.done) ? result.done.length : 0
+  }
   delete info.__clip
   return Object.keys(info).length ? info : null
 }
@@ -1777,6 +1808,22 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
 
     if (events.onTool) events.onTool({ phase: 'start', key: String(call && call.id || name), name, label: toolLabel(name), target: String(args.path || args.table || args.action || args.key || '') })
     const isFileMutation = FILE_MUTATIONS.has(name)
+    // P0-3: 写盘与界面改属性前，检查是否有未失焦/未提交的输入 (AutoReload 竞态防踩)。
+    // ui_steps 也是一次"改属性"，用户打了一半的字同样会被 AutoReload 冲掉，所以一并拦。
+    if (isFileMutation || name === 'ui_steps') {
+      try {
+        const ctxRes = await editorBridge.getContext()
+        if (ctxRes && ctxRes.ok && ctxRes.context && ctxRes.context.hasPendingInput === true) {
+          const rejectMsg = '检测到编辑器中有未失焦的输入正在进行，为防修改被冲掉，请先敲击回车或点击空白处失焦后再试'
+          const errRes = { ok: false, hasPendingInput: true, error: rejectMsg }
+          session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(errRes, name) })
+          saveSession(session)
+          results.push({ name, result: errRes })
+          if (events.onTool) events.onTool({ phase: 'fail', key: String(call && call.id || name), name, label: toolLabel(name), detail: rejectMsg, info: toolInfoOf(errRes) })
+          continue
+        }
+      } catch (e) {}
+    }
     const granted = isFileMutation && isGranted(session, name, args)
     const needsApproval = !granted && (isFileMutation || (OTHER_MUTATIONS.has(name) && config.approvalMode !== 'auto'))
     if (granted && events.onNotice) {
@@ -1859,6 +1906,23 @@ async function handle(pathname, body, events = {}) {
     if (!text) throw new Error('引导内容不能为空')
     if (!session.busy) return { ok: true, busy: false, queued: 0, note: '当前没有正在跑的任务，直接发送即可' }
     return { ok: true, busy: true, queued: queueSteer(session, text) }
+  }
+  if (pathname === '/ui-cancel') {
+    try {
+      const stopped = await editorBridge.action('cancel', { reason: body && body.reason ? body.reason : '用户停止' })
+      if (stopped && stopped.ok === false && stopped.error) return { ok: false, error: stopped.error }
+    } catch (e) {}
+    return { ok: true, cancelled: true }
+  }
+  // 绿档动作的「撤销这一步」：界面上刚演完的那一步，一键退回（走引擎 UndoManager）
+  if (pathname === '/ui-undo') {
+    try {
+      const undone = await editorBridge.action('undo')
+      if (undone && undone.ok === false) return { ok: false, error: undone.error || '编辑器没有可撤销的记录' }
+      return { ok: true, undone: true }
+    } catch (e) {
+      return { ok: false, error: '撤销失败：' + e.message }
+    }
   }
   if (pathname === '/quick-config') {
     // 只更新传入的字段（模型 / 思考开关 / 思考强度），其余保持原值。
@@ -2042,8 +2106,16 @@ async function handle(pathname, body, events = {}) {
     session.repairs = 0     // 每条新需求重新给自动修复预算
     session.toolTally = {}  // 以及重新开始统计工具调用次数（重复提示按轮计）
     saveSession(session)
-    if (body.envSummary && !events.envSummary) events.envSummary = String(body.envSummary).trim()
-    // 留一个可等待的句柄 + 取消令牌：下一条需求进来时若发现"已取消但还在收尾"，就能等它收完
+    if (body.pageContext) {
+      const pc = body.pageContext
+      if (pc.page === 'playtest') {
+        events.envSummary = `【当前环境】当前处于试玩运行中：${pc.summary || '游戏正在运行'}`
+      } else if (pc.summary) {
+        events.envSummary = pc.summary.startsWith('【当前环境】') ? pc.summary : `【当前环境】${pc.summary}`
+      }
+    } else if (body.envSummary && !events.envSummary) {
+      events.envSummary = String(body.envSummary).trim()
+    }
     const running = runTurn(session, readStoredConfig(), events)
     session.activeRun = running
     session.activeCancel = events.cancelToken || null
@@ -2069,6 +2141,16 @@ async function handle(pathname, body, events = {}) {
     let packedApproved = ''
     if (rejected) result = { ok: false, rejected: true, message: '用户取消了这项操作' }
     else {
+      if (FILE_MUTATIONS.has(pending.name)) {
+        try {
+          const ctxRes = await editorBridge.getContext()
+          if (ctxRes && ctxRes.ok && ctxRes.context && ctxRes.context.hasPendingInput === true) {
+            throw new Error('检测到编辑器中有未失焦的输入正在进行，为防修改被冲掉，请先敲击回车或点击空白处失焦后再确认执行')
+          }
+        } catch (e) {
+          if (e.message && e.message.includes('未失焦的输入')) throw e
+        }
+      }
       const args = FILE_MUTATIONS.has(pending.name)
         ? {
             ...pending.args,

@@ -35,6 +35,7 @@ const SUITE = [
   ['test-compiler-lookup.cjs','编译器查找与降级语义(跨平台tsc+没得校验不回滚)'],
   ['test-parallel-tools.cjs', '只读工具并发执行(按注册表声明+写盘独占)'],
   ['test-acceptance.cjs',     '整体验收(工作流串联+真实工程只读体检)'],
+  ['test-ui-operation.cjs',   '界面操作(收束边框+步骤执行+急停)'],
   ['test-autoupdate.mjs',   '热更新端到端 (需联网)'],
 ];
 

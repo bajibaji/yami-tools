@@ -20,7 +20,7 @@ const path = require('path')
 const { spawn } = require('child_process')
 
 const ROOT = path.resolve(__dirname, '..')
-const PROJECT = process.env.YAMI_TEST_PROJECT || '/home/deck/yami-fixture'
+const PROJECT = require('./resolve-project.cjs').resolveProject()
 const TOKEN = crypto.randomBytes(24).toString('hex')
 const AI_PORT = 16968 + Math.floor(Math.random() * 500)
 const MODEL_PORT = AI_PORT + 500

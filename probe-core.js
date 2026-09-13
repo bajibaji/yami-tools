@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.5.3';
+  const PROBE_VERSION = '1.6.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -1897,18 +1897,91 @@
   }
 
   // ============================================================
-  // 编辑器与运行时上下文感知 (AI 助手场景、选中项与检视状态快照)
   // ============================================================
+  // 编辑器与运行时上下文感知 (AI 助手场景、工作页面与检视状态快照)
+  // ============================================================
+  // 页面身份判定必须待在模块作用域：getScope / getEditorContext 都要引用它。
+  // 此前它声明在文件下方的 try 块里（块级 const），函数在模块作用域引用它 ——
+  // 词法上根本看不见，于是 getEditorContext() 每次调用都抛
+  // "ReferenceError: isEditorHostPage is not defined"，/context 路由与整个环境感知全灭。
+  const pageHref = (function () {
+    try {
+      if (typeof window === 'undefined' || !window.location) return '';
+      return String(window.location.href || '').replace(/\\/g, '/');
+    } catch (e) {
+      return '';
+    }
+  })();
+  const isEditorHostPage = /\/resources\/app\/dist\//i.test(pageHref)
+    || /^https?:\/\/localhost:5173\//i.test(pageHref)
+    || /\/dist\/index\.html$/i.test(pageHref);
+
+  function hasPendingInput() {
+    try {
+      if (typeof document === 'undefined') return false;
+      const el = document.activeElement;
+      if (!el) return false;
+      const tag = el.tagName ? el.tagName.toLowerCase() : '';
+      if (tag === 'input' || tag === 'textarea' || el.isContentEditable) {
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function getScope() {
+    try {
+      if (!isEditorHostPage) {
+        if (typeof Game !== 'undefined' && typeof Game.update === 'function') {
+          return { type: 'playtest', name: '独立试玩窗口' };
+        }
+        return { type: 'standalone', name: '独立运行' };
+      }
+      if (typeof document !== 'undefined') {
+        const activeSubWin = document.querySelector('.window.active, .sub-window.active, window-frame.active');
+        if (activeSubWin) {
+          const titleEl = activeSubWin.querySelector('.title, .window-title, header');
+          const subTitle = titleEl ? (titleEl.textContent || '').trim() : '';
+          if (subTitle) {
+            return { type: 'subwindow', name: subTitle };
+          }
+        }
+      }
+      const layoutIdx = (typeof Layout !== 'undefined' && Layout && Layout.manager && Layout.manager.index) || '';
+      const PAGE_MAP = {
+        home: '首页',
+        directory: '资源管理器',
+        project: '工程设置',
+        scene: '场景编辑',
+        ui: '界面编辑',
+        animation: '动画编辑',
+        particle: '粒子编辑'
+      };
+      if (layoutIdx) {
+        return { type: 'layout', index: layoutIdx, name: PAGE_MAP[layoutIdx] || layoutIdx };
+      }
+      return { type: 'editor', name: '编辑器' };
+    } catch (e) {
+      return { type: 'unknown', name: '未知' };
+    }
+  }
+
   function getEditorContext() {
     // 页面类型判定：有 Game.update 且不在编辑器宿主页，即为独立试玩窗口
     const isPlaytest = !isEditorHostPage && typeof Game !== 'undefined' && typeof Game.update === 'function';
+    const scope = getScope();
     const result = {
       environment: isPlaytest ? 'playtest' : (isEditorHostPage ? 'editor' : 'unknown'),
       scene: currentSceneName(),
       playtest: isPlaytest,
       selectedFile: null,
       sceneTarget: null,
-      inspector: null
+      inspector: null,
+      scope: scope,
+      page: scope.name,
+      hasPendingInput: hasPendingInput()
     };
 
     try {
@@ -1968,6 +2041,9 @@
     if (!ctx) return '';
     const parts = [];
     parts.push(ctx.playtest ? '试玩运行中' : (ctx.environment === 'editor' ? '编辑器' : '独立运行'));
+    if (ctx.scope && ctx.scope.name && ctx.scope.name !== '编辑器' && ctx.scope.name !== '独立试玩窗口') {
+      parts.push('页面「' + ctx.scope.name + '」');
+    }
     if (ctx.scene) parts.push('场景「' + ctx.scene + '」');
     if (ctx.selectedFile && ctx.selectedFile.name) {
       const typeLabel = ctx.selectedFile.type ? ctx.selectedFile.type + '/' : '';
@@ -1984,6 +2060,182 @@
     const full = '【当前环境】' + parts.join(' · ');
     return full.length > 180 ? full.slice(0, 177) + '...' : full;
   }
+
+  // ============================================================
+  // AI 界面操作与收束高亮演出控制器 (UI Operation Stage Actor)
+  // ============================================================
+  function createUiController() {
+    let containerEl = null;
+    let boxEl = null;
+    let labelEl = null;
+    let skipBtn = null;
+    let currentTargetEl = null;
+    let isBusyState = false;
+    let cancelled = false;
+    let cancelReason = '';
+    let skipped = false;
+    const activityCallbacks = [];
+
+    function ensureDom() {
+      if (typeof document === 'undefined' || !document.body) return null;
+      if (containerEl && document.body.contains(containerEl)) return containerEl;
+      containerEl = document.createElement('div');
+      containerEl.id = 'yami-ai-ring';
+      containerEl.className = 'yami-ai-ring';
+      containerEl.style.display = 'none';
+
+      boxEl = document.createElement('div');
+      boxEl.className = 'yami-ai-ring-box';
+      containerEl.appendChild(boxEl);
+
+      labelEl = document.createElement('div');
+      labelEl.className = 'yami-ai-ring-label';
+      labelEl.style.display = 'none';
+      containerEl.appendChild(labelEl);
+
+      skipBtn = document.createElement('div');
+      skipBtn.className = 'yami-ai-ring-skip';
+      skipBtn.textContent = '别演了';
+      skipBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        skipped = true;
+        hide();
+      });
+      containerEl.appendChild(skipBtn);
+
+      document.body.appendChild(containerEl);
+
+      window.addEventListener('keydown', notifyActivity, { passive: true });
+      window.addEventListener('mousedown', notifyActivity, { passive: true });
+      window.addEventListener('scroll', updateFollowRect, { passive: true, capture: true });
+      window.addEventListener('resize', updateFollowRect, { passive: true });
+
+      return containerEl;
+    }
+
+    function notifyActivity() {
+      for (let i = 0; i < activityCallbacks.length; i++) {
+        try { activityCallbacks[i](); } catch (e) {}
+      }
+    }
+
+    function updateFollowRect() {
+      if (!currentTargetEl || !boxEl || !containerEl || containerEl.style.display === 'none') return;
+      try {
+        const rect = currentTargetEl.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        applyRect(rect);
+      } catch (e) {}
+    }
+
+    function applyRect(rect) {
+      if (!boxEl) return;
+      boxEl.style.width = Math.round(rect.width) + 'px';
+      boxEl.style.height = Math.round(rect.height) + 'px';
+      boxEl.style.transform = 'translate(' + Math.round(rect.x) + 'px, ' + Math.round(rect.y) + 'px)';
+      if (labelEl && labelEl.style.display !== 'none') {
+        labelEl.style.transform = 'translate(' + Math.round(rect.x) + 'px, ' + Math.max(0, Math.round(rect.y) - 24) + 'px)';
+      }
+    }
+
+    function resolveTarget(target) {
+      if (!target) return null;
+      if (typeof target === 'string') return document.querySelector(target);
+      if (target.nodeType === 1) return target;
+      if (typeof target.selector === 'string') return document.querySelector(target.selector);
+      if (target.key) {
+        const byId = document.getElementById(target.key) ||
+          document.querySelector('#fileItem-' + target.key) ||
+          document.querySelector('#fileScene-' + target.key) ||
+          document.querySelector('[data-key="' + target.key + '"]');
+        if (byId) return byId;
+      }
+      return null;
+    }
+
+    function hide() {
+      if (containerEl) {
+        containerEl.style.display = 'none';
+        containerEl.classList.remove('active');
+      }
+      currentTargetEl = null;
+      if (boxEl) boxEl.className = 'yami-ai-ring-box';
+      if (labelEl) labelEl.style.display = 'none';
+    }
+
+    return {
+      ringTo: function(target, opts) {
+        opts = opts || {};
+        // 注意：这里**不能**清 cancelled —— 清了就变成"只有打断恰好落在高亮停留期才生效"，
+        // 落在 wait 步骤或步骤间隙的打断会被下一次高亮悄悄吞掉，AI 继续干到底。
+        // 清零只由 resetCancel() 在整轮 uiSteps 开始时做一次。
+        isBusyState = true;
+        if (skipped) {
+          isBusyState = false;
+          return Promise.resolve({ ok: true, skipped: true });
+        }
+        ensureDom();
+        const el = resolveTarget(target);
+        if (!el) {
+          hide();
+          isBusyState = false;
+          return Promise.resolve({ ok: false, error: '目标元素未找到或不可见' });
+        }
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+          hide();
+          isBusyState = false;
+          return Promise.resolve({ ok: false, error: '目标元素宽高为0或已被隐藏' });
+        }
+
+        currentTargetEl = el;
+        containerEl.style.display = 'block';
+        containerEl.classList.add('active');
+        applyRect(rect);
+
+        const phase = opts.phase || 'preview';
+        boxEl.className = 'yami-ai-ring-box ' + phase;
+
+        if (opts.label) {
+          labelEl.textContent = opts.label;
+          labelEl.style.display = 'block';
+        } else {
+          labelEl.style.display = 'none';
+        }
+
+        const holdMs = typeof opts.holdMs === 'number' ? opts.holdMs : (phase === 'applied' ? 420 : 340);
+        return new Promise(function(resolve) {
+          setTimeout(function() {
+            isBusyState = false;
+            if (cancelled) {
+              hide();
+              resolve({ ok: false, cancelled: true, error: cancelReason || '操作已打断' });
+            } else {
+              resolve({ ok: true, rect: [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)] });
+            }
+          }, holdMs);
+        });
+      },
+      hide: hide,
+      cancel: function(reason) {
+        cancelled = true;
+        cancelReason = reason || '用户打断';
+        isBusyState = false;
+        hide();
+      },
+      isCancelled: function() { return cancelled; },
+      resetCancel: function() { cancelled = false; cancelReason = ''; },
+      isBusy: function() { return isBusyState; },
+      resetSkip: function() { skipped = false; },
+      isSkipped: function() { return skipped; },
+      onUserActivity: function(cb) {
+        if (typeof cb === 'function') activityCallbacks.push(cb);
+      }
+    };
+  }
+
+  const uiController = createUiController();
 
   try {
     if (typeof window !== 'undefined') {
@@ -3282,10 +3534,7 @@
       const http = require('http');
       const nodeFs = require('fs');
       const nodePath = require('path');
-      const href = String(window.location && window.location.href || '').replace(/\\/g, '/');
-      const isEditorHostPage = /\/resources\/app\/dist\//i.test(href)
-        || /^https?:\/\/localhost:5173\//i.test(href)
-        || /\/dist\/index\.html$/i.test(href);
+      // isEditorHostPage / pageHref 已在模块作用域算好（见 getEditorContext 上方），此处不再重复声明
       let pageFile = '';
       try {
         pageFile = decodeURIComponent(window.location.pathname || '');
@@ -3382,12 +3631,24 @@
           return;
         }
 
+        if (req.url === '/context') {
+          const ctx = getEditorContext();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, context: ctx, summary: formatEditorContextSummary(ctx) }));
+          return;
+        }
+
         res.writeHead(404);
         res.end();
       });
 
       server.on('error', function(err) {
-        if (err.code !== 'EADDRINUSE') console.warn('调试端口错误:', err.message);
+        if (err.code === 'EADDRINUSE') {
+          if (typeof window !== 'undefined') window.__YAMI_PERF_PORT_CONFLICT__ = true;
+          console.warn('[Yami Perf Bridge] 端口 ' + BRIDGE_PORT + ' 已被占用，实时调试服务可能由另一个窗口或实例托管。');
+        } else {
+          console.warn('调试端口错误:', err.message);
+        }
       });
 
       server.listen(BRIDGE_PORT, '127.0.0.1', function() {
@@ -3440,6 +3701,26 @@
               res.writeHead(200, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ ok: true, bridgeToken: bridgeToken }));
             }
+            return;
+          }
+
+          if (req.method === 'GET' && req.url === '/whoami') {
+            let projectRoot = '';
+            try {
+              if (File && File.root) projectRoot = File.root;
+              else if (typeof Data !== 'undefined' && Data.manifest && Data.manifest.guid) projectRoot = Data.manifest.guid;
+            } catch (e) {}
+            if (typeof window !== 'undefined' && !window.__YAMI_INSTANCE_ID__) {
+              window.__YAMI_INSTANCE_ID__ = 'yami_' + Math.random().toString(36).slice(2, 10);
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              ok: true,
+              instanceId: (typeof window !== 'undefined' && window.__YAMI_INSTANCE_ID__) || 'unknown',
+              projectRoot: projectRoot,
+              pageUrl: typeof location !== 'undefined' ? location.href : '',
+              title: typeof document !== 'undefined' ? document.title : ''
+            }));
             return;
           }
 
@@ -3609,7 +3890,127 @@
                 const ctx = getEditorContext();
                 return { ok: true, action: name, context: ctx, summary: formatEditorContextSummary(ctx) };
               }
-              return { ok: false, error: '未知编辑器动作，仅允许 save、undo、redo、refresh、playtest、dumpUi、click、interact、context' };
+              if (name === 'cancel') {
+                uiController.cancel(typeof action.reason === 'string' && action.reason ? action.reason : '用户停止');
+                return { ok: true, action: name, cancelled: true };
+              }
+              if (name === 'uiSteps') {
+                const steps = Array.isArray(action.steps) ? action.steps : [];
+                if (!steps.length) return { ok: true, action: name, steps: 0, done: [] };
+                const results = [];
+                uiController.resetSkip();
+                uiController.resetCancel();
+                const initialFocus = (typeof document !== 'undefined' && document.activeElement) || null;
+
+                for (let i = 0; i < steps.length; i++) {
+                  if (uiController.isCancelled()) {
+                    if (initialFocus && typeof initialFocus.focus === 'function') {
+                      try { initialFocus.focus(); } catch (e) {}
+                    }
+                    return { ok: false, action: name, cancelled: true, failedAt: i, done: results, error: '用户已打断操作' };
+                  }
+                  const step = steps[i];
+                  const kind = step.kind || 'focus';
+                  const label = step.label || (kind + (step.target && step.target.key ? ' ' + step.target.key : ''));
+                  const prevStep = i > 0 ? steps[i - 1] : null;
+                  const isMerged = !!(step.mergeGroup && prevStep && prevStep.mergeGroup === step.mergeGroup);
+                  const isLastInGroup = i === steps.length - 1 || !steps[i + 1] || steps[i + 1].mergeGroup !== step.mergeGroup;
+
+                  // 1. 目标定位与高亮预告 (未合并按 240+340ms，合并后续按 120ms)
+                  const previewHold = isMerged ? 120 : (typeof step.holdMs === 'number' ? step.holdMs : 340);
+                  const ringRes = await uiController.ringTo(step.target, {
+                    phase: 'preview',
+                    label: label,
+                    holdMs: previewHold
+                  });
+
+                  if (!ringRes.ok && !ringRes.skipped) {
+                    uiController.hide();
+                    if (initialFocus && typeof initialFocus.focus === 'function') {
+                      try { initialFocus.focus(); } catch (e) {}
+                    }
+                    return { ok: false, action: name, failedAt: i, done: results, error: ringRes.error || ('第 ' + (i + 1) + ' 步目标控件无法定位') };
+                  }
+
+                  // 2. 执行具体原子动作 (580ms 瞬时执行)
+                  let stepOk = true;
+                  let stepError = '';
+                  let el = null;
+                  if (typeof step.target === 'string') el = document.querySelector(step.target);
+                  else if (step.target && step.target.nodeType === 1) el = step.target;
+                  else if (step.target && step.target.selector) el = document.querySelector(step.target.selector);
+                  else if (step.target && step.target.key) {
+                    el = document.getElementById(step.target.key) ||
+                      document.querySelector('#fileItem-' + step.target.key) ||
+                      document.querySelector('#fileScene-' + step.target.key) ||
+                      document.querySelector('[data-key="' + step.target.key + '"]');
+                  }
+
+                  try {
+                    if (kind === 'focus') {
+                      if (el && typeof el.focus === 'function') el.focus();
+                      else if (!el) { stepOk = false; stepError = '目标未找到'; }
+                    } else if (kind === 'click') {
+                      if (el && typeof el.click === 'function') el.click();
+                      else { stepOk = false; stepError = '目标不支持点击'; }
+                    } else if (kind === 'set') {
+                      if (el) {
+                        const prevFocus = document.activeElement;
+                        const needsFocus = prevFocus !== el;
+                        if (needsFocus && typeof el.focus === 'function') el.focus();
+                        if (typeof el.input === 'function') el.input(step.value);
+                        else el.value = step.value == null ? '' : String(step.value);
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        if (typeof el.blur === 'function') el.blur(); // 触发 Inspector.inputBlur 进撤销栈！
+                        if (needsFocus && prevFocus && typeof prevFocus.focus === 'function') {
+                          try { prevFocus.focus(); } catch (e) {}
+                        }
+                      } else {
+                        stepOk = false;
+                        stepError = '目标输入框未找到';
+                      }
+                    } else if (kind === 'wait') {
+                      const ms = typeof step.duration === 'number' ? step.duration : 300;
+                      await new Promise(function(r) { setTimeout(r, ms); });
+                    } else if (kind === 'goto') {
+                      if (typeof Layout !== 'undefined' && Layout.manager && typeof Layout.manager.switch === 'function') {
+                        Layout.manager.switch(step.page);
+                      }
+                    }
+                  } catch (err) {
+                    stepOk = false;
+                    stepError = err.message;
+                  }
+
+                  if (!stepOk) {
+                    uiController.hide();
+                    if (initialFocus && typeof initialFocus.focus === 'function') {
+                      try { initialFocus.focus(); } catch (e) {}
+                    }
+                    return { ok: false, action: name, failedAt: i, done: results, error: '第 ' + (i + 1) + ' 步执行失败: ' + stepError };
+                  }
+
+                  // 3. 留痕变绿 (若是合并组，仅最后一个步骤留痕)
+                  const isGrouped = !!step.mergeGroup;
+                  if (!isGrouped || isLastInGroup) {
+                    await uiController.ringTo(step.target, {
+                      phase: 'applied',
+                      label: '已完成: ' + label,
+                      holdMs: typeof step.settleMs === 'number' ? step.settleMs : 420
+                    });
+                  }
+
+                  results.push({ index: i, kind: kind, label: label, ok: true });
+                }
+
+                uiController.hide();
+                if (initialFocus && typeof initialFocus.focus === 'function') {
+                  try { initialFocus.focus(); } catch (e) {}
+                }
+                return { ok: true, action: name, steps: steps.length, done: results };
+              }
+              return { ok: false, error: '未知编辑器动作，仅允许 save、undo、redo、refresh、playtest、dumpUi、click、interact、context、uiSteps、cancel' };
             }).then(function(result) {
               res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify(result));
@@ -3622,7 +4023,12 @@
           res.writeHead(404); res.end();
         });
         editorServer.on('error', function(err) {
-          if (err.code !== 'EADDRINUSE') console.warn('编辑器桥端口错误:', err.message);
+          if (err.code === 'EADDRINUSE') {
+            if (typeof window !== 'undefined') window.__YAMI_PORT_CONFLICT__ = true;
+            console.warn('[Yami Perf Bridge] 端口 5967 已被占用，检测到双编辑器实例运行！当前实例未挂载动作桥。');
+          } else {
+            console.warn('编辑器桥端口错误:', err.message);
+          }
         });
         editorServer.listen(5967, '127.0.0.1', function() {
           console.log('[Yami Perf Bridge] 编辑器动作服务已就绪: http://127.0.0.1:5967');
@@ -4427,6 +4833,10 @@
     version: PROBE_VERSION,
     state: state,
     glStats: glStats,
+    getEditorContext: getEditorContext,
+    hasPendingInput: hasPendingInput,
+    getScope: getScope,
+    ui: uiController,
     getReport: buildReport,
     checkUpdate: checkUpdate,
     performAutoUpdate: performAutoUpdate,

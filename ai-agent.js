@@ -747,6 +747,10 @@
   function stopStream() {
     if (!state.busy) return;
     if (state.abort) { try { state.abort.abort(); } catch (e) { /* 已经断开 */ } }
+    if (typeof window !== 'undefined' && window.__YAMI_PERF_PROBE__ && window.__YAMI_PERF_PROBE__.ui) {
+      try { window.__YAMI_PERF_PROBE__.ui.cancel('用户打断'); } catch (e) {}
+    }
+    try { request('/ui-cancel', { reason: '用户打断' }); } catch (e) {}
     setStatus('已打断', 'idle');
     pushNotice('已打断，AI 停下来了（已完成的改动都保留着）', 'wait');
   }
@@ -833,15 +837,22 @@
     const cardKeyOf = event => String((event && event.key) || (event && event.name) || '');
     state.abort = new AbortController();
     let liveEnv = '';
+    let pageContext = null;
     try {
       if (typeof window !== 'undefined' && typeof window.__YAMI_CTX_SUMMARY__ === 'function') {
         liveEnv = window.__YAMI_CTX_SUMMARY__() || '';
       }
+      const probe = typeof window !== 'undefined' ? window.__YAMI_PERF_PROBE__ : null;
+      const isPlaytest = typeof location !== 'undefined' && (!location.href.includes('/resources/app/dist/') && !location.href.includes('/app/dist/'));
+      const pageType = isPlaytest ? 'playtest' : 'editor';
+      const summary = liveEnv || (probe && typeof probe.getEditorContext === 'function' ? (probe.getEditorContext().summary || '') : '');
+      const scope = probe && typeof probe.getScope === 'function' ? probe.getScope() : null;
+      pageContext = { page: pageType, summary: summary, scope: scope };
     } catch (e) {}
     const response = await fetch('http://127.0.0.1:' + PORT + '/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-yami-agent-token': state.token },
-      body: JSON.stringify({ sessionId: state.sessionId, message: text, envSummary: liveEnv || undefined }),
+      body: JSON.stringify({ sessionId: state.sessionId, message: text, envSummary: liveEnv || undefined, pageContext: pageContext || undefined }),
       signal: state.abort.signal
     });
     if (!response.ok) {
@@ -962,7 +973,11 @@
           const key = cardKeyOf(event);
           const card = toolCards.get(key) || toolCards.get(String(event.name || ''));
           if (card) {
-            if (event.phase === 'done') { card.done(event); toolCards.delete(key); }
+            if (event.phase === 'done') {
+              card.done(event); toolCards.delete(key);
+              // 界面操作演完了：给一个「撤销这一步」，用户不满意可以一键退回
+              if (event.name === 'ui_steps') offerStepUndo(event);
+            }
             else if (event.phase === 'fail') { card.fail(event); toolCards.delete(key); }
             // 审批是跨轮的：卡片留在表里，等下一轮真正执行完的 done/fail 来收尾
             else if (event.phase === 'approval') card.wait(event);
@@ -972,6 +987,7 @@
       }
       if (event.type === 'system') { pushSystemRow(event); return; }
       if (event.type === 'steer') { if (event.phase === 'delivered') markSteerDelivered(String(event.text || '')); return; }
+      if (event.type === 'align') { renderAlignmentCard(event.data); return; }
       if (event.type === 'notice') { pushNotice(event.text || '', 'wait'); return; }
       if (event.type === 'plan') { renderPlan(event.items, event.summary); return; }
       if (event.type === 'result') { finalResult = event; return; }
@@ -1000,6 +1016,18 @@
     autoScroll();
     if (streamError) throw new Error(streamError);
     if (finalResult && finalResult.status !== 'approval') {
+      if (text$) {
+        const alignMatch = text$.match(/<alignment-card>([\s\S]*?)<\/alignment-card>/i);
+        if (alignMatch) {
+          try {
+            const cardData = JSON.parse(alignMatch[1]);
+            renderAlignmentCard(cardData);
+          } catch (e) {}
+          // 卡片已经渲染成可点的选项卡了，正文里那段机器可读的 JSON 不该再摊给用户看
+          text$ = text$.replace(/<alignment-card>[\s\S]*?<\/alignment-card>/gi, '').trim();
+          if (bubble) { bubble.textContent = text$; bubbleTextNode = null; }
+        }
+      }
       if (!received && finalResult.message) addMessage(finalResult.ok === false ? 'error' : 'assistant', finalResult.message);
       else if ((finalResult.status === 'stuck' || finalResult.status === 'compile-failed') && finalResult.message) pushNotice(finalResult.message, 'bad');
       if (finalResult.plan) renderPlan(finalResult.plan.items, finalResult.plan.summary);
@@ -1714,15 +1742,149 @@
     }
   }
 
-  async function sendMessage(mode) {
+  function updateScopeBar() {
+    const el = document.getElementById('yami-ai-scope');
+    if (!el) return;
+    const txtNode = el.querySelector('.yami-ai-scope-text');
+    let summary = '';
+    try {
+      if (typeof window !== 'undefined' && typeof window.__YAMI_CTX_SUMMARY__ === 'function') {
+        summary = window.__YAMI_CTX_SUMMARY__() || '';
+      }
+    } catch (e) {}
+    if (summary) {
+      summary = summary.replace(/^【当前环境】/, '');
+      if (txtNode) txtNode.textContent = summary;
+    } else {
+      if (txtNode) txtNode.textContent = '未检测到活跃场景或工作区';
+    }
+  }
+
+  /**
+   * 绿档动作的「撤销这一步」：AI 刚在界面上演完的操作，一键退回（走引擎 UndoManager）。
+   * 只保留最近一次 —— "撤销这一步"的语义就是刚那一步，攒一屏按钮只会让人不知道该点哪个。
+   * 失败时如实说明并提示 Ctrl+Z 手动撤，不假装成功。
+   */
+  function offerStepUndo(event) {
+    const info = event && event.info;
+    if (!info || info.uiSteps !== true || !info.done) return;
+    const list = document.getElementById('yami-ai-messages');
+    if (!list) return;
+    list.querySelectorAll('.yami-ai-step-undo').forEach(el => el.remove());
+    const row = document.createElement('div');
+    row.className = 'yami-ai-step-undo';
+    row.setAttribute('role', 'button');
+    row.setAttribute('tabindex', '0');
+    row.textContent = '撤销这一步（刚演示了 ' + info.done + ' 步）';
+    activate(row, async () => {
+      if (row.dataset.busy) return;
+      row.dataset.busy = '1';
+      row.textContent = '正在撤销...';
+      let result = null;
+      try { result = await request('/ui-undo', {}); } catch (e) { result = null; }
+      delete row.dataset.busy;
+      if (result && result.ok) {
+        row.textContent = '已撤销这一步';
+        row.classList.add('done');
+        hudToast('已撤销刚才那一步（继续往前撤可以按 Ctrl+Z）');
+      } else {
+        row.textContent = '撤销这一步（点这里重试）';
+        hudToast((result && result.error) || '撤销失败，请用编辑器自己的 Ctrl+Z');
+      }
+    });
+    list.appendChild(row);
+    autoScroll();
+  }
+
+  function renderAlignmentCard(cardData) {
+    if (!cardData) return;
+    const container = document.getElementById('yami-ai-messages');
+    if (!container) return;
+    const existing = document.getElementById('yami-ai-align');
+    if (existing) existing.remove();
+
+    const card = document.createElement('div');
+    card.id = 'yami-ai-align';
+    card.className = 'yami-ai-align-card';
+
+    let qHtml = '';
+    const selections = {};
+    if (Array.isArray(cardData.questions)) {
+      cardData.questions.forEach((q, qIdx) => {
+        const firstOpt = (q.options && q.options[0]) || '';
+        selections[qIdx] = firstOpt;
+        qHtml += '<div class="yami-ai-align-q">';
+        qHtml += '<div class="yami-ai-align-q-title">' + (q.title || ('选项 ' + (qIdx + 1))) + '</div>';
+        qHtml += '<div class="yami-ai-align-options">';
+        (q.options || []).forEach((opt, optIdx) => {
+          const selClass = optIdx === 0 ? ' selected' : '';
+          qHtml += '<div class="yami-ai-align-opt-btn' + selClass + '" role="button" tabindex="0" data-q="' + qIdx + '" data-val="' + opt + '">' + opt + '</div>';
+        });
+        qHtml += '</div></div>';
+      });
+    }
+
+    let defHtml = '';
+    if (Array.isArray(cardData.defaults) && cardData.defaults.length) {
+      defHtml = '<div class="yami-ai-align-defaults">其余按默认来：' + cardData.defaults.join('；') + '</div>';
+    }
+
+    card.innerHTML =
+      '<div class="yami-ai-align-title">' +
+        AI_ICONS.brain +
+        '<span>意图对齐确认</span>' +
+      '</div>' +
+      '<div class="yami-ai-align-summary">' + (cardData.summary || '请确认接下来的实施方案：') + '</div>' +
+      '<div class="yami-ai-align-questions">' + qHtml + '</div>' +
+      defHtml +
+      '<div class="yami-ai-align-actions">' +
+        '<div class="yami-ai-align-btn-cancel" role="button" tabindex="0">我再补充</div>' +
+        '<div class="yami-ai-align-btn-start" role="button" tabindex="0">开工</div>' +
+      '</div>';
+
+    card.querySelectorAll('.yami-ai-align-opt-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const qIdx = btn.getAttribute('data-q');
+        const val = btn.getAttribute('data-val');
+        selections[qIdx] = val;
+        btn.parentElement.querySelectorAll('.yami-ai-align-opt-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+      });
+    });
+
+    const cancelBtn = card.querySelector('.yami-ai-align-btn-cancel');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => {
+        card.remove();
+        const input = document.getElementById('yami-ai-input');
+        if (input) {
+          input.focus();
+          hudToast('请在输入框补充说明需求细节');
+        }
+      });
+    }
+
+    const startBtn = card.querySelector('.yami-ai-align-btn-start');
+    if (startBtn) {
+      startBtn.addEventListener('click', () => {
+        const answers = Object.values(selections).filter(Boolean).join('；');
+        card.remove();
+        sendMessage(undefined, '已确认对齐方案（' + (answers || '按默认设定') + '），请开工并边做边演示');
+      });
+    }
+
+    container.appendChild(card);
+    autoScroll(true);
+  }
+
+  async function sendMessage(mode, overrideText) {
     const input = document.getElementById('yami-ai-input');
-    const text = input && input.value.trim();
+    const text = overrideText !== undefined ? String(overrideText).trim() : (input && input.value.trim());
     // 繁忙时不再把用户打的字丢掉（旧行为是直接 return，字等于白打）：
     //   默认「排队」——本轮结束后依次发出；显式「引导」——立刻交给宿主，下一步骤边界投递。
     if (state.busy) {
       if (!text) return;
-      input.value = '';
-      input.style.height = '';
+      if (input && overrideText === undefined) { input.value = ''; input.style.height = ''; }
       // Ctrl+Enter 是保留的快捷键（不占按钮）：把这句话插进正在跑的这一轮，不打断它
       if (mode === 'steer') return await sendSteer(text);
       if (busySendMode() === 'interrupt') return await interruptThenSend(text);
@@ -1738,8 +1900,7 @@
       resolvePendingCard(false, '你直接发了新需求');
     }
     if (!text) { input?.focus(); return; }
-    input.value = '';
-    input.style.height = '';
+    if (input && overrideText === undefined) { input.value = ''; input.style.height = ''; }
     await runMessage(text);
   }
 
@@ -2074,6 +2235,10 @@
           '<div class="yami-ai-tool-btn" id="yami-ai-settings-toggle" role="button" tabindex="0" title="模型与插件设置">' + AI_ICONS.settings + '<span>设置</span></div>' +
         '</div>' +
       '</div>' +
+      '<div class="yami-ai-scope" id="yami-ai-scope" role="region" title="点击纠偏或重新识别当前环境">' +
+        '<span class="yami-ai-scope-text">环境感知就绪</span>' +
+        '<span class="yami-ai-scope-badge">在场感知</span>' +
+      '</div>' +
       '<div class="yami-ai-undo" id="yami-ai-undo"></div>' +
       '<div class="yami-ai-history" id="yami-ai-history"></div>' +
       '<div class="yami-ai-settings" id="yami-ai-settings">' +
@@ -2267,6 +2432,16 @@
       inputArea.style.height = 'auto';
       inputArea.style.height = Math.min(140, Math.max(52, inputArea.scrollHeight)) + 'px';
     });
+
+    const scopeBar = document.getElementById('yami-ai-scope');
+    if (scopeBar) {
+      scopeBar.addEventListener('click', () => {
+        updateScopeBar();
+        hudToast('环境已刷新');
+      });
+      updateScopeBar();
+      setInterval(updateScopeBar, 2000);
+    }
   }
 
   function waitForHud() {

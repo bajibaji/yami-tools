@@ -21,7 +21,7 @@ const { spawn } = require('child_process')
 
 const ROOT = path.resolve(__dirname, '..')
 const MCP = path.join(ROOT, 'runtime', 'yami-mcp', 'server.js')
-const FIXTURE = process.env.YAMI_TEST_PROJECT || '/home/deck/yami-fixture'
+const FIXTURE = require('./resolve-project.cjs').resolveProject()
 const REAL_PROJECT = process.env.YAMI_REAL_PROJECT || '/home/deck/Desktop/ SHIT/GITHUB/new-game'
 const ENGINE_TSC = process.env.YAMI_TSC_JS || '/home/deck/Desktop/ SHIT/GITHUB/2/node_modules/typescript/lib/tsc.js'
 
@@ -109,7 +109,10 @@ async function main() {
     const expected = ['search_project', 'edit_script', 'diagnose_runtime', 'playtest_smoke', 'project_changelog', 'todo_write', 'list_backups', 'restore_backup']
     const missing = expected.filter(name => !toolList.includes(name))
     check('本工程特色工具齐备', missing.length === 0, missing.length ? '缺: ' + missing.join(',') : expected.length + ' 项齐全')
-    check('内置模型看不到 cdp_eval（安全约定）', toolList.includes('cdp_eval'))
+    // 原始 MCP 工具表是给外部客户端/路线 B 的，cdp_eval 应当保留；
+    // "内置模型看不到它"由宿主侧 HIDDEN_TOOLS 过滤，真源断言在 test-ui-operation.cjs
+    // （直接抓模型请求体里实际带了哪些工具）。
+    check('原始工具表保留 cdp_eval（供外部客户端/路线 B）', toolList.includes('cdp_eval'))
     const hiddenInHost = require('fs').readFileSync(path.join(ROOT, 'ai-host.js'), 'utf8')
     check('宿主侧 cdp_eval 已隐藏', /HIDDEN_TOOLS = new Set\(\['cdp_eval'\]\)/.test(hiddenInHost))
 

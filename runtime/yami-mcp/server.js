@@ -1026,8 +1026,40 @@ const tools = [
       },
       required: ['action', 'x', 'y']
     }
+  },
+  {
+    name: 'ui_steps',
+    description: '在编辑器界面上把操作一步一步"演"给用户看：每步先用收束高亮框圈住目标控件，再执行，最后留痕变绿。目标走引擎公开入口（等价于用户自己点了那里），不是鼠标模拟。任何一步找不到控件就立即熔断、绝不继续往下做，并如实报出是第几步失败的。适合"用户看得见才放心"的属性调整与界面操作。',
+    readOnlyHint: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          description: '按顺序执行并演示的步骤列表',
+          items: {
+            type: 'object',
+            properties: {
+              kind: { type: 'string', enum: ['focus', 'set', 'click', 'goto', 'wait'], description: '这一步做什么：聚焦 / 改值 / 点击 / 切换工作页 / 等待' },
+              target: { type: 'string', description: '目标控件的 CSS 选择器，如 #fileItem-attack；goto 与 wait 可不填' },
+              value: { description: 'kind=set 时写入的值（字符串或数字）' },
+              label: { type: 'string', description: '这一步的白话说明，会显示在高亮框旁边，写给人看别写代码术语' },
+              mergeGroup: { type: 'string', description: '同一次需求里关联的步骤填同一个分组名，演出会合并成一轮、不会一顿一顿' },
+              page: { type: 'string', description: 'kind=goto 时切换的工作页：home/directory/project/scene/ui/animation/particle' },
+              duration: { type: 'number', description: 'kind=wait 时等待的毫秒数' }
+            },
+            required: ['kind']
+          }
+        }
+      },
+      required: ['steps']
+    }
   }
 ]
+
+// 注意：原始 tools/list 保持完整（cdp_eval 也在里面）——它是给外部 MCP 客户端/路线 B 用的。
+// "内置模型看不到 cdp_eval" 由宿主侧 ai-host.js 的 HIDDEN_TOOLS 负责过滤，
+// 那条边界有 test-ui-operation.cjs 直接抓模型请求体来验，不在这一层做。
 
 /* ============================== 工具执行 ============================== */
 
@@ -1632,6 +1664,15 @@ async function callTool(name, args) {
       return await runtimeBridge.getDiagnosis()
     case 'get_editor_context':
       return await editorBridge.getContext()
+    case 'ui_steps': {
+      const steps = Array.isArray(args.steps) ? args.steps : []
+      if (!steps.length) return { ok: false, error: 'steps 不能为空：至少要写一步要在界面上演示的操作' }
+      const result = await editorBridge.uiSteps(steps, ROOT)
+      // 熔断与打断走的是 HTTP 400，正文里带着 failedAt 和已完成的步骤；
+      // 必须原样透给模型，否则它只知道"失败了"，不知道死在第几步、前面做完了哪些。
+      if (result && result.ok === false && result.data && typeof result.data.ok === 'boolean') return result.data
+      return result
+    }
     case 'todo_write': {
       if (args.clear === true) {
         currentTodos = []

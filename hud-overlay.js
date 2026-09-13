@@ -4493,6 +4493,258 @@
       .yami-home-module-item:active {
         scale: 0.96 !important;
       }
+
+      /* ============================================================
+       * AI 界面操作与收束高亮演出浮层 (#yami-ai-ring)
+       * ============================================================ */
+      #yami-ai-ring,
+      .yami-ai-ring {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        pointer-events: none !important;
+        z-index: 99999 !important;
+        display: none;
+      }
+      #yami-ai-ring.active,
+      .yami-ai-ring.active {
+        display: block !important;
+      }
+      .yami-ai-ring-box {
+        position: absolute !important;
+        box-sizing: border-box !important;
+        border-radius: 4px !important;
+        outline: 2px solid #38bdf8 !important;
+        outline-offset: 0 !important;
+        transition: outline-color 0.2s ease, background-color 0.2s ease !important;
+        pointer-events: none !important;
+        will-change: transform, outline-offset !important;
+      }
+      .yami-ai-ring-box.preview {
+        outline-color: #38bdf8 !important;
+        background-color: rgba(56, 189, 248, 0.08) !important;
+        animation: yami-ai-ring-in 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+      }
+      .yami-ai-ring-box.applied {
+        outline-color: #4ade80 !important;
+        background-color: rgba(74, 222, 128, 0.12) !important;
+      }
+      .yami-ai-ring-label {
+        position: absolute !important;
+        background: #18191e !important;
+        color: #f1f5f9 !important;
+        border: 1px solid #38bdf8 !important;
+        border-radius: 4px !important;
+        padding: 2px 8px !important;
+        font-size: 11px !important;
+        font-family: inherit !important;
+        white-space: nowrap !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6) !important;
+        pointer-events: none !important;
+      }
+      .yami-ai-ring-skip {
+        position: fixed !important;
+        bottom: 24px !important;
+        right: 24px !important;
+        background: #1e212b !important;
+        color: #94a3b8 !important;
+        border: 1px solid #334155 !important;
+        border-radius: 16px !important;
+        padding: 6px 14px !important;
+        font-size: 12px !important;
+        font-weight: 500 !important;
+        cursor: pointer !important;
+        pointer-events: auto !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
+        transition: all 0.15s ease !important;
+      }
+      .yami-ai-ring-skip:hover {
+        color: #f1f5f9 !important;
+        border-color: #64748b !important;
+        background: #282d3c !important;
+      }
+      @keyframes yami-ai-ring-in {
+        from {
+          outline-offset: 28px;
+          opacity: 0.2;
+        }
+        to {
+          outline-offset: 0;
+          opacity: 1;
+        }
+      }
+
+      /* ============================================================
+       * AI 助手顶栏常显上下文行 (#yami-ai-scope)
+       * ============================================================ */
+      #yami-ai-scope,
+      .yami-ai-scope {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding: 4px 10px !important;
+        background: #14151a !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+        font-size: 11px !important;
+        color: #94a3b8 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: background 0.15s ease !important;
+      }
+      .yami-ai-scope:hover {
+        background: #1c1d24 !important;
+        color: #cbd5e1 !important;
+      }
+      .yami-ai-scope-text {
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+      }
+      .yami-ai-scope-badge {
+        font-size: 10px !important;
+        padding: 1px 5px !important;
+        background: rgba(56, 189, 248, 0.12) !important;
+        border: 1px solid rgba(56, 189, 248, 0.3) !important;
+        border-radius: 3px !important;
+        color: #38bdf8 !important;
+        margin-left: 6px !important;
+        flex-shrink: 0 !important;
+      }
+
+      /* ============================================================
+       * 开工前对齐卡 (#yami-ai-align)
+       * ============================================================ */
+      .yami-ai-align-card {
+        background: #16181f !important;
+        border: 1px solid #2d3345 !important;
+        border-radius: 8px !important;
+        padding: 12px 14px !important;
+        margin: 10px 0 !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35) !important;
+      }
+      .yami-ai-align-title {
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        color: #f1f5f9 !important;
+        margin-bottom: 8px !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .yami-ai-align-summary {
+        font-size: 12px !important;
+        color: #cbd5e1 !important;
+        margin-bottom: 10px !important;
+        line-height: 1.5 !important;
+      }
+      .yami-ai-align-q {
+        margin: 8px 0 !important;
+        font-size: 12px !important;
+        color: #e2e8f0 !important;
+      }
+      .yami-ai-align-q-title {
+        color: #94a3b8 !important;
+        font-size: 11px !important;
+        margin-bottom: 4px !important;
+      }
+      .yami-ai-align-options {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 6px !important;
+      }
+      .yami-ai-align-opt-btn {
+        background: #202430 !important;
+        border: 1px solid #334155 !important;
+        color: #cbd5e1 !important;
+        padding: 3px 10px !important;
+        border-radius: 4px !important;
+        font-size: 11px !important;
+        cursor: pointer !important;
+        transition: all 0.15s ease !important;
+      }
+      .yami-ai-align-opt-btn:hover {
+        border-color: #38bdf8 !important;
+        color: #f8fafc !important;
+      }
+      .yami-ai-align-opt-btn.selected {
+        background: #0c2d48 !important;
+        border-color: #38bdf8 !important;
+        color: #38bdf8 !important;
+        font-weight: 600 !important;
+      }
+      .yami-ai-align-defaults {
+        font-size: 11px !important;
+        color: #64748b !important;
+        margin-top: 8px !important;
+        padding-top: 6px !important;
+        border-top: 1px dashed rgba(255, 255, 255, 0.08) !important;
+      }
+      .yami-ai-align-actions {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+        gap: 8px !important;
+        margin-top: 12px !important;
+      }
+      .yami-ai-align-btn-start {
+        background: #1e3a5f !important;
+        border: 1px solid #38bdf8 !important;
+        color: #ffffff !important;
+        padding: 5px 14px !important;
+        border-radius: 4px !important;
+        font-size: 12px !important;
+        font-weight: 600 !important;
+        cursor: pointer !important;
+        transition: all 0.15s ease !important;
+      }
+      .yami-ai-align-btn-start:hover {
+        background: #2563eb !important;
+      }
+      .yami-ai-align-btn-cancel {
+        background: transparent !important;
+        border: 1px solid #475569 !important;
+        color: #94a3b8 !important;
+        padding: 5px 12px !important;
+        border-radius: 4px !important;
+        font-size: 12px !important;
+        cursor: pointer !important;
+      }
+      .yami-ai-align-btn-cancel:hover {
+        color: #cbd5e1 !important;
+        border-color: #64748b !important;
+      }
+
+      /* ============================================================
+       * 界面演示后的「撤销这一步」入口
+       * ============================================================ */
+      .yami-ai-step-undo {
+        align-self: flex-start !important;
+        padding: 4px 12px !important;
+        background: #14151a !important;
+        border: 1px solid #334155 !important;
+        border-radius: 14px !important;
+        font-size: 11px !important;
+        color: #94a3b8 !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: color, background-color, border-color 0.15s ease !important;
+      }
+      .yami-ai-step-undo:hover {
+        color: #e2e8f0 !important;
+        border-color: #64748b !important;
+        background: #1e212b !important;
+      }
+      .yami-ai-step-undo.done {
+        color: #4ade80 !important;
+        border-color: #14532d !important;
+        background: #0f1f16 !important;
+        cursor: default !important;
+      }
     `;
     document.head.appendChild(style);
 
@@ -5059,7 +5311,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.5.3 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.6.0 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
@@ -5254,7 +5506,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.5.3 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.6.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -8496,7 +8748,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.5.3';
+      const cur = (probe && probe.version) ? probe.version : '1.6.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -8562,7 +8814,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.5.3') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.6.0') + ')');
           refreshVersionBadge();
         }
       });

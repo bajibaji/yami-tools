@@ -21,7 +21,7 @@ const { spawn } = require('child_process')
 
 const ROOT = path.resolve(__dirname, '..')
 const MCP = path.join(ROOT, 'runtime', 'yami-mcp', 'server.js')
-const FIXTURE = process.env.YAMI_TEST_PROJECT || '/home/deck/yami-fixture'
+const FIXTURE = require('./resolve-project.cjs').resolveProject()
 const ENGINE_TSC = process.env.YAMI_TSC_JS || '/home/deck/Desktop/ SHIT/GITHUB/2/node_modules/typescript/lib/tsc.js'
 const SCRIPT_REL = 'Assets/插件/全局插件/Steamworks.2aafc4d56d4590d8.ts'
 const UNIQUE = '@lang ru'                                   // 位于 @plugin 注释块内，用于安全的片段替换用例

@@ -7,7 +7,7 @@
 > - **第二层 · 记忆与经验**：项目经历了什么、踩过哪些坑、为什么这样设计——读它能少走弯路。
 > - **第三层 · 当前进度**：推进到哪里了、什么已完成、什么没做完、下一步做什么。
 >
-> **当前版本**：`v1.5.3`　**最近更新**：2026-09-13
+> **当前版本**：`v1.6.0`　**最近更新**：2026-09-13
 
 ---
 
@@ -202,7 +202,7 @@
 
 - 鉴权：`ai-host` 与两座桥都要求令牌，请求头 `x-yami-agent-token`（SSE 亦可走 `?token=`）；令牌文件在 `<配置目录>/agent-token`（Linux 为 `~/DanJuanDevSuite/`）。
 - AI 宿主 SSE 事件类型：`start` / `status` / `delta`（分 `content` 与 `reasoning` 两路）/ `tool` / `notice` / `plan` / `result` / `error`。
-- MCP 侧：`ai-host` 以 stdio 拉起 `runtime/yami-mcp/server.js`（JSON-RPC 2.0），工具数以 `tools/list` 为准（当前 36 项）。
+- MCP 侧：`ai-host` 以 stdio 拉起 `runtime/yami-mcp/server.js`（JSON-RPC 2.0），工具数以 `tools/list` 为准（原始表 37 项；内置模型可见 36 项——`cdp_eval` 由宿主侧 `HIDDEN_TOOLS` 过滤，只留给外部 MCP 客户端与路线 B）。
 
 ## 1.6 发布文件清单与职责
 
@@ -215,7 +215,7 @@
 | `ai-agent.js` | AI 助手面板（对话 UI、审批、撤销、计划、成本显示） | 依赖 `ai-render-core.js`，缺它会降级直写并告警 |
 | `ai-render-core.js` | 流式渲染纯逻辑（帧合并调度 / 增量文本缓冲 / 滚动判定 / 历史窗口） | UMD 双挂：浏览器全局与 Node `require` 同时可用 |
 | `ai-host.js` | AI 宿主：模型调用、工具编排、审批、会话、计费、连接体检 | 127.0.0.1:5968 |
-| `runtime/yami-mcp/server.js` | 内置 MCP 服务（36 个工具） | 由宿主以 stdio 拉起 |
+| `runtime/yami-mcp/server.js` | 内置 MCP 服务（注册 37 个工具，模型可见 36 个） | 由宿主以 stdio 拉起 |
 | `runtime/yami-mcp/modules/*` | 工具实现与共享模块（diff / changelog / playtest / todos / pricing / message-pairs / file-ops / 双桥 / cdp / db / event-builder） | 每个模块都必须登记进热更新清单（`tests/test-static-health.cjs` 会扫目录核对，漏登记会让老用户热更新后宿主起不来） |
 | `runtime/yami-mcp/modules/message-pairs.js` | 消息序列自愈：`assistant.tool_calls` 与 `tool` 应答配对（补占位 / 剔除越界 / 压缩切点对齐 / 合法性校验） | 宿主每次发请求前调用；依赖它的 `require`，删文件等于 AI 助手全废 |
 | `runtime/yami-mcp/modules/context-meter.js` | 上下文计量与压缩规格（token 估算 / 1M 窗口与 80% 阈值 / 保留范围选择 / 长工具结果头尾修剪 / 真实用量锚点） | 计量口径与阈值参数的单一事实源，别处不要再自己算上下文大小 |
@@ -958,6 +958,36 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
   4. 排队与引导是两种语义：排队 = 本轮结束后依次发出（进对话记录），引导 = 下一步骤边界插进上下文（不当普通气泡）。UI 上必须能一眼分清，键盘也要能分开（Enter / Ctrl+Enter）。
 - **验证**：`tests/test-ai-agent.cjs` 的 E2E 用"慢两轮 + 中途 POST /steer"跑真实链路：断言 `/steer` 回报 `busy:true`、会话文件里**真的**多了一条用户消息（进了模型可见历史）、`undeliveredSteer` 不出现；空闲调 `/steer` 必须回 `busy:false`。
 
+### ㊸ 检视器属性改动靠 blur 进撤销栈与未失焦输入防踩（Inspector Blur & Pending Input Protection）
+
+- **现象**：AI 助手帮用户改属性（如攻击力、缩放）时，如果只是 `input.value = 50` 并派发 `input`/`change`，界面显示确实改了，但用户按下 Ctrl+Z 无法撤销；更严重的是，若用户此时正在另一个输入框打字未失焦，AI 的写盘或操作会触发引擎 `AutoReload`，直接把用户还没敲回车的内容冲掉。
+- **根因**：
+  1. Open Yami 引擎的检视器架构依赖 `Inspector.inputBlur`（`inspector.ts:340`）与 `elements.on('blur')`（如 `file-scene-page.ts:56`）在失焦时将改动快照推入 `UndoManager`。无失焦则无撤销记录；
+  2. 引擎的 AutoReload 机制只在 `Data.manifest.changes` 不含该 meta 时才重载，未失焦的内容不在 changes 中，文件刷新瞬间会被旧值覆写。
+- **铁律**：
+  1. AI 修改属性时必须严格遵循 `focus() -> 改值 -> 派发事件 -> blur()` 规范闭环，确保引擎真正生成撤销条目；
+  2. 在操作目标控件前必须主动保存当前焦点的元素引用与输入态，修改完成后无损还原原有焦点（Focus Preservation）；
+  3. 执行写盘与属性修改前，必须主动通过 `probe.hasPendingInput()` 探测未失焦状态，若为真则前置拦截并友好提示用户敲回车失焦，严禁冲刷未提交输入。
+- **验证**：`tests/test-ui-operation.cjs` 包含焦点保护断言（原有焦点与输入内容零损耗）与 `pendingInput` 拦截断言；`build.cjs` 增设 `hasPendingInput` 关键锚点守卫。
+
+### ㊹ 模块作用域与块级作用域的错配：函数引用块内 const 必抛（Block-Scoped Declaration Reachability）
+
+- **现象**：V1.5.3 的「环境感知」整条链路（`/context` 路由、面板顶栏常显上下文行、写盘前的未失焦守卫、`scope` 字段）**全部静默失效**：`/context` 请求永远拿不到响应，上下文行恒定显示「未检测到活跃场景或工作区」，却没有任何报错冒到用户面前；连带的三个验收项在纸面上还是全绿。
+- **根因**：`const isEditorHostPage` 声明在 `try { if (typeof require === 'function') { ... } }` 这个**块**里，而 `getScope()` / `getEditorContext()` 在**模块作用域**引用它 —— 块级 `const` 在词法上根本不可达，函数一被调用就抛 `ReferenceError: isEditorHostPage is not defined`。这跟运行环境无关，**任何机器上都必然抛**；又因为所有调用方都包了 try/catch 静默兜底，错误被完整吞掉，只剩"功能不好使"这一层表象。
+- **铁律**：
+  1. 会被多处函数引用的判定量（页面身份、路径、能力探测）**必须声明在模块最外层**，不许图省事塞进 `try` / `if` 块里；
+  2. 新增"静默兜底"的 try/catch 时，必须在同一次改动里给这条链路补一条**本来会红的**断言 —— 否则错误只是换个地方继续隐身。
+- **验证**：`tests/test-ui-operation.cjs` 的「`probe.getEditorContext()` 可执行（作用域回归守卫）」与「`GET /context` 返回 ok」两条；修复前必红。
+
+### ㊺ 打断标记必须粘到整轮结束，不能被每次高亮重置（Sticky Cancel Flag）
+
+- **现象**：用户按了停止，AI 却把整批界面操作做完；只有恰好按在 340/420ms 高亮停留期内的那一次能停住。
+- **根因**：`ringTo()` 入口有一行 `cancelled = false`，每次画高亮都把打断标记清掉 —— 落在 `wait` 步骤或步骤间隙的打断，被紧随其后的那次 `ringTo` 悄悄吞掉；`/ui-cancel` 这条路又因为 `cancel` 不在 5967 的动作白名单里返回 400 被忽略。两条路一起断，用户看到的就是"停不下来"。
+- **铁律**：
+  1. 打断是**整轮有效**的状态，只能在一轮开始时清零（`resetCancel()`），任何中间步骤都不许重置；
+  2. 做"能被用户打断"的长流程时，前端、宿主、动作桥三段的动作名必须对得上 —— 白名单里少一个词，前端那个停止按钮就只是个装饰。
+- **验证**：`tests/test-ui-operation.cjs` 的「急停落在 wait 步骤之间仍被尊重（回归守卫）」与「cancel 动作在 5967 白名单内」。
+
 ## 2.3 关键设计决策与取舍
 
 | 决策 | 理由 | 代价 / 备注 |
@@ -983,7 +1013,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 
 # 第三层 · 当前进度（Where We Are）
 
-> 更新日期：2026-09-13 · 当前版本：`v1.5.3`
+> 更新日期：2026-09-13 · 当前版本：`v1.6.0`
 
 ## 3.1 能力清单与完成度
 

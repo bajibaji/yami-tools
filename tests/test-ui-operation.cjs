@@ -1,0 +1,606 @@
+'use strict'
+/**
+ * 界面操作与演出引擎 · 真实通道行为断言（零依赖，纯 Node.js）
+ *
+ * 这套测试只有一条原则：**只调产品入口，绝不在测试里把产品逻辑重写一遍**。
+ *
+ * 上一版把 probe.ui.ringTo 覆盖成桩、再在测试里写个 for 循环当"执行器"，
+ * 于是演出引擎一行都没被跑到也全绿（甚至连 getEditorContext 抛 ReferenceError
+ * 都没测出来）。现在改成三条真通道：
+ *
+ *   A. 把真的 probe-core.js 装进沙盒，接管 require('http') 拿到 5967 的真请求处理器，
+ *      先 GET /token 取真令牌，再 POST /action —— 全链路无桩。
+ *   B. 真的 spawn yami-mcp，用标准 JSON-RPC 问 tools/list，确认 ui_steps 真注册了。
+ *   C. 真的把 ai-host 拉起来，用假模型截获**实际发给模型**的 system 提示词，
+ *      验证"谁提问就用谁的视野"和对齐卡协议真的到达了模型。
+ *
+ * 用法: node tests/test-ui-operation.cjs
+ */
+const crypto = require('crypto')
+const fs = require('fs')
+const http = require('http')
+const os = require('os')
+const path = require('path')
+const vm = require('vm')
+const { spawn } = require('child_process')
+
+const ROOT = path.resolve(__dirname, '..')
+const PROBE_SRC = fs.readFileSync(path.join(ROOT, 'probe-core.js'), 'utf8')
+
+let passed = 0
+let failed = 0
+function check(name, condition, detail = '') {
+  if (condition) { passed++; console.log('  PASS  ' + name + (detail ? '  [' + detail + ']' : '')) }
+  else { failed++; console.error('  FAIL  ' + name + (detail ? '  [' + detail + ']' : '')) }
+}
+
+/* ============================== 沙盒 DOM ============================== */
+
+function createDom() {
+  const all = []
+  const byId = new Map()
+  class El {
+    constructor(tag, id) {
+      this.tagName = String(tag || 'div').toUpperCase()
+      this.id = id || ''
+      this._cls = new Set()
+      this.attributes = new Map()
+      this.style = {}
+      this.value = ''
+      this.textContent = ''
+      this.children = []
+      this.parentElement = null
+      this.isConnected = true
+      this._ls = new Map()
+      this.dispatched = []
+      this._rect = { x: 200, y: 100, width: 150, height: 32, top: 100, left: 200, right: 350, bottom: 132 }
+      this._clicks = 0
+      this._focuses = 0
+      this._blurs = 0
+      all.push(this)
+      if (id) byId.set(id, this)
+    }
+    get classList() {
+      const s = this._cls
+      return {
+        add: (...c) => c.forEach(x => s.add(x)),
+        remove: (...c) => c.forEach(x => s.delete(x)),
+        contains: c => s.has(c),
+        toggle: c => (s.has(c) ? s.delete(c) : s.add(c))
+      }
+    }
+    get className() { return [...this._cls].join(' ') }
+    set className(v) { this._cls = new Set(String(v).split(/\s+/).filter(Boolean)) }
+    getAttribute(k) { return this.attributes.has(k) ? this.attributes.get(k) : null }
+    setAttribute(k, v) { this.attributes.set(k, String(v)) }
+    removeAttribute(k) { this.attributes.delete(k) }
+    addEventListener(e, f) { if (!this._ls.has(e)) this._ls.set(e, []); this._ls.get(e).push(f) }
+    removeEventListener(e, f) { const l = this._ls.get(e); if (l) { const i = l.indexOf(f); if (i >= 0) l.splice(i, 1) } }
+    dispatchEvent(ev) {
+      this.dispatched.push(ev && ev.type)
+      const l = this._ls.get(ev && ev.type)
+      if (l) l.slice().forEach(f => f(ev))
+      return true
+    }
+    focus() { this._focuses++; document.activeElement = this; this.dispatchEvent({ type: 'focus' }) }
+    blur() { this._blurs++; if (document.activeElement === this) document.activeElement = null; this.dispatchEvent({ type: 'blur' }) }
+    click() { this._clicks++; this.dispatchEvent({ type: 'click' }) }
+    appendChild(c) { c.parentElement = this; this.children.push(c); if (c.id) byId.set(c.id, c); return c }
+    contains(c) { return c === this || this.children.indexOf(c) >= 0 }
+    remove() {
+      this.isConnected = false
+      if (this.parentElement) {
+        const i = this.parentElement.children.indexOf(this)
+        if (i >= 0) this.parentElement.children.splice(i, 1)
+      }
+      if (this.id) byId.delete(this.id)
+    }
+    getBoundingClientRect() {
+      if (!this.isConnected) return { x: 0, y: 0, width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 }
+      return this._rect
+    }
+    querySelector() { return null }
+    querySelectorAll() { return [] }
+  }
+  function matchOne(el, sel) {
+    sel = sel.trim()
+    if (sel.startsWith('#')) return el.id === sel.slice(1)
+    if (sel.startsWith('.')) return el._cls.has(sel.slice(1))
+    if (sel.startsWith('[')) {
+      const m = sel.match(/^\[([\w-]+)(?:="([^"]*)")?\]$/)
+      if (!m) return false
+      return m[2] === undefined ? el.attributes.has(m[1]) : el.getAttribute(m[1]) === m[2]
+    }
+    const parts = sel.split('.')
+    if (el.tagName.toLowerCase() !== parts[0].toLowerCase()) return false
+    return parts.slice(1).every(c => el._cls.has(c))
+  }
+  const document = {
+    createElement: t => new El(t),
+    createTextNode(t) { const e = new El('#text'); e.textContent = t; return e },
+    getElementById: id => byId.get(id) || null,
+    querySelector(sel) {
+      for (const s of String(sel).split(',')) for (const e of all) if (e.isConnected && matchOne(e, s)) return e
+      return null
+    },
+    querySelectorAll(sel) {
+      const out = []
+      for (const e of all) for (const s of String(sel).split(',')) if (e.isConnected && matchOne(e, s)) { out.push(e); break }
+      return out
+    },
+    activeElement: null,
+    body: null,
+    documentElement: new El('html'),
+    head: new El('head'),
+    addEventListener() {},
+    removeEventListener() {}
+  }
+  document.body = new El('body')
+  return { document, El, byId, all }
+}
+
+/* ============================== 把 probe-core 装进沙盒 ============================== */
+
+const EDITOR_URL = 'file:///D:/Program%20Files/Open%20Yami%20RPG%20Editor/resources/app/dist/index.html'
+
+async function bootProbe() {
+  const { document, El, byId } = createDom()
+  const servers = []
+  const fakeHttp = {
+    createServer(handler) {
+      const s = {
+        handler, port: null, errs: [],
+        on(ev, fn) { if (ev === 'error') s.errs.push(fn); return s },
+        listen(port, host, cb) { s.port = port; if (cb) cb(); return s },
+        close() {}
+      }
+      servers.push(s)
+      return s
+    }
+  }
+  const sandbox = {
+    console: { log() {}, warn() {}, error() {} },
+    document,
+    performance: { now: () => Date.now() },
+    Date, Math, JSON, Object, Array, Number, String, Boolean, RegExp, Error, Promise, Map, Set, Symbol,
+    setTimeout, clearTimeout,
+    setInterval: () => 1, clearInterval() {},
+    requestAnimationFrame: cb => setTimeout(() => cb(Date.now()), 16),
+    cancelAnimationFrame: clearTimeout,
+    Event: class { constructor(t, o) { this.type = t; Object.assign(this, o || {}) } },
+    CustomEvent: class { constructor(t, o) { this.type = t; this.detail = (o && o.detail) || {} } },
+    PointerEvent: class { constructor(t, o) { this.type = t; Object.assign(this, o || {}) } },
+    location: { href: EDITOR_URL, pathname: '/D:/Program%20Files/Open%20Yami%20RPG%20Editor/resources/app/dist/index.html' },
+    BroadcastChannel: class { postMessage() {} close() {} },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    navigator: { userAgent: 'node' },
+    fetch: async () => ({ ok: false, json: async () => ({}) }),
+    require: name => (name === 'http' ? fakeHttp : require(name)),
+    process: { versions: { node: process.versions.node }, platform: process.platform },
+    addEventListener() {}, removeEventListener() {}, dispatchEvent() {},
+    File: { root: 'D:/Documents/GitHub/DemoGame', save: async () => {}, get: async () => ({}) },
+    Directory: { update: async () => {} },
+    Data: { manifest: { guid: 'demo-guid', changes: [], pathMap: {}, guidMap: {}, project: {} } },
+    Layout: { manager: { index: 'scene', switch(p) { sandbox.Layout.manager.index = p } } },
+    UndoManager: { undo() {}, redo() {} },
+    Title: { playGame: async () => {} }
+  }
+  sandbox.window = sandbox
+  sandbox.global = sandbox
+  sandbox.globalThis = sandbox
+  vm.runInNewContext(PROBE_SRC, sandbox, { filename: 'probe-core.js' })
+
+  const probe = sandbox.window.__YAMI_PERF_PROBE__
+  if (!probe) throw new Error('沙盒里没有初始化出 window.__YAMI_PERF_PROBE__')
+  for (let i = 0; i < 400 && !servers.some(s => s.port === 5967); i++) {
+    await new Promise(r => setTimeout(r, 25))
+  }
+  return { sandbox, probe, document, El, byId, servers, editor: servers.find(s => s.port === 5967) }
+}
+
+/** 直接把请求喂给真实请求处理器（不起真实端口，但走的是同一份 handler 与同一套令牌校验） */
+function call(server, method, url, body, headers) {
+  return new Promise(resolve => {
+    const listeners = new Map()
+    const req = {
+      method, url, headers: headers || {},
+      on(ev, fn) { if (!listeners.has(ev)) listeners.set(ev, []); listeners.get(ev).push(fn); return req },
+      destroy() {}
+    }
+    const res = {
+      statusCode: null, body: null, headers: {},
+      setHeader(k, v) { res.headers[k] = v },
+      writeHead(code) { res.statusCode = code; return res },
+      end(b) { res.body = b }
+    }
+    let thrown = null
+    try { server.handler(req, res) } catch (e) { thrown = e }
+    if (thrown) return resolve({ status: 0, thrown: thrown.message, json: null })
+    setTimeout(() => {
+      const payload = body == null ? '' : JSON.stringify(body)
+      ;(listeners.get('data') || []).forEach(f => f(payload))
+      ;(listeners.get('end') || []).forEach(f => f())
+    }, 0)
+    const started = Date.now()
+    ;(function poll() {
+      if (res.body != null && res.body !== undefined) {
+        let json = null
+        try { json = JSON.parse(res.body) } catch (e) { /* 非 JSON */ }
+        return resolve({ status: res.statusCode, json })
+      }
+      if (Date.now() - started > 40000) return resolve({ status: res.statusCode, json: null, timeout: true })
+      setTimeout(poll, 5)
+    })()
+  })
+}
+
+/* ============================== 假工程夹具（给 MCP / 宿主用） ============================== */
+
+function makeFixture() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yami-ui-fixture-'))
+  fs.mkdirSync(path.join(dir, 'Data'), { recursive: true })
+  fs.mkdirSync(path.join(dir, 'Assets'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'game.yamirpg'), JSON.stringify({ title: '夹具工程' }))
+  fs.writeFileSync(path.join(dir, 'Data', 'config.json'), JSON.stringify({ title: '夹具工程', window: { width: 1280, height: 720, title: '夹具工程', display: 'windowed' } }))
+  fs.writeFileSync(path.join(dir, 'Data', 'manifest.json'), JSON.stringify({ guidMap: {}, pathMap: {}, project: {} }))
+  return dir
+}
+
+/* ============================== 真通道 B：MCP 工具表 ============================== */
+
+function askMcpTools(root) {
+  return new Promise(resolve => {
+    const child = spawn(process.execPath, [path.join(ROOT, 'runtime', 'yami-mcp', 'server.js'), '--root', root], {
+      cwd: ROOT, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']
+    })
+    let out = ''
+    let settled = false
+    const finish = tools => {
+      if (settled) return
+      settled = true
+      try { child.kill() } catch (e) {}
+      resolve(tools)
+    }
+    child.stdout.on('data', d => {
+      out += d.toString()
+      for (const line of out.split('\n')) {
+        if (!line.trim()) continue
+        let msg = null
+        try { msg = JSON.parse(line) } catch (e) { continue }
+        if (msg.id === 2 && msg.result && Array.isArray(msg.result.tools)) finish(msg.result.tools)
+      }
+    })
+    child.stderr.on('data', () => {})
+    child.on('error', () => finish(null))
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'ui-op-test', version: '1' } } }) + '\n')
+    setTimeout(() => {
+      child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) + '\n')
+    }, 300)
+    setTimeout(() => finish(null), 12000)
+  })
+}
+
+/* ============================== 真通道 C：宿主 + 假模型 ============================== */
+
+function startFakeModel(captured) {
+  return new Promise(resolve => {
+    const server = http.createServer((req, res) => {
+      let raw = ''
+      req.on('data', c => { raw += c })
+      req.on('end', () => {
+        let body = {}
+        try { body = JSON.parse(raw || '{}') } catch (e) { /* 忽略 */ }
+        captured.push(body)
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: '收到，我先看一眼。' } }] }) + '\n\n')
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\n')
+        res.write('data: [DONE]\n\n')
+        res.end()
+      })
+    })
+    server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }))
+  })
+}
+
+function jsonCall(port, route, method, body, token) {
+  return new Promise((resolve, reject) => {
+    const payload = body === null ? null : Buffer.from(JSON.stringify(body))
+    const req = http.request({
+      hostname: '127.0.0.1', port, path: route, method,
+      headers: Object.assign({ 'x-yami-agent-token': token }, payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {})
+    }, res => {
+      let raw = ''
+      res.on('data', c => { raw += c })
+      res.on('end', () => { try { resolve(JSON.parse(raw || '{}')) } catch (e) { resolve({}) } })
+    })
+    req.on('error', reject)
+    if (payload) req.write(payload)
+    req.end()
+  })
+}
+
+function streamChat(port, token, body) {
+  return new Promise((resolve, reject) => {
+    const payload = Buffer.from(JSON.stringify(body))
+    const req = http.request({
+      hostname: '127.0.0.1', port, path: '/chat/stream', method: 'POST',
+      headers: { 'x-yami-agent-token': token, 'Content-Type': 'application/json', 'Content-Length': payload.length }
+    }, res => {
+      let raw = ''
+      res.setEncoding('utf8')
+      res.on('data', c => { raw += c })
+      res.on('end', () => resolve(raw))
+    })
+    req.on('error', reject)
+    req.write(payload)
+    req.end()
+  })
+}
+
+function systemTextOf(body) {
+  return (body.messages || []).filter(m => m.role === 'system').map(m => String(m.content || '')).join('\n')
+}
+
+/* ============================== 主流程 ============================== */
+
+async function main() {
+  const fixture = makeFixture()
+  let host = null
+  let model = null
+  const cleanup = () => {
+    try { if (host) host.kill() } catch (e) {}
+    try { if (model) model.close() } catch (e) {}
+    try { fs.rmSync(fixture, { recursive: true, force: true }) } catch (e) {}
+  }
+
+  try {
+    /* ---------------- A. 演出引擎与操作桥（真 HTTP 通道） ---------------- */
+    console.log('--- A. 演出引擎与 5967 动作桥（真请求处理器 + 真令牌）---')
+    const boot = await bootProbe()
+    check('5967 编辑器动作桥已启动（真实 createServer）', !!boot.editor, boot.editor ? 'port 5967' : '未启动')
+
+    // P0 回归守卫：getEditorContext 曾经因为块级作用域引用 isEditorHostPage 而每次调用都抛
+    let ctxErr = null
+    let ctxVal = null
+    try { ctxVal = boot.probe.getEditorContext() } catch (e) { ctxErr = e }
+    check('probe.getEditorContext() 可执行（作用域回归守卫）', !ctxErr, ctxErr ? ctxErr.constructor.name + ': ' + ctxErr.message : 'environment=' + (ctxVal && ctxVal.environment))
+
+    if (!boot.editor) throw new Error('5967 桥没起来，后面的真通道断言无法进行')
+    const editor = boot.editor
+    const tokenRes = await call(editor, 'GET', '/token')
+    const token = tokenRes.json && tokenRes.json.bridgeToken
+    check('GET /token 拿到真实桥接令牌', !!token)
+    const H = { 'x-yami-bridge-token': token }
+
+    const ctxRes = await call(editor, 'GET', '/context')
+    const ctx = ctxRes.json && ctxRes.json.context
+    check('GET /context 返回 ok（曾经的 ReferenceError 现场）', ctxRes.json && ctxRes.json.ok === true, JSON.stringify(ctxRes.json).slice(0, 140))
+    check('上下文带 scope / page / hasPendingInput 字段', !!(ctx && ctx.scope && ctx.page !== undefined && ctx.hasPendingInput !== undefined))
+
+    const who = await call(editor, 'GET', '/whoami')
+    check('GET /whoami 报出真实工程根（File.root）', who.json && who.json.projectRoot === 'D:/Documents/GitHub/DemoGame', who.json && who.json.projectRoot)
+
+    // --- 正常三步：真执行 + 真演出 ---
+    const atk = new boot.El('input', 'fileItem-attack'); atk.value = '10'; boot.document.body.appendChild(atk)
+    const def = new boot.El('input', 'fileItem-def'); def.value = '5'; boot.document.body.appendChild(def)
+    const save = new boot.El('div', 'btn-save'); boot.document.body.appendChild(save)
+    const scratch = new boot.El('input', 'user-scratch'); scratch.value = '用户没提交的字'; boot.document.body.appendChild(scratch)
+    scratch.focus()
+    const order = []
+    atk.addEventListener('focus', () => order.push('focus:attack'))
+    def.addEventListener('input', () => order.push('input:def'))
+    save.addEventListener('click', () => order.push('click:save'))
+    const step = (kind, target, extra) => Object.assign({ kind, target, holdMs: 5, settleMs: 5 }, extra || {})
+
+    const runA = await call(editor, 'POST', '/action', {
+      action: 'uiSteps',
+      steps: [
+        step('focus', '#fileItem-attack', { label: '聚焦攻击力' }),
+        step('set', '#fileItem-def', { value: 50, label: '防御改成 50' }),
+        step('click', '#btn-save', { label: '点保存' })
+      ]
+    }, H)
+    check('uiSteps 三步全成 ok:true', runA.json && runA.json.ok === true, JSON.stringify(runA.json).slice(0, 120))
+    // 中间那次 focus:attack 是 set 的"焦点保护"把焦点还给了原来聚焦的控件 —— 这是预期行为，不是重复执行
+    check('三步按序真实执行，且 set 之后把焦点还原给原控件',
+      order.join(';') === 'focus:attack;input:def;focus:attack;click:save', order.join(';'))
+    check('DOM 真值变更（value=50 / click=1）', def.value === '50' && save._clicks === 1, 'value=' + def.value + ' clicks=' + save._clicks)
+    check('set 走完 focus -> input -> change -> blur（能进撤销栈）',
+      def._focuses >= 1 && def._blurs >= 1 && def.dispatched.indexOf('change') >= 0,
+      'focus=' + def._focuses + ' blur=' + def._blurs + ' 事件=' + def.dispatched.join(','))
+    check('操作完用户原有焦点与未提交内容无损', boot.document.activeElement === scratch && scratch.value === '用户没提交的字')
+
+    const ring = boot.byId.get('yami-ai-ring')
+    const box = ring && ring.children.find(c => String(c.className).indexOf('yami-ai-ring-box') >= 0)
+    check('演出浮层 #yami-ai-ring 真被创建并挂到 body', !!ring && ring.children.length >= 3, ring ? '子节点=' + ring.children.length : '缺失')
+    check('高亮框按目标 rect 定位（transform translate）', !!box && /translate\(200px, 100px\)/.test(String(box.style.transform)),
+      box ? box.style.transform + ' ' + box.style.width + 'x' + box.style.height : '缺失')
+    check('演出结束后浮层已收起（无残留幽灵框）', !!ring && ring.style.display === 'none')
+
+    // --- 熔断：第 2 步目标不存在 ---
+    const mp = new boot.El('input', 'fileItem-mp'); mp.value = '100'; boot.document.body.appendChild(mp)
+    let step3Ran = false
+    mp.addEventListener('input', () => { step3Ran = true })
+    const runB = await call(editor, 'POST', '/action', {
+      action: 'uiSteps',
+      steps: [
+        step('set', '#fileItem-attack', { value: '200' }),
+        step('set', '#ghost-not-exist', { value: '999' }),
+        step('set', '#fileItem-mp', { value: '999' })
+      ]
+    }, H)
+    check('失败熔断返回 ok:false 且 failedAt=1', runB.json && runB.json.ok === false && runB.json.failedAt === 1, JSON.stringify(runB.json).slice(0, 150))
+    check('第 3 步绝对没有被执行', step3Ran === false && mp.value === '100', '触发=' + step3Ran + ' mp=' + mp.value)
+    check('已完成的第 1 步如实入账 done', !!(runB.json && Array.isArray(runB.json.done) && runB.json.done.length === 1))
+
+    // --- 急停：cancel 必须在白名单里（此前 /ui-cancel 打到未知名返回 400 被吞） ---
+    const cancelRes = await call(editor, 'POST', '/action', { action: 'cancel', reason: '测试停止' }, H)
+    check('cancel 动作在 5967 白名单内（/ui-cancel 不再是死路）', cancelRes.status === 200 && cancelRes.json && cancelRes.json.ok === true,
+      'status=' + cancelRes.status + ' ' + JSON.stringify(cancelRes.json).slice(0, 110))
+
+    // --- 急停：打断落在 wait 步骤（曾经被 ringTo 里的 cancelled=false 吞掉） ---
+    const d1 = new boot.El('input', 'd1'); boot.document.body.appendChild(d1)
+    const d2 = new boot.El('input', 'd2'); boot.document.body.appendChild(d2)
+    const d3 = new boot.El('input', 'd3'); boot.document.body.appendChild(d3)
+    const slowRun = call(editor, 'POST', '/action', {
+      action: 'uiSteps',
+      steps: [
+        step('set', '#d1', { value: 'A' }),
+        Object.assign(step('wait', '#d2'), { duration: 500 }),
+        step('set', '#d3', { value: 'C' })
+      ]
+    }, H)
+    await new Promise(r => setTimeout(r, 150))
+    boot.probe.ui.cancel('用户在停顿期间按了停')
+    const runD = await slowRun
+    check('急停落在 wait 步骤之间仍被尊重（回归守卫）', runD.json && runD.json.ok === false && runD.json.cancelled === true, JSON.stringify(runD.json).slice(0, 170))
+    check('急停后剩余步骤没有被执行', d3.value === '', 'd3=' + JSON.stringify(d3.value))
+
+    // --- 批量合并：用真实默认节奏测耗时 ---
+    for (const n of ['m1', 'm2', 'm3', 'u1', 'u2', 'u3']) {
+      const el = new boot.El('input', n); el.value = '0'; boot.document.body.appendChild(el)
+    }
+    const t0 = Date.now()
+    const merged = await call(editor, 'POST', '/action', {
+      action: 'uiSteps',
+      steps: [
+        { kind: 'set', target: '#m1', value: 1, mergeGroup: 'g' },
+        { kind: 'set', target: '#m2', value: 2, mergeGroup: 'g' },
+        { kind: 'set', target: '#m3', value: 3, mergeGroup: 'g' }
+      ]
+    }, H)
+    const mergedMs = Date.now() - t0
+    const t1 = Date.now()
+    const plain = await call(editor, 'POST', '/action', {
+      action: 'uiSteps',
+      steps: [
+        { kind: 'set', target: '#u1', value: 1 },
+        { kind: 'set', target: '#u2', value: 2 },
+        { kind: 'set', target: '#u3', value: 3 }
+      ]
+    }, H)
+    const plainMs = Date.now() - t1
+    check('同 mergeGroup 的三步全成', merged.json && merged.json.ok === true)
+    check('合并演出耗时 <= 1400ms', mergedMs <= 1400, mergedMs + 'ms')
+    check('合并确实比逐步演出快', mergedMs < plainMs, '合并 ' + mergedMs + 'ms vs 逐步 ' + plainMs + 'ms')
+    check('逐步演出同样全部执行成功', plain.json && plain.json.ok === true && boot.byId.get('u3').value === '3')
+
+    // --- 未失焦输入探测 ---
+    boot.document.activeElement = null
+    const idle = boot.probe.hasPendingInput()
+    const focused = new boot.El('input', 'search-box'); boot.document.body.appendChild(focused)
+    focused.focus()
+    const busy = boot.probe.hasPendingInput()
+    focused.blur()
+    check('hasPendingInput：无焦点时 false', idle === false)
+    check('hasPendingInput：输入框聚焦未失焦时 true', busy === true)
+    check('hasPendingInput：失焦后自动解除', boot.probe.hasPendingInput() === false)
+
+    // --- 白名单没被放宽成通配 ---
+    const unknown = await call(editor, 'POST', '/action', { action: 'evalJs', expression: 'alert(1)' }, H)
+    check('未知动作仍被拒（白名单没被放宽）', unknown.status === 400 && unknown.json && unknown.json.ok === false, 'status=' + unknown.status)
+
+    /* ---------------- B. MCP 工具表：ui_steps 真的注册了 ---------------- */
+    console.log('\n--- B. MCP 工具表（真 JSON-RPC tools/list）---')
+    const tools = await askMcpTools(fixture)
+    if (!tools) {
+      check('MCP tools/list 可访问', false, '没拿到工具表')
+    } else {
+      const names = tools.map(t => t.name)
+      const ui = tools.find(t => t.name === 'ui_steps')
+      check('tools/list 能拿到工具表', names.length > 30, names.length + ' 个工具')
+      check('ui_steps 已注册（AI 真的调得到演出引擎）', !!ui)
+      check('ui_steps 必填 steps', !!(ui && ui.inputSchema && ui.inputSchema.required && ui.inputSchema.required.indexOf('steps') >= 0))
+      const itemProps = ui && ui.inputSchema.properties.steps.items.properties
+      check('步骤字段声明齐全（kind/target/value/label/mergeGroup）',
+        !!(itemProps && itemProps.kind && itemProps.target && itemProps.value && itemProps.label && itemProps.mergeGroup),
+        itemProps ? Object.keys(itemProps).join(',') : '缺失')
+      check('ui_steps 声明为写操作（readOnlyHint=false，不能并发）', !!(ui && ui.readOnlyHint === false))
+      check('原始工具表保留 cdp_eval（留给外部 MCP 客户端与路线 B）', names.indexOf('cdp_eval') >= 0)
+    }
+
+    /* ---------------- C. 宿主：谁提问就用谁的视野 + 对齐卡协议到达模型 ---------------- */
+    console.log('\n--- C. 宿主提示词与一手环境（真 ai-host + 假模型截获）---')
+    const captured = []
+    const fake = await startFakeModel(captured)
+    model = fake.server
+    const AI_PORT = 17968 + Math.floor(Math.random() * 400)
+    const AGENT_TOKEN = crypto.randomBytes(16).toString('hex')
+    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yami-ui-host-'))
+    host = spawn(process.execPath, [path.join(ROOT, 'ai-host.js')], {
+      cwd: ROOT,
+      windowsHide: true,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: Object.assign({}, process.env, {
+        YAMI_AI_PORT: String(AI_PORT),
+        YAMI_AI_TOKEN: AGENT_TOKEN,
+        YAMI_AI_CONFIG_DIR: configDir,
+        YAMI_AI_SESSION_DIR: path.join(configDir, 'sessions'),
+        YAMI_PROJECT_ROOT: fixture
+      })
+    })
+    let hostErr = ''
+    host.stderr.on('data', d => { hostErr += d.toString() })
+
+    let ready = false
+    for (let i = 0; i < 80 && !ready; i++) {
+      try {
+        const s = await jsonCall(AI_PORT, '/status', 'GET', null, AGENT_TOKEN)
+        if (s && s.ok) ready = true
+      } catch (e) { /* 还没起来 */ }
+      if (!ready) await new Promise(r => setTimeout(r, 100))
+    }
+    check('ai-host 已就绪', ready, ready ? '' : hostErr.slice(0, 160))
+
+    if (ready) {
+      await jsonCall(AI_PORT, '/config', 'POST', {
+        endpoint: 'http://127.0.0.1:' + fake.port + '/chat/completions',
+        model: 'fake-model', apiKey: 'test-key', approvalMode: 'confirm'
+      }, AGENT_TOKEN)
+      await jsonCall(AI_PORT, '/project', 'POST', { projectRoot: fixture }, AGENT_TOKEN)
+
+      // C1：试玩窗口提问 —— 必须用提问者自己的视野，不能被编辑器串味
+      await streamChat(AI_PORT, AGENT_TOKEN, {
+        sessionId: 'ui-playtest',
+        message: '这个怪为什么打不死',
+        pageContext: { page: 'playtest', summary: '试玩运行中 · 场景「BOSS战」' }
+      })
+      const playtestSystem = systemTextOf(captured[captured.length - 1] || {})
+      check('试玩窗口提问时，模型收到的一手环境写着"试玩运行中"', playtestSystem.indexOf('试玩运行中') >= 0)
+      check('严禁把试玩窗口误标成"编辑器"', playtestSystem.indexOf('处于编辑器中') === -1)
+
+      // C2：编辑器窗口提问 —— 用编辑器自己的视野
+      await streamChat(AI_PORT, AGENT_TOKEN, {
+        sessionId: 'ui-editor',
+        message: '帮我看看新手村',
+        pageContext: { page: 'editor', summary: '编辑器 · 页面「场景编辑」· 场景「新手村」' }
+      })
+      const editorSystem = systemTextOf(captured[captured.length - 1] || {})
+      check('编辑器窗口提问时，模型收到的是编辑器自己的视野', editorSystem.indexOf('新手村') >= 0 && editorSystem.indexOf('试玩运行中') === -1)
+
+      // C3：提示词协议真的到达模型（否则卡片和演示都是摆设）
+      check('系统提示词里定义了 ui_steps 的用法', editorSystem.indexOf('ui_steps') >= 0)
+      check('系统提示词里定义了对齐卡协议', editorSystem.indexOf('alignment-card') >= 0)
+      check('系统提示词要求开工前先对齐', editorSystem.indexOf('对齐卡') >= 0)
+      check('提示词里带上了界面演示的失败语义（如实说清第几步卡住）', editorSystem.indexOf('第几步卡住') >= 0)
+
+      // C4：内置模型**实际拿到**的工具表 —— 这才是"模型看不看得见"的唯一真源
+      const lastReq = captured[captured.length - 1] || {}
+      const modelToolNames = (lastReq.tools || []).map(t => (t.function && t.function.name) || t.name)
+      check('模型请求体里带上了 ui_steps（工具真的递到了模型手上）', modelToolNames.indexOf('ui_steps') >= 0, modelToolNames.length + ' 个工具')
+      check('模型请求体里没有 cdp_eval（宿主侧 HIDDEN_TOOLS 真的生效）', modelToolNames.indexOf('cdp_eval') === -1)
+    }
+
+    try { fs.rmSync(configDir, { recursive: true, force: true }) } catch (e) {}
+
+    console.log('\n========== 界面操作与演出测试汇总: ' + passed + '/' + (passed + failed) + ' PASS ==========')
+    if (failed > 0) process.exitCode = 1
+  } finally {
+    cleanup()
+  }
+}
+
+main().catch(err => {
+  console.error('测试异常崩溃:', err && err.stack ? err.stack : err)
+  process.exit(1)
+})

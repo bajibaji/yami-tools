@@ -31,7 +31,23 @@ class EditorBridge {
     })
   }
 
-  async action(action, params = {}) {
+  async whoami() {
+    const res = await this.request('GET', '/whoami', null, 800)
+    return res.ok ? res.data : { ok: false, error: res.error || '获取编辑器实例信息失败' }
+  }
+
+  async action(action, params = {}, expectedProjectRoot = '') {
+    const root = expectedProjectRoot || process.env.YAMI_PROJECT_ROOT || ''
+    if (root) {
+      const who = await this.whoami()
+      if (who.ok && who.projectRoot) {
+        const normWho = String(who.projectRoot).replace(/\\/g, '/').toLowerCase()
+        const normExp = String(root).replace(/\\/g, '/').toLowerCase()
+        if (!normWho.includes(normExp) && !normExp.includes(normWho)) {
+          return { ok: false, error: `检测到另一个编辑器实例占用端口（目标工程: ${who.projectRoot}，当前工程: ${root}），已拒绝操作以防串工程` }
+        }
+      }
+    }
     const live = await this.request('GET', '/token')
     if (!live.ok) return live
     const token = live.data.bridgeToken
@@ -39,7 +55,8 @@ class EditorBridge {
     const body = { ...params }
     if (action === 'interact' && params.action) body.operation = params.action
     body.action = action
-    const result = await this.request('POST', '/action', body, 1800, token)
+    const timeout = action === 'uiSteps' ? 30000 : 1800
+    const result = await this.request('POST', '/action', body, timeout, token)
     return result.ok ? result.data : result
   }
 
@@ -54,6 +71,10 @@ class EditorBridge {
   async getContext() {
     const res = await this.request('GET', '/context', null, 800)
     return res.ok ? res.data : { ok: false, error: res.error || '获取编辑器上下文失败' }
+  }
+
+  async uiSteps(steps, expectedProjectRoot = '') {
+    return await this.action('uiSteps', { steps }, expectedProjectRoot)
   }
 }
 

@@ -17,7 +17,7 @@ const path = require('path')
 const { spawn } = require('child_process')
 
 const ROOT = path.resolve(__dirname, '..')
-const FIXTURE = process.env.YAMI_TEST_PROJECT || '/home/deck/yami-fixture'
+const FIXTURE = require('./resolve-project.cjs').resolveProject()
 const TOKEN = 'parallel-test-token'
 const AI_PORT = 19100 + Math.floor(Math.random() * 200)
 const MODEL_PORT = AI_PORT + 300
