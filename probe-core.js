@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.6.2';
+  const PROBE_VERSION = '1.6.8';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -1929,6 +1929,335 @@
     || /^https?:\/\/localhost:5173\//i.test(pageHref)
     || /\/dist\/index\.html$/i.test(pageHref);
 
+  // ============================================================
+  // 在场感知：用户此刻"停"在界面的哪个控件上
+  //   · 引擎给交互控件挂了 .tip（它自己写的人话说明）与 name —— 最准的"这是什么"
+  //   · 只认"停留"（>= PRESENCE_HOLD_MS）：鼠标划过不算，停住才算
+  //   · 焦点优先于悬停：点进去的输入框比鼠标路过更能说明他在意什么
+  // ============================================================
+  const PRESENCE_HOLD_MS = 600;
+  // el/since   = 鼠标停留（划过不算，要停住）
+  // clickEl/…  = 右键"指着"的东西（引擎会给它描一圈高亮，明确表示"菜单作用在它身上"）
+  const presence = { el: null, since: 0, focusEl: null, focusSince: 0, clickEl: null, clickSince: 0,
+                     selEl: null, selSince: 0, seenSelected: null };
+
+  /**
+   * 引擎自己的"选中态"就是用户看到的那圈高亮。
+   * 实据（引擎源码 components/common-list.ts:230）：pointerdown 里 case 0 / case 2 走同一支，
+   * 右键和左键一样会 select(element) —— 也就是给目标 addClass('selected')（element-methods.ts:33 是真 class）。
+   * 这比悬停、焦点都权威（是引擎自己记的状态），所以单独跟一份，只认"新出现的那个"。
+   */
+  function trackEngineSelection() {
+    let list = null;
+    try { list = document.querySelectorAll('[selected], .selected'); } catch (e) { return; }
+    if (!list) return;
+    const now = Date.now();
+    const set = new Set();
+    let newest = null;
+    for (let i = 0; i < list.length; i++) {
+      const el = list[i];
+      set.add(el);
+      if (!presence.seenSelected || !presence.seenSelected.has(el)) newest = el;
+    }
+    presence.seenSelected = set;
+    // 只在"换了个目标"时刷新时间戳：同一元素被反复判为新会让它的时间戳一直最新，
+    // 把更新的悬停/焦点信号压住（实测踩过：点在检视器输入框上却仍报上一次选中的列表项）。
+    if (newest && newest !== presence.selEl && !isOwnUi(newest)) {
+      presence.selEl = newest;
+      presence.selSince = now;
+    }
+  }
+
+  function isOwnUi(el) {
+    try { return !!(el && el.closest && el.closest('#yami-perf-dock, #page-ai')); } catch (e) { return false; }
+  }
+
+  function readElementTip(el) {
+    try {
+      let tip = el.tip;
+      if (typeof tip === 'function') tip = tip();
+      if (typeof tip !== 'string' || !tip) return '';
+      // tip 允许带 <b> 之类标记与换行（引擎的写法）：只取第一行、剥标签
+      return tip.split('\n')[0].replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    } catch (e) { return ''; }
+  }
+
+  function readElementName(el) {
+    try {
+      if (typeof el.name === 'string' && el.name) return el.name.trim().slice(0, 40);
+      const attr = el.getAttribute && el.getAttribute('name');
+      return attr ? String(attr).trim().slice(0, 40) : '';
+    } catch (e) { return ''; }
+  }
+
+  /**
+   * 检视器/参数面板的字段标签：引擎的静态标记把标签写成紧邻的前一个 <text>：
+   *   <text>Icon</text><custom-box id="fileSkill-icon" type="file">
+   *   <flex-item><text>Name</text><text-box id="attribute-name"></text-box></flex-item>
+   * 所以"这是哪个字段"根本不用猜，看前一个兄弟就行。
+   */
+  function readSiblingLabel(el) {
+    try {
+      let prev = el.previousElementSibling;
+      for (let i = 0; prev && i < 3; i++, prev = prev.previousElementSibling) {
+        const tag = String(prev.tagName || '').toLowerCase();
+        // 只认真正的标签元素：引擎的标签一律写成 <text>（少数 <legend>/<label>）。
+        // 别拿"文字很短"当判据 —— 那样前一个兄弟只要是别的控件（number-box 的 "speed:1.0"），
+        // 就会被当成这个控件的标签（实测踩过：hover 在 canvas 上却报出"停在 speed:1.0"）。
+        if (tag !== 'text' && tag !== 'label' && tag !== 'legend') continue;
+        const text = String(prev.textContent || '').replace(/\s+/g, ' ').trim();
+        if (text && text.length <= 24) return text.slice(0, 24);
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  // 区域名（取自引擎静态标记里的真实 id，不是我编的）：
+  //   <box id="scene-screen" tabindex="-1"> / <box id="ui-screen"> /
+  //   <page-frame id="inspector"> / <node-list id="command-list"> / <file-browser id="project-browser">
+  const REGION_NAMES = {
+    'scene-screen': '场景视图',
+    'scene-marquee': '场景视图',
+    'ui-screen': '界面视图',
+    'ui-marquee': '界面视图',
+    'inspector-page-manager': '检视器',
+    inspector: '检视器',
+    'command-list': '事件编辑器',
+    'project-browser': '资源树',
+    title: '标题栏',
+    menu: '菜单栏',
+    'window-ambient': '编辑器空白处',
+    // 几个只有 id、没有标题栏的页面/容器（引擎标记里靠注释区分，注释不进 DOM）
+    // 都是引擎真实存在的 id，名字只是给它一个人话标签 —— 不加这些就会一路退到很含糊的"编辑器主区"
+    'scene-object': '场景对象列表',
+    'ui-element': '界面元素列表',
+    'animation-motion': '动画列表',
+    'animation-timeline': '动画时间轴',
+    'particle-layer': '粒子层',
+    'command-widget': '指令搜索',
+    'layout-content': '编辑器主区'
+  };
+
+  /** 读某个元素的直接子元素里、指定标签的文字（窗口标题栏 / field-set 的 legend 都在这儿） */
+  function readChildText(node, tags) {
+    try {
+      const kids = node.children || [];
+      for (let i = 0; i < kids.length; i++) {
+        const kid = kids[i];
+        if (tags.indexOf(String(kid.tagName || '').toLowerCase()) < 0) continue;
+        // 标题栏里常带 <close>/<maximize> 这类空元素，textContent 自然只剩窗口名
+        const text = String(kid.textContent || '').replace(/\s+/g, ' ').trim();
+        if (text && text.length <= 24) return text;
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  /**
+   * 兜底：精确识别不出来的东西（典型是 WebGL canvas —— 场景里的对象没有 DOM 节点；
+   * 以及只有 id 没有可见标签的紧凑控件），至少说清"他在哪一块"。
+   *
+   * 名字来源按"离得近"排序，而且**全部取自引擎真实标记里已有的文字**，不拿随便一个 id 充数：
+   *   ① 已知区域 id（REGION_NAMES）；
+   *   ② 所在窗口的名字：<window-frame id="showText"><title-bar>Show Text</title-bar>…
+   *   ③ 所在分组的名：<field-set id="event-commands-fieldset"><legend>Content</legend>…
+   * 拿 id 当名字会很难看，而且鼠标扫过网格空白处就会把前面识别出来的「攻击力」冲掉。
+   */
+  function describePresenceRegion(el) {
+    try {
+      let node = el;
+      for (let i = 0; node && i < 12; i++, node = node.parentElement) {
+        const id = node.id;
+        const tag = String(node.tagName || '').toLowerCase();
+        if (id && REGION_NAMES[id]) {
+          return { label: REGION_NAMES[id], kind: 'region', value: '', where: id, vague: true };
+        }
+        if (tag === 'window-frame' || tag === 'page-frame') {
+          const winName = readChildText(node, ['title-bar', 'detail-summary']);
+          if (winName) return { label: winName, kind: 'region', value: '', where: id || tag, vague: true };
+        }
+        if (tag === 'field-set') {
+          const legend = readChildText(node, ['legend']);
+          if (legend) return { label: legend, kind: 'region', value: '', where: id || 'field-set', vague: true };
+        }
+      }
+      return null;
+    } catch (e) { return null; }
+  }
+
+  /**
+   * 有些控件的标签写在**自己内部**（照抄引擎真实标记）：
+   *   <number-box id="animation-speed" min="0" max="4" …><text class="label">speed:</text></number-box>
+   * 只看直接子元素，避免从深层内容里抓错东西。
+   */
+  function readInnerLabel(el) {
+    try {
+      const kids = el.children || [];
+      for (let i = 0; i < kids.length && i < 3; i++) {
+        const kid = kids[i];
+        const tag = String(kid.tagName || '').toLowerCase();
+        if (tag !== 'text' && tag !== 'label') continue;
+        const text = String(kid.textContent || '').replace(/\s+/g, ' ').trim();
+        if (text && text.length <= 16) return text;
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  /** 把一个 DOM 元素翻译成"用户停在什么东西上"。找不到有意义的身份就返回 null（不硬凑）。 */
+  function describePresenceElement(el, via, heldMs) {
+    try {
+      if (!el || el.nodeType !== 1 || el.isConnected === false) return null;
+      const tag0 = String(el.tagName || '').toLowerCase();
+      if (tag0 === 'html' || tag0 === 'body') return null;
+      if (isOwnUi(el)) return null;
+      // 鼠标多半落在控件内部的 <text>/<input> 上，而 tip/name 挂在控件本体 —— 往上找最近一个有身份的
+      let node = el;
+      let label = '';
+      let host = null;
+      for (let depth = 0; node && node.nodeType === 1 && depth < 5; depth++, node = node.parentElement) {
+        const found = readElementTip(node) || readElementName(node);
+        if (found) { label = found; host = node; break; }
+      }
+      if (!label) {
+        // 标签写在自己内部的那种控件（见 readInnerLabel）
+        const inner = readInnerLabel(el);
+        if (inner) { label = inner; host = el; }
+      }
+      if (!label) {
+        // 检视器字段：往上找一层，看有没有紧邻的 <text> 标签
+        let probe = el;
+        for (let depth = 0; probe && depth < 3; depth++, probe = probe.parentElement) {
+          const sibling = readSiblingLabel(probe);
+          if (sibling) { label = sibling; host = probe; break; }
+        }
+      }
+      if (!label) {
+        // 兜底：可见文字（按钮、列表项、命令、标签页都属于这一类）
+        const text = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!text || text.length > 60) return null;
+        label = text.slice(0, 30);
+        host = el;
+      }
+      let value = '';
+      try {
+        const raw = host && 'value' in host ? host.value : undefined;
+        if (typeof raw === 'string' && raw && raw.length <= 24) value = raw;
+        else {
+          // custom-box / number-box 这类控件的值就写在它自己的文字里（引擎标记无 value 属性）；
+          // 若标签本身就在内部（<text class="label">speed:</text>1.0），把标签部分剥掉只留值
+          const own = String((host && host.textContent) || '').replace(/\s+/g, ' ').trim();
+          const stripped = label ? own.split(label).join('').trim() : own;
+          if (stripped && stripped !== label && stripped.length <= 24) value = stripped;
+        }
+      } catch (e) {}
+      let where = '';
+      try {
+        let p = host;
+        for (let i = 0; p && i < 8; i++, p = p.parentElement) {
+          if (p.id) { where = String(p.id); break; }
+        }
+      } catch (e) {}
+      return {
+        label: String(label).slice(0, 40),
+        kind: String((host && host.tagName || tag0)).toLowerCase(),
+        value: value,
+        where: where,
+        via: via,
+        restingMs: heldMs > 0 ? heldMs : 0
+      };
+    } catch (e) { return null; }
+  }
+
+  function getPresence() {
+    try {
+      if (typeof document === 'undefined') return null;
+      const now = Date.now();
+      const candidates = [];
+      // 引擎自己记的选中态（右键/点选出来的 .selected）—— 最权威，优先看它
+      trackEngineSelection();
+      if (presence.selEl && presence.selSince) {
+        candidates.push({ el: presence.selEl, since: presence.selSince, via: 'selected' });
+      }
+      // 右键指过的东西：最明确的"就是它"手势
+      if (presence.clickEl && presence.clickSince) {
+        candidates.push({ el: presence.clickEl, since: presence.clickSince, via: 'rightclick' });
+      }
+      // 点进去/右键聚焦的控件：浏览器会给它描一圈焦点环，也就是用户说的"蓝色边框"
+      const active = document.activeElement;
+      if (active && active !== document.body && !isOwnUi(active)) {
+        candidates.push({ el: active, since: presence.focusSince || now, via: 'focus' });
+      }
+      // 鼠标停留：要真的停住才算，划过不算
+      if (presence.el && presence.since) {
+        candidates.push({ el: presence.el, since: presence.since, via: 'hover', needHold: true });
+      }
+      // 最新的信号优先：他刚刚指的那个，比他十分钟前点过的地方更能说明现在想要什么。
+      // 同一毫秒内撞车时按语义定序（右键/选中是"明确指着它"，比被动悬停硬）——
+      // 不定序的话就变成"谁先入队谁赢"，纯属运气。
+      const viaRank = { rightclick: 0, selected: 1, focus: 2, hover: 3 };
+      candidates.sort(function (a, b) {
+        return (b.since - a.since) || ((viaRank[a.via] || 9) - (viaRank[b.via] || 9));
+      });
+      // 两组分开问，顺序有意义：
+      //   ① "他现在在哪儿"（指针停留 / 焦点 / 右键）—— 先精确到控件，认不出再退到区域级；
+      //   ② "他选了什么"（.selected 是**持续状态**，不是"此刻在哪"）—— 只在①什么都问不出来时兜底。
+      // 早先的实现把选中态和悬停放在一起比时间戳，结果"鼠标已经挪到 canvas 上了"仍报上一次选中的列表项。
+      const byPointer = candidates.filter(function (c) { return c.via !== 'selected'; });
+      const bySelection = candidates.filter(function (c) { return c.via === 'selected'; });
+      // 组内按"最近优先"，每个候选先试着精确描述、认不出就退到它所在的区域 ——
+      // 顺序很关键：不能"先把所有候选的精确描述都试一遍"，否则鼠标已经停在 canvas 上了，
+      // 却因为上一次右键的那个控件更好描述而被报成"停在那个控件上"（实测踩过）。
+      function resolveGroup(group) {
+        for (let i = 0; i < group.length; i++) {
+          const c = group[i];
+          if (c.needHold && (now - c.since) < PRESENCE_HOLD_MS) continue;
+          const desc = describePresenceElement(c.el, c.via, now - c.since);
+          if (desc) return desc;
+          const region = describePresenceRegion(c.el);
+          if (region) { region.via = c.via; region.restingMs = now - c.since; return region; }
+        }
+        return null;
+      }
+      return resolveGroup(byPointer) || resolveGroup(bySelection);
+    } catch (e) { return null; }
+  }
+
+  (function initPresenceTracking() {
+    try {
+      if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
+      document.addEventListener('pointerover', function (e) {
+        const el = e && e.target;
+        if (!el || el === presence.el) return;
+        // 移到我们自己的面板上（比如来这里打字）：保留"他上一个停的地方"，别把它冲掉
+        if (isOwnUi(el)) return;
+        presence.el = el;
+        presence.since = Date.now();
+      }, true);
+      document.addEventListener('pointerout', function (e) {
+        // 只有真的离开窗口才清空。在元素之间穿梭时不能清 ——
+        // 否则"从编辑器挪到面板打字"这一下就把停留点抹掉了，而那正是最该报的时刻。
+        if (e && e.target === presence.el && !e.relatedTarget) { presence.el = null; presence.since = 0; }
+      }, true);
+      document.addEventListener('pointerdown', function (e) {
+        // 右键：引擎会把它指的那个控件描上高亮边框。用户用这个动作明确说"就是它"，
+        // 是比悬停强得多的信号，单独记一份。
+        if (!e || e.button !== 2) return;
+        const el = e.target;
+        if (!el || isOwnUi(el)) return;
+        presence.clickEl = el;
+        presence.clickSince = Date.now();
+      }, true);
+      document.addEventListener('focusin', function (e) {
+        const el = e && e.target;
+        if (!el || isOwnUi(el)) return;
+        presence.focusEl = el;
+        presence.focusSince = Date.now();
+      }, true);
+      document.addEventListener('focusout', function () { presence.focusEl = null; presence.focusSince = 0; }, true);
+    } catch (e) {}
+  })();
+
   function hasPendingInput() {
     try {
       if (typeof document === 'undefined') return false;
@@ -1995,7 +2324,9 @@
       scope: scope,
       page: scope.name,
       engineAvailable: engineAvailable(),
-      hasPendingInput: hasPendingInput()
+      hasPendingInput: hasPendingInput(),
+      // 用户此刻停在哪：比"选了什么"更直接地表达他想要什么
+      presence: getPresence()
     };
 
     try {
@@ -2051,29 +2382,57 @@
     return result;
   }
 
+  /**
+   * 环境摘要：这条会同时上屏（面板顶栏）与进系统提示词，所以**必须短**。
+   * 排序原则：先说"用户此刻停在哪"（在场感知），其次才是场景/选中项这类背景；
+   * 有停留点时不再堆背景信息 —— 顶栏只有一行，堆满了等于什么都没说。
+   * 要细节让模型去调 get_editor_context（那里有完整对象）。
+   */
   function formatEditorContextSummary(ctx) {
     if (!ctx) return '';
+    const at = ctx.presence;
+    // 有停留点：顶栏就只说这一件事。
+    // 用户要的是"AI 知道我在看哪儿"，而页面/场景他自己正看着，不必再占那一行。
+    // （试玩窗口例外：那是另一个窗口，必须说出来。）
+    if (at && at.label) {
+      let line = '停在「' + at.label + '」';
+      if (at.value) line += '=' + at.value;
+      // 区域级（比如"停在场景视图"）光说这块地方信息不够，补一条背景；
+      // 精确到控件时就不补 —— 用户要的是"AI 知道我在看哪儿"，不是一串背景。
+      if (at.vague) {
+        const one = (ctx.sceneTarget && ctx.sceneTarget.name)
+          ? '选中' + (ctx.sceneTarget.type && ctx.sceneTarget.type !== 'object' ? ctx.sceneTarget.type + ':' : '') + '「' + ctx.sceneTarget.name + '」'
+          : ((ctx.selectedFile && ctx.selectedFile.name) ? '选中「' + ctx.selectedFile.name + '」' : '');
+        if (one) line += '·' + one;
+      }
+      return '【当前环境】' + (ctx.playtest ? '试玩中·' : '') + line;
+    }
     const parts = [];
-    parts.push(ctx.playtest ? '试玩运行中' : (ctx.environment === 'editor' ? '编辑器' : '独立运行'));
-    if (ctx.scope && ctx.scope.name && ctx.scope.name !== '编辑器' && ctx.scope.name !== '独立试玩窗口') {
-      parts.push('页面「' + ctx.scope.name + '」');
+    parts.push(ctx.playtest ? '试玩中' : (ctx.environment === 'editor' ? '编辑器' : '独立运行'));
+    const pageName = (ctx.scope && ctx.scope.name) || '';
+    if (pageName && pageName !== '编辑器' && pageName !== '独立试玩窗口' && pageName !== '独立运行') {
+      parts.push(pageName);
     }
-    if (ctx.engineAvailable === false) parts.push('引擎接口未暴露（演示类可用，保存/撤销/试玩不可用）');
-    if (ctx.scene) parts.push('场景「' + ctx.scene + '」');
-    if (ctx.selectedFile && ctx.selectedFile.name) {
-      const typeLabel = ctx.selectedFile.type ? ctx.selectedFile.type + '/' : '';
-      parts.push('选中「' + typeLabel + ctx.selectedFile.name + '」');
+    if (ctx.engineAvailable === false) parts.push('引擎接口未暴露');
+
+    {
+      // 没有停留点时才退回背景信息，而且最多两条，不堆
+      const bg = [];
+      if (ctx.scene) bg.push('场景「' + ctx.scene + '」');
+      if (ctx.sceneTarget && ctx.sceneTarget.name) {
+        const classLabel = ctx.sceneTarget.type && ctx.sceneTarget.type !== 'object' ? ctx.sceneTarget.type + ':' : '';
+        bg.push('选中' + classLabel + '「' + ctx.sceneTarget.name + '」');
+      } else if (ctx.selectedFile && ctx.selectedFile.name) {
+        const typeLabel = ctx.selectedFile.type ? ctx.selectedFile.type + '/' : '';
+        bg.push('选中「' + typeLabel + ctx.selectedFile.name + '」');
+      } else if (ctx.inspector && ctx.inspector.metaName) {
+        bg.push('检视「' + ctx.inspector.metaName + '」');
+      }
+      parts.push.apply(parts, bg.slice(0, 2));
     }
-    if (ctx.sceneTarget && ctx.sceneTarget.name) {
-      const classLabel = ctx.sceneTarget.type && ctx.sceneTarget.type !== 'object' ? ctx.sceneTarget.type + ':' : '';
-      parts.push('场景对象「' + classLabel + ctx.sceneTarget.name + '」');
-    }
-    if (ctx.inspector && ctx.inspector.metaName) {
-      parts.push('检视「' + ctx.inspector.metaName + '」');
-    }
-    if (parts.length <= 1 && !ctx.scene && !ctx.selectedFile) return '';
-    const full = '【当前环境】' + parts.join(' · ');
-    return full.length > 180 ? full.slice(0, 177) + '...' : full;
+    if (parts.length <= 1) return '';
+    const full = '【当前环境】' + parts.join('·');
+    return full.length > 120 ? full.slice(0, 117) + '...' : full;
   }
 
   // ============================================================
@@ -4856,6 +5215,7 @@
     getEditorContext: getEditorContext,
     hasPendingInput: hasPendingInput,
     getScope: getScope,
+    getPresence: getPresence,
     ui: uiController,
     getReport: buildReport,
     checkUpdate: checkUpdate,

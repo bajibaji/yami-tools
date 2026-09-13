@@ -556,7 +556,10 @@ async function main() {
     assert.ok(/meta\.file\s*&&\s*\(meta\.file\.alias\s*\|\|\s*meta\.file\.name\)/.test(probeSource), '检视器对象名必须读取 Inspector.meta.file.alias，不能读不存在的 meta.name')
     assert.ok(/tgt\.class\s*\|\|\s*tgt\.type/.test(probeSource), '场景对象类别必须读取 Scene.target.class，不能恒为 object')
     assert.ok(/af\.alias\s*\|\|\s*af\.name/.test(probeSource), '资源树选中文件名优先使用 alias 别名，去除 16位 GUID 噪音')
-    assert.ok(/full\.length > 180 \? full\.slice\(0, 177\) \+ '\.\.\.' : full/.test(probeSource), '环境摘要必须有 180 字符长度上限防爆')
+    // 不钉死某个魔法数字，钉"必须有上限、而且必须够紧"——顶栏只有一行，堆满了等于什么都没说
+    const summaryCap = probeSource.match(/full\.length > (\d+) \? full\.slice\(0, \d+\) \+ '\.\.\.' : full/)
+    assert.ok(summaryCap, '环境摘要必须有长度上限防爆')
+    assert.ok(Number(summaryCap[1]) <= 120, '环境摘要上限必须收到 120 字符以内（实测旧上限 180 在顶栏上长得没法看），当前 ' + summaryCap[1])
     assert.ok(/window\.__YAMI_CTX__ = getEditorContext/.test(probeSource) && /window\.__YAMI_CTX_SUMMARY__/.test(probeSource), 'probe-core 必须在 window 暴露环境上下文直读钩子')
     assert.ok(/envSummary:\s*liveEnv/.test(agentSource), '前端流式请求必须直发当前窗口环境快照')
     assert.ok(/events\s*&&\s*events\.envSummary/.test(hostSource), 'ai-host 必须优先采用前端上报的环境快照，防止试玩被误报为编辑器')
@@ -567,7 +570,14 @@ async function main() {
     assert.ok(fnExtract, '必须能提取 formatEditorContextSummary 函数实现')
     const sandbox = {}
     vm.runInNewContext(fnExtract[0] + '; result = formatEditorContextSummary({ playtest: true, scene: "测试场景", selectedFile: { name: "木剑.item", type: "item" }, sceneTarget: { name: "主角", type: "actor" }, inspector: { metaName: "木剑.item" } });', sandbox)
-    assert.strictEqual(sandbox.result, '【当前环境】试玩运行中 · 场景「测试场景」 · 选中「item/木剑.item」 · 场景对象「actor:主角」 · 检视「木剑.item」', '格式化摘要必须包含准确的场景、选中项、场景对象类型与检视对象')
+    assert.strictEqual(sandbox.result, '【当前环境】试玩中·场景「测试场景」·选中actor:「主角」',
+      '没有停留点时才退回背景信息，且最多两句（不再把场景/选中项/场景对象/检视对象全堆上）')
+
+    // 在场优先：有停留点时就只讲停留点 —— 用户要的是"AI 知道我在看哪儿"，不是一串背景
+    const presenceSandbox = {}
+    vm.runInNewContext(fnExtract[0] + '; result = formatEditorContextSummary({ environment: "editor", scene: "测试场景", selectedFile: { name: "木剑.item", type: "item" }, presence: { label: "攻击力", value: "25" } });', presenceSandbox)
+    assert.strictEqual(presenceSandbox.result, '【当前环境】停在「攻击力」=25',
+      '有停留点时必须只说这一件事（页面/场景用户自己看得见，不占顶栏那一行）')
 
     console.log('前端接线检查: 流式 / 历史面板 / 上下文刻度 / 工具卡片 / 思考过程显示 / 过程收起 / 每轮用量 / 系统提示词行 / 排队与引导 / 轮次导航 / 环境感知行为 全绿通过')
   } catch (error) {

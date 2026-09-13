@@ -23,6 +23,7 @@
     sessionId: localStorage.getItem('danjuan-ai-session') || ('session-' + Date.now().toString(36)),
     busy: false,
     pending: null,
+    deciding: false,   // 审批卡正在提交（防连点），与 busy 分开：审批时 busy 完全可能是 true
     mounted: false,
     balance: null,
     abort: null,
@@ -754,6 +755,12 @@
     try { request('/ui-cancel', { reason: '用户打断' }); } catch (e) {}
     setStatus('已打断', 'idle');
     pushNotice('已打断，AI 停下来了（已完成的改动都保留着）', 'wait');
+    // 不能只等 runMessage 的 finally 去清 busy：SSE 已经断掉/已经死掉时它可能永远回不来，
+    // 那样 busy 会一直挂着，之后「执行修改」「发送」全变成点了没反应的死按钮。
+    // 这里主动兜底解开，让界面永远有出路（finally 再清一次是幂等的）。
+    state.pending = null;
+    document.getElementById('yami-ai-approval')?.classList.remove('show');
+    setBusy(false);
   }
 
   /** 把统一 diff 文本渲染成逐行着色：新增绿、删除红、上下文灰、定位行蓝 */
@@ -1747,18 +1754,24 @@
     const el = document.getElementById('yami-ai-scope');
     if (!el) return;
     const txtNode = el.querySelector('.yami-ai-scope-text');
+    const badge = el.querySelector('.yami-ai-scope-badge');
     let summary = '';
+    let at = null;
     try {
       if (typeof window !== 'undefined' && typeof window.__YAMI_CTX_SUMMARY__ === 'function') {
         summary = window.__YAMI_CTX_SUMMARY__() || '';
       }
+      // 单独取一次停留点，用来点亮徽标 —— 比把整份上下文算两遍便宜
+      const probe = typeof window !== 'undefined' ? window.__YAMI_PERF_PROBE__ : null;
+      if (probe && typeof probe.getPresence === 'function') at = probe.getPresence();
     } catch (e) {}
-    if (summary) {
-      summary = summary.replace(/^【当前环境】/, '');
-      if (txtNode) txtNode.textContent = summary;
-    } else {
-      if (txtNode) txtNode.textContent = '未检测到活跃场景或工作区';
+    if (txtNode) {
+      // 摘要本身就是短的（在场优先），这里只剥掉前缀，不再自己拼长句
+      txtNode.textContent = summary
+        ? summary.replace(/^【当前环境】/, '')
+        : '还没识别到停留点';
     }
+    if (badge) badge.textContent = at && at.label ? '停留中' : '在场感知';
   }
 
   /**
@@ -1954,9 +1967,29 @@
   }
 
   async function decide(approve) {
-    if (state.busy || !state.pending) return;
+    // 这里**不能**拿 state.busy 当闸门：审批卡弹出来的时候，本轮正处在"暂停等人"的状态，
+    // busy 完全可能是 true（SSE 还开着）。用 busy 一挡，「执行修改」就变成一个点了毫无反应的
+    // 死按钮 —— 用户报的"点击执行修改没有反应"正是这么来的。
+    if (!state.pending) { hudToast('这一步已经不需要确认了（可能已被新需求作废），直接说需求即可'); return; }
+    if (state.deciding) return;   // 只有"正在提交"才需要防连点
+    state.deciding = true;
+    const approveBtn = document.getElementById('yami-ai-approve');
+    const rejectBtn = document.getElementById('yami-ai-reject');
+    const startedAt = Date.now();
+    let ticker = null;
     setBusy(true);
     setStatus(approve ? '正在执行' : '正在取消', 'working');
+    if (approve) {
+      // /approve 是普通 POST、不是 SSE：确认之后整轮会在后台跑完（可能还有好几轮模型调用）
+      // 才一次性返回，中间界面上不会有任何逐字输出。不把这件事说清楚，用户看到的就是"没反应"。
+      if (approveBtn) approveBtn.textContent = '执行中…';
+      pushNotice('已确认，正在执行…（这一步没有逐字输出，跑完会自动显示结果；期间可以随时按停止）', 'wait');
+      ticker = setInterval(() => {
+        setStatus('正在执行（已 ' + Math.round((Date.now() - startedAt) / 1000) + ' 秒）', 'working');
+      }, 1000);
+    } else if (rejectBtn) {
+      rejectBtn.textContent = '取消中…';
+    }
     try {
       const route = approve ? '/approve' : '/reject';
       const grantBox = document.getElementById('yami-ai-grant');
@@ -1970,7 +2003,13 @@
       addMessage('error', e.message + '。修改未完成，可重新发送需求。');
       resolvePendingCard(false, '执行失败');
       setStatus('需要处理', 'error');
-    } finally { setBusy(false); }
+    } finally {
+      if (ticker) clearInterval(ticker);
+      state.deciding = false;
+      if (approveBtn) approveBtn.textContent = '执行修改';
+      if (rejectBtn) rejectBtn.textContent = '取消修改';
+      setBusy(false);
+    }
   }
 
   /** 填充输入框下方的模型下拉（始终保持当前模型在列表里） */
@@ -2443,7 +2482,8 @@
         hudToast('环境已刷新');
       });
       updateScopeBar();
-      setInterval(updateScopeBar, 2000);
+      // 1 秒一次：停留点要"跟得上手"，2 秒会明显滞后于人把鼠标停过去的动作
+      setInterval(updateScopeBar, 1000);
     }
   }
 

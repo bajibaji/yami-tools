@@ -336,7 +336,9 @@ const aiAnchors = [
   ['双实例握手防串工程', /whoami/],
   ['界面演示工具接线', /ui_steps/],
   ['急停动作白名单', /'cancel'/],
-  ['开工前对齐卡协议', /alignment-card/]
+  ['开工前对齐卡协议', /alignment-card/],
+  ['在场感知四路信号', /getPresence/],
+  ['顶栏停留点口径', /停在「/]
 ];
 for (const [name, pattern] of aiAnchors) {
   if (!pattern.test(aiAgentContent + '\n' + aiHostContent + '\n' + probeRaw)) {

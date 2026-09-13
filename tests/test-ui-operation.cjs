@@ -41,6 +41,7 @@ function createDom() {
   const byId = new Map()
   class El {
     constructor(tag, id) {
+      this.nodeType = 1                      // 产品代码用 nodeType 判"是不是元素"，假 DOM 不能少这一项
       this.tagName = String(tag || 'div').toUpperCase()
       this.id = id || ''
       this._cls = new Set()
@@ -99,6 +100,20 @@ function createDom() {
       if (!this.isConnected) return { x: 0, y: 0, width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0 }
       return this._rect
     }
+    get previousElementSibling() {
+      const parent = this.parentElement
+      if (!parent) return null
+      const i = parent.children.indexOf(this)
+      return i > 0 ? parent.children[i - 1] : null
+    }
+    closest(sel) {
+      let node = this
+      while (node && node.nodeType !== 9) {
+        for (const s of String(sel).split(',')) if (matchOne(node, s)) return node
+        node = node.parentElement
+      }
+      return null
+    }
     querySelector() { return null }
     querySelectorAll() { return [] }
   }
@@ -117,7 +132,7 @@ function createDom() {
   }
   const document = {
     createElement: t => new El(t),
-    createTextNode(t) { const e = new El('#text'); e.textContent = t; return e },
+    createTextNode(t) { const e = new El('#text'); e.nodeType = 3; e.textContent = t; return e },
     getElementById: id => byId.get(id) || null,
     querySelector(sel) {
       for (const s of String(sel).split(',')) for (const e of all) if (e.isConnected && matchOne(e, s)) return e
@@ -132,8 +147,22 @@ function createDom() {
     body: null,
     documentElement: new El('html'),
     head: new El('head'),
-    addEventListener() {},
-    removeEventListener() {}
+    // 真实的事件总线：在场感知靠 pointerover / focusin 跟踪用户停在哪，
+    // 假成一个空函数就等于把这条链整个跳过（那正是我们要测的东西）
+    _listeners: new Map(),
+    addEventListener(type, fn) {
+      if (!document._listeners.has(type)) document._listeners.set(type, [])
+      document._listeners.get(type).push(fn)
+    },
+    removeEventListener(type, fn) {
+      const list = document._listeners.get(type)
+      if (list) { const i = list.indexOf(fn); if (i >= 0) list.splice(i, 1) }
+    },
+    dispatchEvent(ev) {
+      const list = document._listeners.get(ev && ev.type)
+      if (list) list.slice().forEach(fn => fn(ev))
+      return true
+    }
   }
   document.body = new El('body')
   return { document, El, byId, all }
@@ -526,6 +555,181 @@ async function main() {
     // --- 白名单没被放宽成通配 ---
     const unknown = await call(editor, 'POST', '/action', { action: 'evalJs', expression: 'alert(1)' }, H)
     check('未知动作仍被拒（白名单没被放宽）', unknown.status === 400 && unknown.json && unknown.json.ok === false, 'status=' + unknown.status)
+
+    /* ---------------- A3. 在场感知：用户此刻停在哪 ---------------- */
+    console.log('\n--- A3. 在场感知（用户停在哪个控件上）---')
+    boot.document.activeElement = null   // 别把前面几条用例留下的焦点带进来
+    // 造一个"引擎控件"：tip 挂在控件本体上，鼠标实际落在它内部的 input 上
+    const numBox = new boot.El('number-box', 'probe-attack-field')
+    numBox.tip = '攻击力\n伤害计算用的基础值'
+    numBox.setAttribute('name', '攻击力')
+    numBox.value = '25'
+    const innerInput = new boot.El('input')
+    numBox.appendChild(innerInput)
+    boot.document.body.appendChild(numBox)
+
+    boot.document.dispatchEvent({ type: 'pointerover', target: innerInput })
+    const tooEarly = boot.probe.getPresence()
+    check('刚划过不算停留（未到停留阈值前不报）', !tooEarly, JSON.stringify(tooEarly))
+
+    await new Promise(r => setTimeout(r, 750))
+    const rested = boot.probe.getPresence()
+    check('停在控件上会被认出来（从内部 input 往上找到控件本体的 tip）',
+      !!rested && rested.label === '攻击力', JSON.stringify(rested))
+    check('顺带带上控件类型与当前值', !!rested && rested.kind === 'number-box' && rested.value === '25', rested && (rested.kind + '=' + rested.value))
+    check('记录停留了多久（供"他盯着这个看了很久"这类判断）', !!rested && rested.restingMs >= 600, rested && rested.restingMs + 'ms')
+
+    const withCtx = boot.probe.getEditorContext()
+    check('getEditorContext 带上了停留点', !!(withCtx.presence && withCtx.presence.label === '攻击力'))
+
+    const shortSummary = boot.sandbox.__YAMI_CTX_SUMMARY__()
+    check('环境摘要以"停在"为核心且足够短', /停在「攻击力」/.test(shortSummary) && shortSummary.length <= 60,
+      shortSummary.length + ' 字: ' + shortSummary)
+
+    // tip 是 getter 函数时同样要能读（引擎两种写法都在用）
+    const fnTipEl = new boot.El('item')
+    fnTipEl.tip = () => '撤销\n快捷键 Ctrl+Z'
+    boot.document.body.appendChild(fnTipEl)
+    boot.document.activeElement = fnTipEl
+    const byFocus = boot.probe.getPresence()
+    check('tip 写成 getter 函数也能读', !!byFocus && byFocus.label === '撤销', JSON.stringify(byFocus))
+    check('点进去的控件优先于鼠标停留', !!byFocus && byFocus.via === 'focus', byFocus && byFocus.via)
+    boot.document.activeElement = null
+
+    // 鼠标挪到我们自己的面板上（来打字）时，必须保留"他上一个停的地方"
+    const dock = new boot.El('div', 'yami-perf-dock')
+    const panelInput = new boot.El('textarea', 'yami-ai-input')
+    dock.appendChild(panelInput)
+    boot.document.body.appendChild(dock)
+    boot.document.dispatchEvent({ type: 'pointerover', target: panelInput })
+    const kept = boot.probe.getPresence()
+    check('鼠标移到 AI 面板上时，保留他上一个停的地方（这恰恰是最该报的时刻）',
+      !!kept && kept.label === '攻击力', JSON.stringify(kept))
+
+    // 右键"指着"某处：引擎会给它描一圈高亮边框，是"就是它"最明确的手势
+    const schoolBox = new boot.El('select-box', 'probe-school-field')
+    schoolBox.tip = '流派'
+    boot.document.body.appendChild(schoolBox)
+    boot.document.dispatchEvent({ type: 'pointerdown', button: 2, target: schoolBox })
+    const byRight = boot.probe.getPresence()
+    check('右键指着的控件会被认出来', !!byRight && byRight.label === '流派' && byRight.via === 'rightclick', JSON.stringify(byRight))
+    check('右键（更新更明确）优先于更早的鼠标停留', !!byRight && byRight.label === '流派', byRight && byRight.via)
+    const rightSummary = boot.sandbox.__YAMI_CTX_SUMMARY__()
+    check('摘要随之切到右键指的东西，且仍然短', /停在「流派」/.test(rightSummary) && rightSummary.length <= 60,
+      rightSummary.length + ' 字: ' + rightSummary)
+
+    // 引擎自己记的选中态：common-list.pointerdown 里 case 0 / case 2 同一支 → select() → addClass('selected')。
+    // 这才是"右键高亮那个东西"的权威来源，比悬停/焦点都硬。
+    const pickedItem = new boot.El('common-item', 'probe-picked-item')
+    pickedItem.tip = '火球术'
+    pickedItem.classList.add('selected')
+    boot.document.body.appendChild(pickedItem)
+    const bySelected = boot.probe.getPresence()
+    // 选中态是"持续状态"，不是"此刻在哪"：有指针/焦点信号时它不该顶掉那些信号
+    check('有指针信号时，旧的选中态不会盖掉"他现在在哪儿"',
+      !!bySelected && bySelected.via !== 'selected', JSON.stringify(bySelected))
+
+    // 反过来：什么指针信号都没有时，选中态就是唯一线索，必须报出来（单开一个干净沙盒验）
+    const selOnly = await bootProbe({ engine: true })
+    selOnly.document.activeElement = null
+    const loneItem = new selOnly.El('common-item', 'probe-lone-item')
+    loneItem.tip = '火球术'
+    loneItem.classList.add('selected')
+    selOnly.document.body.appendChild(loneItem)
+    const lone = selOnly.probe.getPresence()
+    check('没有指针信号时，引擎的选中态（右键/点选出的那圈高亮）会被认出来',
+      !!lone && lone.label === '火球术' && lone.via === 'selected', JSON.stringify(lone))
+    const loneSummary = selOnly.sandbox.__YAMI_CTX_SUMMARY__()
+    check('摘要切到选中项，仍然是一行短句', /停在「火球术」/.test(loneSummary) && loneSummary.length <= 60, loneSummary)
+
+    // 真实检视器结构（照抄引擎静态标记）：
+    //   <text>Icon</text><custom-box id="fileSkill-icon" type="file"></custom-box>
+    const grid = new boot.El('detail-grid', 'fileSkill-general-grid')
+    const labelText = new boot.El('text')
+    labelText.textContent = 'Icon'
+    const iconBox = new boot.El('custom-box', 'fileSkill-icon')
+    iconBox.textContent = '双手武器精通'
+    grid.appendChild(labelText)
+    grid.appendChild(iconBox)
+    boot.document.body.appendChild(grid)
+    boot.document.activeElement = iconBox
+    // 真实使用里人的动作相隔几百毫秒以上；这里也留出间隔，
+    // 否则同一毫秒内三个信号撞在一起，测的就成了"排序稳定性"而不是"谁更近"
+    await new Promise(r => setTimeout(r, 30))
+    const field = boot.probe.getPresence()
+    check('检视器字段：字段名取自紧邻的前一个 <text>，值取自控件自身文字',
+      !!field && field.label === 'Icon' && field.value === '双手武器精通', JSON.stringify(field))
+    check('顺带记下控件自己的 id（模型据此能用选择器定位到它）', !!field && field.where === 'fileSkill-icon', field && field.where)
+    const fieldSummary = boot.sandbox.__YAMI_CTX_SUMMARY__()
+    check('摘要：停在「字段名」=值，一行说完', /停在「Icon」=双手武器精通/.test(fieldSummary), fieldSummary)
+
+    // 真实标记：<number-box id="animation-speed" …><text class="label">speed:</text></number-box>
+    // 标签写在控件**内部**，不是前面的兄弟 —— 这条是被"拿引擎真实标记做覆盖率审计"找出来的
+    // （1533 个控件实例里，有 85 个是这种写法，原先的实现全都取不到名字）。
+    const speedBox = new boot.El('number-box', 'animation-speed')
+    const speedLabel = new boot.El('text')
+    speedLabel.className = 'label'
+    speedLabel.textContent = 'speed:'
+    speedBox.appendChild(speedLabel)
+    speedBox.textContent = 'speed:1.0'   // 真 DOM 里 textContent 会把内部标签与值拼在一起
+    boot.document.body.appendChild(speedBox)
+    boot.document.activeElement = speedBox
+    await new Promise(r => setTimeout(r, 30))
+    const innerLabelled = boot.probe.getPresence()
+    check('标签写在控件内部时也能取到，而且值会剥掉标签',
+      !!innerLabelled && innerLabelled.label === 'speed:' && innerLabelled.value === '1.0', JSON.stringify(innerLabelled))
+    boot.document.activeElement = null
+
+    // canvas 兜底：场景里的对象没有 DOM 节点，但至少要能说清"他在场景视图那一块"
+    boot.document.activeElement = null
+    const sceneBox = new boot.El('box', 'scene-screen')
+    const canvasInner = new boot.El('div')          // 无文字、无 tip、无 name
+    sceneBox.appendChild(canvasInner)
+    boot.document.body.appendChild(sceneBox)
+    boot.document.dispatchEvent({ type: 'pointerover', target: canvasInner })
+    await new Promise(r => setTimeout(r, 700))
+    const onCanvas = boot.probe.getPresence()
+    check('停在 canvas 上时退到区域级，而不是什么都不报',
+      !!onCanvas && onCanvas.label === '场景视图' && onCanvas.vague === true && onCanvas.kind === 'region',
+      JSON.stringify(onCanvas))
+    const canvasSummary = boot.sandbox.__YAMI_CTX_SUMMARY__()
+    check('区域级停留点照样是一行短句', /停在「场景视图」/.test(canvasSummary) && canvasSummary.length <= 60, canvasSummary)
+
+    // 没有标签的控件：退到"所在窗口的名字"（引擎把窗口名写在 <title-bar> 里）
+    // 真实标记：<window-frame id="showText"><title-bar>Show Text<close></close></title-bar><content-frame>…
+    const win = new boot.El('window-frame', 'showText')
+    const winTitle = new boot.El('title-bar')
+    winTitle.textContent = 'Show Text'
+    const winBody = new boot.El('content-frame')
+    const winField = new boot.El('text-area', 'showText-content')
+    win.appendChild(winTitle); win.appendChild(winBody); winBody.appendChild(winField)
+    sceneBox.appendChild(win)
+    boot.document.activeElement = winField
+    await new Promise(r => setTimeout(r, 30))
+    const inWindow = boot.probe.getPresence()
+    check('没标签的控件退到「所在窗口的名字」（取自引擎的 title-bar）',
+      !!inWindow && inWindow.label === 'Show Text' && inWindow.vague === true, JSON.stringify(inWindow))
+
+    // ...或者所在分组的 legend：<field-set id="event-commands-fieldset"><legend>Content</legend>…
+    const fieldSet = new boot.El('field-set', 'event-commands-fieldset')
+    const legend = new boot.El('legend')
+    legend.textContent = 'Content'
+    const cmdList = new boot.El('command-list', 'event-commands')
+    fieldSet.appendChild(legend); fieldSet.appendChild(cmdList)
+    boot.document.body.appendChild(fieldSet)
+    boot.document.activeElement = cmdList
+    await new Promise(r => setTimeout(r, 30))
+    const inField = boot.probe.getPresence()
+    // legend 是紧邻的前一个兄弟 → 走精确路径拿到名字（比区域兜底更好）；区域兜底只是它够不着时的补网
+    check('分组里的控件能取到 legend 当名字', !!inField && inField.label === 'Content', JSON.stringify(inField))
+    boot.document.activeElement = null
+
+    // 反过来：区域兜底不许盖掉已经识别出来的具体控件
+    boot.document.dispatchEvent({ type: 'pointerover', target: iconBox })
+    await new Promise(r => setTimeout(r, 700))
+    const backToField = boot.probe.getPresence()
+    check('换回具体控件时仍然精确识别（区域兜底不会顶掉它）',
+      !!backToField && backToField.label === 'Icon' && !backToField.vague, JSON.stringify(backToField))
 
     /* ---------------- A2. 引擎接口缺失时（官方预编译版）桥仍须可用 ---------------- */
     console.log('\n--- A2. 引擎接口缺失时（官方预编译版）桥仍须可用 ---')
