@@ -57,7 +57,11 @@ class EditorBridge {
     body.action = action
     const timeout = action === 'uiSteps' ? 30000 : 1800
     const result = await this.request('POST', '/action', body, timeout, token)
-    return result.ok ? result.data : result
+    if (result.ok) return result.data
+    // 非 2xx 时正文里往往带着结构化的失败原因（failedAt / done / engineUnavailable / 具体原因），
+    // 直接透给调用方与模型，它们才知道到底死在哪一步、为什么 —— 只回一句"失败"等于把线索扔掉。
+    if (result.data && typeof result.data.ok === 'boolean') return result.data
+    return result
   }
 
   async dumpUiHierarchy() {

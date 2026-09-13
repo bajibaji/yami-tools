@@ -143,7 +143,8 @@ function createDom() {
 
 const EDITOR_URL = 'file:///D:/Program%20Files/Open%20Yami%20RPG%20Editor/resources/app/dist/index.html'
 
-async function bootProbe() {
+async function bootProbe(options) {
+  const withEngine = !options || options.engine !== false
   const { document, El, byId } = createDom()
   const servers = []
   const fakeHttp = {
@@ -177,13 +178,17 @@ async function bootProbe() {
     fetch: async () => ({ ok: false, json: async () => ({}) }),
     require: name => (name === 'http' ? fakeHttp : require(name)),
     process: { versions: { node: process.versions.node }, platform: process.platform },
-    addEventListener() {}, removeEventListener() {}, dispatchEvent() {},
-    File: { root: 'D:/Documents/GitHub/DemoGame', save: async () => {}, get: async () => ({}) },
-    Directory: { update: async () => {} },
-    Data: { manifest: { guid: 'demo-guid', changes: [], pathMap: {}, guidMap: {}, project: {} } },
-    Layout: { manager: { index: 'scene', switch(p) { sandbox.Layout.manager.index = p } } },
-    UndoManager: { undo() {}, redo() {} },
-    Title: { playGame: async () => {} }
+    addEventListener() {}, removeEventListener() {}, dispatchEvent() {}
+  }
+  // 官方预编译版根本没有 window.YamiEngine / 裸全局，引擎接口一个都取不到。
+  // 测试要能复刻这种局面：桥仍然必须起来，纯 DOM 能力不受影响。
+  if (withEngine) {
+    sandbox.File = { root: 'D:/Documents/GitHub/DemoGame', save: async () => {}, get: async () => ({}) }
+    sandbox.Directory = { update: async () => {} }
+    sandbox.Data = { manifest: { guid: 'demo-guid', changes: [], pathMap: {}, guidMap: {}, project: {} } }
+    sandbox.Layout = { manager: { index: 'scene', switch(p) { sandbox.Layout.manager.index = p } } }
+    sandbox.UndoManager = { undo() {}, redo() {} }
+    sandbox.Title = { playGame: async () => {} }
   }
   sandbox.window = sandbox
   sandbox.global = sandbox
@@ -243,6 +248,8 @@ function makeFixture() {
   fs.writeFileSync(path.join(dir, 'game.yamirpg'), JSON.stringify({ title: '夹具工程' }))
   fs.writeFileSync(path.join(dir, 'Data', 'config.json'), JSON.stringify({ title: '夹具工程', window: { width: 1280, height: 720, title: '夹具工程', display: 'windowed' } }))
   fs.writeFileSync(path.join(dir, 'Data', 'manifest.json'), JSON.stringify({ guidMap: {}, pathMap: {}, project: {} }))
+  // 一个真实可改的事件文件：审批时机那两条断言需要"预览能成功"，否则根本走不到确认那一步
+  fs.writeFileSync(path.join(dir, 'Assets', '测试事件.0123456789abcdef.event'), JSON.stringify({ commands: [] }))
   return dir
 }
 
@@ -282,7 +289,8 @@ function askMcpTools(root) {
 
 /* ============================== 真通道 C：宿主 + 假模型 ============================== */
 
-function startFakeModel(captured) {
+/** plan: null=直接回文本；{name,args}=先发一次工具调用，拿到结果后再回文本 */
+function startFakeModel(captured, plan) {
   return new Promise(resolve => {
     const server = http.createServer((req, res) => {
       let raw = ''
@@ -291,7 +299,17 @@ function startFakeModel(captured) {
         let body = {}
         try { body = JSON.parse(raw || '{}') } catch (e) { /* 忽略 */ }
         captured.push(body)
+        const messages = body.messages || []
+        const lastUser = messages.map(m => m.role).lastIndexOf('user')
+        const hasToolResult = lastUser >= 0 && messages.slice(lastUser + 1).some(m => m.role === 'tool')
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
+        const active = plan && plan.current
+        if (active && active.name && !hasToolResult) {
+          res.write('data: ' + JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_probe_1', type: 'function', function: { name: active.name, arguments: JSON.stringify(active.args || {}) } }] } }] }) + '\n\n')
+          res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }) + '\n\n')
+          res.write('data: [DONE]\n\n')
+          return res.end()
+        }
         res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: '收到，我先看一眼。' } }] }) + '\n\n')
         res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\n')
         res.write('data: [DONE]\n\n')
@@ -300,6 +318,15 @@ function startFakeModel(captured) {
     })
     server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }))
   })
+}
+
+/** 把 SSE 原文切成事件数组，便于按 phase 断言 */
+function parseSse(raw) {
+  return String(raw || '').split('\n\n').map(block => {
+    const line = block.split('\n').find(one => one.startsWith('data:'))
+    if (!line) return null
+    try { return JSON.parse(line.slice(5).trim()) } catch (e) { return null }
+  }).filter(Boolean)
 }
 
 function jsonCall(port, route, method, body, token) {
@@ -500,6 +527,33 @@ async function main() {
     const unknown = await call(editor, 'POST', '/action', { action: 'evalJs', expression: 'alert(1)' }, H)
     check('未知动作仍被拒（白名单没被放宽）', unknown.status === 400 && unknown.json && unknown.json.ok === false, 'status=' + unknown.status)
 
+    /* ---------------- A2. 引擎接口缺失时（官方预编译版）桥仍须可用 ---------------- */
+    console.log('\n--- A2. 引擎接口缺失时（官方预编译版）桥仍须可用 ---')
+    const bare = await bootProbe({ engine: false })
+    check('取不到引擎接口时，5967 桥依然启动', !!bare.editor, bare.editor ? 'port 5967' : '没起来（官方预编译版上界面操作会整片失效）')
+    if (bare.editor) {
+      const t2 = await call(bare.editor, 'GET', '/token')
+      const H2 = { 'x-yami-bridge-token': t2.json && t2.json.bridgeToken }
+      const who2 = await call(bare.editor, 'GET', '/whoami')
+      check('/whoami 如实报出引擎接口不可用', !!(who2.json && who2.json.engineAvailable === false && Array.isArray(who2.json.engineMissing) && who2.json.engineMissing.length),
+        who2.json ? 'missing=' + JSON.stringify(who2.json.engineMissing) : '')
+      const ctx2 = await call(bare.editor, 'GET', '/context')
+      check('/context 在无引擎时也能返回（不再 500/无响应）', !!(ctx2.json && ctx2.json.ok === true && ctx2.json.context && ctx2.json.context.engineAvailable === false))
+
+      const eng = new bare.El('input', 'fileItem-gold'); eng.value = '10'; bare.document.body.appendChild(eng)
+      const domRun = await call(bare.editor, 'POST', '/action', {
+        action: 'uiSteps',
+        steps: [{ kind: 'set', target: '#fileItem-gold', value: 99, label: '把金币改成 99', holdMs: 5, settleMs: 5 }]
+      }, H2)
+      check('无引擎时纯 DOM 的 uiSteps 照常可用（这是本次修复的关键）', !!(domRun.json && domRun.json.ok === true) && eng.value === '99', JSON.stringify(domRun.json).slice(0, 120))
+      const saveRun = await call(bare.editor, 'POST', '/action', { action: 'save' }, H2)
+      check('无引擎时引擎类动作给出可读原因（不是静默失败）',
+        !!(saveRun.json && saveRun.json.ok === false && saveRun.json.engineUnavailable === true), JSON.stringify(saveRun.json).slice(0, 130))
+      const undoRun = await call(bare.editor, 'POST', '/action', { action: 'undo' }, H2)
+      check('无引擎时 undo 也如实说明（「撤销这一步」不会假装成功）',
+        !!(undoRun.json && undoRun.json.ok === false && undoRun.json.engineUnavailable === true), JSON.stringify(undoRun.json).slice(0, 130))
+    }
+
     /* ---------------- B. MCP 工具表：ui_steps 真的注册了 ---------------- */
     console.log('\n--- B. MCP 工具表（真 JSON-RPC tools/list）---')
     const tools = await askMcpTools(fixture)
@@ -522,7 +576,8 @@ async function main() {
     /* ---------------- C. 宿主：谁提问就用谁的视野 + 对齐卡协议到达模型 ---------------- */
     console.log('\n--- C. 宿主提示词与一手环境（真 ai-host + 假模型截获）---')
     const captured = []
-    const fake = await startFakeModel(captured)
+    const planRef = { current: null }   // 想验证审批时机时，把要发的工具调用塞进去
+    const fake = await startFakeModel(captured, planRef)
     model = fake.server
     const AI_PORT = 17968 + Math.floor(Math.random() * 400)
     const AGENT_TOKEN = crypto.randomBytes(16).toString('hex')
@@ -589,6 +644,26 @@ async function main() {
       const modelToolNames = (lastReq.tools || []).map(t => (t.function && t.function.name) || t.name)
       check('模型请求体里带上了 ui_steps（工具真的递到了模型手上）', modelToolNames.indexOf('ui_steps') >= 0, modelToolNames.length + ' 个工具')
       check('模型请求体里没有 cdp_eval（宿主侧 HIDDEN_TOOLS 真的生效）', modelToolNames.indexOf('cdp_eval') === -1)
+
+      // C5/C6：写盘节奏 —— 预览随便看，落盘才确认（用户实测踩到的就是这条）
+      const PREVIEW_TOOL = {
+        name: 'append_event_commands',
+        args: { path: 'Assets/测试事件.0123456789abcdef.event', commands: [{ type: '注释', params: {} }], dryRun: true }
+      }
+      planRef.current = PREVIEW_TOOL
+      const previewEvents = parseSse(await streamChat(AI_PORT, AGENT_TOKEN, { sessionId: 'ui-preview', message: '先预览一下要加什么' }))
+      const previewApprovals = previewEvents.filter(e => e.type === 'tool' && e.phase === 'approval')
+      check('dryRun:true 预览不弹确认卡（用户卡住的那一条）', previewApprovals.length === 0, 'approval 事件数=' + previewApprovals.length)
+      check('预览真的跑成功了（不是靠失败蒙混过关）',
+        previewEvents.some(e => e.type === 'tool' && e.phase === 'done'),
+        previewEvents.filter(e => e.type === 'tool').map(e => e.phase).join(','))
+
+      planRef.current = Object.assign({}, PREVIEW_TOOL, { args: Object.assign({}, PREVIEW_TOOL.args, { dryRun: false }) })
+      const writeEvents = parseSse(await streamChat(AI_PORT, AGENT_TOKEN, { sessionId: 'ui-write', message: '正式写进去' }))
+      const writeApprovals = writeEvents.filter(e => e.type === 'tool' && e.phase === 'approval')
+      check('dryRun:false 正式写入必须停在确认卡', writeApprovals.length === 1, 'approval 事件数=' + writeApprovals.length)
+      const writeResult = writeEvents.find(e => e.type === 'result')
+      check('待确认时本轮以 approval 收尾（绝不偷偷写盘）', !!(writeResult && writeResult.status === 'approval'), writeResult && writeResult.status)
     }
 
     try { fs.rmSync(configDir, { recursive: true, force: true }) } catch (e) {}

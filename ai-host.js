@@ -173,15 +173,20 @@ function listSessions() {  try {
         const id = name.replace(/\.json$/, '')
         try {
           const data = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, name), 'utf8'))
-          const firstUser = (data.messages || []).find(message => message.role === 'user')
+          const list = data.messages || []
+          const firstUser = list.find(message => message.role === 'user')
           return {
             id,
             updatedAt: data.updatedAt || 0,
             title: String(firstUser && firstUser.content || '新对话').replace(/\s+/g, ' ').slice(0, 40),
-            messageCount: (data.messages || []).length
+            // 上屏给人看的"几轮"= 用户自己说了几句。messageCount 是内部消息条数，
+            // 里面混着 system 和每条工具结果 —— 拿它上屏就会出现"问一句显示 2 条、
+            // 调几次工具变几十条"这种对不上的数字。
+            turns: list.filter(message => message.role === 'user').length,
+            messageCount: list.length
           }
         } catch {
-          return { id, updatedAt: 0, title: '（无法读取）', messageCount: 0 }
+          return { id, updatedAt: 0, title: '（无法读取）', turns: 0, messageCount: 0 }
         }
       })
       .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -1183,7 +1188,21 @@ const SYSTEM_PROMPT = `你是 Open Yami RPG Editor 内置开发副驾。用简�
     <alignment-card>{"summary":"我理解你要把木剑改强","questions":[{"title":"攻击力改成多少？","options":["25","40"]}],"defaults":["其余属性不动"]}</alignment-card>
     面板会把它渲染成可点的选项卡，用户点「开工」之后你才会收到确认，那之前不要动手。
 23. 只问"答案会改变你下一步做法"的问题，数量不设上限但也不要凑数；需求已经明确时直接开工，不要为了显得严谨硬发一张卡。
-    给出 questions 时每个选项都要是具体可执行的取值，不要写"你决定"这种空转选项。`
+    给出 questions 时每个选项都要是具体可执行的取值，不要写"你决定"这种空转选项。
+
+【写盘节奏：预览随便看，落盘只确认一次】
+24. 写盘类工具（write_script / edit_script / append_event_commands / patch_resource / upsert_database_item /
+    delete_resource / restore_backup / write_resource / create_script）先用 dryRun:true 看一眼差异 ——
+    **dryRun:true 不会弹确认卡，直接就能拿到结果**；确认无误再传 dryRun:false 正式写入，那一步才会请用户点「执行修改」。
+25. 所以一次需求里能合并的改动就合并成一次正式写入，别一处一确认 ——
+    让用户点十次确认，他最后只会闭着眼睛点。预览可以看很多次，落盘只打扰他一次。
+
+【引擎接口不可用时如实说】
+26. 如果环境提示里出现「引擎接口未暴露」，说明这台编辑器的引擎没有打 window.YamiEngine 补丁（官方预编译版就是这样）：
+    界面演示、高亮、点击、读界面结构、改检视器属性 全都照常可用；
+    但 保存、撤销、重做、刷新资源树、启动试玩、文件预检 这几项用不了。
+    这种时候不要反复重试同一个动作，也不要承诺"我帮你保存好了 / 已启动试玩"，
+    如实说明这一项在当前引擎上用不了、需要引擎侧补丁，然后把能做的部分做完。`
 
 
 
@@ -1808,9 +1827,15 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
 
     if (events.onTool) events.onTool({ phase: 'start', key: String(call && call.id || name), name, label: toolLabel(name), target: String(args.path || args.table || args.action || args.key || '') })
     const isFileMutation = FILE_MUTATIONS.has(name)
+    // dryRun 预览不落盘，本来就不该要用户确认：
+    //   · "先看一眼差异"是我们要鼓励的动作，每看一眼都弹一次确认，只会把用户训练成闭眼点确认；
+    //   · 真正写盘那一步（dryRun:false）照旧拦确认，安全性一点没少。
+    // 只认**显式** dryRun:true：模型不传这个参数时，我们无法保证这个工具一定不写。
+    const isPreviewOnly = !!(args && args.dryRun === true)
     // P0-3: 写盘与界面改属性前，检查是否有未失焦/未提交的输入 (AutoReload 竞态防踩)。
     // ui_steps 也是一次"改属性"，用户打了一半的字同样会被 AutoReload 冲掉，所以一并拦。
-    if (isFileMutation || name === 'ui_steps') {
+    // 纯预览既不写盘也不碰控件，不拦。
+    if ((isFileMutation && !isPreviewOnly) || name === 'ui_steps') {
       try {
         const ctxRes = await editorBridge.getContext()
         if (ctxRes && ctxRes.ok && ctxRes.context && ctxRes.context.hasPendingInput === true) {
@@ -1825,7 +1850,7 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
       } catch (e) {}
     }
     const granted = isFileMutation && isGranted(session, name, args)
-    const needsApproval = !granted && (isFileMutation || (OTHER_MUTATIONS.has(name) && config.approvalMode !== 'auto'))
+    const needsApproval = !granted && ((isFileMutation && !isPreviewOnly) || (OTHER_MUTATIONS.has(name) && config.approvalMode !== 'auto'))
     if (granted && events.onNotice) {
       events.onNotice(`已授权：${toolLabel(name)} · ${String(args.path || '')}（本次任务内不再逐条确认，随时可撤销）`)
     }
@@ -2096,9 +2121,11 @@ async function handle(pathname, body, events = {}) {
       appendUnexecutedToolResults(
         session,
         [abandoned.call].concat(abandoned.remaining || []),
-        '用户改说了别的需求，这项操作没有执行'
+        '用户改说了别的需求，这项操作没有执行。如果这一步仍然是新需求的前置，请主动问用户要不要重做。'
       )
-      if (events.onNotice) events.onNotice(`已放弃未确认的操作：${toolLabel(abandoned.name)} · ${String(abandoned.args && abandoned.args.path || '')}`)
+      if (events.onNotice) {
+        events.onNotice(`上一步「${toolLabel(abandoned.name)}」还等着你在卡片上点「执行修改」，你先说了新需求，我把它作废了（${String(abandoned.args && abandoned.args.path || '')}）。需要的话说一句"接着刚才那步做"，我重新来。`)
+      }
     }
     healSessionMessages(session, '发送前体检')
     session.messages.push({ role: 'user', content: text })
@@ -2206,9 +2233,18 @@ async function handle(pathname, body, events = {}) {
     return await runTurn(session, config, events)
   }
   if (pathname === '/clear') {
+    // 只清空**这段对话的内容**，绝不删历史文件。
+    // 这里以前是 sessions.delete + rmSync：于是面板上那个写着「新对话」的按钮，
+    // 每点一次就把上一段对话从磁盘上抹掉 —— 用户看到的"历史对话数量不对/新对话之后
+    // 老对话不见了"就是这个。要删某段历史请走 /session/delete（历史面板里的「删除」）。
     const id = safeSessionId(body.sessionId || 'default')
-    sessions.delete(id)
-    try { fs.rmSync(sessionPath(id), { force: true }) } catch { /* 忽略删除失败 */ }
+    const session = sessionFor(id)
+    session.messages = [{ role: 'system', content: SYSTEM_PROMPT }]
+    session.summary = ''
+    session.pending = null
+    session.toolTally = {}
+    session.grants = []
+    saveSession(session)
     return { ok: true }
   }
   throw new Error('未知请求')

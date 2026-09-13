@@ -272,6 +272,29 @@ async function main() {
   const afterDelete = await json('/sessions')
   check('删除后不再出现在列表', !afterDelete.data.sessions.some(one => one.id === 'tool-1'))
 
+  console.log('\n########## 8. 历史列表口径与「新对话」的非破坏性 ##########')
+  // 面板上那个写着「新对话」的按钮，以前的顺序是：先 POST /clear（当年 = 删文件）再换会话 id，
+  // 于是每开一段新对话就把上一段对话从磁盘上抹掉。这一节把两条语义钉死：
+  //   · /clear 只清空内容，绝不删文件；
+  //   · 上屏的"几轮"只数用户消息，不是内部消息条数。
+  const histList = await json('/sessions')
+  const row = histList.data.sessions.find(one => one.id === 'stream-1')
+  check('列表带 turns（用户自己说了几轮）', !!row && row.turns === 1, row && ('turns=' + row.turns))
+  check('turns 与 messageCount 确实是两回事（后者含 system 与工具结果）',
+    !!row && row.messageCount > row.turns, row && ('turns=' + row.turns + ' / messageCount=' + row.messageCount))
+
+  await json('/clear', 'POST', { sessionId: 'stream-1' })
+  check('/clear 之后会话文件仍在磁盘上（不再删历史）', fs.existsSync(path.join(SESSION_DIR, 'stream-1.json')))
+  const cleared = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'stream-1.json'), 'utf8'))
+  check('/clear 只清空内容（只剩 system 一条）',
+    cleared.messages.length === 1 && cleared.messages[0].role === 'system', '剩 ' + cleared.messages.length + ' 条')
+  const afterClear = (await json('/sessions')).data.sessions.find(one => one.id === 'stream-1')
+  check('清空后 turns 归零（面板据此不再列出这段空会话）', !!afterClear && afterClear.turns === 0)
+
+  // 只有显式的 /session/delete 才真的把文件拿掉
+  await json('/session/delete', 'POST', { sessionId: 'stream-1' })
+  check('只有显式删除才真的移除文件', !fs.existsSync(path.join(SESSION_DIR, 'stream-1.json')))
+
   console.log(`\n########## AI 会话/上下文测试: ${passed} PASS / ${failed} FAIL ##########`)
   await stopHost()
   model.close()

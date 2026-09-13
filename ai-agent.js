@@ -616,7 +616,8 @@
     panel.classList.add('show');
     try {
       const data = await request('/sessions');
-      const sessions = (data.sessions || []).filter(item => item.messageCount > 0);
+      // 只列"真的聊过"的：新建了但一句话没说、只剩一条 system 的会话不该占着历史
+      const sessions = (data.sessions || []).filter(item => (item.turns || 0) > 0);
       if (!sessions.length) {
         panel.innerHTML = '<div class="yami-ai-history-empty">还没有历史对话。每次对话都会自动保存，可随时切回来继续。</div>';
         return;
@@ -633,7 +634,7 @@
         const meta = document.createElement('div');
         meta.className = 'yami-ai-history-meta';
         const when = item.updatedAt ? new Date(item.updatedAt) : null;
-        meta.textContent = (when ? when.toLocaleString('zh-CN', { hour12: false }) + ' · ' : '') + item.messageCount + ' 条消息';
+        meta.textContent = (when ? when.toLocaleString('zh-CN', { hour12: false }) + ' · ' : '') + (item.turns || 0) + ' 轮对话';
         const del = document.createElement('div');
         del.className = 'yami-ai-history-del';
         del.setAttribute('role', 'button');
@@ -2407,7 +2408,9 @@
     activate(document.getElementById('yami-ai-clear'), async () => {
       if (state.busy) { hudToast('AI 正在处理中，请先停止或等待本轮结束'); return; }
       if (state.pending) return;
-      try { await request('/clear', { sessionId: state.sessionId }); } catch (e) {}
+      // 只换一个新会话，**绝不动旧会话**。这里以前会顺手打一次 /clear，
+      // 而 /clear 当年是"把会话文件删掉"——于是每开一段新对话，上一段就从历史里消失了。
+      // 要删某段历史，用历史面板里那个「删除」。
       startNewSession();
     });
     document.addEventListener('keydown', event => {

@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.6.0';
+  const PROBE_VERSION = '1.6.2';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -204,11 +204,24 @@
    *   · 老打包版：历史上直接挂 File / Directory / Data 等全局。
    * 注意 window.File 正常情况下是浏览器原生 File 构造函数，没有 save/root，别拿来当引擎用。
    */
+  /** 引擎内部接口是否可用（官方预编译版没有 window.YamiEngine，纯 DOM 能力不受影响） */
+  function engineAvailable() {
+    const engine = engineApi();
+    return !!(engine.File && engine.Directory && engine.Data);
+  }
+
   function engineApi() {
     const box = (typeof window !== 'undefined' && window.YamiEngine) || null;
     const pick = function (name) {
       if (box && box[name]) return box[name];
-      try { return typeof window !== 'undefined' ? window[name] : undefined; } catch (e) { return undefined; }
+      try {
+        const value = typeof window !== 'undefined' ? window[name] : undefined;
+        // window.File 是浏览器**原生** File 构造函数（没有 save/get/root）。老代码直接把它
+        // 当引擎接口返回，于是 engineApi().File 永远"看起来拿得到"，真正的判空只剩
+        // Directory/Data —— 排查"桥为什么没起来"时极容易被这半个真值带偏。这里直接挡掉。
+        if (name === 'File' && value && typeof value.save !== 'function' && typeof value.get !== 'function') return undefined;
+        return value;
+      } catch (e) { return undefined; }
     };
     return { File: pick('File'), Directory: pick('Directory'), Title: pick('Title'), UndoManager: pick('UndoManager'), Data: pick('Data') };
   }
@@ -1981,6 +1994,7 @@
       inspector: null,
       scope: scope,
       page: scope.name,
+      engineAvailable: engineAvailable(),
       hasPendingInput: hasPendingInput()
     };
 
@@ -2044,6 +2058,7 @@
     if (ctx.scope && ctx.scope.name && ctx.scope.name !== '编辑器' && ctx.scope.name !== '独立试玩窗口') {
       parts.push('页面「' + ctx.scope.name + '」');
     }
+    if (ctx.engineAvailable === false) parts.push('引擎接口未暴露（演示类可用，保存/撤销/试玩不可用）');
     if (ctx.scene) parts.push('场景「' + ctx.scene + '」');
     if (ctx.selectedFile && ctx.selectedFile.name) {
       const typeLabel = ctx.selectedFile.type ? ctx.selectedFile.type + '/' : '';
@@ -3659,29 +3674,22 @@
       // 编辑器动作桥：只在编辑器主页面启动，避免 all_frames 下与试玩窗口争抢端口。
       // 仅暴露固定动作和 DOM 语义点击，不开放任意 JS 执行。
       let editorBridgeStarted = false;
-      function startEditorBridge(attempt) {
+      function startEditorBridge() {
         if (!isEditorHostPage || editorBridgeStarted) return;
-        const tries = attempt || 0;
-        // 引擎接口有两套来源（window.YamiEngine 或老的裸全局），这里统一绑成局部量，
-        // 下面所有 File / Directory / Data / Title / UndoManager 的引用都能自动兼容。
-        const engine = engineApi();
-        const File = engine.File;
-        const Directory = engine.Directory;
-        const Data = engine.Data;
-        const Title = engine.Title;
-        const UndoManager = engine.UndoManager;
-        if (!Directory || !File || !Data) {
-          // 两种构建都可能还没就绪（页面刚加载），等一会儿；始终等不到就如实说清楚，别无限轮询刷日志。
-          if (tries >= 40) {
-            console.warn('[Yami Perf Bridge] 编辑器动作桥未启动：页面上取不到引擎接口（window.YamiEngine 或全局 File/Directory/Data），'
-              + '编辑器级动作（保存/刷新/试玩）请改走 CDP 或文件级工具。');
-            return;
-          }
-          setTimeout(function () { startEditorBridge(tries + 1); }, 250);
-          return;
-        }
         editorBridgeStarted = true;
         const editorServer = http.createServer(function(req, res) {
+          // 引擎接口**每次请求现取**，不在启动时绑死：
+          //   1. 页面刚加载时它可能还没就绪；
+          //   2. 官方预编译版根本没有 window.YamiEngine（那是引擎仓库的本地补丁）。
+          // 后一种情况下桥也必须起来 —— 演示高亮 / 点击 / 界面结构这些纯 DOM 动作不依赖引擎，
+          // 只有保存/撤销/试玩/文件预检才需要。以前在启动时就判空并放弃，
+          // 于是官方预编译版上整座桥永远起不来，连锁把界面操作一起埋了。
+          const engine = engineApi();
+          const File = engine.File;
+          const Directory = engine.Directory;
+          const Data = engine.Data;
+          const Title = engine.Title;
+          const UndoManager = engine.UndoManager;
           res.setHeader('Access-Control-Allow-Origin', '*');
           res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
           res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-yami-bridge-token');
@@ -3713,11 +3721,14 @@
             if (typeof window !== 'undefined' && !window.__YAMI_INSTANCE_ID__) {
               window.__YAMI_INSTANCE_ID__ = 'yami_' + Math.random().toString(36).slice(2, 10);
             }
+            const engine = engineApi();
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
               ok: true,
               instanceId: (typeof window !== 'undefined' && window.__YAMI_INSTANCE_ID__) || 'unknown',
               projectRoot: projectRoot,
+              engineAvailable: engineAvailable(),
+              engineMissing: ['File', 'Directory', 'Data', 'Title', 'UndoManager'].filter(function (k) { return !engine[k]; }),
               pageUrl: typeof location !== 'undefined' ? location.href : '',
               title: typeof document !== 'undefined' ? document.title : ''
             }));
@@ -3740,6 +3751,9 @@
             readJsonBody(req, 64 * 1024).then(async function(action) {
               const name = String(action && action.action || '');
               if (name === 'preflight' || name === 'reload') {
+                if (!Data || !Data.manifest || !File || typeof File.get !== 'function') {
+                  return { ok: false, engineUnavailable: true, error: '当前引擎没有暴露内部接口（window.YamiEngine），文件预检与重载不可用' };
+                }
                 const rel = String(action.path || '').replace(/\\/g, '/').replace(/^\.\//, '');
                 if (!rel || rel.includes('..')) return { ok: false, error: '编辑器桥收到非法工程路径' };
                 const dataMatch = rel.match(/^Data\/([a-zA-Z0-9_-]+)\.json$/);
@@ -3799,26 +3813,26 @@
                 return { ok: true, action: name, path: rel };
               }
               if (name === 'save') {
-                if (typeof File.save !== 'function') return { ok: false, error: 'File.save 不可用' };
+                if (!File || typeof File.save !== 'function') return { ok: false, engineUnavailable: true, error: 'File.save 不可用（当前编辑器的引擎未暴露 window.YamiEngine）' };
                 await File.save(false);
                 return { ok: true, action: name };
               }
               if (name === 'refresh') {
-                if (typeof Directory.update !== 'function') return { ok: false, error: 'Directory.update 不可用' };
+                if (!Directory || typeof Directory.update !== 'function') return { ok: false, engineUnavailable: true, error: 'Directory.update 不可用（当前编辑器的引擎未暴露 window.YamiEngine）' };
                 await Directory.update();
                 return { ok: true, action: name };
               }
               if (name === 'playtest') {
-                if (typeof Title === 'undefined' || typeof Title.playGame !== 'function') return { ok: false, error: 'Title.playGame 不可用' };
+                if (!Title || typeof Title.playGame !== 'function') return { ok: false, engineUnavailable: true, error: 'Title.playGame 不可用（当前编辑器的引擎未暴露 window.YamiEngine）' };
                 await Title.playGame();
                 return { ok: true, action: name };
               }
               if (name === 'undo' || name === 'redo') {
-                if (typeof UndoManager !== 'undefined' && typeof UndoManager[name] === 'function') {
+                if (UndoManager && typeof UndoManager[name] === 'function') {
                   UndoManager[name]();
                   return { ok: true, action: name };
                 }
-                return { ok: false, error: '当前编辑器未暴露 UndoManager' };
+                return { ok: false, engineUnavailable: true, error: '当前编辑器未暴露 UndoManager（需要引擎侧 window.YamiEngine）' };
               }
               if (name === 'dumpUi') {
                 const selector = 'button, [role="button"], item, nav-item, select-box, custom-box, number-box, close, minimize, maximize, #title-play, .menu-item, input, textarea, box[hotkey]';
@@ -4031,7 +4045,13 @@
           }
         });
         editorServer.listen(5967, '127.0.0.1', function() {
-          console.log('[Yami Perf Bridge] 编辑器动作服务已就绪: http://127.0.0.1:5967');
+          if (engineAvailable()) {
+            console.log('[Yami Perf Bridge] 编辑器动作服务已就绪: http://127.0.0.1:5967');
+          } else {
+            console.warn('[Yami Perf Bridge] 编辑器动作桥已就绪（5967），但当前引擎没有暴露内部接口 window.YamiEngine：'
+              + '界面演示 / 高亮 / 点击 / 界面结构读取 均不受影响，只有 保存、撤销、重做、刷新资源、启动试玩、文件预检 这几项不可用。'
+              + '（官方预编译版即属此类；引擎源码构建需要打上 window.YamiEngine 补丁才会有。）');
+          }
         });
       }
       startEditorBridge();
