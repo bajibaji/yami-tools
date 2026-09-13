@@ -298,6 +298,25 @@ async function main() {
   const { probe: probeFlat } = loadProbe({ fetch: async () => ({ ok: true, status: 200, headers: { get: () => String(flatTar.length) }, arrayBuffer: async () => flatTar }), require: (name) => (name === 'fs' ? trackedFs() : require(name)) });
   const flatRes = await probeFlat.performAutoUpdate(null, { targetDir: flatDst });
   check('没有顶层目录的平铺包同样能装 (路径不被多剥一层)', flatRes.success === true && existsSync(path.join(flatDst, 'bootstrap.js')) && existsSync(path.join(flatDst, 'runtime/yami-mcp/server.js')), 'v' + flatRes.version);
+  // 路径穿越: 越出插件目录的条目必须被挡下（本地安装允许选任意目录，不能靠"包一定是干净的"）
+  const evilDst = path.join(workDir, 'plugin-evil');
+  mkdirSync(evilDst, { recursive: true });
+  installOldPlugin(evilDst);
+  const evilTar = makeTarGz(fakeSnapshotFiles('9.9.9').concat([
+    ['../EVIL-SHOULD-NOT-EXIST.js', 'REKT'],
+    ['../../../EVIL-FAR.js', 'REKT'],
+    ['/EVIL-ABS.js', 'REKT']
+  ]));
+  const { probe: probeEvil } = loadProbe({
+    fetch: async () => ({ ok: true, status: 200, headers: { get: () => String(evilTar.length) }, arrayBuffer: async () => evilTar }),
+    require: (name) => (name === 'fs' ? trackedFs() : require(name))
+  });
+  const evilRes = await probeEvil.performAutoUpdate(null, { targetDir: evilDst });
+  check('带 ../ 的整包仍能正常安装（危险条目被忽略，而不是整包失败）', evilRes.success === true, 'v' + evilRes.version);
+  check('穿越条目没有被写到插件目录之外', !existsSync(path.join(workDir, 'EVIL-SHOULD-NOT-EXIST.js')) && !existsSync(path.join(workDir, 'EVIL-FAR.js')) && !existsSync(path.join(workDir, 'EVIL-ABS.js')));
+  check('穿越条目也没有被写进插件目录', !existsSync(path.join(evilDst, 'EVIL-ABS.js')) && !existsSync(path.join(evilDst, 'EVIL-SHOULD-NOT-EXIST.js')));
+  check('正常文件照旧装上（挡的是危险条目，不是整个更新）', existsSync(path.join(evilDst, 'bootstrap.js')) && existsSync(path.join(evilDst, 'manifest.json')));
+
   // 全通道失败
   const { probe: probeF } = loadProbe({ fetch: async () => { throw new Error('net down'); } });
   let err6 = null;

@@ -50,6 +50,11 @@ class EditorBridge {
   async clickElement(params) {
     return await this.action('click', params)
   }
+
+  async getContext() {
+    const res = await this.request('GET', '/context', null, 800)
+    return res.ok ? res.data : { ok: false, error: res.error || '获取编辑器上下文失败' }
+  }
 }
 
 module.exports = EditorBridge

@@ -152,7 +152,7 @@ async function main() {
   const project = process.env.YAMI_TEST_PROJECT || '/home/deck/yami-fixture'
   if (!fs.existsSync(path.join(project, 'Assets'))) {
     console.log('跳过：找不到可用的测试工程 ' + project + '（可用 YAMI_TEST_PROJECT 指定）')
-    host.kill(); model.close(); fs.rmSync(CONFIG_DIR, { recursive: true, force: true }); fs.rmSync(sandbox, { recursive: true, force: true })
+    model.close(); fs.rmSync(CONFIG_DIR, { recursive: true, force: true }); fs.rmSync(sandbox, { recursive: true, force: true })
     process.exit(0)
   }
   const host = spawn(process.execPath, [path.join(sandbox, 'ai-host.js')], {

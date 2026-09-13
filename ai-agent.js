@@ -37,6 +37,22 @@
   state.token = sharedToken();
   localStorage.setItem('danjuan-ai-session', state.sessionId);
 
+  const AI_ICONS = {
+    undo: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M5.828 7l2.536 2.536L6.95 10.95 2 6l4.95-4.95 1.414 1.414L5.828 5H13a8 8 0 1 1 0 16H4v-2h9a6 6 0 1 0 0-12H5.828z"/></svg>',
+    history: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 2c5.523 0 10 4.477 10 10s-4.477 10-10 10S2 17.523 2 12h2a8 8 0 1 0 2.343-5.657L9 9H2V2l2.657 2.657A9.957 9.957 0 0 1 12 2zm1 5v4.586l3.243 3.243-1.414 1.414L11 12.414V7h2z"/></svg>',
+    add: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M11 11V5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>',
+    settings: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 1l1.79 2.15 2.76-.64.96 2.64 2.8.32-.01 2.83 2.16 1.8L21 12l1.46 2.4-2.16 1.8.01 2.83-2.8.32-.96 2.64-2.76-.64L12 23l-1.79-2.15-2.76.64-.96-2.64-2.8-.32.01-2.83-2.16-1.8L3 12l-1.46-2.4 2.16-1.8-.01-2.83 2.8-.32.96-2.64 2.76.64L12 1zm0 7a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/></svg>',
+    refresh: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M12 4c2.1 0 4.1.8 5.6 2.3L20 4v7h-7l2.8-2.8C14.7 7.1 13.4 6.5 12 6.5c-3 0-5.5 2.5-5.5 5.5s2.5 5.5 5.5 5.5c2.4 0 4.4-1.6 5.1-3.8l2 .6c-1 3.1-3.9 5.2-7.1 5.2-4.1 0-7.5-3.4-7.5-7.5S7.9 4 12 4z"/></svg>',
+    send: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M13 7.828V20h-2V7.828l-5.364 5.364-1.414-1.414L12 4l7.778 7.778-1.414 1.414L13 7.828z"/></svg>',
+    stop: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>',
+    chevronRight: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M13.172 12l-4.95-4.95 1.414-1.414L16 12l-6.364 6.364-1.414-1.414z"/></svg>',
+    chevronDown: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M12 13.172l4.95-4.95 1.414 1.414L12 16 5.636 9.636 7.05 8.222z"/></svg>',
+    cpu: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M13 4.055c4.5.496 8 4.31 8 8.945v5a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-5c0-4.635 3.5-8.449 8-8.945V2h2v2.055zM12 6a7 7 0 0 0-7 7v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a7 7 0 0 0-7-7zm-4 5a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm8 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/></svg>',
+    brain: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 7.2L21.6 12l-7.2 2.4L12 21.6l-2.4-7.2L2.4 12l7.2-2.4L12 2zm0 4.6L10.6 10.6 6.6 12l4 1.4L12 17.4l1.4-4 4-1.4-4-1.4L12 6.6z"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M7 6V3a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v3h5v2h-2v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V8H2V6h5zm2-2v2h6V4H9zm-3 4v12h12V8H6zm3 3h2v6H9v-6zm4 0h2v6h-2v-6z"/></svg>',
+    close: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 10.586l4.95-4.95 1.414 1.414L13.414 12l4.95 4.95-1.414 1.414L12 13.414l-4.95 4.95-1.414-1.414L10.586 12 5.636 7.05l1.414-1.414z"/></svg>'
+  };
+
   // 当前这一轮的思考过程块与起始时刻（严格模式下必须显式声明，否则出现隐式全局）
   let currentThinkingEl = null;
   let thinkingStartedAt = 0;
@@ -227,7 +243,11 @@
       body: body === undefined ? undefined : JSON.stringify(body)
     });
     const data = await response.json().catch(() => ({ ok: false, error: 'AI 助手响应无法解析' }));
-    if (!response.ok || data.ok === false) throw new Error(data.error || 'AI 助手请求失败');
+    if (!response.ok || data.ok === false) {
+      const err = new Error(data.error || 'AI 助手请求失败');
+      err.payload = data;   // 失败响应里可能带着"没赶上的引导"这类回执，别丢在异常里
+      throw err;
+    }
     return data;
   }
 
@@ -388,15 +408,16 @@
     const el = document.getElementById('yami-ai-context');
     if (!el) return;
     if (!context) { el.textContent = ''; el.classList.remove('show'); return; }
-    // 刻度文案由宿主按 token 与真实窗口算好（label 形如「320k/1M · 32%」），前端只负责显示，
-    // 避免两处各算一套、又把字符数当上下文长度糊弄用户
-    const suffix = context.summary ? ' · 已压缩' : (context.nearLimit ? ' · 即将自动压缩' : '');
-    el.textContent = '上下文 ' + context.label + suffix;
+    // 侧栏空间约 380px：精简前缀与「/1M」刻度，紧凑展示（如「97.2k · 10%」），完整详情置于 title 中
+    const compactLabel = String(context.label || '').replace('/1M', '').trim();
+    const compactSuffix = context.summary ? ' · 压缩' : (context.nearLimit ? ' · 临界' : '');
+    el.textContent = (compactLabel || context.label) + compactSuffix;
     el.classList.add('show');
     el.classList.toggle('warn', !!context.nearLimit);
-    el.title = context.calibrated
+    const fullSuffix = context.summary ? ' · 已压缩' : (context.nearLimit ? ' · 即将自动压缩' : '');
+    el.title = '上下文用量: ' + context.label + fullSuffix + '\n' + (context.calibrated
       ? '按模型真实用量计（1M token 窗口，占用达到 80% 自动压缩：先精简长工具结果，再折叠成结构化检查点）'
-      : '按官方换算估算（中文 0.6 token/字、英文 0.3 token/字符；发起一次对话后改用真实用量）';
+      : '按官方换算估算（中文 0.6 token/字、英文 0.3 token/字符；发起一次对话后改用真实用量）');
   }
 
   async function refreshContext() {
@@ -493,7 +514,7 @@
         btn.className = 'yami-ai-undo-btn';
         btn.setAttribute('role', 'button');
         btn.setAttribute('tabindex', '0');
-        btn.textContent = '撤销';
+        btn.innerHTML = AI_ICONS.undo + '<span>撤销</span>';
         activate(btn, async () => {
           if (state.busy) return;
           btn.textContent = '回退中';
@@ -618,7 +639,7 @@
         del.setAttribute('role', 'button');
         del.setAttribute('tabindex', '0');
         del.setAttribute('title', '删除这段对话');
-        del.textContent = '删除';
+        del.innerHTML = AI_ICONS.trash + '<span>删除</span>';
         activate(row, () => loadSession(item.id, item.title));
         activate(del, async event => {
           event.stopPropagation();
@@ -637,12 +658,17 @@
   }
 
   async function loadSession(id, title) {
-    if (state.busy) return;
+    if (state.busy) {
+      hudToast('AI 正在处理中，请先停止或等待本轮结束');
+      return;
+    }
     try {
       const data = await request('/session/load', { sessionId: id });
       state.sessionId = data.sessionId || id;
       localStorage.setItem('danjuan-ai-session', state.sessionId);
       state.pending = null;
+      currentThinkingEl = null;
+      thinkingStartedAt = 0;
       endTurn();
       document.getElementById('yami-ai-approval')?.classList.remove('show');
       clearMessages('');
@@ -696,7 +722,12 @@
   function setStatus(text, mode) {
     const el = document.getElementById('yami-ai-status');
     if (!el) return;
-    el.textContent = text;
+    const txtNode = el.querySelector('.yami-ai-status-text');
+    if (txtNode) {
+      txtNode.textContent = text;
+    } else {
+      el.textContent = text;
+    }
     el.className = 'yami-ai-status ' + (mode || 'idle');
   }
 
@@ -801,10 +832,16 @@
     const toolCards = new Map();
     const cardKeyOf = event => String((event && event.key) || (event && event.name) || '');
     state.abort = new AbortController();
+    let liveEnv = '';
+    try {
+      if (typeof window !== 'undefined' && typeof window.__YAMI_CTX_SUMMARY__ === 'function') {
+        liveEnv = window.__YAMI_CTX_SUMMARY__() || '';
+      }
+    } catch (e) {}
     const response = await fetch('http://127.0.0.1:' + PORT + '/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-yami-agent-token': state.token },
-      body: JSON.stringify({ sessionId: state.sessionId, message: text }),
+      body: JSON.stringify({ sessionId: state.sessionId, message: text, envSummary: liveEnv || undefined }),
       signal: state.abort.signal
     });
     if (!response.ok) {
@@ -869,8 +906,10 @@
         // 思考块自身是滚动容器（max-height:30vh），它不会自己跟着长
         if (near) body.scrollTop = body.scrollHeight;
       }
-      const seconds = Math.max(1, Math.round((Date.now() - thinkingStartedAt) / 1000));
-      setThinkingMeta(currentThinkingEl, thinkingSegments.round(), seconds, reasoningBuffer.length());
+      if (thinkingStartedAt > 0) {
+        const seconds = Math.max(1, Math.round((Date.now() - thinkingStartedAt) / 1000));
+        setThinkingMeta(currentThinkingEl, thinkingSegments.round(), seconds, reasoningBuffer.length());
+      }
     };
 
     const handleEvent = event => {
@@ -1137,7 +1176,8 @@
    *  编号只从**已知段号**来（第 1 段要等到"确实存在第 2 段"那一刻才敢加），
    *  所以第 2 段起由创建时就带上，第 1 段由 labelThinkingRound 事后补。 */
   function thinkingMetaText(index, seconds, chars) {
-    return (index >= 2 ? '第 ' + index + ' 段 · ' : '') + '已思考 ' + seconds + ' 秒 · ' + chars + ' 字';
+    const sec = Number.isFinite(seconds) && seconds > 0 && seconds < 86400 ? seconds : 1;
+    return (index >= 2 ? '第 ' + index + ' 段 · ' : '') + '已思考 ' + sec + ' 秒 · ' + chars + ' 字';
   }
 
   /** 回放用的段头（历史块没有"耗时"可算，如实只报字数，不编造秒数） */
@@ -1204,8 +1244,10 @@
     }
     if (!currentThinkingEl) return;
     currentThinkingEl.dataset.text = fullText;
-    const seconds = Math.max(1, Math.round((Date.now() - thinkingStartedAt) / 1000));
-    setThinkingMeta(currentThinkingEl, thinkingSegments.round(), seconds, fullText.length);
+    if (thinkingStartedAt > 0) {
+      const seconds = Math.max(1, Math.round((Date.now() - thinkingStartedAt) / 1000));
+      setThinkingMeta(currentThinkingEl, thinkingSegments.round(), seconds, fullText.length);
+    }
     applyThinkingMode(currentThinkingEl);
     refreshProcessMeta();
     autoScroll();
@@ -1456,6 +1498,28 @@
     return el;
   }
 
+  /**
+   * 审批有结论后给那张卡片收尾：不然它会永远停在"等待你确认"（黄点 + 一行"等待你确认"），
+   * 用户以为还卡在那儿。
+   */
+  function resolvePendingCard(approved, note) {
+    const dot = document.querySelector('.yami-ai-tool-dot.wait');
+    if (!dot) return false;
+    const card = dot.closest ? dot.closest('.yami-ai-tool') : null;
+    if (!card) return false;
+    dot.className = 'yami-ai-tool-dot ' + (approved ? 'ok' : 'bad');
+    const body = card.querySelector('.yami-ai-tool-body');
+    if (body) {
+      const line = document.createElement('div');
+      line.textContent = (approved ? '已确认并执行' : '已取消，工程未改动') + (note ? ' · ' + note : '');
+      body.appendChild(line);
+    }
+    card.classList.remove('collapsed');
+    const toggle = card.querySelector('.yami-ai-tool-toggle');
+    if (toggle) toggle.textContent = '▾';
+    return true;
+  }
+
   /** 引导条：告诉用户"这句话会在下一步送到模型"；宿主确认送达后翻成已送达 */
   function pushSteerChip(text) {
     const area = processArea();
@@ -1658,6 +1722,7 @@
     if (state.busy) {
       if (!text) return;
       input.value = '';
+      input.style.height = '';
       // Ctrl+Enter 是保留的快捷键（不占按钮）：把这句话插进正在跑的这一轮，不打断它
       if (mode === 'steer') return await sendSteer(text);
       if (busySendMode() === 'interrupt') return await interruptThenSend(text);
@@ -1670,9 +1735,11 @@
     if (state.pending) {
       state.pending = null;
       document.getElementById('yami-ai-approval')?.classList.remove('show');
+      resolvePendingCard(false, '你直接发了新需求');
     }
     if (!text) { input?.focus(); return; }
     input.value = '';
+    input.style.height = '';
     await runMessage(text);
   }
 
@@ -1698,6 +1765,12 @@
       refreshContext();
       refreshFooterCost();
     } catch (e) {
+      // 宿主在失败响应里退回的引导：如实放进排队区（绝不能因为"报错了"就悄悄吞掉用户说的话）
+      const left = e && e.payload && Array.isArray(e.payload.undeliveredSteer) ? e.payload.undeliveredSteer : [];
+      if (left.length) {
+        for (const item of left) enqueueMessage(item);
+        hudToast('有 ' + left.length + ' 条引导没送到，已放进排队区');
+      }
       if (e && (e.name === 'AbortError' || /已打断/.test(String(e.message)))) {
         setStatus('已打断', 'idle');
       } else {
@@ -1729,9 +1802,11 @@
       if (grantBox) localStorage.setItem('danjuan-ai-grant', grantBox.checked ? '1' : '0');
       const data = await request(route, { sessionId: state.sessionId, grantForSession });
       handleResult(data);
+      resolvePendingCard(approve, approve ? '编译与回滚状态见上方小结' : '');
       if (grantForSession) pushNotice('已记住该文件的授权：本次任务内不再逐条确认（可在【撤销】面板旁随时取消）', 'wait');
     } catch (e) {
       addMessage('error', e.message + '。修改未完成，可重新发送需求。');
+      resolvePendingCard(false, '执行失败');
       setStatus('需要处理', 'error');
     } finally { setBusy(false); }
   }
@@ -1812,16 +1887,23 @@
       }
       const balance = state.balance;
       if (balance && balance.total !== null && balance.total !== undefined) {
-        parts.push('余额 ' + balance.total + ' 元');
+        const balNum = Number(balance.total);
+        const balStr = isNaN(balNum) ? String(balance.total) : balNum.toFixed(2);
+        parts.push('<span class="yami-ai-cost-balance">余额 ' + balStr + ' 元</span>');
       }
-      parts.push('本次 ' + (cost > 0 ? cost.toFixed(4) : '0') + ' 元');
-      el.textContent = parts.join(' · ');
+      const costNum = Number(cost);
+      let costStr = '0.00';
+      if (costNum > 0) {
+        costStr = costNum >= 0.01 ? costNum.toFixed(2) : costNum.toFixed(4);
+      }
+      parts.push('<span class="yami-ai-cost-turn">本次 ' + costStr + ' 元</span>');
+      el.innerHTML = parts.join('<span class="yami-ai-cost-sep">·</span>');
       const detail = [];
       if (usage && usage.calls) detail.push('本次调用 ' + usage.calls + ' 次、共 ' + ((usage.promptTokens || 0) + (usage.completionTokens || 0)) + ' tokens（输入 ' + (usage.promptTokens || 0) + '、输出 ' + (usage.completionTokens || 0) + '）');
       if (balance && (balance.granted || balance.toppedUp)) detail.push('赠金 ' + (balance.granted || '0') + ' / 充值 ' + (balance.toppedUp || '0'));
       el.title = detail.join('；') || '本次对话用量与账户余额';
     } catch (e) {
-      el.textContent = '';
+      el.innerHTML = '';
       el.title = '余额与用量暂不可用';
     }
   }
@@ -1978,7 +2060,113 @@
     page.className = 'yami-suite-page yami-ai-page';
     page.id = 'page-ai';
     page.style.setProperty('display', 'none', 'important');
-    page.innerHTML = '<div class="yami-ai-toolbar"><div class="yami-ai-status idle" id="yami-ai-status" role="status">尚未启动</div><div class="yami-ai-context" id="yami-ai-context" role="status"></div><div class="yami-ai-tool-btn" id="yami-ai-undo-toggle" role="button" tabindex="0">撤销</div><div class="yami-ai-tool-btn" id="yami-ai-history-toggle" role="button" tabindex="0">历史</div><div class="yami-ai-tool-btn" id="yami-ai-clear" role="button" tabindex="0">新对话</div><div class="yami-ai-tool-btn" id="yami-ai-settings-toggle" role="button" tabindex="0">设置</div></div><div class="yami-ai-undo" id="yami-ai-undo"></div><div class="yami-ai-history" id="yami-ai-history"></div><div class="yami-ai-settings" id="yami-ai-settings"><label for="yami-ai-endpoint">BASE URL（OpenAI 格式）</label><input id="yami-ai-endpoint" type="url" value="https://api.deepseek.com" placeholder="https://api.deepseek.com"><label for="yami-ai-key">API Key</label><input id="yami-ai-key" type="password" autocomplete="off" placeholder="DeepSeek API Key"><label class="yami-ai-check"><input id="yami-ai-mode" type="checkbox"><span>编辑器操作自动执行，工程文件仍需确认</span></label><div class="yami-ai-hint" id="yami-ai-key-state"></div><label for="yami-ai-thinking-view">思考过程显示</label><select id="yami-ai-thinking-view" title="思考过程在对话里的显示方式"><option value="expand" selected>展开</option><option value="preview">单行预览</option><option value="collapse">折叠</option></select><label for="yami-ai-process-fold">执行过程收起</label><select id="yami-ai-process-fold" title="一轮结束后，思考与工具这些过程行要不要自动收起"><option value="compact" selected>紧凑（结束后自动收起）</option><option value="standard">标准（过程始终展开）</option></select><label for="yami-ai-busy-send">繁忙时发送</label><select id="yami-ai-busy-send" title="AI 正在干活时你按发送 / 回车：排队等它做完，还是打断它立刻发这条"><option value="queue" selected>排队（等这一轮跑完再发）</option><option value="interrupt">打断（停掉这一轮，立刻发）</option></select><div class="yami-ai-model-row"><div class="yami-ai-secondary" id="yami-ai-test" role="button" tabindex="0">测试连接</div><div class="yami-ai-secondary" id="yami-ai-balance" role="button" tabindex="0">查余额</div><div class="yami-ai-hint" id="yami-ai-money"></div></div><div class="yami-ai-primary" id="yami-ai-save-settings" role="button" tabindex="0">保存设置</div></div><div class="yami-ai-messages" id="yami-ai-messages" role="log" aria-live="polite"><div class="yami-ai-message assistant">告诉我你想做什么。我会先查看工程，涉及文件修改时会让你确认。</div></div><div class="yami-ai-approval" id="yami-ai-approval" role="alert"><div class="yami-ai-approval-title">确认执行</div><div class="yami-ai-approval-stat" id="yami-ai-approval-stat"></div><pre id="yami-ai-approval-detail"></pre><div class="yami-ai-approval-diff" id="yami-ai-approval-diff"></div><label class="yami-ai-check yami-ai-grant"><input id="yami-ai-grant" type="checkbox"><span>本次任务内，这个文件不再逐条确认（随时可撤销）</span></label><div class="yami-ai-approval-actions"><div class="yami-ai-secondary" id="yami-ai-reject" role="button" tabindex="0">取消修改</div><div class="yami-ai-primary" id="yami-ai-approve" role="button" tabindex="0">执行修改</div></div></div><div class="yami-ai-compose"><label for="yami-ai-input">你的需求</label><textarea id="yami-ai-input" rows="3" placeholder="例如：检查当前工程报错，并修复相关脚本"></textarea><div class="yami-ai-devbar"><label for="yami-ai-model">模型</label><select id="yami-ai-model" title="模型（可点【拉取模型】刷新列表）"></select><div class="yami-ai-tool-btn" id="yami-ai-fetch-models" role="button" tabindex="0" title="从服务端拉取可用模型">↻</div><label class="yami-ai-check"><input id="yami-ai-thinking" type="checkbox" checked><span>Thinking</span></label><select id="yami-ai-effort" title="思考强度"><option value="low">Low</option><option value="high" selected>High</option><option value="max">Max</option></select></div><div class="yami-ai-primary" id="yami-ai-send" role="button" tabindex="0" aria-disabled="false">发送</div></div>';
+    page.innerHTML =
+      '<div class="yami-ai-toolbar">' +
+        '<div class="yami-ai-status idle" id="yami-ai-status" role="status">' +
+          '<span class="yami-ai-status-pulse"></span>' +
+          '<span class="yami-ai-status-text">尚未启动</span>' +
+        '</div>' +
+        '<div class="yami-ai-context" id="yami-ai-context" role="status"></div>' +
+        '<div class="yami-ai-toolbar-actions">' +
+          '<div class="yami-ai-tool-btn" id="yami-ai-undo-toggle" role="button" tabindex="0" title="查看并撤销文件改动">' + AI_ICONS.undo + '<span>撤销</span></div>' +
+          '<div class="yami-ai-tool-btn" id="yami-ai-history-toggle" role="button" tabindex="0" title="会话历史记录">' + AI_ICONS.history + '<span>历史</span></div>' +
+          '<div class="yami-ai-tool-btn yami-ai-btn-new-chat" id="yami-ai-clear" role="button" tabindex="0" title="开启新对话">' + AI_ICONS.add + '<span>新对话</span></div>' +
+          '<div class="yami-ai-tool-btn" id="yami-ai-settings-toggle" role="button" tabindex="0" title="模型与插件设置">' + AI_ICONS.settings + '<span>设置</span></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="yami-ai-undo" id="yami-ai-undo"></div>' +
+      '<div class="yami-ai-history" id="yami-ai-history"></div>' +
+      '<div class="yami-ai-settings" id="yami-ai-settings">' +
+        '<div class="yami-ai-settings-header">' +
+          '<span class="yami-ai-settings-title">AI 助手设置</span>' +
+          '<div class="yami-ai-settings-close" id="yami-ai-settings-close" role="button" tabindex="0" title="关闭设置">' + AI_ICONS.close + '</div>' +
+        '</div>' +
+        '<div class="yami-ai-settings-group">' +
+          '<label for="yami-ai-endpoint">BASE URL（OpenAI 格式）</label>' +
+          '<input id="yami-ai-endpoint" type="url" value="https://api.deepseek.com" placeholder="https://api.deepseek.com">' +
+          '<label for="yami-ai-key">API Key</label>' +
+          '<input id="yami-ai-key" type="password" autocomplete="off" placeholder="DeepSeek API Key">' +
+          '<div class="yami-ai-hint" id="yami-ai-key-state"></div>' +
+          '<label class="yami-ai-check">' +
+            '<input id="yami-ai-mode" type="checkbox">' +
+            '<span>编辑器操作自动执行，工程文件仍需确认</span>' +
+          '</label>' +
+        '</div>' +
+        '<div class="yami-ai-settings-group">' +
+          '<div class="yami-ai-settings-row">' +
+            '<div class="yami-ai-settings-col">' +
+              '<label for="yami-ai-thinking-view">思考过程显示</label>' +
+              '<select id="yami-ai-thinking-view" title="思考过程在对话里的显示方式">' +
+                '<option value="expand" selected>展开</option>' +
+                '<option value="preview">单行预览</option>' +
+                '<option value="collapse">折叠</option>' +
+              '</select>' +
+            '</div>' +
+            '<div class="yami-ai-settings-col">' +
+              '<label for="yami-ai-process-fold">执行过程收起</label>' +
+              '<select id="yami-ai-process-fold" title="一轮结束后，思考与工具这些过程行要不要自动收起">' +
+                '<option value="compact" selected>紧凑（结束后自动收起）</option>' +
+                '<option value="standard">标准（过程始终展开）</option>' +
+              '</select>' +
+            '</div>' +
+          '</div>' +
+          '<label for="yami-ai-busy-send">繁忙时发送</label>' +
+          '<select id="yami-ai-busy-send" title="AI 正在干活时你按发送 / 回车：排队等它做完，还是打断它立刻发这条">' +
+            '<option value="queue" selected>排队（等这一轮跑完再发）</option>' +
+            '<option value="interrupt">打断（停掉这一轮，立刻发）</option>' +
+          '</select>' +
+        '</div>' +
+        '<div class="yami-ai-model-row">' +
+          '<div class="yami-ai-secondary" id="yami-ai-test" role="button" tabindex="0">测试连接</div>' +
+          '<div class="yami-ai-secondary" id="yami-ai-balance" role="button" tabindex="0">查余额</div>' +
+          '<div class="yami-ai-hint" id="yami-ai-money"></div>' +
+        '</div>' +
+        '<div class="yami-ai-primary" id="yami-ai-save-settings" role="button" tabindex="0">保存设置</div>' +
+      '</div>' +
+      '<div class="yami-ai-messages" id="yami-ai-messages" role="log" aria-live="polite">' +
+        '<div class="yami-ai-message assistant">告诉我你想做什么。我会先查看工程，涉及文件修改时会让你确认。</div>' +
+      '</div>' +
+      '<div class="yami-ai-approval" id="yami-ai-approval" role="alert">' +
+        '<div class="yami-ai-approval-title">确认执行</div>' +
+        '<div class="yami-ai-approval-stat" id="yami-ai-approval-stat"></div>' +
+        '<pre id="yami-ai-approval-detail"></pre>' +
+        '<div class="yami-ai-approval-diff" id="yami-ai-approval-diff"></div>' +
+        '<label class="yami-ai-check yami-ai-grant">' +
+          '<input id="yami-ai-grant" type="checkbox">' +
+          '<span>本次任务内，这个文件不再逐条确认（随时可撤销）</span>' +
+        '</label>' +
+        '<div class="yami-ai-approval-actions">' +
+          '<div class="yami-ai-secondary" id="yami-ai-reject" role="button" tabindex="0">取消修改</div>' +
+          '<div class="yami-ai-primary" id="yami-ai-approve" role="button" tabindex="0">执行修改</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="yami-ai-compose">' +
+        '<div class="yami-ai-compose-main">' +
+          '<div class="yami-ai-input-wrap">' +
+            '<textarea id="yami-ai-input" rows="3" placeholder="输入需求：编写技能逻辑、排查脚本报错、调整事件流程... (Enter 发送 / Shift+Enter 换行)"></textarea>' +
+          '</div>' +
+          '<div class="yami-ai-primary yami-ai-send-btn" id="yami-ai-send" role="button" tabindex="0" aria-disabled="false" title="发送（Enter）">发送</div>' +
+        '</div>' +
+        '<div class="yami-ai-devbar">' +
+          '<div class="yami-ai-capsule" title="当前模型（可点右侧刷新可用列表）">' +
+            '<span class="yami-ai-capsule-icon">' + AI_ICONS.cpu + '</span>' +
+            '<select id="yami-ai-model" title="模型选择"></select>' +
+            '<div class="yami-ai-capsule-btn yami-ai-fetch-btn" id="yami-ai-fetch-models" role="button" tabindex="0" title="从服务端拉取可用模型">' + AI_ICONS.refresh + '</div>' +
+          '</div>' +
+          '<div class="yami-ai-capsule yami-ai-thinking-capsule" title="深度思考模式 (Thinking / Reasoning)">' +
+            '<label class="yami-ai-check yami-ai-capsule-check">' +
+              '<input id="yami-ai-thinking" type="checkbox" checked>' +
+              '<span class="yami-ai-capsule-icon">' + AI_ICONS.brain + '</span>' +
+              '<span>思考</span>' +
+            '</label>' +
+            '<select id="yami-ai-effort" title="思考强度">' +
+              '<option value="low">Low</option>' +
+              '<option value="high" selected>High</option>' +
+              '<option value="max">Max</option>' +
+            '</select>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
     document.querySelector('.yami-perf-dock-body').appendChild(page);
     api.registerPage('ai', page, { title: 'AI 助手', showBack: true, showModeSwitch: false, showClearErrors: false, showTabs: false, showExportBtns: false, refresh() {}, destroy() {} });
     ensureJumpButton();
@@ -1996,6 +2184,7 @@
     activate(document.getElementById('yami-ai-approve'), () => decide(true));
     activate(document.getElementById('yami-ai-reject'), () => decide(false));
     activate(document.getElementById('yami-ai-settings-toggle'), () => document.getElementById('yami-ai-settings').classList.toggle('show'));
+    activate(document.getElementById('yami-ai-settings-close'), () => document.getElementById('yami-ai-settings')?.classList.remove('show'));
     activate(document.getElementById('yami-ai-undo-toggle'), () => {
       const panel = document.getElementById('yami-ai-undo')
       if (panel && panel.classList.contains('show')) panel.classList.remove('show')
@@ -2012,8 +2201,23 @@
     activate(document.getElementById('yami-ai-test'), testConnection);
     // 输入框下方的快捷调节：改动即生效，只提交改动项
     document.getElementById('yami-ai-model').addEventListener('change', event => quickUpdate({ model: event.target.value }));
-    document.getElementById('yami-ai-effort').addEventListener('change', event => quickUpdate({ thinkingEffort: event.target.value }));
-    document.getElementById('yami-ai-thinking').addEventListener('change', event => quickUpdate({ thinkingMode: event.target.checked ? 'enabled' : 'disabled' }));
+    const effortSelect = document.getElementById('yami-ai-effort');
+    const thinkingCheck = document.getElementById('yami-ai-thinking');
+    const syncEffortState = () => {
+      if (effortSelect && thinkingCheck) {
+        effortSelect.disabled = !thinkingCheck.checked;
+        effortSelect.style.opacity = thinkingCheck.checked ? '1' : '0.4';
+        effortSelect.style.cursor = thinkingCheck.checked ? 'pointer' : 'not-allowed';
+      }
+    };
+    if (effortSelect) effortSelect.addEventListener('change', event => quickUpdate({ thinkingEffort: event.target.value }));
+    if (thinkingCheck) {
+      thinkingCheck.addEventListener('change', event => {
+        syncEffortState();
+        quickUpdate({ thinkingMode: event.target.checked ? 'enabled' : 'disabled' });
+      });
+      syncEffortState();
+    }
     const viewSelect = document.getElementById('yami-ai-thinking-view');
     if (viewSelect) viewSelect.value = thinkingView();
     const foldSelect = document.getElementById('yami-ai-process-fold');
@@ -2036,7 +2240,8 @@
       });
     }
     activate(document.getElementById('yami-ai-clear'), async () => {
-      if (state.pending || state.busy) return;
+      if (state.busy) { hudToast('AI 正在处理中，请先停止或等待本轮结束'); return; }
+      if (state.pending) return;
       try { await request('/clear', { sessionId: state.sessionId }); } catch (e) {}
       startNewSession();
     });
@@ -2050,11 +2255,17 @@
       event.preventDefault();
       stopStream();
     });
-    document.getElementById('yami-ai-input').addEventListener('keydown', event => {
+    const inputArea = document.getElementById('yami-ai-input');
+    inputArea.addEventListener('keydown', event => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key !== 'Enter' || event.shiftKey) return;
       event.preventDefault();
       // Enter = 发送（忙时的行为由设置决定：排队 / 打断）；Ctrl/Cmd+Enter = 保留的"引导"快捷键
       sendMessage(state.busy && (event.ctrlKey || event.metaKey) ? 'steer' : undefined);
+    });
+    inputArea.addEventListener('input', () => {
+      inputArea.style.height = 'auto';
+      inputArea.style.height = Math.min(140, Math.max(52, inputArea.scrollHeight)) + 'px';
     });
   }
 

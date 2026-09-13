@@ -824,14 +824,34 @@
 
       /* 余额与本次花费：跟在版本号后面，只有 AI 助手页显示（切页由 HUD 调度） */
       #yami-ai-footer-cost {
-        color: #909090 !important;
+        display: none !important;
+        align-items: center !important;
+        gap: 6px !important;
+        padding: 1px 8px !important;
+        background: rgba(255, 255, 255, 0.04) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 10px !important;
+        color: #9ca3af !important;
         font-size: 11px !important;
-        font-family: Consolas, monospace !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
         cursor: default !important;
         user-select: text !important;
         white-space: nowrap !important;
+        margin-inline-start: 4px !important;
       }
       #yami-ai-footer-cost:empty { display: none !important; }
+      .yami-ai-cost-balance {
+        color: #34d399 !important;
+        font-weight: 500 !important;
+      }
+      .yami-ai-cost-sep {
+        color: #52525b !important;
+        font-size: 10px !important;
+        user-select: none !important;
+      }
+      .yami-ai-cost-turn {
+        color: #cbd5e1 !important;
+      }
       .yami-perf-dock-footer {
         height: 36px !important;
         min-height: 36px !important;
@@ -3261,26 +3281,114 @@
         word-break: break-all !important;
       }
 
-      /* ============ AI 助手 ============ */
+      /* ============ AI 助手 (Industrial Dark Aesthetics) ============ */
       .yami-ai-page {
         min-height: 100% !important;
+        display: flex !important;
+        flex-direction: column !important;
         gap: 10px !important;
+        position: relative !important;
       }
+
+      /* 顶栏仪表盘 (Geek Toolbar) */
       .yami-ai-toolbar {
         display: flex !important;
         align-items: center !important;
-        gap: 8px !important;
+        justify-content: space-between !important;
+        gap: 6px !important;
+        padding: 5px 8px !important;
+        background: #18191e !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 6px !important;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25) !important;
+        flex-wrap: nowrap !important;
+        overflow: hidden !important;
       }
       .yami-ai-status {
-        flex: 1 !important;
+        flex: 0 0 auto !important;
         min-width: 0 !important;
-        font-size: 12px !important;
-        color: #b8b8b8 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        font-size: 11px !important;
+        font-weight: 500 !important;
+        color: #9ca3af !important;
+        white-space: nowrap !important;
       }
-      .yami-ai-status.ready { color: #4ade80 !important; }
-      .yami-ai-status.working { color: #60a5fa !important; }
-      .yami-ai-status.waiting { color: #fbbf24 !important; }
-      .yami-ai-status.error { color: #ff8888 !important; }
+      .yami-ai-status-pulse {
+        width: 6px !important;
+        height: 6px !important;
+        border-radius: 50% !important;
+        flex: 0 0 auto !important;
+        background: #9ca3af !important;
+        transition: all 0.2s ease !important;
+      }
+      .yami-ai-status-text {
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        min-width: 0 !important;
+      }
+      .yami-ai-status.ready .yami-ai-status-pulse {
+        background: #10b981 !important;
+        box-shadow: 0 0 6px rgba(16, 185, 129, 0.6) !important;
+      }
+      .yami-ai-status.ready .yami-ai-status-text { color: #34d399 !important; }
+
+      .yami-ai-status.working .yami-ai-status-pulse {
+        background: #3b82f6 !important;
+        box-shadow: 0 0 8px rgba(59, 130, 246, 0.8) !important;
+        animation: yami-ai-glow 1.4s infinite !important;
+      }
+      .yami-ai-status.working .yami-ai-status-text { color: #60a5fa !important; }
+
+      .yami-ai-status.waiting .yami-ai-status-pulse {
+        background: #f59e0b !important;
+        box-shadow: 0 0 6px rgba(245, 158, 11, 0.6) !important;
+      }
+      .yami-ai-status.waiting .yami-ai-status-text { color: #fbbf24 !important; }
+
+      .yami-ai-status.error .yami-ai-status-pulse {
+        background: #ef4444 !important;
+        box-shadow: 0 0 6px rgba(239, 68, 68, 0.6) !important;
+      }
+      .yami-ai-status.error .yami-ai-status-text { color: #f87171 !important; }
+
+      @keyframes yami-ai-glow {
+        0%, 100% { transform: scale(1); opacity: 0.85; }
+        50% { transform: scale(1.25); opacity: 1; filter: brightness(1.2); }
+      }
+
+      /* 上下文预算指示刻度 */
+      .yami-ai-context {
+        display: none !important;
+        flex: 0 0 auto !important;
+        padding: 1px 6px !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 4px !important;
+        background: rgba(0, 0, 0, 0.3) !important;
+        color: #71717a !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+        font-size: 10px !important;
+        line-height: 1.4 !important;
+        white-space: nowrap !important;
+      }
+      .yami-ai-context.show { display: inline-flex !important; align-items: center !important; }
+      .yami-ai-context.warn {
+        border-color: rgba(245, 158, 11, 0.4) !important;
+        background: rgba(245, 158, 11, 0.1) !important;
+        color: #fbbf24 !important;
+      }
+
+      /* 顶栏胶囊动作区 */
+      .yami-ai-toolbar-actions,
+      .yami-ai-actions {
+        display: flex !important;
+        align-items: center !important;
+        gap: 4px !important;
+        flex: 0 0 auto !important;
+        flex-wrap: nowrap !important;
+      }
       .yami-ai-tool-btn,
       .yami-ai-primary,
       .yami-ai-secondary {
@@ -3288,76 +3396,153 @@
         display: inline-flex !important;
         align-items: center !important;
         justify-content: center !important;
-        min-height: 28px !important;
-        padding: 4px 10px !important;
-        border-radius: 3px !important;
-        border: 1px solid #3d3d3d !important;
-        background: #303030 !important;
-        color: #e8e8e8 !important;
-        font-size: 12px !important;
-        line-height: 1.4 !important;
+        gap: 4px !important;
+        height: 24px !important;
+        padding: 0 6px !important;
+        border-radius: 4px !important;
+        border: 1px solid rgba(255, 255, 255, 0.09) !important;
+        background: #202127 !important;
+        color: #9ca3af !important;
+        font-size: 11px !important;
+        line-height: 1 !important;
         cursor: pointer !important;
         user-select: none !important;
-        transition: background-color 0.12s, border-color 0.12s, scale 0.12s !important;
+        white-space: nowrap !important;
+        transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1) !important;
       }
-      .yami-ai-primary {
-        border-color: #0864a8 !important;
-        background: #0864a8 !important;
-        color: #ffffff !important;
+      .yami-ai-tool-btn svg,
+      .yami-ai-primary svg,
+      .yami-ai-secondary svg {
+        flex: 0 0 auto !important;
+        display: block !important;
       }
-      .yami-ai-secondary { background: #242424 !important; }
       .yami-ai-tool-btn:hover,
-      .yami-ai-secondary:hover { background: #3d3d3d !important; }
-      .yami-ai-primary:hover { background: #0874c0 !important; }
+      .yami-ai-secondary:hover {
+        background: #2a2c34 !important;
+        border-color: rgba(255, 255, 255, 0.18) !important;
+        color: #f3f4f6 !important;
+        transform: translateY(-0.5px) !important;
+      }
+      .yami-ai-tool-btn:active,
+      .yami-ai-secondary:active {
+        transform: translateY(0.5px) !important;
+        background: #1c1d22 !important;
+      }
+      .yami-ai-tool-btn.active {
+        background: rgba(59, 130, 246, 0.16) !important;
+        border-color: rgba(59, 130, 246, 0.4) !important;
+        color: #60a5fa !important;
+      }
       .yami-ai-tool-btn:focus-visible,
       .yami-ai-primary:focus-visible,
       .yami-ai-secondary:focus-visible,
       .yami-ai-page input:focus-visible,
-      .yami-ai-page textarea:focus-visible {
-        outline: 2px solid #60a5fa !important;
+      .yami-ai-page textarea:focus-visible,
+      .yami-ai-page select:focus-visible {
+        outline: 2px solid #3b82f6 !important;
         outline-offset: 1px !important;
       }
-      .yami-ai-tool-btn:active,
-      .yami-ai-primary:active,
-      .yami-ai-secondary:active { scale: 0.96 !important; }
-      .yami-ai-primary.disabled {
-        opacity: 0.55 !important;
-        cursor: default !important;
-        scale: 1 !important;
+
+      .yami-ai-primary {
+        border-color: #1d4ed8 !important;
+        background: #2563eb !important;
+        color: #ffffff !important;
+        box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3) !important;
       }
+      .yami-ai-primary:hover {
+        background: #3b82f6 !important;
+        border-color: #2563eb !important;
+        box-shadow: 0 3px 8px rgba(37, 99, 235, 0.4) !important;
+        transform: translateY(-0.5px) !important;
+      }
+      .yami-ai-primary:active {
+        transform: translateY(0.5px) !important;
+      }
+      .yami-ai-primary.disabled {
+        opacity: 0.5 !important;
+        cursor: default !important;
+        transform: none !important;
+        box-shadow: none !important;
+      }
+
+      /* 设置卡片抽屉 (Card Drawer) */
       .yami-ai-settings {
         display: none !important;
-        /* 单列：标签一行、控件一行。旧的「标签 | 控件」两列在 440px 停靠宽度里会被
-           长文案（勾选项说明、密钥状态提示）撑爆，auto 列吃光宽度、1fr 列被压成 0，
-           输入框只剩一条竖缝、保存设置竖排——实测踩过 */
         grid-template-columns: minmax(0, 1fr) !important;
         align-items: stretch !important;
-        gap: 6px !important;
-        padding: 10px !important;
-        border: 1px solid #3d3d3d !important;
-        border-radius: 4px !important;
-        background: #202020 !important;
+        gap: 8px !important;
+        padding: 12px !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 6px !important;
+        background: #17181d !important;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
       }
       .yami-ai-settings > * { grid-column: 1 !important; min-width: 0 !important; }
       .yami-ai-settings.show { display: grid !important; }
+      .yami-ai-settings-header,
+      .yami-ai-settings-head {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding-bottom: 8px !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+        margin-bottom: 4px !important;
+      }
+      .yami-ai-settings-title,
+      .yami-ai-settings-head span {
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        color: #e5e7eb !important;
+      }
+      .yami-ai-settings-close {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 22px !important;
+        height: 22px !important;
+        padding: 0 !important;
+        border-radius: 4px !important;
+        background: transparent !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        color: #9ca3af !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: all 0.15s ease !important;
+      }
+      .yami-ai-settings-close:hover {
+        background: rgba(239, 68, 68, 0.18) !important;
+        border-color: rgba(239, 68, 68, 0.45) !important;
+        color: #fca5a5 !important;
+      }
+      .yami-ai-settings-close svg {
+        display: block !important;
+      }
       .yami-ai-settings label,
       .yami-ai-compose label {
-        color: #b8b8b8 !important;
+        color: #9ca3af !important;
         font-size: 12px !important;
-        line-height: 1.5 !important;
+        line-height: 1.4 !important;
       }
       .yami-ai-settings input,
-      .yami-ai-settings select,
-      .yami-ai-compose textarea {
+      .yami-ai-settings select {
         min-width: 0 !important;
         width: 100% !important;
-        border: 1px solid #080808 !important;
-        border-radius: 3px !important;
-        background: #18191a !important;
-        color: #e8e8e8 !important;
-        font: 400 13px/1.5 Inter, "Microsoft YaHei UI", sans-serif !important;
-        padding: 7px 8px !important;
-        resize: vertical !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 4px !important;
+        background: #0f1013 !important;
+        color: #f3f4f6 !important;
+        font: 400 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+        padding: 6px 9px !important;
+        transition: border-color 0.15s, box-shadow 0.15s !important;
+      }
+      .yami-ai-settings input:focus,
+      .yami-ai-settings select:focus {
+        border-color: #3b82f6 !important;
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2) !important;
+      }
+      .yami-ai-settings select option {
+        background: #18191e !important;
+        color: #e5e7eb !important;
       }
       .yami-ai-check {
         grid-column: 1 / -1 !important;
@@ -3365,141 +3550,126 @@
         align-items: center !important;
         gap: 8px !important;
       }
-      .yami-ai-check input { width: 16px !important; height: 16px !important; flex: 0 0 auto !important; }
-      .yami-ai-settings .yami-ai-primary { grid-column: 1 !important; justify-self: stretch !important; text-align: center !important; }
-      .yami-ai-settings .yami-ai-check { display: flex !important; align-items: center !important; gap: 6px !important; }
+      .yami-ai-check input {
+        width: 15px !important;
+        height: 15px !important;
+        flex: 0 0 auto !important;
+        accent-color: #2563eb !important;
+      }
+      .yami-ai-settings .yami-ai-primary {
+        grid-column: 1 !important;
+        justify-self: stretch !important;
+        text-align: center !important;
+        height: 30px !important;
+        font-size: 12px !important;
+      }
       .yami-ai-settings .yami-ai-model-row { flex-wrap: wrap !important; }
+      .yami-ai-hint {
+        color: #71717a !important;
+        font-size: 11px !important;
+        line-height: 1.5 !important;
+        overflow-wrap: anywhere !important;
+        user-select: text !important;
+      }
+      .yami-ai-model-row {
+        display: flex !important;
+        gap: 6px !important;
+        align-items: center !important;
+      }
+      .yami-ai-model-row label { flex: 0 0 auto !important; margin: 0 !important; }
+      .yami-ai-model-row input,
+      .yami-ai-model-row select { flex: 1 1 auto !important; min-width: 0 !important; }
+      .yami-ai-model-row .yami-ai-secondary { flex: 0 0 auto !important; height: 28px !important; }
+
+      /* 消息列表流 (Messages Stream) */
       .yami-ai-messages {
         flex: 1 1 240px !important;
         min-height: 180px !important;
         overflow-y: auto !important;
         display: flex !important;
         flex-direction: column !important;
-        gap: 8px !important;
-        padding: 2px !important;
+        gap: 10px !important;
+        padding: 4px 12px 4px 2px !important;
       }
-      /* 「有新内容」提示：只在用户上滚看历史时出现（点一下回到最新）。
-         order 让它永远排在消息末尾，后续 appendChild 不会把它挤到中间；
-         sticky 让它吸在可视区底部，不随内容滚走。 */
+
+      /* 浮动置底按钮 (Jump to Bottom) */
       .yami-ai-jump {
         order: 9999 !important;
         position: sticky !important;
-        bottom: 4px !important;
+        bottom: 6px !important;
         align-self: center !important;
-        padding: 3px 10px !important;
-        border: 1px solid #4a4a5a !important;
-        border-radius: 11px !important;
-        background: #2f2f3a !important;
-        color: #cfcfe4 !important;
+        padding: 4px 12px !important;
+        border: 1px solid rgba(59, 130, 246, 0.4) !important;
+        border-radius: 14px !important;
+        background: #1c2438 !important;
+        color: #93c5fd !important;
         font-size: 11px !important;
         line-height: 1.4 !important;
         cursor: pointer !important;
         user-select: none !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+        transition: all 0.15s ease !important;
       }
-      .yami-ai-jump:hover { border-color: #6a6a8a !important; color: #ffffff !important; }
+      .yami-ai-jump:hover {
+        background: #24304c !important;
+        border-color: #60a5fa !important;
+        color: #ffffff !important;
+        transform: translateY(-1px) !important;
+      }
+
+      /* 对话消息气泡 (Message Bubbles) */
       .yami-ai-message {
         max-width: 90% !important;
-        padding: 8px 10px !important;
-        border: 1px solid #383838 !important;
-        border-radius: 4px !important;
-        background: #2b2b2b !important;
-        color: #e0e0e0 !important;
+        padding: 9px 12px !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 6px !important;
+        background: #1a1b22 !important;
+        color: #e5e7eb !important;
         font-size: 13px !important;
-        line-height: 1.55 !important;
+        line-height: 1.6 !important;
         white-space: pre-wrap !important;
         overflow-wrap: break-word !important;
         user-select: text !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
       }
       .yami-ai-message.user {
         align-self: flex-end !important;
-        border-color: #22547a !important;
-        background: #18344a !important;
-        color: #ffffff !important;
+        border-color: rgba(59, 130, 246, 0.35) !important;
+        background: linear-gradient(135deg, #1e3a5f 0%, #152744 100%) !important;
+        color: #f0f6fc !important;
+        border-radius: 6px 6px 2px 6px !important;
+        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25) !important;
       }
-      .yami-ai-message.system { color: #b8b8b8 !important; background: #202020 !important; }
-      .yami-ai-message.error { border-color: #663333 !important; background: #321f1f !important; color: #ffaaaa !important; }
-      /* 工具调用与过程提示：不占用答复气泡，弱化为一行提示条（对标 Claude Code 的工具日志） */
+      .yami-ai-message.system {
+        color: #9ca3af !important;
+        background: #15161a !important;
+        border-color: rgba(255, 255, 255, 0.05) !important;
+      }
+      .yami-ai-message.error {
+        border-color: rgba(239, 68, 68, 0.3) !important;
+        background: #251818 !important;
+        color: #fca5a5 !important;
+      }
+
+      /* 工具与过程单行提示条 */
       .yami-ai-notice {
         align-self: flex-start !important;
-        max-width: 92% !important;
+        max-width: 94% !important;
         padding: 4px 8px !important;
-        border-inline-start: 2px solid #3a3a3a !important;
-        color: #9a9a9a !important;
-        font-family: Consolas, monospace !important;
+        border-inline-start: 2px solid rgba(255, 255, 255, 0.15) !important;
+        color: #9ca3af !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
         font-size: 12px !important;
         line-height: 1.5 !important;
         white-space: pre-wrap !important;
         overflow-wrap: anywhere !important;
         user-select: text !important;
       }
-      .yami-ai-notice.ok { border-inline-start-color: #3f7a4a !important; color: #8fc79c !important; }
-      .yami-ai-notice.bad { border-inline-start-color: #7a3f3f !important; color: #e09a9a !important; }
-      .yami-ai-notice.wait { border-inline-start-color: #8a5a16 !important; color: #e0bb7a !important; }
-      /* 上下文占用指示：随时可见的预算刻度 */
-      .yami-ai-context {
-        display: none !important;
-        margin-inline-start: auto !important;
-        padding: 2px 6px !important;
-        border: 1px solid #383838 !important;
-        border-radius: 3px !important;
-        color: #8a8a8a !important;
-        font-family: Consolas, monospace !important;
-        font-size: 11px !important;
-        white-space: nowrap !important;
-      }
-      .yami-ai-context.show { display: block !important; }
-      /* 触及自动压缩阈值时给个提示色：用户能提前知道"下一次就要折叠历史了" */
-      .yami-ai-context.warn {
-        border-color: #a8762a !important;
-        color: #e0b165 !important;
-      }
+      .yami-ai-notice.ok { border-inline-start-color: #10b981 !important; color: #6ee7b7 !important; }
+      .yami-ai-notice.bad { border-inline-start-color: #ef4444 !important; color: #fca5a5 !important; }
+      .yami-ai-notice.wait { border-inline-start-color: #f59e0b !important; color: #fcd34d !important; }
 
-
-
-      /* 批量授权列表（在撤销面板内，可随时取消） */
-      .yami-ai-grants {
-        display: flex !important;
-        flex-direction: column !important;
-        gap: 4px !important;
-        padding: 6px !important;
-        border: 1px solid #4a4a2a !important;
-        border-radius: 4px !important;
-        background: #2a2a1f !important;
-      }
-      .yami-ai-grant-row {
-        display: flex !important;
-        align-items: center !important;
-        justify-content: space-between !important;
-        gap: 8px !important;
-      }
-      .yami-ai-grant { margin-top: 6px !important; }
-
-      /* 任务计划卡片（待办清单）：多步任务的进度骨架 */
-      .yami-ai-plan {
-        display: flex !important;
-        flex-direction: column !important;
-        gap: 3px !important;
-        padding: 8px 10px !important;
-        border: 1px solid #3f4a3a !important;
-        border-inline-start: 3px solid #6a8f5a !important;
-        border-radius: 4px !important;
-        background: #212720 !important;
-      }
-      .yami-ai-plan-head { color: #a8c79a !important; font-size: 12px !important; font-weight: 600 !important; }
-      .yami-ai-plan-item {
-        color: #a8a8a8 !important;
-        font-size: 12px !important;
-        line-height: 1.6 !important;
-        overflow-wrap: anywhere !important;
-        user-select: text !important;
-      }
-      .yami-ai-plan-item.in_progress { color: #d8c88a !important; }
-      .yami-ai-plan-item.done { color: #8fc79c !important; }
-
-
-
-
-      /* 一个回合：上面是「执行过程」（思考+工具集中在一处），下面是正文 */
+      /* 一个回合 (Turn Container) */
       .yami-ai-turn {
         display: flex !important;
         flex-direction: column !important;
@@ -3511,44 +3681,51 @@
         flex-direction: column !important;
         gap: 6px !important;
       }
+
+      /* 执行过程面板 (Process Block) */
       .yami-ai-process {
-        border: 1px solid #33333c !important;
-        border-radius: 4px !important;
-        background: #1e1e22 !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 6px !important;
+        background: #15161b !important;
         overflow: hidden !important;
       }
-      /* 收起后的过程行：只留一行控制条，别再占正文的地盘 */
       .yami-ai-process.collapsed {
-        background: #1a1a1e !important;
-      }
-      /* 每轮用量行：贴在轮次末尾的一行小字，记账不全时根本不会出现 */
-      .yami-ai-turn-usage {
-        color: #6a6a78 !important;
-        font-size: 11px !important;
-        font-family: Consolas, monospace !important;
-        padding-inline-start: 2px !important;
-        cursor: default !important;
+        background: #141518 !important;
       }
       .yami-ai-process-head {
         display: flex !important;
         align-items: center !important;
         gap: 8px !important;
-        padding: 5px 8px !important;
+        padding: 6px 10px !important;
         cursor: pointer !important;
         user-select: none !important;
+        background: rgba(255, 255, 255, 0.02) !important;
       }
-      .yami-ai-process-title { color: #9a9aa8 !important; font-size: 12px !important; font-weight: 600 !important; }
-      .yami-ai-process-meta { color: #7a7a8a !important; font-size: 11px !important; font-family: Consolas, monospace !important; }
-      .yami-ai-process-toggle { margin-inline-start: auto !important; color: #7a7a8a !important; font-size: 12px !important; line-height: 1 !important; }
-      .yami-ai-process-head:hover .yami-ai-process-toggle { color: #d0d0e0 !important; }
+      .yami-ai-process-title {
+        color: #cbd5e1 !important;
+        font-size: 12px !important;
+        font-weight: 600 !important;
+      }
+      .yami-ai-process-meta {
+        color: #64748b !important;
+        font-size: 11px !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+      }
+      .yami-ai-process-toggle {
+        margin-inline-start: auto !important;
+        color: #64748b !important;
+        font-size: 12px !important;
+        line-height: 1 !important;
+        transition: color 0.15s ease !important;
+      }
+      .yami-ai-process-head:hover .yami-ai-process-toggle { color: #e2e8f0 !important; }
       .yami-ai-process-body {
         display: flex !important;
         flex-direction: column !important;
-        gap: 4px !important;
-        padding: 0 8px 7px !important;
+        gap: 5px !important;
+        padding: 0 10px 8px !important;
       }
       .yami-ai-process.collapsed .yami-ai-process-body { display: none !important; }
-      /* 过程区里的步骤行去掉提示条外框，压成紧凑清单 */
       .yami-ai-process-body .yami-ai-notice {
         border: 0 !important;
         border-radius: 0 !important;
@@ -3557,18 +3734,24 @@
         font-size: 12px !important;
         line-height: 1.6 !important;
       }
-      /* 打断按钮：忙碌时发送键变红，点它就是停 */
-      #yami-ai-send.stop { background: #8a3a3a !important; }
-      #yami-ai-send.stop:hover { background: #a34444 !important; }
 
-      /* 思考过程块：默认单行预览；可切展开 / 折叠 */
+      /* 轮次用量小字 */
+      .yami-ai-turn-usage {
+        color: #52525b !important;
+        font-size: 11px !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+        padding-inline-start: 2px !important;
+        cursor: default !important;
+      }
+
+      /* 思考过程卡片 (Thinking Card) */
       .yami-ai-thinking {
         align-self: stretch !important;
-        border: 1px solid #3a3a46 !important;
-        border-inline-start: 3px solid #6a6a8a !important;
-        border-radius: 4px !important;
-        background: #23232b !important;
-        padding: 6px 8px !important;
+        border: 1px solid rgba(255, 255, 255, 0.07) !important;
+        border-inline-start: 3px solid #6366f1 !important;
+        border-radius: 5px !important;
+        background: #14151a !important;
+        padding: 7px 10px !important;
       }
       .yami-ai-thinking-head {
         display: flex !important;
@@ -3576,26 +3759,34 @@
         gap: 8px !important;
         cursor: default !important;
       }
-      .yami-ai-thinking-title { color: #a8a8c8 !important; font-size: 12px !important; font-weight: 600 !important; }
-      .yami-ai-thinking-meta { color: #7a7a8a !important; font-size: 11px !important; font-family: Consolas, monospace !important; }
-      /* 折叠控件就是一个符号：带底色边框的按钮挂在思考块头部太抢眼 */
+      .yami-ai-thinking-title {
+        color: #a5b4fc !important;
+        font-size: 12px !important;
+        font-weight: 600 !important;
+      }
+      .yami-ai-thinking-meta {
+        color: #64748b !important;
+        font-size: 11px !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+      }
       .yami-ai-thinking-toggle {
         margin-inline-start: auto !important;
         padding: 0 4px !important;
         font-size: 12px !important;
         line-height: 1 !important;
-        color: #7a7a8a !important;
+        color: #64748b !important;
         background: transparent !important;
         border: 0 !important;
         cursor: pointer !important;
         user-select: none !important;
+        transition: color 0.15s ease !important;
       }
-      .yami-ai-thinking-toggle:hover { color: #d0d0e0 !important; }
+      .yami-ai-thinking-toggle:hover { color: #cbd5e1 !important; }
       .yami-ai-thinking-body {
-        margin-top: 5px !important;
+        margin-top: 6px !important;
         max-height: 30vh !important;
         overflow-y: auto !important;
-        color: #9a9aa8 !important;
+        color: #94a3b8 !important;
         font-size: 12px !important;
         line-height: 1.65 !important;
         white-space: pre-wrap !important;
@@ -3603,9 +3794,6 @@
         user-select: text !important;
       }
       .yami-ai-thinking.collapsed .yami-ai-thinking-body { display: none !important; }
-      /* 单行预览要显示思考的**最后一行**（此刻在想什么）。文本块右对齐、溢出的部分从左边裁掉，
-         这样最新的字永远落在可见区——早先用 text-overflow: ellipsis 裁的是右边，
-         结果用户看到的永远是最新内容之前的那一截。 */
       .yami-ai-thinking.preview .yami-ai-thinking-body {
         max-height: none !important;
         overflow: hidden !important;
@@ -3618,7 +3806,8 @@
         white-space: nowrap !important;
         text-overflow: clip !important;
       }
-      /* 输入框下方的快捷调节条：模型 / Thinking / 强度 */
+
+      /* 快捷选项条兼容 */
       .yami-ai-devbar {
         display: flex !important;
         align-items: center !important;
@@ -3627,188 +3816,319 @@
         grid-column: 1 / -1 !important;
         padding-top: 2px !important;
       }
-      .yami-ai-devbar label {
-        color: #9a9a9a !important;
-        font-size: 11px !important;
-        margin: 0 !important;
-        flex: 0 0 auto !important;
-      }
-      .yami-ai-devbar select {
-        flex: 0 1 auto !important;
-        min-width: 0 !important;
-        max-width: 46% !important;
-        background: #2b2b2b !important;
-        color: #e0e0e0 !important;
-        border: 1px solid #3a3a3a !important;
-        border-radius: 3px !important;
-        padding: 2px 6px !important;
-        font-size: 12px !important;
-      }
-      .yami-ai-devbar .yami-ai-check { margin: 0 !important; }
-      .yami-ai-devbar .yami-ai-tool-btn { padding: 1px 6px !important; }
-      .yami-ai-devbar .yami-ai-tool-btn.busy { opacity: 0.5 !important; }
-      /* 设置区：思考强度下拉与余额提示 */
-      .yami-ai-model-row label { flex: 0 0 auto !important; margin: 0 !important; }
-      .yami-ai-model-row select {
-        flex: 1 1 auto !important;
-        min-width: 0 !important;
-        background: #2b2b2b !important;
-        color: #e0e0e0 !important;
-        border: 1px solid #3a3a3a !important;
-        border-radius: 3px !important;
-        padding: 3px 6px !important;
-      }
-      .yami-ai-hint {
-        color: #9a9a9a !important;
-        font-size: 11px !important;
-        line-height: 1.5 !important;
-        overflow-wrap: anywhere !important;
-        user-select: text !important;
-      }
-      /* 模型名 + 拉取按钮同一行 */
-      .yami-ai-model-row {
-        display: flex !important;
-        gap: 6px !important;
-        align-items: center !important;
-      }
-      .yami-ai-model-row input { flex: 1 1 auto !important; min-width: 0 !important; }
-      .yami-ai-model-row .yami-ai-secondary { flex: 0 0 auto !important; }
-      /* 变更小结卡片：这次动了什么、编译过没过、下一步做什么 */
-      .yami-ai-changelog {
+
+      /* 一体化输入工作舱与布局 (Input Island Workstation) */
+      .yami-ai-compose {
         display: flex !important;
         flex-direction: column !important;
-        gap: 4px !important;
-        padding: 8px 10px !important;
-        border: 1px solid #3a4a5a !important;
-        border-inline-start: 3px solid #4a7aa8 !important;
+        gap: 6px !important;
+        width: 100% !important;
+        padding-top: 2px !important;
+      }
+      .yami-ai-compose-main {
+        display: flex !important;
+        align-items: stretch !important;
+        gap: 8px !important;
+        width: 100% !important;
+        min-width: 0 !important;
+      }
+      .yami-ai-input-wrap {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 6px !important;
+        background: #18191e !important;
+        padding: 6px 10px !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+        transition: border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+      }
+      .yami-ai-input-wrap:focus-within {
+        border-color: rgba(59, 130, 246, 0.5) !important;
+        background: #191b22 !important;
+        box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25), 0 3px 12px rgba(0, 0, 0, 0.35) !important;
+      }
+      .yami-ai-compose textarea,
+      #yami-ai-input {
+        min-width: 0 !important;
+        width: 100% !important;
+        min-height: 52px !important;
+        max-height: 140px !important;
+        border: none !important;
+        outline: none !important;
+        background: transparent !important;
+        color: #f3f4f6 !important;
+        font: 400 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+        padding: 0 !important;
+        resize: none !important;
+      }
+
+      /* 发送与停止键：与输入框并排在右侧，等高拉伸，纯文字展示 */
+      #yami-ai-send {
+        flex: 0 0 54px !important;
+        width: 54px !important;
+        height: auto !important;
+        min-height: 52px !important;
+        align-self: stretch !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 0 !important;
+        border-radius: 6px !important;
+        border: none !important;
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+        color: #ffffff !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        letter-spacing: 1px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35) !important;
+        transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1) !important;
+      }
+      #yami-ai-send:hover {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+        box-shadow: 0 3px 12px rgba(37, 99, 235, 0.5) !important;
+        transform: translateY(-0.5px) !important;
+      }
+      #yami-ai-send:active {
+        transform: translateY(0.5px) !important;
+      }
+      #yami-ai-send.stop {
+        background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%) !important;
+        box-shadow: 0 2px 8px rgba(220, 38, 38, 0.35) !important;
+      }
+      #yami-ai-send.stop:hover {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+        box-shadow: 0 3px 12px rgba(220, 38, 38, 0.5) !important;
+      }
+
+      /* 下方快捷调节条（模型 / 思考模式） */
+      .yami-ai-devbar {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        flex-wrap: wrap !important;
+        width: 100% !important;
+      }
+      .yami-ai-capsule {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        height: 26px !important;
+        padding: 0 9px !important;
+        background: #202228 !important;
+        border: 1px solid rgba(255, 255, 255, 0.09) !important;
+        border-radius: 13px !important;
+        color: #9ca3af !important;
+        font-size: 11px !important;
+        line-height: 1 !important;
+        user-select: none !important;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
+      }
+      .yami-ai-capsule-icon {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        color: #38bdf8 !important;
+      }
+      .yami-ai-thinking-capsule .yami-ai-capsule-icon {
+        color: #818cf8 !important;
+      }
+      .yami-ai-capsule svg {
+        flex: 0 0 auto !important;
+        display: block !important;
+      }
+      .yami-ai-capsule select {
+        max-width: 140px !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        border: none !important;
+        outline: none !important;
+        background: transparent !important;
+        color: #d1d5db !important;
+        font-size: 11px !important;
+        line-height: 1.2 !important;
+        padding: 0 !important;
+        cursor: pointer !important;
+      }
+      .yami-ai-capsule select option {
+        background: #18191e !important;
+        color: #f3f4f6 !important;
+      }
+      .yami-ai-capsule-btn,
+      .yami-ai-fetch-btn {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 20px !important;
+        height: 20px !important;
         border-radius: 4px !important;
-        background: #1f2833 !important;
+        cursor: pointer !important;
+        color: #9ca3af !important;
+        background: rgba(255, 255, 255, 0.04) !important;
+        border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        margin-inline-start: 2px !important;
+        transition: all 0.15s ease !important;
       }
-      .yami-ai-changelog-head { color: #8fb8e0 !important; font-size: 12px !important; font-weight: 600 !important; }
-      .yami-ai-changelog-line {
-        color: #d8d8d8 !important;
-        font-size: 12px !important;
-        line-height: 1.6 !important;
-        overflow-wrap: anywhere !important;
-        user-select: text !important;
+      .yami-ai-capsule-btn:hover,
+      .yami-ai-fetch-btn:hover {
+        color: #38bdf8 !important;
+        background: rgba(56, 189, 248, 0.15) !important;
+        border-color: rgba(56, 189, 248, 0.3) !important;
       }
-      .yami-ai-changelog-file {
-        color: #a8a8a8 !important;
-        font: 400 11px/1.6 Consolas, monospace !important;
-        overflow-wrap: anywhere !important;
-        user-select: text !important;
+      .yami-ai-capsule-btn.busy,
+      .yami-ai-fetch-btn.busy {
+        animation: yami-spin 0.8s linear infinite !important;
+        color: #38bdf8 !important;
       }
-      .yami-ai-changelog-file.bad { color: #e09a9a !important; }
-      .yami-ai-changelog-next { color: #c8b88a !important; font-size: 12px !important; line-height: 1.6 !important; }
-      /* 撤销面板：列出本次对话里 AI 改过的文件，一键退回 */
+      @keyframes yami-spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+
+      /* 撤销面板 (Undo Panel) */
       .yami-ai-undo {
         display: none !important;
         flex-direction: column !important;
         gap: 6px !important;
         max-height: 40vh !important;
         overflow-y: auto !important;
-        padding: 6px !important;
-        border: 1px solid #383838 !important;
-        border-radius: 4px !important;
-        background: #232323 !important;
+        padding: 10px !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 6px !important;
+        background: #17181d !important;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
       }
       .yami-ai-undo.show { display: flex !important; }
-      .yami-ai-undo-tip { color: #9a9a9a !important; font-size: 12px !important; line-height: 1.6 !important; }
+      .yami-ai-undo-tip { color: #9ca3af !important; font-size: 12px !important; line-height: 1.5 !important; }
       .yami-ai-undo-item {
         display: flex !important;
         align-items: center !important;
         justify-content: space-between !important;
         gap: 8px !important;
-        padding: 8px !important;
-        border: 1px solid #333333 !important;
-        border-radius: 4px !important;
-        background: #2a2a2a !important;
+        padding: 7px 10px !important;
+        border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        border-radius: 5px !important;
+        background: #1f2026 !important;
       }
       .yami-ai-undo-info { display: flex !important; flex-direction: column !important; gap: 2px !important; min-width: 0 !important; }
       .yami-ai-undo-path {
-        color: #e0e0e0 !important;
+        color: #e5e7eb !important;
         font-size: 12px !important;
         overflow-wrap: anywhere !important;
         user-select: text !important;
       }
       .yami-ai-undo-btn {
         flex: 0 0 auto !important;
-        padding: 4px 10px !important;
-        border: 1px solid #4a5a3a !important;
-        border-radius: 3px !important;
-        background: #26301f !important;
-        color: #b7d49a !important;
-        font-size: 12px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 4px !important;
+        padding: 3px 8px !important;
+        border: 1px solid rgba(16, 185, 129, 0.3) !important;
+        border-radius: 4px !important;
+        background: rgba(16, 185, 129, 0.1) !important;
+        color: #34d399 !important;
+        font-size: 11px !important;
         cursor: pointer !important;
+        transition: all 0.15s ease !important;
       }
-      .yami-ai-undo-btn:hover { background: #2f3d26 !important; }
-      .yami-ai-undo-btn:active { scale: 0.96 !important; }
-      /* 会话历史面板 */
+      .yami-ai-undo-btn:hover {
+        background: rgba(16, 185, 129, 0.18) !important;
+        border-color: rgba(16, 185, 129, 0.5) !important;
+      }
+      .yami-ai-undo-btn:active { transform: scale(0.96) !important; }
+
+      /* 会话历史面板 (History Panel) */
       .yami-ai-history {
         display: none !important;
         flex-direction: column !important;
         gap: 6px !important;
         max-height: 46vh !important;
         overflow-y: auto !important;
-        padding: 6px !important;
-        border: 1px solid #383838 !important;
-        border-radius: 4px !important;
-        background: #232323 !important;
+        padding: 10px !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 6px !important;
+        background: #17181d !important;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
       }
       .yami-ai-history.show { display: flex !important; }
-      .yami-ai-history-empty { color: #8a8a8a !important; font-size: 12px !important; line-height: 1.6 !important; }
+      .yami-ai-history-empty { color: #64748b !important; font-size: 12px !important; line-height: 1.5 !important; }
       .yami-ai-history-item {
         display: flex !important;
         flex-direction: column !important;
-        gap: 2px !important;
-        padding: 8px !important;
-        border: 1px solid #333333 !important;
-        border-radius: 4px !important;
-        background: #2a2a2a !important;
+        gap: 3px !important;
+        padding: 8px 10px !important;
+        border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        border-radius: 5px !important;
+        background: #1e1f25 !important;
         cursor: pointer !important;
+        transition: all 0.15s ease !important;
       }
-      .yami-ai-history-item:hover { border-color: #4a4a4a !important; background: #303030 !important; }
-      .yami-ai-history-item:active { scale: 0.98 !important; }
-      .yami-ai-history-item.current { border-color: #22547a !important; background: #18344a !important; }
-      .yami-ai-history-title { color: #e0e0e0 !important; font-size: 13px !important; }
-      .yami-ai-history-meta { color: #8a8a8a !important; font-size: 11px !important; font-family: Consolas, monospace !important; }
+      .yami-ai-history-item:hover {
+        border-color: rgba(255, 255, 255, 0.15) !important;
+        background: #252730 !important;
+      }
+      .yami-ai-history-item:active { transform: scale(0.99) !important; }
+      .yami-ai-history-item.current {
+        border-color: rgba(59, 130, 246, 0.4) !important;
+        background: rgba(59, 130, 246, 0.08) !important;
+      }
+      .yami-ai-history-title { color: #e5e7eb !important; font-size: 13px !important; font-weight: 500 !important; }
+      .yami-ai-history-meta {
+        color: #64748b !important;
+        font-size: 11px !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+      }
       .yami-ai-history-del {
         align-self: flex-end !important;
-        padding: 1px 6px !important;
-        border: 1px solid #4a3030 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 3px !important;
+        padding: 2px 6px !important;
+        border: 1px solid rgba(239, 68, 68, 0.25) !important;
         border-radius: 3px !important;
-        color: #c98a8a !important;
+        color: #fca5a5 !important;
+        background: rgba(239, 68, 68, 0.05) !important;
         font-size: 11px !important;
+        transition: all 0.15s ease !important;
       }
-      .yami-ai-history-del:hover { background: #3a2424 !important; }
+      .yami-ai-history-del:hover {
+        background: rgba(239, 68, 68, 0.15) !important;
+        border-color: rgba(239, 68, 68, 0.45) !important;
+      }
+
+      /* 审批与高危确认面板 (Approval Modal) */
       .yami-ai-approval {
         display: none !important;
-        padding: 10px !important;
-        border: 1px solid #8a5a16 !important;
-        border-radius: 4px !important;
-        background: #2a2418 !important;
+        padding: 12px !important;
+        border: 1px solid rgba(245, 158, 11, 0.4) !important;
+        border-radius: 6px !important;
+        background: #1c1811 !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
       }
       .yami-ai-approval.show { display: block !important; }
-      .yami-ai-approval-title { color: #ffd37a !important; font-size: 13px !important; font-weight: 600 !important; }
+      .yami-ai-approval-title {
+        color: #fbbf24 !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+      }
       .yami-ai-approval pre {
         margin: 7px 0 !important;
-        color: #e6dcc8 !important;
-        font: 400 12px/1.5 Consolas, monospace !important;
+        color: #fde68a !important;
+        font: 400 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
         white-space: pre-wrap !important;
         overflow-wrap: break-word !important;
       }
-      /* 高危操作（删除等）：卡片整体转红，按钮文案也会变，避免顺手点掉 */
       .yami-ai-approval.danger {
-        border-color: #a33a3a !important;
-        background: #2e1c1c !important;
+        border-color: rgba(239, 68, 68, 0.5) !important;
+        background: #241414 !important;
       }
-      .yami-ai-approval.danger .yami-ai-approval-title { color: #ff9c9c !important; }
-      /* 改动差异：逐行着色，新增绿 / 删除红 / 上下文灰 / 定位行蓝 */
+      .yami-ai-approval.danger .yami-ai-approval-title { color: #f87171 !important; }
       .yami-ai-approval-stat {
         display: none !important;
         margin-top: 4px !important;
-        color: #9a9a9a !important;
-        font: 400 11px/1.4 Consolas, monospace !important;
+        color: #9ca3af !important;
+        font: 400 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
       }
       .yami-ai-approval-stat.show { display: block !important; }
       .yami-ai-approval-diff {
@@ -3816,65 +4136,53 @@
         overflow: auto !important;
         margin-top: 6px !important;
         padding: 6px 8px !important;
-        border: 1px solid #3a3a3a !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
         border-radius: 4px !important;
-        background: #1d1d1d !important;
+        background: #0f1013 !important;
       }
       .yami-ai-diff-line {
-        color: #b8b8b8 !important;
-        font: 400 12px/1.5 Consolas, monospace !important;
+        color: #9ca3af !important;
+        font: 400 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
         white-space: pre !important;
         overflow-wrap: normal !important;
         user-select: text !important;
       }
-      .yami-ai-diff-line.add { color: #8fd19e !important; background: #1e2a20 !important; }
-      .yami-ai-diff-line.del { color: #e09a9a !important; background: #2a1e1e !important; }
-      .yami-ai-diff-line.hunk { color: #7aa7d0 !important; }
-      .yami-ai-approval-actions { display: flex !important; justify-content: flex-end !important; gap: 8px !important; }
-      .yami-ai-compose {
-        display: grid !important;
-        grid-template-columns: minmax(0, 1fr) auto !important;
-        gap: 6px 8px !important;
-        align-items: end !important;
-      }
-      .yami-ai-compose label { grid-column: 1 / -1 !important; }
-      .yami-ai-compose textarea { min-height: 66px !important; max-height: 150px !important; }
-      @media (max-width: 520px) {
-        .yami-ai-compose { grid-template-columns: 1fr !important; }
-        .yami-ai-compose .yami-ai-primary { justify-self: end !important; }
-      }
-      /* ============================================================
-         AI 助手：工具卡片 / 系统提示词行 / 引导条 / 排队区 / 轮次导航轨道
-         (对齐 DSH 的 client-ui-tool 与 client-ui-chat)
-         ============================================================ */
-      .yami-ai-page { position: relative !important; }
-      .yami-ai-messages { padding-inline-end: 12px !important; }
+      .yami-ai-diff-line.add { color: #6ee7b7 !important; background: rgba(16, 185, 129, 0.12) !important; }
+      .yami-ai-diff-line.del { color: #fca5a5 !important; background: rgba(239, 68, 68, 0.12) !important; }
+      .yami-ai-diff-line.hunk { color: #60a5fa !important; }
+      .yami-ai-approval-actions { display: flex !important; justify-content: flex-end !important; gap: 8px !important; margin-top: 8px !important; }
 
+      /* 工具执行卡片 (Tool Card) */
       .yami-ai-tool {
         align-self: stretch !important;
-        border: 1px solid #2f2f38 !important;
-        border-radius: 4px !important;
-        background: #1c1c20 !important;
+        border: 1px solid rgba(255, 255, 255, 0.07) !important;
+        border-radius: 5px !important;
+        background: #15161b !important;
         overflow: hidden !important;
       }
       .yami-ai-tool-head {
         display: flex !important;
         align-items: center !important;
         gap: 6px !important;
-        padding: 4px 7px !important;
+        padding: 5px 8px !important;
         cursor: pointer !important;
         user-select: none !important;
         font-size: 12px !important;
       }
-      .yami-ai-tool-dot { width: 6px !important; height: 6px !important; border-radius: 50% !important; flex: 0 0 auto !important; }
-      .yami-ai-tool-dot.run { background: #0080c0 !important; animation: yami-pulse 1.2s infinite !important; }
-      .yami-ai-tool-dot.ok { background: #1cff9b !important; }
-      .yami-ai-tool-dot.bad { background: #ff4040 !important; }
-      .yami-ai-tool-dot.wait { background: #ffb020 !important; }
-      .yami-ai-tool-title { color: #d0d0dc !important; font-weight: 600 !important; flex: 0 0 auto !important; }
+      .yami-ai-tool-dot {
+        width: 6px !important;
+        height: 6px !important;
+        border-radius: 50% !important;
+        flex: 0 0 auto !important;
+      }
+      .yami-ai-tool-dot.run { background: #3b82f6 !important; animation: yami-ai-glow 1.2s infinite !important; }
+      .yami-ai-tool-dot.ok { background: #10b981 !important; }
+      .yami-ai-tool-dot.bad { background: #ef4444 !important; }
+      .yami-ai-tool-dot.wait { background: #f59e0b !important; }
+      .yami-ai-tool-title { color: #d1d5db !important; font-weight: 600 !important; flex: 0 0 auto !important; }
       .yami-ai-tool-target {
-        color: #7a8a9a !important;
-        font-family: Consolas, monospace !important;
+        color: #64748b !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
         font-size: 11px !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
@@ -3882,64 +4190,79 @@
         min-width: 0 !important;
       }
       .yami-ai-tool-target.clickable { cursor: pointer !important; text-decoration: underline dotted !important; }
-      .yami-ai-tool-target.clickable:hover { color: #00a0f0 !important; }
-      .yami-ai-tool-chips { margin-inline-start: auto !important; color: #8899a8 !important; font-size: 11px !important; font-family: Consolas, monospace !important; white-space: nowrap !important; }
-      .yami-ai-tool-toggle { color: #6a6a78 !important; font-size: 11px !important; line-height: 1 !important; }
-      .yami-ai-tool-head:hover .yami-ai-tool-toggle { color: #d0d0e0 !important; }
+      .yami-ai-tool-target.clickable:hover { color: #38bdf8 !important; }
+      .yami-ai-tool-chips {
+        margin-inline-start: auto !important;
+        color: #64748b !important;
+        font-size: 11px !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+        white-space: nowrap !important;
+      }
+      .yami-ai-tool-toggle {
+        color: #64748b !important;
+        font-size: 11px !important;
+        line-height: 1 !important;
+        transition: color 0.15s ease !important;
+      }
+      .yami-ai-tool-head:hover .yami-ai-tool-toggle { color: #e2e8f0 !important; }
       .yami-ai-tool-body {
         display: none !important;
-        padding: 0 8px 6px !important;
-        color: #98a0ac !important;
+        padding: 6px 10px !important;
+        color: #94a3b8 !important;
+        background: #0f1013 !important;
         font-size: 11px !important;
-        font-family: Consolas, monospace !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
         white-space: pre-wrap !important;
         word-break: break-all !important;
       }
       .yami-ai-tool:not(.collapsed) .yami-ai-tool-body { display: block !important; }
-      .yami-ai-tool-spill { color: #00a0f0 !important; cursor: pointer !important; text-decoration: underline !important; margin-top: 3px !important; }
+      .yami-ai-tool-spill { color: #38bdf8 !important; cursor: pointer !important; text-decoration: underline !important; margin-top: 4px !important; }
 
+      /* 系统提示词卡片 (System Row) */
       .yami-ai-system {
         align-self: stretch !important;
-        border: 1px dashed #3a3a46 !important;
-        border-radius: 4px !important;
-        padding: 4px 8px !important;
+        border: 1px dashed rgba(255, 255, 255, 0.1) !important;
+        border-radius: 5px !important;
+        padding: 5px 8px !important;
       }
       .yami-ai-system-head { display: flex !important; align-items: center !important; gap: 8px !important; cursor: pointer !important; user-select: none !important; }
-      .yami-ai-system-title { color: #8a8a9a !important; font-size: 12px !important; font-weight: 600 !important; }
-      .yami-ai-system-meta { color: #6a6a78 !important; font-size: 11px !important; font-family: Consolas, monospace !important; }
-      .yami-ai-system-toggle { margin-inline-start: auto !important; color: #6a6a78 !important; font-size: 11px !important; }
+      .yami-ai-system-title { color: #94a3b8 !important; font-size: 12px !important; font-weight: 600 !important; }
+      .yami-ai-system-meta { color: #64748b !important; font-size: 11px !important; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important; }
+      .yami-ai-system-toggle { margin-inline-start: auto !important; color: #64748b !important; font-size: 11px !important; }
       .yami-ai-system-body {
         display: none !important;
         margin-top: 4px !important;
         max-height: 220px !important;
         overflow-y: auto !important;
-        color: #9098a4 !important;
+        color: #94a3b8 !important;
         font-size: 11px !important;
-        font-family: Consolas, monospace !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
         white-space: pre-wrap !important;
         word-break: break-word !important;
       }
       .yami-ai-system:not(.collapsed) .yami-ai-system-body { display: block !important; }
 
+      /* 引导条与排队区 (Steer & Queue) */
       .yami-ai-steer {
         align-self: stretch !important;
-        border-inline-start: 3px solid #ffb020 !important;
-        background: #20201a !important;
+        border-inline-start: 3px solid #f59e0b !important;
+        background: #1c1811 !important;
         border-radius: 3px !important;
-        padding: 3px 8px !important;
-        color: #d8c08a !important;
+        padding: 4px 8px !important;
+        color: #fcd34d !important;
         font-size: 11px !important;
       }
-      .yami-ai-steer.ok { border-inline-start-color: #1cff9b !important; background: #17201a !important; color: #8fd8b0 !important; }
+      .yami-ai-steer.ok { border-inline-start-color: #10b981 !important; background: #121f17 !important; color: #6ee7b7 !important; }
 
       .yami-ai-queue { display: none !important; flex-direction: column !important; gap: 3px !important; margin-bottom: 6px !important; max-height: 120px !important; overflow-y: auto !important; }
       .yami-ai-queue.show { display: flex !important; }
-      .yami-ai-queue-head { color: #8899a8 !important; font-size: 11px !important; }
-      .yami-ai-queue-item { display: flex !important; align-items: center !important; gap: 6px !important; background: #23232b !important; border-radius: 3px !important; padding: 3px 7px !important; }
-      .yami-ai-queue-text { color: #c0c0cc !important; font-size: 11px !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; min-width: 0 !important; flex: 1 1 auto !important; }
-      .yami-ai-queue-del { color: #7a7a8a !important; cursor: pointer !important; font-size: 13px !important; line-height: 1 !important; flex: 0 0 auto !important; }
-      .yami-ai-queue-del:hover { color: #ff4040 !important; }
+      .yami-ai-queue-head { color: #64748b !important; font-size: 11px !important; }
+      .yami-ai-queue-item { display: flex !important; align-items: center !important; gap: 6px !important; background: #1e1f25 !important; border-radius: 4px !important; padding: 3px 8px !important; }
+      .yami-ai-queue-text { color: #cbd5e1 !important; font-size: 11px !important; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; min-width: 0 !important; flex: 1 1 auto !important; }
+      .yami-ai-queue-del { color: #64748b !important; cursor: pointer !important; font-size: 13px !important; line-height: 1 !important; flex: 0 0 auto !important; }
+      .yami-ai-queue-del:hover { color: #ef4444 !important; }
 
+      /* 轮次指示导轨 (Turn Rail) */
       .yami-ai-rail {
         display: none !important;
         position: absolute !important;
@@ -3956,12 +4279,12 @@
         width: 6px !important;
         height: 2px !important;
         border-radius: 1px !important;
-        background: #3a3a46 !important;
+        background: #334155 !important;
         cursor: pointer !important;
         transition: background 0.12s ease, width 0.12s ease !important;
       }
-      .yami-ai-rail-tick:hover { background: #8899a8 !important; width: 9px !important; }
-      .yami-ai-rail-tick.active { background: #0080c0 !important; width: 9px !important; }
+      .yami-ai-rail-tick:hover { background: #64748b !important; width: 9px !important; }
+      .yami-ai-rail-tick.active { background: #3b82f6 !important; width: 9px !important; }
 
       /* ============================================================
          滚动条单一事实源 (颜色只在这里定义)
@@ -3992,7 +4315,8 @@
       .yami-ai-thinking-body::-webkit-scrollbar-track,
       .yami-ai-approval-diff::-webkit-scrollbar-track,
       .yami-ai-system-body::-webkit-scrollbar-track,
-      .yami-ai-queue::-webkit-scrollbar-track {
+      .yami-ai-queue::-webkit-scrollbar-track,
+      #yami-ai-input::-webkit-scrollbar-track {
         background: #181818 !important;
       }
       .yami-perf-dock-body::-webkit-scrollbar-thumb,
@@ -4014,7 +4338,8 @@
       .yami-ai-thinking-body::-webkit-scrollbar-thumb,
       .yami-ai-approval-diff::-webkit-scrollbar-thumb,
       .yami-ai-system-body::-webkit-scrollbar-thumb,
-      .yami-ai-queue::-webkit-scrollbar-thumb {
+      .yami-ai-queue::-webkit-scrollbar-thumb,
+      #yami-ai-input::-webkit-scrollbar-thumb {
         background: #383838 !important;
         border-radius: 2px !important;
       }
@@ -4035,7 +4360,8 @@
       .yami-ai-approval-diff::-webkit-scrollbar-thumb:hover,
       .yami-ai-thinking-body::-webkit-scrollbar-thumb:hover,
       .yami-ai-system-body::-webkit-scrollbar-thumb:hover,
-      .yami-ai-queue::-webkit-scrollbar-thumb:hover {
+      .yami-ai-queue::-webkit-scrollbar-thumb:hover,
+      #yami-ai-input::-webkit-scrollbar-thumb:hover {
         background: #4a4a4a !important;
       }
       .yami-perf-dock-body::-webkit-scrollbar-corner,
@@ -4050,7 +4376,8 @@
       .yami-ai-history::-webkit-scrollbar-corner,
       .yami-ai-undo::-webkit-scrollbar-corner,
       .yami-ai-thinking-body::-webkit-scrollbar-corner,
-      .yami-ai-approval-diff::-webkit-scrollbar-corner {
+      .yami-ai-approval-diff::-webkit-scrollbar-corner,
+      #yami-ai-input::-webkit-scrollbar-corner {
         background: #181818 !important;
       }
       /* 新增容器自带宽度 (老容器的宽度分档保持不变) */
@@ -4062,6 +4389,7 @@
       .yami-ai-approval-diff::-webkit-scrollbar,
       .yami-ai-system-body::-webkit-scrollbar,
       .yami-ai-queue::-webkit-scrollbar,
+      #yami-ai-input::-webkit-scrollbar,
       .yami-ai-messages::-webkit-scrollbar {
         width: 4px !important;
         height: 4px !important;

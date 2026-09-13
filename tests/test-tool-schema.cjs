@@ -69,7 +69,7 @@ function hintedParams(entryText) {
 }
 
 function main() {
-  const src = fs.readFileSync(SERVER, 'utf8')
+  const src = fs.readFileSync(SERVER, 'utf8').replace(/\r\n/g, '\n')
   const entries = toolEntries(src)
   assert.ok(entries.length >= 30, '工具条目解析数量异常：' + entries.length)
 

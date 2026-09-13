@@ -16,7 +16,7 @@ const { spawn } = require('child_process')
 
 const ROOT = path.resolve(__dirname, '..')
 const MCP = path.join(ROOT, 'runtime', 'yami-mcp', 'server.js')
-const FIXTURE = process.env.YAMI_TEST_PROJECT || '/home/deck/yami-fixture'
+const FIXTURE = process.env.YAMI_TEST_PROJECT || (fs.existsSync('d:\\new-game\\Assets') ? 'd:\\new-game' : '/home/deck/yami-fixture')
 const ENGINE_TSC = process.env.YAMI_TSC_JS || '/home/deck/Desktop/ SHIT/GITHUB/2/node_modules/typescript/lib/tsc.js'
 const SCRIPT_REL = 'Assets/插件/全局插件/Steamworks.2aafc4d56d4590d8.ts'
 const CODE_ANCHOR = 'const regexp = /^--app-path=(.+)$/'
@@ -108,6 +108,11 @@ async function main() {
   check('编译失败时给出补救建议', failLog.nextSteps.some(text => /编译/.test(text)), String(failLog.nextSteps[0]).slice(0, 30))
 
   console.log('\n########## 2. MCP 端到端：基线与真实变更 ##########')
+  if (!fs.existsSync(path.join(FIXTURE, 'Assets'))) {
+    console.log('跳过：找不到可用的测试工程 ' + FIXTURE + '（可用 YAMI_TEST_PROJECT 指定）')
+    console.log(`\n########## 变更小结测试: ${passed} PASS / ${failed} FAIL ##########`)
+    process.exit(failed > 0 ? 1 : 0)
+  }
   const project = copyFixture()
   const { child, parse } = startMcp(project)
   await new Promise(resolve => setTimeout(resolve, 800))
@@ -118,7 +123,8 @@ async function main() {
     const empty = await parse('project_changelog', {})
     check('无改动时结论为空', empty.summary.fileCount === 0 && /没有改动/.test(empty.headline), String(empty.headline).slice(0, 30))
 
-    const write = await parse('edit_script', { path: SCRIPT_REL, oldText: CODE_ANCHOR, newText: CODE_ANCHOR + '\n  // 变更小结测试', dryRun: false })
+    const modAnchor = CODE_ANCHOR + ' /* 变更小结测试 */'
+    const write = await parse('edit_script', { path: SCRIPT_REL, oldText: CODE_ANCHOR, newText: modAnchor, dryRun: false })
     check('写入成功', write.ok === true, String(write.error || '').slice(0, 40))
 
     const log1 = await parse('project_changelog', {})
@@ -128,7 +134,8 @@ async function main() {
     check('给出下一步建议', Array.isArray(log1.nextSteps) && log1.nextSteps.length > 0, String(log1.nextSteps[0]).slice(0, 26))
 
     // 写了又改回去 —— 不应算作变更（按内容哈希判定的意义所在）
-    await parse('edit_script', { path: SCRIPT_REL, oldText: '  // 变更小结测试\n', newText: '', dryRun: false })
+    const revert = await parse('edit_script', { path: SCRIPT_REL, oldText: modAnchor, newText: CODE_ANCHOR, dryRun: false })
+    check('还原写入成功', revert.ok === true, String(revert.error || '').slice(0, 40))
     const log2 = await parse('project_changelog', {})
     check('写入又改回去不计入变更', log2.summary.fileCount === 0, JSON.stringify(log2.summary))
 

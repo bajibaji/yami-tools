@@ -105,6 +105,11 @@ const model = http.createServer(async (req, res) => {
     message = { role: 'assistant', content: '', tool_calls: [{ id: 'search-1', type: 'function', function: { name: 'search_project', arguments: JSON.stringify({ query: 'e', scope: 'all', maxResults: 200 }) } }] }
   } else if (latestUser && latestUser.content.includes('搜一下') && hasToolAfterUser) {
     message = { role: 'assistant', content: '搜完了。' }
+  } else if (latestUser && latestUser.content.includes('慢一点坏')) {
+    // 第一轮就炸：没有步骤边界，引导不可能被投递 → 必须原样退回（铁律㊷）
+    await new Promise(resolve => setTimeout(resolve, 400))
+    res.writeHead(500, { 'Content-Type': 'application/json' })
+    return res.end(JSON.stringify({ error: { message: '上游炸了（模拟）', type: 'server_error' } }))
   } else if (latestUser && latestUser.content.includes('慢一点')) {
     // 故意慢一拍 + 走两轮：给"繁忙时引导"留出真实的步骤边界，让队列有机会被投递
     await new Promise(resolve => setTimeout(resolve, 500))
@@ -284,6 +289,16 @@ async function main() {
     const idleSteer = await request('/steer', 'POST', { sessionId: 'steer', message: '空闲时说一句' })
     assert.equal(idleSteer.data.busy, false, '空闲时引导要如实回"直接发就行"，不许假装收下')
 
+    // 引导在"这一轮抛错"时也必须退回（收下 ≠ 送到；拿不到回执就得如实退回）
+    const failingTurn = request('/chat', 'POST', { sessionId: 'steerfail', message: '慢一点坏：先列脚本' })
+    await new Promise(resolve => setTimeout(resolve, 200))
+    const steerFail = await request('/steer', 'POST', { sessionId: 'steerfail', message: '这句必须被退回' })
+    assert.equal(steerFail.data.busy, true, '繁忙时引导要被收下：' + JSON.stringify(steerFail.data))
+    const failedTurn = await failingTurn
+    assert.equal(failedTurn.data.ok, false, '上游 500 要如实失败：' + JSON.stringify(failedTurn.data).slice(0, 140))
+    assert.ok(Array.isArray(failedTurn.data.undeliveredSteer) && failedTurn.data.undeliveredSteer.includes('这句必须被退回'),
+      '这一轮抛错时没送出去的引导必须退回：' + JSON.stringify(failedTurn.data.undeliveredSteer))
+
 
     // Base URL 口径（官方文档：BASE URL = https://api.deepseek.com，对话接口是 base + /chat/completions）
     const baseOnly = await request('/config', 'POST', { baseUrl: 'http://127.0.0.1:' + MODEL_PORT + '/', model: 'fake-model', apiKey: VALID_KEY })
@@ -331,6 +346,7 @@ async function main() {
     const hostSource = fs.readFileSync(path.join(ROOT, 'ai-host.js'), 'utf8')
     const hudSource = fs.readFileSync(path.join(ROOT, 'hud-overlay.js'), 'utf8')
     const coreSource = fs.readFileSync(path.join(ROOT, 'ai-render-core.js'), 'utf8')
+    const probeSource = fs.readFileSync(path.join(ROOT, 'probe-core.js'), 'utf8')
     assert.ok(/\/chat\/stream/.test(agentSource), '前端必须走流式 /chat/stream')
     assert.ok(/getReader\(\)/.test(agentSource), '前端必须逐块读取流式响应')
     assert.ok(/id="yami-ai-history"/.test(agentSource), '必须存在会话历史面板容器')
@@ -494,6 +510,13 @@ async function main() {
     // 跨 IIFE 调私有函数是运行时 ReferenceError（静态自检抓到过一次）：面板要用自己的 hudToast
     assert.ok(!/\bshowToast\(/.test(agentSource), 'ai-agent.js 不许直接调 hud-overlay 的 showToast（那是另一个 IIFE 的私有函数），要用自己的 hudToast')
     assert.ok(/function hudToast\(/.test(agentSource) && /getElementById\('yami-perf-toast'\)/.test(agentSource), '面板轻提示要复用 HUD 那颗 toast 节点（同款样式）')
+    // 这一轮"盲区排查"修掉的各处，各钉一条断言
+    assert.ok(/读不到那个路径/.test(hostSource), '落盘提示不许骗模型：MCP 只认工程内相对路径，绝对路径读不了')
+    assert.ok(/function resolvePendingCard\(/.test(agentSource) && /resolvePendingCard\(approve, /.test(agentSource), '审批有结论后要把那张卡片收尾，不能永远停在"等待你确认"')
+    assert.ok(/takeUndeliveredSteer\(session\)[\s\S]{0,160}?error\.undeliveredSteer/.test(hostSource), '这一轮抛错时也要把没送出去的引导退回（铁律㊷）')
+    assert.ok(/undeliveredSteer: error\.undeliveredSteer/.test(hostSource) && /err\.payload = data/.test(agentSource), '失败响应要带回退执，前端要能读到')
+    assert.ok(/function isUnsafeSnapshotPath\(/.test(probeSource) && /isUnsafeSnapshotPath\(rel\)/.test(probeSource), '整包安装要挡住越出插件目录的路径（../ 与绝对路径）')
+    assert.ok(/kept\.slice\(40\)/.test(hostSource), '落盘文件要有上限，不能无限长')
     for (const cls of ['yami-ai-tool', 'yami-ai-system', 'yami-ai-steer', 'yami-ai-queue', 'yami-ai-rail']) {
       assert.ok(new RegExp('\\.' + cls + ' \\{').test(hudSource), cls + ' 必须有样式（src/style.css 经构建注入 HUD）')
     }
@@ -522,7 +545,31 @@ async function main() {
     assert.ok(/let near = isNearBottom\(body\)/.test(agentSource), '贴底判定必须发生在写入之前（写完 scrollHeight 就变大，必然误判）')
     assert.ok(/previewLine/.test(coreSource), '最后一行取值规则本身要在渲染核心里')
     assert.ok(/function appendThinkingBlock\(/.test(agentSource), '历史与流式共用同一个思考块构造函数')
-    console.log('前端接线检查: 流式 / 历史面板 / 上下文刻度 / 工具卡片 / 思考过程显示 / 过程收起 / 每轮用量 / 系统提示词行 / 排队与引导 / 轮次导航 全部接上')
+
+    // 编辑器与场景实时环境感知断言 (方案 A + 缺陷加固)
+    const mcpServerSource = fs.readFileSync(path.join(ROOT, 'runtime/yami-mcp/server.js'), 'utf8')
+    assert.ok(/function getEditorContext\(/.test(probeSource) && /formatEditorContextSummary\(/.test(probeSource), 'probe-core 必须提供 getEditorContext 与环境摘要生成')
+    assert.ok(/req\.method === 'GET' && req\.url === '\/context'/.test(probeSource), '5967 编辑器桥必须暴露 /context 路由')
+    assert.ok(/name: 'get_editor_context'/.test(mcpServerSource), 'MCP 必须注册 get_editor_context 工具')
+    assert.ok(/fetchEditorContextSummary/.test(hostSource) && /messagesForApi\(messages, envSummary\)/.test(hostSource), 'ai-host 必须在发请求前抓取环境快照并动态注入 system prompt')
+    // 行为与字段真实性断言：拒绝死字段、恒空、恒假与越界
+    assert.ok(/meta\.file\s*&&\s*\(meta\.file\.alias\s*\|\|\s*meta\.file\.name\)/.test(probeSource), '检视器对象名必须读取 Inspector.meta.file.alias，不能读不存在的 meta.name')
+    assert.ok(/tgt\.class\s*\|\|\s*tgt\.type/.test(probeSource), '场景对象类别必须读取 Scene.target.class，不能恒为 object')
+    assert.ok(/af\.alias\s*\|\|\s*af\.name/.test(probeSource), '资源树选中文件名优先使用 alias 别名，去除 16位 GUID 噪音')
+    assert.ok(/full\.length > 180 \? full\.slice\(0, 177\) \+ '\.\.\.' : full/.test(probeSource), '环境摘要必须有 180 字符长度上限防爆')
+    assert.ok(/window\.__YAMI_CTX__ = getEditorContext/.test(probeSource) && /window\.__YAMI_CTX_SUMMARY__/.test(probeSource), 'probe-core 必须在 window 暴露环境上下文直读钩子')
+    assert.ok(/envSummary:\s*liveEnv/.test(agentSource), '前端流式请求必须直发当前窗口环境快照')
+    assert.ok(/events\s*&&\s*events\.envSummary/.test(hostSource), 'ai-host 必须优先采用前端上报的环境快照，防止试玩被误报为编辑器')
+
+    // 动态运行断言：抽取 formatEditorContextSummary 验证真实产出
+    const vm = require('vm')
+    const fnExtract = probeSource.match(/function formatEditorContextSummary\(ctx\) \{[\s\S]*?\n  \}/)
+    assert.ok(fnExtract, '必须能提取 formatEditorContextSummary 函数实现')
+    const sandbox = {}
+    vm.runInNewContext(fnExtract[0] + '; result = formatEditorContextSummary({ playtest: true, scene: "测试场景", selectedFile: { name: "木剑.item", type: "item" }, sceneTarget: { name: "主角", type: "actor" }, inspector: { metaName: "木剑.item" } });', sandbox)
+    assert.strictEqual(sandbox.result, '【当前环境】试玩运行中 · 场景「测试场景」 · 选中「item/木剑.item」 · 场景对象「actor:主角」 · 检视「木剑.item」', '格式化摘要必须包含准确的场景、选中项、场景对象类型与检视对象')
+
+    console.log('前端接线检查: 流式 / 历史面板 / 上下文刻度 / 工具卡片 / 思考过程显示 / 过程收起 / 每轮用量 / 系统提示词行 / 排队与引导 / 轮次导航 / 环境感知行为 全绿通过')
   } catch (error) {
     error.message += '\nAI host stderr:\n' + stderr
     throw error

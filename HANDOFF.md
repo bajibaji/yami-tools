@@ -7,7 +7,7 @@
 > - **第二层 · 记忆与经验**：项目经历了什么、踩过哪些坑、为什么这样设计——读它能少走弯路。
 > - **第三层 · 当前进度**：推进到哪里了、什么已完成、什么没做完、下一步做什么。
 >
-> **当前版本**：`v1.5.1`　**最近更新**：2026-09-12 上午
+> **当前版本**：`v1.5.3`　**最近更新**：2026-09-13
 
 ---
 
@@ -19,7 +19,7 @@
 | :--- | :--- |
 | 名称 | DanJuan妙妙插件（DanJuan DevSuite） |
 | 形态 | Open Yami RPG Editor 的 Chrome MV3 扩展（非侵入式，不改游戏逻辑） |
-| 当前版本 | `v1.2.0`（单一事实源：`manifest.json` 的 `version`） |
+| 当前版本 | `v1.5.3`（单一事实源：`manifest.json` 的 `version`） |
 | 母仓库 | `yami-tools`，分支 `extension` |
 | 许可与分发 | 母仓库 + GitHub 远端（热更新源），插件目录单向镜像 |
 | 支持平台 | Windows（打包版引擎）与 Linux（源码构建版，本机为 Steam Deck / X11） |
@@ -183,7 +183,7 @@
    - **IIFE 单次调用防重放**：编辑器 CDP 模拟动作统一封装为自执行单次调用，根治双击或多次触发的隐患。
 5. **上下文计量与自动压缩（对齐 DeepSeek Harness 的 token-meter / compaction-basic / tool-result-pruner）**：
    - **窗口与阈值**：窗口取官方公布的 **1M token**（`deepseek-flash` / `deepseek-v4-pro` 同），占用达 **80%** 触发压缩，压缩后原样保留最近 **16%** 窗口的原文（外加「至少保留 N 条消息」的下限）；规格集中在 `runtime/yami-mcp/modules/context-meter.js`；
-   - **计量口径**：按官方「Token 用量计算」换算——中文 0.6 token/字、英文 0.3 token/字符，每条消息与每个内容块各 +4 结构开销；**工具 schema（35 个工具约 4.4k token）也计入**；
+   - **计量口径**：按官方「Token 用量计算」换算——中文 0.6 token/字、英文 0.3 token/字符，每条消息与每个内容块各 +4 结构开销；**工具 schema（36 个工具约 4.5k token）也计入**；
    - **真实用量锚点**：上游返回的 `prompt_tokens` 是权威计数，存成 `session.tokenAnchor = { messageCount, promptTokens }` 后，刻度 = 锚点 + 增量估算，误差不随对话变长而累积；面板显示形如 `上下文 320k/1M · 32%`；
    - **两级压缩**：第一级确定性修剪（超长工具结果换成「头 + 标记 + 尾」，默认 8192/4096/1024，不调模型、零成本）；第二级模型摘要（重放「system + 待折叠消息」+ 追加压缩指令，复用上游前缀缓存），产出**八节固定结构**的检查点包在 `<compacted-summary>` 里，替换成一条带引导语的 user 消息；
    - **不可压的固定开销**：工具 schema 本身超过阈值时明确跳过压缩并说明原因，不做「压了还是超」的空转。
@@ -202,7 +202,7 @@
 
 - 鉴权：`ai-host` 与两座桥都要求令牌，请求头 `x-yami-agent-token`（SSE 亦可走 `?token=`）；令牌文件在 `<配置目录>/agent-token`（Linux 为 `~/DanJuanDevSuite/`）。
 - AI 宿主 SSE 事件类型：`start` / `status` / `delta`（分 `content` 与 `reasoning` 两路）/ `tool` / `notice` / `plan` / `result` / `error`。
-- MCP 侧：`ai-host` 以 stdio 拉起 `runtime/yami-mcp/server.js`（JSON-RPC 2.0），工具数以 `tools/list` 为准（当前 35 项）。
+- MCP 侧：`ai-host` 以 stdio 拉起 `runtime/yami-mcp/server.js`（JSON-RPC 2.0），工具数以 `tools/list` 为准（当前 36 项）。
 
 ## 1.6 发布文件清单与职责
 
@@ -215,7 +215,7 @@
 | `ai-agent.js` | AI 助手面板（对话 UI、审批、撤销、计划、成本显示） | 依赖 `ai-render-core.js`，缺它会降级直写并告警 |
 | `ai-render-core.js` | 流式渲染纯逻辑（帧合并调度 / 增量文本缓冲 / 滚动判定 / 历史窗口） | UMD 双挂：浏览器全局与 Node `require` 同时可用 |
 | `ai-host.js` | AI 宿主：模型调用、工具编排、审批、会话、计费、连接体检 | 127.0.0.1:5968 |
-| `runtime/yami-mcp/server.js` | 内置 MCP 服务（35 个工具） | 由宿主以 stdio 拉起 |
+| `runtime/yami-mcp/server.js` | 内置 MCP 服务（36 个工具） | 由宿主以 stdio 拉起 |
 | `runtime/yami-mcp/modules/*` | 工具实现与共享模块（diff / changelog / playtest / todos / pricing / message-pairs / file-ops / 双桥 / cdp / db / event-builder） | 每个模块都必须登记进热更新清单（`tests/test-static-health.cjs` 会扫目录核对，漏登记会让老用户热更新后宿主起不来） |
 | `runtime/yami-mcp/modules/message-pairs.js` | 消息序列自愈：`assistant.tool_calls` 与 `tool` 应答配对（补占位 / 剔除越界 / 压缩切点对齐 / 合法性校验） | 宿主每次发请求前调用；依赖它的 `require`，删文件等于 AI 助手全废 |
 | `runtime/yami-mcp/modules/context-meter.js` | 上下文计量与压缩规格（token 估算 / 1M 窗口与 80% 阈值 / 保留范围选择 / 长工具结果头尾修剪 / 真实用量锚点） | 计量口径与阈值参数的单一事实源，别处不要再自己算上下文大小 |
@@ -983,7 +983,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 
 # 第三层 · 当前进度（Where We Are）
 
-> 更新日期：2026-09-12 晚 · 当前版本：`v1.5.1`
+> 更新日期：2026-09-13 · 当前版本：`v1.5.3`
 
 ## 3.1 能力清单与完成度
 
@@ -995,7 +995,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 | 场景实体检查台 / 作弊台 / 工程体检 / 诊断断点 | 已落地 | 同上 |
 | AI 助手面板（流式对话 / 思考过程 / 审批差异 / 撤销 / 计划 / 变更小结） | 已落地 | `ai-agent.js` |
 | AI 宿主（模型调用 / 工具编排 / 会话持久化 / 上下文计量与两级压缩 / 计费 / 连接体检 / 打断） | 已落地 | `ai-host.js` + `context-meter.js` |
-| 内置 MCP 工具集（35 项：读 / 写 / 搜 / 编译 / 事件编排 / 数据表 / 备份 / 试玩冒烟…） | 已落地 | `runtime/yami-mcp/` |
+| 内置 MCP 工具集（36 项：读 / 写 / 搜 / 编译 / 事件编排 / 数据表 / 备份 / 试玩冒烟 / 编辑器上下文…） | 已落地 | `runtime/yami-mcp/` |
 | 代理能力（子任务委派给子代理） | 未做（P2） | 见 3.3 |
 | 计划模式（Plan Mode） | 明确不做 | 用户拍板不需要 |
 
@@ -1028,6 +1028,58 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 17. **AI 助手聊天体验对齐 DSH（v1.4.0）**：参考 DSH 源码与它的包级中文设计文档（`dsh-client-ui-chat` / `dsh-client-ui-tool` / `dsh-client-ui-conversation`）逐条移植聊天侧机制。① **思考按模型轮次分块**：工具调用或正文一到就封段、下一轮思考另起一块（段头 `第 N 段 · 已思考 X 秒 · Y 字`），分段状态机 `createThinkingSegments` 放进渲染核心（纯逻辑可单测）；每段独立文本缓冲，否则第二段会把第一段吞进去。② **历史回放与实时同构**：宿主 `visibleMessages` 不再丢掉"只有思考没正文"的工具轮，工具步骤也回放成「执行：xxx」行（与实时工具条共用同一张中文名映射），空正文不再产生空气泡。③ **A1 轮次过程智能收起**（对齐 DSH `turn-process-folding`）：紧凑/标准两档（默认紧凑，localStorage + 宿主配置双写），轮末在「有最终正文 + 焦点不在过程里」时才收起成一行 `思考 X 秒 · N 段 · M 步`；没有最终正文的轮次保留全部过程证据。④ **A2 每轮用量行**（对齐 DSH `turn-token-usage`）：宿主新增每轮记账（`runTurn` / `turnUsageOf`），结果带**本轮增量**，**记账不全就整行不显示**；顺带修好非 SSE 降级路径漏读 `usage` 与思考（本地推理服务忽略 `stream` 参数时，用量行与思考块本来永远是空的）。⑤ 修「再次出现的思考窗口没有文字」（铁律㊶）。⑥ 顺手修掉 5 套测试在 Windows 上的假红（断言全过、收尾 `rmSync` 抛 EPERM 被判失败）。
 
 18. **对齐 DSH 的第二批聊天机制（v1.5.0）**：① **工具卡片**（对齐 `dsh-client-ui-tool`）——工具调用不再是「一行过程条」，而是一张卡片：状态点（运行中/成功/失败/待确认）+ 中文工具名 + 目标路径（可点，一键在文件夹中定位）+ 右侧事实标签（`+12 / -3 行`、`命中 7 处`、`共 67 条`、`退出码 0`…），点开展开细节与错误原文。事实标签全部来自宿主新加的结构化摘要 `toolInfoOf()`，前端不许从中文描述里猜数字。② **超长输出落盘**（对齐 DSH 的 spill）——工具结果被裁剪时，完整原文写进 `<配置目录>/spills/`，事件里带 `truncated + spill.path`，卡片如实标注「已截断 · 打开落盘目录」，给模型的提示也写明路径；**绝不拿部分总量冒充完整**。③ **系统提示词行**（对齐 DSH 的 system-prompt-row）——把模型这一轮实际看到的 system 原文做成一行可折叠项，宿主按文本指纹去重（没变不重复刷，resume 后允许再来一次）。④ **排队与引导**（对齐 DSH 的 queue / steering）——繁忙时按发送不再把用户打的字吞掉。**输入区只保留一个发送按钮**（用户 2026-09-13 裁决：不要让用户每次在按钮之间选），行为改由【设置 → 繁忙时发送】两档决定：**排队**（默认，进排队区、本轮结束后依次发出、可单条撤回）或**打断**（先真停当前轮、等它收尾再发这条）；另有 Ctrl/Cmd+Enter 保留为"引导"快捷键（`POST /steer`），由 Agent 循环在**下一个步骤边界**投进上下文，送达后才改口「已送达模型」；没赶上的由宿主如实退回排队区（`undeliveredSteer`）。⑤ **轮次导航轨道**（对齐 DSH 的 turn rail）——聊天区右侧每一轮一个刻度，按"阅读线"高亮当前轮（判据 `activeTurnIndex` 在渲染核心），点刻度跳过去，悬停现算一句预览。⑥ 渲染核心新增 4 组纯逻辑并配单测（`toolCardChips` / `truncationText` / `activeTurnIndex` / `shortAmount`），渲染性能套件 89 项；E2E 新增四项真机断言（系统行去重、工具事实、落盘文件真的在、引导真的进了历史）。
+
+19. **AI 助手界面视觉与交互重构（2026-09-13 UI 现代化升级）**：
+    - **工业暗黑美学质感**：重写 `src/style.css` 核心样式，背景与面板对齐工业极客暗黑风（`#18191e` / `#15161b` / `#0f1013`），多层级阴影与 1px 细微光边框，彻底消除粗糙生硬感；
+    - **极客工具栏（Geek Toolbar）**：顶栏仪表盘集成发光呼吸状态指示灯（`.yami-ai-status-pulse` + 动画 `yami-ai-glow`），区分就绪（翡翠绿）、忙碌（科技蓝）、待命（琥珀黄）、异常（珊瑚红）四态光晕；右侧动作按钮组胶囊化，Hover 微上浮与 Active 微下沉交互；
+    - **正统 Remix Icon 官方矢量化**：在 `ai-agent.js` 中内嵌 `AI_ICONS` 官方 Line 风格 SVG Path 常量（撤销、历史、清空、设置、关闭、刷新、CPU、Brain、发送、停止等），0 外链 0 依赖，彻底取代旧版生硬字符；
+    - **一体化输入工作舱（Input Island Workstation）**：重构输入区结构，将自适应文本框与底部快捷操作栏（模型胶囊、刷新按钮、Thinking 强度胶囊、发送/停止键）封装为独立岛屿卡片，支持 `:focus-within` 科技蓝呼吸外发光；
+    - **抽屉面板卡片化与细节打磨**：设置面板、撤销面板与历史记录面板统一采用带微光浮层卡片设计，设置面板补齐关闭入口；用户消息气泡改用微蓝渐变（`#1e3a5f` -> `#152744`），思考卡片采用左侧蓝紫（`#6366f1`）科技条；
+    - **严格守卫工程门禁**：滚动条单一事实源选择器组严格无损保持，0 任何原生 `<button>`，0 任何系统 Emoji，`build.cjs --deploy` 46 项锚点全绿并 100% 镜像同步至生产目录。
+
+20. **顶栏单行布局收敛与纯文字发送按钮优化（2026-09-13）**：
+    - **发送/停止键纯文字化**：彻底移除按钮内的 SVG 图标，采用纯文字「发送」与「停止」；样式调整为自适应输入框高度垂直居中展示，字号 13px / 600 字重 / 1px 字距，杜绝图文纵向挤压变形；
+    - **顶栏单行防折行治理**：
+      1. 精简上下文刻度文案：由冗长的「上下文 97.2k/1M · 10%」缩减为极简纯数字比例「97.2k · 10%」（临界/压缩标也做紧凑化），完整说明与 1M 窗口压缩算法保留在 hover 浮层 title 中；
+      2. 统一动作按钮容器类名（`.yami-ai-toolbar-actions`），加固 `.yami-ai-toolbar` 强制 `flex-wrap: nowrap`；
+      3. `.yami-ai-status` 与 `.yami-ai-context` 固定 `flex: 0 0 auto` 与 `white-space: nowrap`，工具按钮精致化（高 24px、内边距 6px），确保在 380px 停靠侧栏下绝对单行展示，不再折行截字；
+    - **构建与门禁核验**：`build.cjs --deploy` 46 项核心锚点全绿，生产镜像 100% MD5 对齐，测试套件 `test-ai-agent.cjs` 零报错通过。
+
+21. **思考过程时间戳秒数暴走 Bug 修复（2026-09-13）**：
+    - **现象与根因**：用户反馈在查看对话时思考过程窗口显示「已思考 1789262202 秒」。经排查定位：在一轮思考结束（正文到达或工具调用）时，`sealThinking()` 正常定格了真实耗时并置 `thinkingStartedAt = 0`；但紧接着流式循环退出收尾（`streamChat` 退出循环后的兜底刷新）或异步排队的 `flushThinking()` 再次被触发。旧代码在 `flushThinking` 与 `renderThinking` 中未判断 `thinkingStartedAt` 是否有效，直接无脑执行 `Math.round((Date.now() - thinkingStartedAt) / 1000)`，在 `thinkingStartedAt === 0` 时直接计算了 `Date.now() - 0`，硬生生把当前毫秒时间戳换算成 17.8 亿秒覆写到了 DOM 上；
+    - **修复措施**：
+      1. `flushThinking` 与 `renderThinking` 严格添加 `if (thinkingStartedAt > 0)` 门禁，已定格封口（`thinkingStartedAt === 0`）时严禁更新耗时；
+      2. `thinkingMetaText` 注入上限防御（`0 < seconds < 86400`），彻底阻断任何异常暴走秒数泄露到段头界面；
+      3. `loadSession` 历史加载入口显式置空 `currentThinkingEl` 与 `thinkingStartedAt`，保证干净回放；
+    - **验证凭据**：`build.cjs --deploy` 46 项断言全绿，镜像 MD5 对齐，`test-ai-agent.cjs`、`test-render-perf.cjs`（89 PASS）全部通过。
+
+22. **交互细节与边界盲区加固（v1.5.2，2026-09-13）**：
+    - **中文输入法（IME）防误发送**：在输入框回车监听中增加 `event.isComposing || event.keyCode === 229` 判定，彻底解决拼音打字回车选字或上屏时直接被当作需求误发送的痛点；
+    - **模型刷新按钮样式与加载动效复活**：将 HTML 中失联的 `.yami-ai-fetch-btn` 与 CSS `.yami-ai-capsule-btn` 类名双向对齐，原地复活拉取模型列表时的旋转加载动画（`yami-spin`）与胶囊内微光 Hover 交互；
+    - **超长模型名排版防撑爆**：为 `.yami-ai-capsule select` 声明 `max-width: 140px !important; text-overflow: ellipsis !important;`，彻底避免第三方或本地复杂超长模型名撑爆侧栏横向布局；
+    - **思考开关与强度下拉状态联动**：关闭思考复选框时联动将 Low/High/Max 强度下拉框禁用置灰（`disabled` + `opacity: 0.4`），开启时即刻恢复，消除配置逻辑矛盾；
+    - **繁忙态操作友好 Toast 反馈**：当模型正在输出时，点击清空新对话或切换历史会话，由过去的无声静默忽略改为明确弹出轻量 Toast 提示（`AI 正在处理中，请先停止或等待本轮结束`），杜绝造成界面卡死假象；
+    - **输入框自适应撑高与单一事实源滚动条美化**：监听 input 事件按内容行数在 52px~140px 间平滑自适应拉伸（发送键等高联动拉伸，清空时自愈复位），并将 `#yami-ai-input` 完整纳入 WebKit 统一滚动条选择器组，消灭 Windows 原生粗糙泛白大滚动条。
+
+23. **核心后端与宿主工具流安全盲区加固（v1.5.2，2026-09-13）**：
+    - **引导（Steer）错误丢失治理（铁律㊷收下≠送到）**：修复 `runTurn` 捕获异常时 `finally` 直接清空队列导致引导丢失的问题；在 `catch` 路径安全取回 `takeUndeliveredSteer` 并挂载至错误响应返回前端，前端自动原样退回排队区，杜绝欺骗用户；
+    - **整包快照解包路径穿越防御**：本地安装或解包存在潜在穿越漏洞，在更新器解包时新增 `isUnsafeSnapshotPath` 检查，严格阻断绝对路径与 `../` 越出插件目录的恶意或坏条目，实现解包与落盘双重门闩防护；
+    - **超长输出落盘文件容量收敛**：工具超长输出落盘目录（`spills`）新增保留策略，自动按修改时间排序仅保留最近 40 份，消除无界磁盘占用风险；
+    - **MCP 工具路径真实指引（纠正假提示）**：模型工具 `file-ops` 严格只认工程根目录内的相对路径。修正向模型输出的裁剪提示，明确告知“你读不到落盘绝对路径”，引导其使用更精确的参数（如 `read_resource` key、`list_*` 分页）重新获取，消除模型工具报错死循环；
+    - **审批卡片状态完整闭环**：`decide()` 补全卡片生命周期闭环，在批准、取消或用户发起新需求时统一调用 `resolvePendingCard()`，解决审批卡片永远停滞在“等待你确认”黄点状态的问题。
+
+24. **编辑器与场景实时环境感知机制（方案 A 落地与对抗加固，v1.5.3，2026-09-13）**：
+    - **痛点与突破**：此前 AI 无法感知用户当前在编辑哪个场景、打开了什么或选中了哪个道具/技能，用户提问必须人工反复复述上下文；
+    - **真实字段与对抗性加固**：
+      1. 修复检视对象名称恒空：查明 `Inspector.meta` 为 `FileMeta`，真实文件别名取自 `Inspector.meta.file.alias`（如 `木剑.item`），杜绝无效的 `meta.name`；
+      2. 修复场景对象类别恒为 object：查明权威类别字段为 `Scene.target.class`（`actor/region/light/tilemap...`），解决被误判为通用 object 的缺陷；
+      3. 资源树选中文件名优先读取 `FileItem.alias`，彻底消除 16 位哈希 GUID（`木剑.a1b2c3d4e5f6a7b8.item`）对提示词的噪音干扰；
+      4. 试玩窗口与编辑器窗口环境隔离（双通道）：`probe-core.js` 在页面内暴露 `window.__YAMI_CTX_SUMMARY__`，`ai-agent.js` 在当前窗口直发一手环境快照，宿主优先采信前端直发快照（防止试玩窗口被 5967 误报为“编辑器”），无则平滑回退 5967 桥；
+      5. 环境摘要增加 180 字符防御上限截断；
+    - **MCP 工具与系统提示词动态注入闭环**：
+      1. `runtime/yami-mcp/server.js` 新增只读工具 `get_editor_context`（工具总数扩充至 36 项），供模型主动查询；
+      2. `ai-host.js` 将单行极简摘要（如 `【当前环境】编辑器 · 场景「新手村」 · 选中「item/木剑.item」 · 检视「木剑.item」`）动态追加在首条 system 提示词末尾，落盘 session 保持纯净不受污染；
+    - **测试守护**：`tests/test-ai-agent.cjs` 扩充真实的字段提取与动态 VM 执行断言，全绿通过。
 
 ## 3.3 未完成 / 未验证 / 已知限制
 

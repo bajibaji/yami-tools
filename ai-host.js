@@ -204,6 +204,13 @@ function spillFullOutput(text, tag) {
     const safe = String(tag || 'tool').replace(/[^\w.-]+/g, '_').slice(0, 40) || 'tool'
     const file = path.join(dir, Date.now().toString(36) + '-' + safe + '.txt')
     fs.writeFileSync(file, text, 'utf8')
+    // 只留最近 40 份：这是"被裁掉那部分的证据"，不是归档系统，不能无限长
+    try {
+      const kept = fs.readdirSync(dir)
+        .map(name => ({ name, at: fs.statSync(path.join(dir, name)).mtimeMs }))
+        .sort((a, b) => b.at - a.at)
+      for (const old of kept.slice(40)) fs.rmSync(path.join(dir, old.name), { force: true })
+    } catch { /* 清理失败不影响本次落盘 */ }
     return file
   } catch {
     return ''
@@ -235,8 +242,12 @@ function clipToolResult(result, tag) {
     truncated: true,
     originalChars: text.length,
     spill: spillPath ? { path: spillPath, chars: text.length } : null,
+    // 注意：这里**不能**让模型去读那个落盘路径 —— file-ops 只接受工程根目录内的相对路径，
+    // 绝对路径会被直接拒绝（"文件路径必须是工程根目录内的相对路径"）。落盘是留给**人**看的证据；
+    // 模型要细节只能换更精确的参数重新取。以前那句"请按这个路径读取"是句假话。
     note: spillPath
-      ? `工具结果过长已裁剪（原 ${text.length} 字符，保留开头与结尾）。**完整原文已落盘：${spillPath}**，需要细节时请按这个路径读取（不要重复整份读取同一个文件）。`
+      ? `工具结果过长已裁剪（原 ${text.length} 字符，保留开头与结尾）。完整原文已由编辑器侧落盘留档（用户可在界面上点开），` +
+        '你**读不到那个路径**（工具只允许访问工程内的相对路径）；需要更多细节请换更精确的参数重新获取（如 read_resource 的 key、list_* 的分页、search_project 缩小范围）。'
       : `工具结果过长已裁剪（原 ${text.length} 字符，保留开头与结尾）。需要完整内容请用更精确的参数（如 read_resource 的 key、list_* 的分页）重新获取。`,
     head: tail ? head + '\n...(中段省略)...\n' + tail : head
   })
@@ -852,25 +863,58 @@ function normalizeUsage(model, raw) {
  * 注意：思考模式下 temperature 不生效（官方明确），因此开启思考时不再传 temperature。
  */
 /**
+ * 从 5967 编辑器桥轻量获取当前环境摘要（场景、选中项、检视器状态）
+ * 设定 350ms 超时，未启动或异常时静默回退为空，0 阻塞 0 报错。
+ */
+function fetchEditorContextSummary() {
+  return new Promise(resolve => {
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: 5967,
+      path: '/context',
+      method: 'GET',
+      timeout: 350,
+      headers: { Accept: 'application/json' }
+    }, res => {
+      let raw = ''
+      res.on('data', chunk => { raw += chunk })
+      res.on('end', () => {
+        try {
+          const data = JSON.parse(raw || '{}')
+          resolve((data && data.summary) || '')
+        } catch { resolve('') }
+      })
+    })
+    req.on('error', () => resolve(''))
+    req.on('timeout', () => { req.destroy(); resolve('') })
+    req.end()
+  })
+}
+
+/**
  * 发给 API 前清洗消息：
  *   · 助手消息保留 reasoning_content —— 带 tools 的请求官方要求完整回传，否则 400；
- *   · 剥掉我们自己的内部字段（__usage 等），避免污染请求体。
+ *   · 剥掉我们自己的内部字段（__usage 等），避免污染请求体；
+ *   · 第一条 system 消息动态追加最新编辑器环境摘要，不污染会话持久化存储。
  */
-function messagesForApi(messages) {
-  return messages.map(message => {
+function messagesForApi(messages, envSummary = '') {
+  return messages.map((message, idx) => {
     const clean = {}
     for (const [key, value] of Object.entries(message)) {
       if (key.startsWith('__')) continue
       if (value === undefined) continue
       clean[key] = value
     }
+    if (idx === 0 && clean.role === 'system' && envSummary) {
+      clean.content = clean.content + '\n\n' + envSummary
+    }
     return clean
   })
 }
 
-function buildModelBody(config, messages, tools, stream) {
+function buildModelBody(config, messages, tools, stream, envSummary = '') {
   const thinkingOn = config.thinkingMode !== 'disabled'
-  const body = { model: config.model, messages: messagesForApi(messages), stream }
+  const body = { model: config.model, messages: messagesForApi(messages, envSummary), stream }
   // 没有工具时不要发 tools / tool_choice：空数组与孤立的 tool_choice 都可能被上游判为非法请求
   if (Array.isArray(tools) && tools.length) {
     body.tools = tools
@@ -952,12 +996,12 @@ function createCancelToken() {
   return token
 }
 
-function requestModelStream(config, apiKey, messages, tools, onDelta, cancelToken) {
+function requestModelStream(config, apiKey, messages, tools, onDelta, cancelToken, envSummary = '') {
   return new Promise((resolve, reject) => {
     let url
     try { url = new URL(chatCompletionsUrl(config.endpoint)) } catch { return reject(new Error('模型地址无法解析')) }
     const transport = url.protocol === 'http:' ? http : https
-    const body = Buffer.from(JSON.stringify(buildModelBody(config, messages, tools, true)), 'utf8')
+    const body = Buffer.from(JSON.stringify(buildModelBody(config, messages, tools, true, envSummary)), 'utf8')
     const headers = { 'Content-Type': 'application/json', Accept: 'text/event-stream', 'Content-Length': body.length }
     if (apiKey) headers.Authorization = 'Bearer ' + apiKey
 
@@ -1399,9 +1443,15 @@ async function runTurn(session, config, events) {
       if (left.length) result.undeliveredSteer = left
     }
     return result
+  } catch (error) {
+    // 出错也要把没送出去的补充交回去：静默丢掉就等于骗用户"已经引导过了"（铁律㊷）。
+    // 之前这里只在成功路径取，抛错时会被下面的 finally 直接清空。
+    const left = takeUndeliveredSteer(session)
+    if (left.length && error && typeof error === 'object') error.undeliveredSteer = left
+    throw error
   } finally {
     turnProbes.delete(session.id)
-    steerQueues.delete(session.id)   // 兜底：引导内容绝不跨轮残留
+    steerQueues.delete(session.id)
   }
 }
 
@@ -1431,6 +1481,12 @@ async function continueSession(session, config, events = {}) {
   let repeats = 0
   let repairJustInjected = false
   let sequenceRetryUsed = false
+  // 获取当前环境快照（优先采用当前窗口直发的一手快照，防止试玩被误报为编辑器；拿不到回退 5967 桥）
+  let envSummary = (events && events.envSummary) || ''
+  if (!envSummary) {
+    try { envSummary = await fetchEditorContextSummary() } catch {}
+  }
+
   for (let step = 0; step < MAX_STEPS; step++) {
     if (cancelToken && cancelToken.cancelled) return aborted()
     // 步骤边界：把用户在这期间补充的话投递给模型（投递了才告知前端，没投递的一律不算数）
@@ -1451,7 +1507,7 @@ async function continueSession(session, config, events = {}) {
     try {
       assistant = await requestModelStream(config, key, session.messages, toolsForModel, delta => {
         if (events.onDelta) events.onDelta(delta)
-      }, cancelToken)
+      }, cancelToken, envSummary)
     } catch (error) {
       // 打断导致的失败不算错误：把已流出的内容留下，如实收尾
       if (cancelToken && cancelToken.cancelled) {
@@ -1986,6 +2042,7 @@ async function handle(pathname, body, events = {}) {
     session.repairs = 0     // 每条新需求重新给自动修复预算
     session.toolTally = {}  // 以及重新开始统计工具调用次数（重复提示按轮计）
     saveSession(session)
+    if (body.envSummary && !events.envSummary) events.envSummary = String(body.envSummary).trim()
     // 留一个可等待的句柄 + 取消令牌：下一条需求进来时若发现"已取消但还在收尾"，就能等它收完
     const running = runTurn(session, readStoredConfig(), events)
     session.activeRun = running
@@ -2168,7 +2225,13 @@ const server = http.createServer(async (req, res) => {
     }
     sendJson(res, 200, { ok: true, ...(await handle(pathname, body)) })
   } catch (error) {
-    if (!res.headersSent) sendJson(res, 400, { ok: false, error: error.message })
+    if (!res.headersSent) {
+      // 出错时也要把"没赶上的引导"交回前端（铁律㊷：收下 ≠ 送到，拿不到回执就得如实退回）
+      const extra = error && Array.isArray(error.undeliveredSteer) && error.undeliveredSteer.length
+        ? { undeliveredSteer: error.undeliveredSteer }
+        : {}
+      sendJson(res, 400, { ok: false, error: error.message, ...extra })
+    }
     else { try { res.end() } catch { /* 已关闭 */ } }
   }
 })

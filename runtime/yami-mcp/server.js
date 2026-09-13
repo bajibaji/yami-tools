@@ -886,6 +886,12 @@ const tools = [
     inputSchema: { type: 'object', properties: {} }
   },
   {
+    name: 'get_editor_context',
+    description: '获取 Open Yami 编辑器与游戏运行时的实时环境上下文（当前编辑/运行的场景中文名、资源树/文件列表中选中的文件、检视器属性面板打开的对象、试玩状态等）。在回答用户涉及具体场景、当前选中道具/技能/事件时优先调用此工具。',
+    readOnlyHint: true,
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
     name: 'todo_write',
     description: '维护本次任务的待办清单（多步开发任务开工时先列一次，之后每完成一步更新状态）。用户会在界面上看到进度骨架；步骤文案用白话，别写代码术语。状态：pending 待做 / in_progress 进行中 / done 已完成。',
     readOnlyHint: true,
@@ -1624,6 +1630,8 @@ async function callTool(name, args) {
       return await runtimeBridge.getLiveState()
     case 'diagnose_runtime':
       return await runtimeBridge.getDiagnosis()
+    case 'get_editor_context':
+      return await editorBridge.getContext()
     case 'todo_write': {
       if (args.clear === true) {
         currentTodos = []

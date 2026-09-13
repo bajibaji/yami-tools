@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.5.1';
+  const PROBE_VERSION = '1.5.3';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -1897,6 +1897,104 @@
   }
 
   // ============================================================
+  // 编辑器与运行时上下文感知 (AI 助手场景、选中项与检视状态快照)
+  // ============================================================
+  function getEditorContext() {
+    // 页面类型判定：有 Game.update 且不在编辑器宿主页，即为独立试玩窗口
+    const isPlaytest = !isEditorHostPage && typeof Game !== 'undefined' && typeof Game.update === 'function';
+    const result = {
+      environment: isPlaytest ? 'playtest' : (isEditorHostPage ? 'editor' : 'unknown'),
+      scene: currentSceneName(),
+      playtest: isPlaytest,
+      selectedFile: null,
+      sceneTarget: null,
+      inspector: null
+    };
+
+    try {
+      // 1. 资源树/文件浏览器选中项 (优先取无 16位 GUID 的别名 alias)
+      const fb = document.querySelector('file-browser');
+      if (fb && fb.body) {
+        const af = fb.body.activeFile;
+        if (af) {
+          result.selectedFile = {
+            name: af.alias || af.name || '',
+            path: af.path || '',
+            type: af.type || ''
+          };
+        } else if (Array.isArray(fb.body.selections) && fb.body.selections.length > 0) {
+          const first = fb.body.selections[0];
+          result.selectedFile = {
+            name: first.alias || first.name || '',
+            path: first.path || '',
+            type: first.type || ''
+          };
+        }
+      }
+      if (!result.selectedFile) {
+        const selNode = document.querySelector('file-body-pane item.selected, file-browser [selected="true"], file-browser .selected');
+        if (selNode) {
+          const txt = (selNode.textContent || '').trim().replace(/\s+/g, ' ');
+          if (txt) result.selectedFile = { name: txt.slice(0, 60), path: '', type: '' };
+        }
+      }
+
+      // 2. 检视器状态 (Inspector.meta 真实结构为 FileMeta: 文件别名在 meta.file.alias)
+      if (typeof Inspector !== 'undefined' && Inspector && Inspector.type) {
+        const meta = Inspector.meta;
+        const metaName = meta
+          ? (meta.file && (meta.file.alias || meta.file.name)) || meta.name || meta.alias || ''
+          : '';
+        result.inspector = {
+          type: String(Inspector.type || ''),
+          metaName: String(metaName)
+        };
+      }
+
+      // 3. 场景内选中目标 (Scene.target 权威类别字段为 target.class: actor/region/light/tilemap...)
+      if (typeof Scene !== 'undefined' && Scene && Scene.target) {
+        const tgt = Scene.target;
+        result.sceneTarget = {
+          name: String(tgt.name || tgt.id || ''),
+          type: String(tgt.class || tgt.type || 'object')
+        };
+      }
+    } catch (e) {}
+
+    return result;
+  }
+
+  function formatEditorContextSummary(ctx) {
+    if (!ctx) return '';
+    const parts = [];
+    parts.push(ctx.playtest ? '试玩运行中' : (ctx.environment === 'editor' ? '编辑器' : '独立运行'));
+    if (ctx.scene) parts.push('场景「' + ctx.scene + '」');
+    if (ctx.selectedFile && ctx.selectedFile.name) {
+      const typeLabel = ctx.selectedFile.type ? ctx.selectedFile.type + '/' : '';
+      parts.push('选中「' + typeLabel + ctx.selectedFile.name + '」');
+    }
+    if (ctx.sceneTarget && ctx.sceneTarget.name) {
+      const classLabel = ctx.sceneTarget.type && ctx.sceneTarget.type !== 'object' ? ctx.sceneTarget.type + ':' : '';
+      parts.push('场景对象「' + classLabel + ctx.sceneTarget.name + '」');
+    }
+    if (ctx.inspector && ctx.inspector.metaName) {
+      parts.push('检视「' + ctx.inspector.metaName + '」');
+    }
+    if (parts.length <= 1 && !ctx.scene && !ctx.selectedFile) return '';
+    const full = '【当前环境】' + parts.join(' · ');
+    return full.length > 180 ? full.slice(0, 177) + '...' : full;
+  }
+
+  try {
+    if (typeof window !== 'undefined') {
+      window.__YAMI_CTX__ = getEditorContext;
+      window.__YAMI_CTX_SUMMARY__ = function() {
+        return formatEditorContextSummary(getEditorContext());
+      };
+    }
+  } catch (e) {}
+
+  // ============================================================
   // 事件黑匣子 (Event Black Box): 指令级时间线 + 幽灵事件侦探
   // ------------------------------------------------------------
   // 引擎事实依据 (arpg-ts-chinese 模板源码, 逐条核对过):
@@ -3345,6 +3443,13 @@
             return;
           }
 
+          if (req.method === 'GET' && req.url === '/context') {
+            const ctx = getEditorContext();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, context: ctx, summary: formatEditorContextSummary(ctx) }));
+            return;
+          }
+
           if (req.method === 'POST' && req.url === '/action') {
             if (req.headers['x-yami-bridge-token'] !== bridgeToken) {
               res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -3500,7 +3605,11 @@
                 } else return { ok: false, error: '不支持的编辑器交互动作: ' + operation };
                 return { ok: true, action: name, operation: operation };
               }
-              return { ok: false, error: '未知编辑器动作，仅允许 save、undo、redo、refresh、playtest、dumpUi、click、interact' };
+              if (name === 'context') {
+                const ctx = getEditorContext();
+                return { ok: true, action: name, context: ctx, summary: formatEditorContextSummary(ctx) };
+              }
+              return { ok: false, error: '未知编辑器动作，仅允许 save、undo、redo、refresh、playtest、dumpUi、click、interact、context' };
             }).then(function(result) {
               res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify(result));
@@ -3850,11 +3959,29 @@
     return false;
   }
 
+  /**
+   * 快照里的路径必须在目标目录之内：绝对路径与 ../ 一律拒绝。
+   * GitHub 自己打的包不会有这种条目，但「本地安装」允许用户选任意目录，
+   * 一个被构造过的包里塞一条 ../../Windows/xxx 就能写到插件目录外面 —— 必须挡死。
+   */
+  function isUnsafeSnapshotPath(rel) {
+    const clean = String(rel == null ? '' : rel).replace(/\\/g, '/');
+    if (!clean || clean === '.' || clean === '..') return true;
+    if (clean.charAt(0) === '/') return true;
+    if (/^[a-zA-Z]:/.test(clean)) return true;
+    return clean.split('/').some(function (seg) { return seg === '..'; });
+  }
+
   function filterSnapshotFiles(files) {
     const shipped = new Map();
+    let rejected = 0;
     files.forEach(function (buf, rel) {
+      if (isUnsafeSnapshotPath(rel)) { rejected += 1; return; }
       if (!isDevOnlyPath(rel)) shipped.set(rel, buf);
     });
+    if (rejected > 0) {
+      console.warn('[自动更新] 整包里 ' + rejected + ' 个条目的路径越出插件目录（绝对路径或 ..），已忽略');
+    }
     return shipped;
   }
 
@@ -4059,6 +4186,10 @@
     try {
       for (let i = 0; i < total; i++) {
         const rel = order[i];
+        // 防御纵深：即便上游过滤被改坏，落盘这一层也不许写出目标目录
+        if (isUnsafeSnapshotPath(rel)) {
+          throw fatalError('快照里有越出插件目录的路径，拒绝安装：' + rel);
+        }
         const dest = path.join(targetDir, rel.split('/').join(path.sep));
         const dir = path.dirname(dest);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
