@@ -2332,12 +2332,16 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method !== 'POST') return sendJson(res, 404, { ok: false, error: 'Not found' })
     const body = await readJson(req)
-    if (pathname === '/chat/stream') {
+    // 哪些路由跑 SSE：前端界面只认一条事件流 —— 审批之后的续跑跟正常一轮必须是同一条通道，
+    // 否则确认之后那一段（工具卡片、思考、提示、正文）在界面上根本没有来源，只能靠一个最终结果
+    // 一次性落下来：用户看到的就是"点了确认之后顺序乱了/中间没了"。
+    const STREAM_ROUTES = { '/chat/stream': '/chat', '/approve/stream': '/approve', '/reject/stream': '/reject' }
+    if (STREAM_ROUTES[pathname]) {
       const events = startStream(res, req, pathname)
       let finished = false
       const close = () => { if (!finished) { finished = true; try { res.end() } catch { /* 已关闭 */ } } }
       try {
-        const result = await handle(pathname, body, events)
+        const result = await handle(STREAM_ROUTES[pathname], body, events)
         events.send({ type: 'result', ...result })
       } catch (error) {
         events.send({ type: 'error', error: error.message })
@@ -2397,3 +2401,21 @@ if (PARENT_PID > 0) {
 }
 
 process.on('SIGTERM', () => { if (mcp) mcp.close(); process.exit(0) })
+
+/**
+ * 宿主**静默死亡**是这个插件最难查的一类故障：面板那边只表现为"请求永远不回"，
+ * 而进程已经没了、控制台又不会说为什么。用户实测踩到过：确认 click_element 之后
+ * 宿主把活干完（会话文件都落盘了）就消失了，于是 /approve 的响应永远发不出去，
+ * 卡片不消失、聊天也不继续。
+ * 所以这两类错误一律：① 落盘到 <配置目录>/host-crash.log，事后能查；② **不让进程退出** ——
+ * 一个请求出问题不该把整个宿主带走，否则用户只能重启编辑器。
+ */
+function logHostCrash(kind, error) {
+  const detail = (error && (error.stack || error.message)) || String(error)
+  try {
+    fs.appendFileSync(path.join(CONFIG_DIR, 'host-crash.log'), '[' + new Date().toISOString() + '] ' + kind + ': ' + detail + '\n', 'utf8')
+  } catch (e) { /* 记不下来也不能因此再炸一次 */ }
+  process.stderr.write('[danjuan-ai] ' + kind + '（已记入 host-crash.log，进程继续）: ' + ((error && error.message) || error) + '\n')
+}
+process.on('uncaughtException', error => logHostCrash('未捕获异常', error))
+process.on('unhandledRejection', reason => logHostCrash('未处理的 Promise 拒绝', reason))

@@ -237,12 +237,34 @@
     try { return require('crypto').randomBytes(24).toString('hex'); } catch (e) { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
   }
 
-  async function request(route, body) {
-    const response = await fetch('http://127.0.0.1:' + PORT + route, {
-      method: body === undefined ? 'GET' : 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-yami-agent-token': state.token },
-      body: body === undefined ? undefined : JSON.stringify(body)
-    });
+  async function request(route, body, timeoutMs, outerSignal) {
+    // 没有超时的 fetch 是这块面板最容易"永久卡住"的地方：宿主一旦退出（或某个请求根本没回），
+    // 界面就会永远停在「执行中…」。用户实测踩到过：宿主把活干完就崩了，响应压根没发出来，
+    // 于是卡片不消失、聊天也不继续。默认给一个很宽的上限（10 分钟）兜底，正常流程永远碰不到。
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const limit = Number(timeoutMs) > 0 ? Number(timeoutMs) : 10 * 60 * 1000;
+    const timer = controller ? setTimeout(() => controller.abort(), limit) : null;
+    if (controller && outerSignal) {
+      const forward = () => { try { controller.abort(); } catch (e) {} };
+      if (outerSignal.aborted) forward();
+      else if (typeof outerSignal.addEventListener === 'function') outerSignal.addEventListener('abort', forward, { once: true });
+    }
+    let response;
+    try {
+      response = await fetch('http://127.0.0.1:' + PORT + route, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-yami-agent-token': state.token },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller ? controller.signal : undefined
+      });
+    } catch (e) {
+      if (timer) clearTimeout(timer);
+      if (e && e.name === 'AbortError') {
+        throw new Error('AI 宿主没有响应（多半已经退出）。点「停止」可以先把界面解开，然后重发一次需求 —— 面板会自动把宿主重新拉起来');
+      }
+      throw e;
+    }
+    if (timer) clearTimeout(timer);
     const data = await response.json().catch(() => ({ ok: false, error: 'AI 助手响应无法解析' }));
     if (!response.ok || data.ok === false) {
       const err = new Error(data.error || 'AI 助手请求失败');
@@ -303,6 +325,35 @@
 
   function endTurn() { currentTurn = null; }
 
+  /** 关掉"已等待 N 秒"的读数。回合一结束就必须关，否则它会一直往状态栏上写字 */
+  function clearIdleTicker() {
+    if (state.idleTicker) { clearInterval(state.idleTicker); state.idleTicker = null; }
+  }
+
+  /**
+   * 开一个回合前的统一准备。正常一轮与"确认之后的续跑"都从这里开回合 ——
+   * 续跑以前没有这一步，于是它的工具卡片/提示全落在回合外面（散在对话末尾），
+   * 跟前面那一轮的过程区割裂成两截。
+   */
+  function prepareTurn() {
+    clearIdleTicker();
+    currentThinkingEl = null;
+    thinkingStartedAt = 0;
+    thinkingSegments.reset();
+    thinkingTotalMs = 0;
+    beginTurn();
+  }
+
+  /** 一个回合的收尾：定稿思考段、收起过程、关回合组 */
+  function finishTurn() {
+    clearIdleTicker();
+    setBusy(false);
+    endThinkingRounds();
+    refreshProcessMeta();
+    applyTurnFold();
+    endTurn();
+  }
+
   /** 过程区：思考过程与工具步骤都收在这里，默认展开、可一键收起成一行 */
   function processArea() {
     if (!currentTurn) return null;
@@ -336,7 +387,11 @@
     head.title = '收起执行过程';
     box.appendChild(head);
     box.appendChild(body);
-    currentTurn.root.appendChild(box);
+    // 【顺序不变量】过程区**永远**排在正文槽之前。正文槽可能先被建出来 —— 模型先说一句
+    // （"我先看一下工程结构"）再调工具，是很常见的一轮开头。这时无脑 appendChild 会把过程区
+    // 甩到那段话下面，用户读到的就成了"答案在上、过程在下"。
+    if (currentTurn.body) currentTurn.root.insertBefore(box, currentTurn.body);
+    else currentTurn.root.appendChild(box);
     currentTurn.process = { box, body, meta, steps: 0 };
     return currentTurn.process;
   }
@@ -391,15 +446,23 @@
     return item;
   }
 
+  /**
+   * 提示行：面板自己说的话（进度、授权、失败说明）。
+   * 两处刻意的规矩，都是按 DSH 的过程组语义定的：
+   *  1) **不算一步** —— 提示不是模型跑的动作，混进步数会让"执行了 3 步"这种读数变成假的；
+   *  2) 失败类（bad）留在过程组**外面** —— 塞进可折叠的过程区，紧凑模式一收起来就等于把错藏了。
+   */
   function pushNotice(text, mode) {
     const list = document.getElementById('yami-ai-messages');
     if (!list) return null;
     const item = document.createElement('div');
     item.className = 'yami-ai-notice' + (mode ? ' ' + mode : '');
     item.textContent = text;
-    const area = currentTurn ? processArea() : null;
-    (area ? area.body : list).appendChild(item);
-    if (area) { area.steps++; refreshProcessMeta(); }
+    if (mode === 'bad' || !currentTurn) list.appendChild(item);
+    else {
+      const area = processArea();
+      (area ? area.body : list).appendChild(item);
+    }
     autoScroll();
     return item;
   }
@@ -760,6 +823,13 @@
     // 这里主动兜底解开，让界面永远有出路（finally 再清一次是幂等的）。
     state.pending = null;
     document.getElementById('yami-ai-approval')?.classList.remove('show');
+    // 审批提交到一半被打断时，deciding 也必须解开：否则下一次「执行修改」会被防连点的闸门
+    // 静默挡掉，又变成一个点了没反应的按钮（上一版漏了这一步）。按钮文案一并还原。
+    state.deciding = false;
+    const approveBtn = document.getElementById('yami-ai-approve');
+    const rejectBtn = document.getElementById('yami-ai-reject');
+    if (approveBtn) approveBtn.textContent = '执行修改';
+    if (rejectBtn) rejectBtn.textContent = '取消修改';
     setBusy(false);
   }
 
@@ -823,27 +893,8 @@
     setStatus(dangerous ? '等待确认删除' : '等待确认', 'waiting');
   }
 
-  function handleResult(data) {
-    if (data.message) addMessage('assistant', data.message);
-    renderTurnUsage(data.turnUsage);
-    if (Array.isArray(data.undeliveredSteer)) for (const text of data.undeliveredSteer) enqueueMessage(text);
-    if (data.status === 'approval') renderApproval(data);
-    else { state.pending = null; document.getElementById('yami-ai-approval')?.classList.remove('show'); setStatus('就绪', 'ready'); }
-  }
-
-  /** 流式对话：逐字上屏 + 工具调用实时可见 + 审批/结果事件 */
+  /** 普通一轮对话：带上当前编辑器上下文快照，交给统一的事件流渲染 */
   async function streamChat(text) {
-    let bubble = null;
-    let text$ = '';
-    let reasoning$ = '';
-    let hasReasoning = false;
-    let received = false;
-    let finalResult = null;
-    let streamError = null;
-    // 工具卡片按调用 id 匹配：只读批次是并发跑的，单槽变量会把 A 的结果写到 B 的卡片上
-    const toolCards = new Map();
-    const cardKeyOf = event => String((event && event.key) || (event && event.name) || '');
-    state.abort = new AbortController();
     let liveEnv = '';
     let pageContext = null;
     try {
@@ -857,10 +908,39 @@
       const scope = probe && typeof probe.getScope === 'function' ? probe.getScope() : null;
       pageContext = { page: pageType, summary: summary, scope: scope };
     } catch (e) {}
-    const response = await fetch('http://127.0.0.1:' + PORT + '/chat/stream', {
+    return streamTurn('/chat/stream', {
+      sessionId: state.sessionId,
+      message: text,
+      envSummary: liveEnv || undefined,
+      pageContext: pageContext || undefined
+    }, '正在处理');
+  }
+
+  /**
+   * 一条事件流渲染一个回合：正常一轮（/chat/stream）与「确认之后的续跑」（/approve/stream）
+   * 走的是**同一段代码**。
+   *
+   * 这按的是 DSH 的做法：界面上的对话只从事件流装配。续跑以前是普通 POST，
+   * 中途每个工具、每段思考、每条提示在界面上都没有来源，只能等最后一个结果一次性落下，
+   * 而且那时回合已经被关掉了 —— 于是那些行全散在回合外面、顺序对不上。
+   * 走事件流之后，"点了确认"和"发了一条需求"在渲染上不再有区别。
+   */
+  async function streamTurn(route, body, statusBase) {
+    let bubble = null;
+    let text$ = '';
+    let reasoning$ = '';
+    let hasReasoning = false;
+    let received = false;
+    let finalResult = null;
+    let streamError = null;
+    // 工具卡片按调用 id 匹配：只读批次是并发跑的，单槽变量会把 A 的结果写到 B 的卡片上
+    const toolCards = new Map();
+    const cardKeyOf = event => String((event && event.key) || (event && event.name) || '');
+    state.abort = new AbortController();
+    const response = await fetch('http://127.0.0.1:' + PORT + route, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-yami-agent-token': state.token },
-      body: JSON.stringify({ sessionId: state.sessionId, message: text, envSummary: liveEnv || undefined, pageContext: pageContext || undefined }),
+      body: JSON.stringify(body),
       signal: state.abort.signal
     });
     if (!response.ok) {
@@ -875,6 +955,19 @@
     // 思考缓冲按「段」重建：一段一块，缓冲也必须跟着换，否则第二段会把第一段的文字一起吞进去
     let reasoningBuffer = renderCore ? renderCore.createTextBuffer() : null;
     let bubbleTextNode = null;
+    // 事件流安静时给一个如实的时间读数：只报"等了多久"，绝不猜"卡住了"。
+    // 宿主自己的状态文案优先，这里只在它上面追加秒数（模型思考久了看到秒数在走，比看到一个
+    // 一动不动的"正在调用模型"踏实）。有事件进来就交给宿主自己的说法。
+    let lastEventAt = Date.now();
+    let lastStatusText = '';
+    state.idleTicker = setInterval(() => {
+      const silent = Math.round((Date.now() - lastEventAt) / 1000);
+      if (silent < 5) return;
+      setStatus((lastStatusText || statusBase || '正在处理') + '（已等待 ' + silent + ' 秒）', 'working');
+    }, 1000);
+    if (state.abort.signal && typeof state.abort.signal.addEventListener === 'function') {
+      state.abort.signal.addEventListener('abort', clearIdleTicker);
+    }
 
     const flushContent = () => {
       if (!bubble) return;
@@ -933,7 +1026,8 @@
 
     const handleEvent = event => {
       if (!event || !event.type) return;
-      if (event.type === 'status') { setStatus(event.text || '正在处理', 'working'); return; }
+      lastEventAt = Date.now();
+      if (event.type === 'status') { lastStatusText = event.text || ''; setStatus(event.text || '正在处理', 'working'); return; }
       if (event.type === 'delta') {
         // 思考过程（reasoning_content）：一段一块，流式追加，默认展开
         if (event.reasoning) {
@@ -1022,7 +1116,11 @@
     flushThinking();
     finalizeThinking();
     autoScroll();
+    clearIdleTicker();
     if (streamError) throw new Error(streamError);
+    // 流断了却一个结果都没有：宿主进程可能被杀掉了。以前这里什么也不说，界面直接回到"就绪"，
+    // 用户看到的就是"发出去没反应/聊到一半没了"。宁可恶报一句，也不能假装跑完了。
+    if (!finalResult) throw new Error('连接在跑完之前断了（AI 宿主可能已退出），这一步的结果无法确认');
     if (finalResult && finalResult.status !== 'approval') {
       if (text$) {
         const alignMatch = text$.match(/<alignment-card>([\s\S]*?)<\/alignment-card>/i);
@@ -1922,11 +2020,7 @@
   async function runMessage(text) {
     addMessage('user', text);
     autoScroll(true);   // 用户刚发消息：无论刚才在看哪，都回到最新（这是他自己触发的）
-    currentThinkingEl = null;
-    thinkingStartedAt = 0;
-    thinkingSegments.reset();
-    thinkingTotalMs = 0;
-    beginTurn();
+    prepareTurn();
     setBusy(true);
     setStatus('正在处理', 'working');
     try {
@@ -1957,11 +2051,9 @@
         setStatus('需要处理', 'error');
       }
     } finally {
-      setBusy(false);
-      endThinkingRounds();   // 最后一段也要定稿（耗时/字数定格，多段任务补全编号）
-      refreshProcessMeta();
-      applyTurnFold();       // 紧凑模式下把过程收起来（没有最终正文/焦点在里面时不收）
-      endTurn();
+      // 收尾统一走 finishTurn：定稿最后一段思考（耗时/字数定格、多段任务补全编号）、
+      // 紧凑模式下收起过程区（没有最终正文/焦点在里面时不收）、关掉回合组
+      finishTurn();
       flushQueue();          // 排队区还有的话，接着发下一条（它在 setBusy(false) 之后才可能进来）
     }
   }
@@ -1975,40 +2067,50 @@
     state.deciding = true;
     const approveBtn = document.getElementById('yami-ai-approve');
     const rejectBtn = document.getElementById('yami-ai-reject');
-    const startedAt = Date.now();
-    let ticker = null;
+    // 这里不再有"ping /status 判断宿主是否还活着"的看门狗。原来那套用 4 秒超时、
+    // 连续两次失败就判定宿主已退出并掐掉请求；可宿主是单进程的，编译（tsc）这类同步活儿一忙
+    // 就会让 /status 连着超时，于是"正在编译"被误判成"宿主已退出"。现在续跑走 SSE：
+    // 宿主真死了，连接会直接断掉且拿不到结果，那条路是确定性的，不需要猜。
     setBusy(true);
     setStatus(approve ? '正在执行' : '正在取消', 'working');
-    if (approve) {
-      // /approve 是普通 POST、不是 SSE：确认之后整轮会在后台跑完（可能还有好几轮模型调用）
-      // 才一次性返回，中间界面上不会有任何逐字输出。不把这件事说清楚，用户看到的就是"没反应"。
-      if (approveBtn) approveBtn.textContent = '执行中…';
-      pushNotice('已确认，正在执行…（这一步没有逐字输出，跑完会自动显示结果；期间可以随时按停止）', 'wait');
-      ticker = setInterval(() => {
-        setStatus('正在执行（已 ' + Math.round((Date.now() - startedAt) / 1000) + ' 秒）', 'working');
-      }, 1000);
-    } else if (rejectBtn) {
-      rejectBtn.textContent = '取消中…';
-    }
+    if (approveBtn && approve) approveBtn.textContent = '执行中…';
+    if (rejectBtn && !approve) rejectBtn.textContent = '取消中…';
     try {
-      const route = approve ? '/approve' : '/reject';
       const grantBox = document.getElementById('yami-ai-grant');
       const grantForSession = approve && grantBox && grantBox.checked && !grantBox.disabled;
       if (grantBox) localStorage.setItem('danjuan-ai-grant', grantBox.checked ? '1' : '0');
-      const data = await request(route, { sessionId: state.sessionId, grantForSession });
-      handleResult(data);
+      // 用户一旦做出选择，这张卡的任务就结束了 —— 立刻收起来。
+      // 以前要等 /approve 返回才收，可那一轮在后台还要跑几分钟（模型调用 + 一串工具），
+      // 用户看到的就是"选了它也不消失"。收起来之后进度由事件流实时显示；
+      // 如果这一轮还要再确认下一步，renderApproval 会把卡片重新弹出来。
+      document.getElementById('yami-ai-approval')?.classList.remove('show');
+      // 【关键】续跑走同一条事件流（/approve/stream）：确认之后每一步工具、每段思考、
+      // 每段正文都跟正常一轮一样实时上屏，也一样归进当前回合的过程区/正文槽。
+      // 以前这里是普通 POST，中间过程没有任何事件来源，只有一个最终结果一次性落下，
+      // 而那时回合已经关了 —— 那一段就成了散在对话末尾、顺序对不上的一堆行。
+      prepareTurn();
+      const result = await streamTurn(approve ? '/approve/stream' : '/reject/stream',
+        { sessionId: state.sessionId, grantForSession }, approve ? '正在执行' : '正在取消');
+      if (result && result.status === 'approval') renderApproval(result);
+      else { state.pending = null; document.getElementById('yami-ai-approval')?.classList.remove('show'); setStatus('就绪', 'ready'); }
       resolvePendingCard(approve, approve ? '编译与回滚状态见上方小结' : '');
-      if (grantForSession) pushNotice('已记住该文件的授权：本次任务内不再逐条确认（可在【撤销】面板旁随时取消）', 'wait');
+      // 授权提示由宿主随事件流发（它才知道有没有真的记住），这里不再自己补一条重复的
+      refreshContext();
+      refreshFooterCost();
     } catch (e) {
-      addMessage('error', e.message + '。修改未完成，可重新发送需求。');
-      resolvePendingCard(false, '执行失败');
-      setStatus('需要处理', 'error');
+      if (e && (e.name === 'AbortError' || /已打断/.test(String(e.message)))) {
+        setStatus('已打断', 'idle');
+        resolvePendingCard(false, '已打断');
+      } else {
+        addMessage('error', e.message + '。修改未完成，可重新发送需求。');
+        resolvePendingCard(false, '执行失败');
+        setStatus('需要处理', 'error');
+      }
     } finally {
-      if (ticker) clearInterval(ticker);
       state.deciding = false;
       if (approveBtn) approveBtn.textContent = '执行修改';
       if (rejectBtn) rejectBtn.textContent = '取消修改';
-      setBusy(false);
+      finishTurn();
     }
   }
 

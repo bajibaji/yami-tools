@@ -284,6 +284,33 @@ async function main() {
   await json('/config', 'POST', { endpoint: `http://127.0.0.1:${MODEL_PORT}/chat/completions`, model: 'fake', apiKey: 'k', approvalMode: 'auto' })
 
 
+  console.log('\n########## 6b. 确认之后的续跑必须挂在同一条事件流上 ##########')
+  // 用户报的"给了权限之后聊天的显示顺序就不对了"根因：续跑当时是普通 POST，不是事件流。
+  // 确认之后那一段（工具卡片、思考、正文）在界面上没有任何事件来源，只能等最终结果一次性落下，
+  // 而那时回合已经关了 —— 那些行全散在对话末尾、顺序对不上。这里按"事件流上能不能看见"验收。
+  await json('/config', 'POST', { endpoint: `http://127.0.0.1:${MODEL_PORT}/chat/completions`, model: 'fake', apiKey: 'k', approvalMode: 'confirm' })
+  writeOnly = true
+  const saTurn = await stream('/chat/stream', { sessionId: 'stream-approve-1', message: '改一下' })
+  const saApproval = saTurn.find(event => event.type === 'result')
+  check('续跑验收：先停在审批', !!saApproval && saApproval.status === 'approval', saApproval && saApproval.status)
+  const saRun = await stream('/approve/stream', { sessionId: 'stream-approve-1' })
+  check('/approve/stream 真的是一条 SSE（有 start 事件）', saRun.some(event => event.type === 'start'))
+  const saTools = saRun.filter(event => event.type === 'tool')
+  check('续跑的写入有 start 事件（卡片才画得出来）', saTools.some(event => event.phase === 'start'))
+  check('续跑的写入有收尾事件（卡片不会永远停在"运行中"）', saTools.some(event => event.phase === 'done' || event.phase === 'fail'), JSON.stringify(saTools.map(event => event.phase)))
+  check('续跑有逐字正文（不是只落一个最终结果）', saRun.some(event => event.type === 'delta' && event.content))
+  check('续跑照常给出最终结果', saRun.some(event => event.type === 'result' && event.status !== 'approval'))
+
+  // 取消走同一条通道
+  const srTurn = await stream('/chat/stream', { sessionId: 'stream-reject-1', message: '改一下' })
+  const srApproval = srTurn.find(event => event.type === 'result')
+  check('取消验收：先停在审批', !!srApproval && srApproval.status === 'approval', srApproval && srApproval.status)
+  const srRun = await stream('/reject/stream', { sessionId: 'stream-reject-1' })
+  check('/reject/stream 可用并给出结果', srRun.some(event => event.type === 'result'))
+  writeOnly = false
+  await json('/config', 'POST', { endpoint: `http://127.0.0.1:${MODEL_PORT}/chat/completions`, model: 'fake', apiKey: 'k', approvalMode: 'auto' })
+
+
   console.log('\n########## 5. 会话内批量授权 ##########')
   await json('/config', 'POST', { endpoint: `http://127.0.0.1:${MODEL_PORT}/chat/completions`, model: 'fake', apiKey: 'k', approvalMode: 'confirm' })
   writeOnly = true

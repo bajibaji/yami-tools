@@ -338,7 +338,12 @@ const aiAnchors = [
   ['急停动作白名单', /'cancel'/],
   ['开工前对齐卡协议', /alignment-card/],
   ['在场感知四路信号', /getPresence/],
-  ['顶栏停留点口径', /停在「/]
+  ['顶栏停留点口径', /停在「/],
+  // 铁律【52】: 一个回合只从一条事件流渲染。审批续跑曾经走普通 POST，中途一个事件都发不出来，
+  // 前端只能等最终结果一次性落下（而那时回合已经关了）—— 用户看到的就是"给了权限之后顺序不对"。
+  ['审批续跑走同一条事件流', /approve \? '\/approve\/stream' : '\/reject\/stream'/],
+  ['宿主提供审批 SSE 路由', /'\/approve\/stream': '\/approve'/],
+  ['过程区永远排在正文槽之前', /if \(currentTurn\.body\) currentTurn\.root\.insertBefore\(box, currentTurn\.body\)/]
 ];
 for (const [name, pattern] of aiAnchors) {
   if (!pattern.test(aiAgentContent + '\n' + aiHostContent + '\n' + probeRaw)) {

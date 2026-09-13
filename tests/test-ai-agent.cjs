@@ -479,7 +479,23 @@ async function main() {
     assert.ok(/body\.firstChild && body\.firstChild\.nodeType === 3/.test(agentSource), '展开模式的文本节点必须从当前块里取（一段一块，块与块不能共用节点）')
     assert.ok(/mode === 'preview'[\s\S]{0,560}?reasoningBuffer\.lastLine\(160\)/.test(agentSource), '单行预览必须实时刷新那一行（用缓冲的 lastLine，不许每帧 split 全文），否则刚出现的思考窗口整段都是空的')
     assert.ok(/let span = body\.firstElementChild[\s\S]{0,600}?span\.textContent !== line/.test(agentSource), '预览行要就地更新，别每帧重建节点')
-    assert.ok(/renderTurnUsage\(finalResult\.turnUsage\)/.test(agentSource) && /renderTurnUsage\(data\.turnUsage\)/.test(agentSource), '流式与审批两条路径都要渲染每轮用量行')
+    assert.ok(/renderTurnUsage\(finalResult\.turnUsage\)/.test(agentSource), '每轮用量行要在事件流收尾里渲染（渲染路径只有这一条）')
+    // 用户报"给了权限之后聊天的显示顺序就不对了"：根因是审批续跑当时走普通 POST，不是事件流，
+    // 那一段过程（工具卡片/思考/正文）在界面上根本没有来源，只能等一个最终结果一次性落下，
+    // 而那时回合已经关了 —— 于是全散在对话末尾、顺序对不上。这里把架构钉死：
+    assert.ok(/approve \? '\/approve\/stream' : '\/reject\/stream'/.test(agentSource), '审批续跑必须走 /approve/stream（与正常一轮同一条事件流）')
+    assert.ok(/'\/approve\/stream': '\/approve'/.test(hostSource), '宿主必须提供 /approve/stream 这条 SSE 路由')
+    assert.ok(!/handleResult/.test(agentSource), '审批路径不许再有"只落一个最终结果"的旁路渲染函数')
+    assert.ok(/prepareTurn\(\);[\s\S]{0,400}?streamTurn\(approve/.test(agentSource), '续跑必须先在当前回合组里开工（否则卡片与提示全落在回合外面）')
+    // 过程区与正文槽的先后：模型先说一句再调工具是常见的一轮开头，正文槽会先建出来
+    assert.ok(/if \(currentTurn\.body\) currentTurn\.root\.insertBefore\(box, currentTurn\.body\)/.test(agentSource), '过程区必须始终插在正文槽之前（否则过程掉到正文下面，读起来就是答案在前过程在后）')
+    // 提示行的两条规矩：不算一步、失败类留在过程组外
+    assert.ok(/if \(mode === 'bad' \|\| !currentTurn\) list\.appendChild\(item\)/.test(agentSource), '失败类提示要留在过程组外（塞进可折叠的过程区，一收起来就等于把错藏了）')
+    // 提示行的"不算一步"要用函数体本身来判，不能只看整份源码里有没有 steps++（别处也有）
+    const noticeBody = (agentSource.match(/function pushNotice\(text, mode\) \{[\s\S]*?\n  \}/) || [''])[0]
+    assert.ok(noticeBody && !/steps\+\+/.test(noticeBody), '提示行不许计入步数（那会让"执行了 3 步"这种读数变成假的）')
+    assert.ok(/连接在跑完之前断了/.test(agentSource), '流断了却没拿到结果必须如实报错，不能悄悄回到"就绪"')
+    assert.ok(/state\.idleTicker = setInterval/.test(agentSource) && /（已等待 ' \+ silent \+ ' 秒）/.test(agentSource), '事件流安静时只如实报"已等待 N 秒"，不猜"卡住了"')
     assert.ok(/formatTurnUsage/.test(agentSource) && /formatTurnUsage: formatTurnUsage/.test(coreSource), '用量行的"记账不全就不显示"要用渲染核心那一份')
     assert.ok(/noteModelAttempt\(session, !!\(assistant && assistant\.__usage\)\)/.test(hostSource), '每次模型调用都要记一笔（没报 usage 的那次会让整行不显示）')
     assert.ok(/async function runTurn\(session, config, events\)/.test(hostSource) && /turnUsageOf\(session\)/.test(hostSource), '每轮用量要挂在结果上交给前端')

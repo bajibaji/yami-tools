@@ -413,7 +413,8 @@ function main() {
   const handoffSrc = fs.readFileSync(path.join(ROOT, 'HANDOFF.md'), 'utf8')
   const declaredRules = Number((readmeSrc.match(/(\d+)\s*条血泪避坑档案/) || [])[1] || 0)
   // 圈码范围要一路覆盖到 ㊿（㊵=U+32B5 曾落在旧的 ㊱-㊴ 之外，导致新增铁律时计数少 1）
-  const actualRules = (handoffSrc.match(/^### [①-⑳㉑-㉟㊱-㊿]/gm) || []).length
+  // 圈码只到 ㊿（50）。第 51 条起改用 【N】 形式，两种都要认。
+  const actualRules = (handoffSrc.match(/^### (?:[①-⑳㉑-㉟㊱-㊿]|【\d+】)/gm) || []).length
   assert.ok(declaredRules > 0 && declaredRules === actualRules,
     `README 声明 ${declaredRules} 条铁律，HANDOFF 实际 ${actualRules} 条——数字对不上（新增铁律时要同步 README）`)
   const declaredSuites = Number((readmeSrc.match(/run-all\.cjs:?\s*(\d+)\s*套/) || [])[1] || 0)
