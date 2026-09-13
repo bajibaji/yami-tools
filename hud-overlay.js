@@ -189,6 +189,84 @@
         border-color: #1cff9b !important;
       }
 
+      /* 悬浮窗切换按钮 (位于穿透按钮左侧) */
+      .yami-dock-float-btn {
+        font-size: 11px !important;
+        color: #909090 !important;
+        background: #222222 !important;
+        border: 1px solid #181818 !important;
+        border-radius: 2px !important;
+        padding: 2px 6px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        line-height: 16px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        transition: color, background-color, border-color, transform 0.15s ease !important;
+      }
+      .yami-dock-float-btn:hover {
+        color: #ffffff !important;
+        background: #2c2c2c !important;
+        border-color: #383838 !important;
+      }
+      .yami-dock-float-btn.active {
+        color: #38bdf8 !important;
+        background: rgba(56, 189, 248, 0.15) !important;
+        border-color: rgba(56, 189, 248, 0.6) !important;
+        box-shadow: 0 0 6px rgba(56, 189, 248, 0.25) !important;
+      }
+
+      /* 真正的自由悬浮窗模式 (可自由拖拽位置与调节窗口尺寸) */
+      .yami-perf-dock.floating {
+        position: fixed !important;
+        bottom: auto !important;
+        right: auto !important;
+        max-width: 96vw !important;
+        max-height: 96vh !important;
+        min-width: 380px !important;
+        min-height: 400px !important;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+        border-radius: 6px !important;
+        display: none !important;
+      }
+      .yami-perf-dock.floating.show {
+        display: flex !important;
+        transform: none !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+      }
+      .yami-perf-dock.floating .yami-perf-dock-header {
+        cursor: move !important;
+      }
+      /* 右下角拖拽缩放手柄 */
+      .yami-dock-resizer {
+        display: none !important;
+        position: absolute !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 14px !important;
+        height: 14px !important;
+        cursor: se-resize !important;
+        z-index: 1000 !important;
+      }
+      .yami-dock-resizer::after {
+        content: '' !important;
+        position: absolute !important;
+        right: 3px !important;
+        bottom: 3px !important;
+        width: 6px !important;
+        height: 6px !important;
+        border-right: 2px solid rgba(255, 255, 255, 0.35) !important;
+        border-bottom: 2px solid rgba(255, 255, 255, 0.35) !important;
+      }
+      .yami-perf-dock.floating .yami-dock-resizer {
+        display: block !important;
+      }
+      .yami-dock-resizer:hover::after {
+        border-color: #38bdf8 !important;
+      }
+
       /* 页面容器与主控台样式 */
       .yami-suite-page {
         display: flex;
@@ -3504,9 +3582,10 @@
         background: #1c1d22 !important;
       }
       .yami-ai-tool-btn.active {
-        background: rgba(59, 130, 246, 0.16) !important;
-        border-color: rgba(59, 130, 246, 0.4) !important;
-        color: #60a5fa !important;
+        background: rgba(59, 130, 246, 0.22) !important;
+        border-color: #3b82f6 !important;
+        color: #93c5fd !important;
+        box-shadow: 0 0 8px rgba(59, 130, 246, 0.3) !important;
       }
       .yami-ai-tool-btn:focus-visible,
       .yami-ai-primary:focus-visible,
@@ -4059,6 +4138,82 @@
       @keyframes yami-spin {
         from { transform: rotate(0deg); }
         to { transform: rotate(360deg); }
+      }
+
+      /* 全界面子视图排版 (历史 / 撤销 打开时完全隐藏消息记录、输入区与环境行，整屏呈现) */
+      .yami-ai-page.view-undo #yami-ai-scope,
+      .yami-ai-page.view-undo #yami-ai-messages,
+      .yami-ai-page.view-undo #yami-ai-quick-bar,
+      .yami-ai-page.view-undo #yami-ai-composer,
+      .yami-ai-page.view-undo #yami-ai-approval,
+      .yami-ai-page.view-history #yami-ai-scope,
+      .yami-ai-page.view-history #yami-ai-messages,
+      .yami-ai-page.view-history #yami-ai-quick-bar,
+      .yami-ai-page.view-history #yami-ai-composer,
+      .yami-ai-page.view-history #yami-ai-approval {
+        display: none !important;
+      }
+
+      .yami-ai-page.view-undo .yami-ai-undo.show,
+      .yami-ai-page.view-history .yami-ai-history.show {
+        display: flex !important;
+        flex: 1 1 auto !important;
+        height: auto !important;
+        max-height: none !important;
+        min-height: 320px !important;
+        padding: 12px 14px !important;
+        gap: 8px !important;
+        border-radius: 6px !important;
+        box-shadow: none !important;
+        background: #17181d !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+      }
+
+      /* 子视图头部说明条 */
+      .yami-ai-subpage-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+        padding-bottom: 8px !important;
+        margin-bottom: 4px !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-ai-subpage-info {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 2px !important;
+        min-width: 0 !important;
+      }
+      .yami-ai-subpage-title {
+        color: #f3f4f6 !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+      }
+      .yami-ai-subpage-desc {
+        color: #9ca3af !important;
+        font-size: 11px !important;
+      }
+      .yami-ai-subpage-back {
+        flex-shrink: 0 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 4px !important;
+        padding: 4px 10px !important;
+        background: #252730 !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        border-radius: 4px !important;
+        color: #d1d5db !important;
+        font-size: 11px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: all 0.15s ease !important;
+      }
+      .yami-ai-subpage-back:hover {
+        background: #313440 !important;
+        color: #ffffff !important;
+        border-color: rgba(255, 255, 255, 0.25) !important;
       }
 
       /* 撤销面板 (Undo Panel) */
@@ -4803,6 +4958,9 @@
             <div class="yami-mode-btn" data-mode="pro" role="button">专业模式</div>
           </div>
           <div class="yami-nav-back-btn" id="btn-clear-errors" role="button" style="display: none; padding: 1px 6px;">清空</div>
+          <div class="yami-dock-float-btn" id="btn-dock-float" role="button" tabindex="0" title="切换为自由悬浮窗 (可拖拽位置与调节窗口大小)">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true" style="display: block;"><path d="M21 3C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3ZM20 5H4V19H20V5ZM19 11H12V17H19V11ZM17 13V15H14V13H17Z"/></svg>
+          </div>
           <div class="yami-pin-btn" id="btn-dock-pin" role="button" title="点击开启穿透 (可直接操作底层游戏)">穿透</div>
           <div class="yami-perf-icon-btn" id="btn-dock-close" role="button" title="收起 (Home / ESC)">×</div>
         </div>
@@ -5311,7 +5469,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.6.11 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.7.0 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
@@ -5319,6 +5477,7 @@
           <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
           <div class="yami-perf-btn" id="dock-btn-dl" role="button">保存报告</div>
         </div>
+      <div class="yami-dock-resizer" id="yami-dock-resizer" title="按住拖拽调节窗口大小"></div>
       </div>
     `;
     document.body.appendChild(dock);
@@ -5451,6 +5610,126 @@
       });
     }
 
+    // 绑定悬浮窗切换交互 (支持随意拖拽移动与调节窗口尺寸)
+    const floatBtn = document.getElementById('btn-dock-float');
+    const resizer = document.getElementById('yami-dock-resizer');
+    let isFloating = false;
+    const DOCK_FLOATING_KEY = 'yami-perf-dock-floating';
+    const DOCK_POS_KEY = 'yami-perf-dock-pos';
+    const DOCK_SIZE_KEY = 'yami-perf-dock-size';
+
+    function applyFloatingState(enable, notify) {
+      isFloating = enable;
+      dock.classList.toggle('floating', isFloating);
+      if (floatBtn) {
+        floatBtn.classList.toggle('active', isFloating);
+        floatBtn.setAttribute('title', isFloating ? '切回右侧停靠面板' : '切换为自由悬浮窗 (可自由拖拽位置与调节窗口大小)');
+      }
+      if (isFloating) {
+        let pos = null;
+        let size = null;
+        try {
+          pos = JSON.parse(localStorage.getItem(DOCK_POS_KEY) || 'null');
+          size = JSON.parse(localStorage.getItem(DOCK_SIZE_KEY) || 'null');
+        } catch (e) {}
+        const defaultW = 520;
+        const defaultH = Math.min(window.innerHeight - 80, 720);
+        const w = size && size.w ? Math.max(380, Math.min(window.innerWidth - 20, size.w)) : defaultW;
+        const h = size && size.h ? Math.max(400, Math.min(window.innerHeight - 20, size.h)) : defaultH;
+        const defaultX = Math.max(20, window.innerWidth - w - 40);
+        const defaultY = Math.max(20, Math.min(window.innerHeight - h - 20, 60));
+        const x = pos && typeof pos.x === 'number' ? Math.max(0, Math.min(window.innerWidth - 100, pos.x)) : defaultX;
+        const y = pos && typeof pos.y === 'number' ? Math.max(0, Math.min(window.innerHeight - 50, pos.y)) : defaultY;
+        dock.style.setProperty('left', x + 'px', 'important');
+        dock.style.setProperty('top', y + 'px', 'important');
+        dock.style.setProperty('width', w + 'px', 'important');
+        dock.style.setProperty('height', h + 'px', 'important');
+        dock.style.setProperty('right', 'auto', 'important');
+        dock.style.setProperty('bottom', 'auto', 'important');
+        try { localStorage.setItem(DOCK_FLOATING_KEY, 'true'); } catch (e) {}
+        if (notify) showToast('已切换为自由悬浮窗 (拖拽顶栏移动，拖拽右下角调整大小)', 2500);
+      } else {
+        dock.style.removeProperty('left');
+        dock.style.removeProperty('top');
+        dock.style.removeProperty('width');
+        dock.style.removeProperty('height');
+        dock.style.removeProperty('right');
+        dock.style.removeProperty('bottom');
+        try { localStorage.setItem(DOCK_FLOATING_KEY, 'false'); } catch (e) {}
+        if (notify) showToast('已切回侧边停靠模式', 1500);
+      }
+    }
+    try {
+      if (localStorage.getItem(DOCK_FLOATING_KEY) === 'true') applyFloatingState(true, false);
+    } catch (e) {}
+    if (floatBtn) {
+      floatBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        applyFloatingState(!isFloating, true);
+      });
+    }
+    const dockHeaderEl = dock.querySelector('.yami-perf-dock-header');
+    if (dockHeaderEl) {
+      dockHeaderEl.addEventListener('mousedown', function(e) {
+        if (!isFloating) return;
+        if (e.target.closest('[role="button"]') || e.target.closest('input') || e.target.closest('select')) return;
+        e.preventDefault();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const rect = dock.getBoundingClientRect();
+        const initLeft = rect.left;
+        const initTop = rect.top;
+        function onMouseMove(moveEv) {
+          const dx = moveEv.clientX - startX;
+          const dy = moveEv.clientY - startY;
+          const maxX = window.innerWidth - 80;
+          const maxY = window.innerHeight - 40;
+          const nextX = Math.max(0, Math.min(maxX, initLeft + dx));
+          const nextY = Math.max(0, Math.min(maxY, initTop + dy));
+          dock.style.setProperty('left', nextX + 'px', 'important');
+          dock.style.setProperty('top', nextY + 'px', 'important');
+        }
+        function onMouseUp() {
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+          try {
+            const r = dock.getBoundingClientRect();
+            localStorage.setItem(DOCK_POS_KEY, JSON.stringify({ x: Math.round(r.left), y: Math.round(r.top) }));
+          } catch (e) {}
+        }
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+    }
+    if (resizer) {
+      resizer.addEventListener('mousedown', function(e) {
+        if (!isFloating) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const initW = dock.offsetWidth;
+        const initH = dock.offsetHeight;
+        function onMouseMove(moveEv) {
+          const dx = moveEv.clientX - startX;
+          const dy = moveEv.clientY - startY;
+          const nextW = Math.max(380, Math.min(window.innerWidth - 20, initW + dx));
+          const nextH = Math.max(400, Math.min(window.innerHeight - 20, initH + dy));
+          dock.style.setProperty('width', nextW + 'px', 'important');
+          dock.style.setProperty('height', nextH + 'px', 'important');
+        }
+        function onMouseUp() {
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+          try {
+            localStorage.setItem(DOCK_SIZE_KEY, JSON.stringify({ w: dock.offsetWidth, h: dock.offsetHeight }));
+          } catch (e) {}
+        }
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+    }
+
     // 绑定返回按钮
     if (backBtnEl) {
       backBtnEl.addEventListener('click', function(e) {
@@ -5506,7 +5785,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.6.11 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.7.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -8748,7 +9027,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.6.11';
+      const cur = (probe && probe.version) ? probe.version : '1.7.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -8814,7 +9093,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.6.11') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.7.0') + ')');
           refreshVersionBadge();
         }
       });

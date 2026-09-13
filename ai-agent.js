@@ -502,6 +502,40 @@
     autoScroll(true);
   }
 
+  function setSubView(view) {
+    const page = document.getElementById('page-ai');
+    const undoPanel = document.getElementById('yami-ai-undo');
+    const historyPanel = document.getElementById('yami-ai-history');
+    const settingsPanel = document.getElementById('yami-ai-settings');
+    const undoToggle = document.getElementById('yami-ai-undo-toggle');
+    const historyToggle = document.getElementById('yami-ai-history-toggle');
+    const settingsToggle = document.getElementById('yami-ai-settings-toggle');
+
+    if (!page) return;
+
+    page.classList.remove('view-undo', 'view-history', 'view-settings');
+    if (undoToggle) undoToggle.classList.remove('active');
+    if (historyToggle) historyToggle.classList.remove('active');
+    if (settingsToggle) settingsToggle.classList.remove('active');
+    if (undoPanel) undoPanel.classList.remove('show');
+    if (historyPanel) historyPanel.classList.remove('show');
+    if (settingsPanel) settingsPanel.classList.remove('show');
+
+    if (view === 'undo') {
+      page.classList.add('view-undo');
+      if (undoToggle) undoToggle.classList.add('active');
+      renderUndoList();
+    } else if (view === 'history') {
+      page.classList.add('view-history');
+      if (historyToggle) historyToggle.classList.add('active');
+      renderHistory();
+    } else if (view === 'settings') {
+      page.classList.add('view-settings');
+      if (settingsToggle) settingsToggle.classList.add('active');
+      if (settingsPanel) settingsPanel.classList.add('show');
+    }
+  }
+
   /** 撤销面板：只列本次对话里 AI 改过的文件，一点即可退回它动手之前 */
   async function renderUndoList() {
     const panel = document.getElementById('yami-ai-undo');
@@ -512,6 +546,18 @@
       const data = await request('/backups', { sessionId: state.sessionId });
       const files = data.files || [];
       panel.innerHTML = '';
+
+      const subHeader = document.createElement('div');
+      subHeader.className = 'yami-ai-subpage-header';
+      subHeader.innerHTML =
+        '<div class="yami-ai-subpage-info">' +
+          '<span class="yami-ai-subpage-title">撤销记录与文件回退</span>' +
+          '<span class="yami-ai-subpage-desc">仅列出本次会话中 AI 修改过的工程文件</span>' +
+        '</div>' +
+        '<div class="yami-ai-subpage-back" role="button" tabindex="0">返回对话</div>';
+      activate(subHeader.querySelector('.yami-ai-subpage-back'), () => setSubView('chat'));
+      panel.appendChild(subHeader);
+
       if (!files.length) {
         const empty = document.createElement('div');
         empty.className = 'yami-ai-history-empty';
@@ -682,11 +728,33 @@
       const data = await request('/sessions');
       // 只列"真的聊过"的：新建了但一句话没说、只剩一条 system 的会话不该占着历史
       const sessions = (data.sessions || []).filter(item => (item.turns || 0) > 0);
+      panel.innerHTML = '';
+
+      const subHeader = document.createElement('div');
+      subHeader.className = 'yami-ai-subpage-header';
+      subHeader.innerHTML =
+        '<div class="yami-ai-subpage-info">' +
+          '<span class="yami-ai-subpage-title">会话历史记录</span>' +
+          '<span class="yami-ai-subpage-desc">自动保存每次对话，可随时恢复、继续或删除</span>' +
+        '</div>' +
+        '<div class="yami-ai-subpage-actions" style="display:flex;align-items:center;gap:6px;">' +
+          '<div class="yami-ai-subpage-back yami-ai-subpage-new" role="button" tabindex="0" style="background:#1e293b;border-color:#334155;">新对话</div>' +
+          '<div class="yami-ai-subpage-back" role="button" tabindex="0">返回对话</div>' +
+        '</div>';
+      activate(subHeader.querySelector('.yami-ai-subpage-new'), () => {
+        startNewSession();
+        setSubView('chat');
+      });
+      activate(subHeader.querySelector('.yami-ai-subpage-back:not(.yami-ai-subpage-new)'), () => setSubView('chat'));
+      panel.appendChild(subHeader);
+
       if (!sessions.length) {
-        panel.innerHTML = '<div class="yami-ai-history-empty">还没有历史对话。每次对话都会自动保存，可随时切回来继续。</div>';
+        const empty = document.createElement('div');
+        empty.className = 'yami-ai-history-empty';
+        empty.textContent = '还没有历史对话。每次对话都会自动保存，可随时切回来继续。';
+        panel.appendChild(empty);
         return;
       }
-      panel.innerHTML = '';
       for (const item of sessions) {
         const row = document.createElement('div');
         row.className = 'yami-ai-history-item' + (item.id === state.sessionId ? ' current' : '');
@@ -718,7 +786,16 @@
         panel.appendChild(row);
       }
     } catch (e) {
-      panel.innerHTML = '<div class="yami-ai-history-empty">读取历史失败：' + String(e.message || e) + '</div>';
+      panel.innerHTML =
+        '<div class="yami-ai-subpage-header">' +
+          '<div class="yami-ai-subpage-info">' +
+            '<span class="yami-ai-subpage-title">会话历史记录</span>' +
+            '<span class="yami-ai-subpage-desc">自动保存每次对话，可随时恢复、继续或删除</span>' +
+          '</div>' +
+          '<div class="yami-ai-subpage-back" role="button" tabindex="0">返回对话</div>' +
+        '</div>' +
+        '<div class="yami-ai-history-empty">读取历史失败：' + String(e.message || e) + '</div>';
+      activate(panel.querySelector('.yami-ai-subpage-back'), () => setSubView('chat'));
     }
   }
 
@@ -763,7 +840,7 @@
       if (refreshRail) refreshRail();
       if (data.pending) renderApproval({ approval: data.pending });
       else setStatus('就绪', 'ready');
-      document.getElementById('yami-ai-history')?.classList.remove('show');
+      setSubView('chat');
       pushNotice('已切换到历史对话：' + (title || id));
       refreshContext();
     } catch (e) {
@@ -778,7 +855,7 @@
     document.getElementById('yami-ai-approval')?.classList.remove('show');
     clearMessages('新对话已开始。告诉我你想做什么。');
     clearPlan();
-    document.getElementById('yami-ai-history')?.classList.remove('show');
+    setSubView('chat');
     setStatus('就绪', 'ready');
     renderContext(null);
     if (notify) pushNotice('已开启新对话（旧对话仍可在历史里找回）');
@@ -2490,17 +2567,18 @@
     activate(document.getElementById('yami-ai-send'), () => { state.busy ? stopStream() : sendMessage(); });
     activate(document.getElementById('yami-ai-approve'), () => decide(true));
     activate(document.getElementById('yami-ai-reject'), () => decide(false));
-    activate(document.getElementById('yami-ai-settings-toggle'), () => document.getElementById('yami-ai-settings').classList.toggle('show'));
-    activate(document.getElementById('yami-ai-settings-close'), () => document.getElementById('yami-ai-settings')?.classList.remove('show'));
+    activate(document.getElementById('yami-ai-settings-toggle'), () => {
+      const page = document.getElementById('page-ai');
+      setSubView(page && page.classList.contains('view-settings') ? 'chat' : 'settings');
+    });
+    activate(document.getElementById('yami-ai-settings-close'), () => setSubView('chat'));
     activate(document.getElementById('yami-ai-undo-toggle'), () => {
-      const panel = document.getElementById('yami-ai-undo')
-      if (panel && panel.classList.contains('show')) panel.classList.remove('show')
-      else renderUndoList()
-    })
+      const page = document.getElementById('page-ai');
+      setSubView(page && page.classList.contains('view-undo') ? 'chat' : 'undo');
+    });
     activate(document.getElementById('yami-ai-history-toggle'), () => {
-      const panel = document.getElementById('yami-ai-history');
-      if (panel && panel.classList.contains('show')) panel.classList.remove('show');
-      else renderHistory();
+      const page = document.getElementById('page-ai');
+      setSubView(page && page.classList.contains('view-history') ? 'chat' : 'history');
     });
     activate(document.getElementById('yami-ai-save-settings'), saveSettings);
     activate(document.getElementById('yami-ai-fetch-models'), fetchModelList);

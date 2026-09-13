@@ -7,7 +7,7 @@
 > - **第二层 · 记忆与经验**：项目经历了什么、踩过哪些坑、为什么这样设计——读它能少走弯路。
 > - **第三层 · 当前进度**：推进到哪里了、什么已完成、什么没做完、下一步做什么。
 >
-> **当前版本**：`v1.6.11`　**最近更新**：2026-09-13
+> **当前版本**：`v1.7.0`　**最近更新**：2026-09-13
 
 ---
 
@@ -1114,7 +1114,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 
 # 第三层 · 当前进度（Where We Are）
 
-> 更新日期：2026-09-13 · 当前版本：`v1.6.11`
+> 更新日期：2026-09-13 · 当前版本：`v1.7.0`
 
 ## 3.1 能力清单与完成度
 
@@ -1219,6 +1219,16 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
     - **宿主静默死亡**（铁律【51】）：宿主补 `uncaughtException` / `unhandledRejection` 兜底（落盘 `<配置目录>/host-crash.log` + 进程不退出）；前端 `request()` 补超时（默认 10 分钟兜底）；判断"宿主没了"改用确定性信号 —— **SSE 断了却没拿到 `result` 事件**就如实报错；原先"ping `/status` 连续两次失败就掐断请求"的看门狗**已删除**（宿主是单进程，编译 tsc 时 `/status` 会连着超时，把"正在编译"误判成"宿主已退出"）；事件流安静时只显示"已等待 N 秒"，不猜"卡住了"；
     - **顺带**：确认卡做出选择后**立即收起**（不再等 `/approve` 返回）；`stopStream()` 兜底解开 `deciding` 并还原按钮文案（少这一步，「执行修改」会变成点了没反应的死按钮）；打断现在真的能停住续跑（续跑有了自己的 `AbortController`，取消令牌一路传到模型与工具循环）；
     - **验证凭证**：`node tests/run-all.cjs` **29/29 套通过**；`tests/test-ai-repair.cjs` 新增 §6b 段（真宿主 + 假模型跑 `/approve/stream`：断言有 `start`、工具 `start`/`done` 收尾、逐字正文、最终结果；`/reject/stream` 同）→ 该套 36 → **44 断言**；`tests/test-ai-agent.cjs` 把上述接线逐条钉死（含"审批路径不许再有旁路渲染函数"）；`node build.cjs` 51 项核心锚点 + 3 项新增 AI 锚点全绿；`--deploy` 镜像 MD5 与母仓库逐一相同。
+
+26. **历史与撤销全屏子视图 + 自由悬浮窗模式（UI/UX 规范级落地，2026-09-13）**：
+    - **历史与撤销按钮高亮与互斥**：打开选中后，顶栏按钮颜色实时高亮（增加 `.yami-ai-tool-btn.active` 类，鲜明科技蓝背景 `#1d4ed8` 与阴影微光），再次点击自动恢复默认并切回主对话视图；
+    - **全屏纯净子视图展示（不留多余内容）**：打开历史（`#yami-ai-history`）或撤销（`#yami-ai-undo`）时，通过集中视图调度器 `setSubView` 激活 `#page-ai.view-undo` / `#page-ai.view-history`，物理级隐藏底层聊天记录（`#yami-ai-messages`）、输入框与工具快捷条（`#yami-ai-composer` / `#yami-ai-quick-bar`）、常显环境感知条（`#yami-ai-scope`）、审批确认卡（`#yami-ai-approval`），让历史与撤销面板 100% 独占剩余视区；头部展示 `.yami-ai-subpage-header`（带模块标题、功能白话说明与「返回对话」及「新对话」操作按钮），点击即刻还原对话工作区；
+    - **自由悬浮窗模式与窗口尺寸调节**：在顶栏穿透按钮（`#btn-dock-pin`）左侧内嵌正统 Remix Icon 矢量悬浮窗图标（`#btn-dock-float`，`ri-picture-in-picture-2-line`，0 外部依赖 0 系统 Emoji）；支持点击在右侧停靠大盘与自由悬浮窗（`.yami-perf-dock.floating`）之间平滑切换；悬浮窗支持顶部拖拽随意定位（自动附带屏幕安全边界吸附保护）、右下角手柄（`#yami-dock-resizer`）拖拽调节宽高（带 380×400 最小尺寸保护），并通过 `localStorage`（`yami-perf-dock-floating`、`yami-perf-dock-pos`、`yami-perf-dock-size`）实现多开、刷新与重启后全自动记忆复原；
+    - **构建与测试守护**：
+      1. `node build.cjs --deploy`：51 项核心锚点全绿，无任何原生 `<button>`，无系统 Emoji，生产镜像逐文件 MD5 100% 一致；
+      2. `node tests/test-static-health.cjs`：全通过（隐式全局 0 泄漏，CSS 结构配平，文档与套件数量 30 套 100% 一致）；
+      3. `node tests/test-subviews-floating.cjs`：15/15 项断言全绿；
+      4. `node tests/test-ui-operation.cjs`：78/78 项断言全绿。
 
 ## 3.3 未完成 / 未验证 / 已知限制
 
