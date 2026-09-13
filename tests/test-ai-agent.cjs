@@ -195,7 +195,9 @@ async function main() {
       YAMI_AI_CONFIG_DIR: CONFIG_DIR,
       // 工具结果预算压到 400 字符：让「超长输出裁剪 + 落盘(spill)」这条路在本套件里可测
       YAMI_AI_TOOL_LIMIT: '400',
-      YAMI_PROJECT_ROOT: PROJECT
+      YAMI_PROJECT_ROOT: PROJECT,
+      // 隔离本机正在运行的编辑器：单测不应受开发者桌面上的编辑器输入框焦点状态影响
+      YAMI_EDITOR_BRIDGE_PORT: '0'
     }
   })
   let stderr = ''

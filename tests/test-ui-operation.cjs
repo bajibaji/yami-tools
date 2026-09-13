@@ -795,7 +795,9 @@ async function main() {
         YAMI_AI_TOKEN: AGENT_TOKEN,
         YAMI_AI_CONFIG_DIR: configDir,
         YAMI_AI_SESSION_DIR: path.join(configDir, 'sessions'),
-        YAMI_PROJECT_ROOT: fixture
+        YAMI_PROJECT_ROOT: fixture,
+        // 隔离本机正在运行的编辑器：单测不应受开发者桌面上的编辑器输入框焦点状态影响
+        YAMI_EDITOR_BRIDGE_PORT: '0'
       })
     })
     let hostErr = ''

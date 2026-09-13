@@ -7,7 +7,7 @@
 > - **第二层 · 记忆与经验**：项目经历了什么、踩过哪些坑、为什么这样设计——读它能少走弯路。
 > - **第三层 · 当前进度**：推进到哪里了、什么已完成、什么没做完、下一步做什么。
 >
-> **当前版本**：`v1.7.0`　**最近更新**：2026-09-13
+> **当前版本**：`v1.7.1`　**最近更新**：2026-09-13
 
 ---
 
@@ -1114,7 +1114,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 
 # 第三层 · 当前进度（Where We Are）
 
-> 更新日期：2026-09-13 · 当前版本：`v1.7.0`
+> 更新日期：2026-09-13 · 当前版本：`v1.7.1`
 
 ## 3.1 能力清单与完成度
 
@@ -1229,6 +1229,54 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
       2. `node tests/test-static-health.cjs`：全通过（隐式全局 0 泄漏，CSS 结构配平，文档与套件数量 30 套 100% 一致）；
       3. `node tests/test-subviews-floating.cjs`：15/15 项断言全绿；
       4. `node tests/test-ui-operation.cjs`：78/78 项断言全绿。
+
+27. **聊天工具流式呈现时序纠正与单轮步数上限治理（2026-09-13 用户实测反馈）**：
+    - **工具条目时空倒流根因与修复**：
+      - **根因**：原先模型先输出阶段性正文（如计划/前言）后再调工具时，由于 `currentTurn.process` 全局单例且 `processArea()` 强制 `insertBefore(box, currentTurn.body)`，导致新调用的工具被强行塞回顶部的旧过程框中，而下方正文纹丝不动，造成视觉上“历史倒流”；
+      - **修复**：在 `streamTurn` 中引入**阶段状态切断**机制。当检测到 `bubble` 已有正文输出且后续收到 `tool (start)` 或 `delta (reasoning)` 时，立即封口当前正文（`flushContent()`）并重置 `bubble`、`bubbleTextNode`、`text$`、`currentTurn.process`、`currentTurn.body`。后续调用的工具卡片将通过 `processArea()` 以 `appendChild` 追加到消息流的最底部，与最新正文形成“思考/工具 -> 正文 -> 新工具 -> 新正文”的自然从上到下时间线；
+    - **单轮步数硬编码 12 步暴力掐死治理**：
+      - **根因**：原代码拍脑袋硬编码了 12 步极低阈值，满额后直接 `throw new Error('本次任务步骤过多（已达 12 步），已停止...')` 粗暴终止，无配置入口且抛异常中断体验极差；
+      - **修复与彻底放飞**：
+        1. `ai-host.js` 默认单轮步数阈值 `DEFAULT_MAX_STEPS` 调整为 `0`（**无限制**，彻底放飞，仅由 `repeats >= 3` 重复死循环打转检测熔断）；循环计算采用 `rawMaxSteps > 0 ? rawMaxSteps : Infinity`，步数上限不再人为设卡；
+        2. 设置面板中「单轮步数上限」下拉默认选为「无限制（彻底放飞，仅防打转）」，同时保留 35 / 50 / 80 步阶段检查点选项，用户可随心切换；
+        3. 满额处理彻底移除 `throw new Error` 抛异常逻辑，改为优雅收尾：输出温馨 notice 并返回 `status: 'step-limit'`，已完成的改动 100% 安全保留；
+        4. 前端渲染联动：在收到 `step-limit` 时自动呈现「单轮已满额：点击接续执行下一步（自动发送“继续”）」一键接续按钮，用户无需手动敲字即可无缝接力执行后续任务；
+    - **测试与隔离守护**：
+      - 单测套件（`test-ai-agent.cjs`、`test-ai-repair.cjs`、`test-ui-operation.cjs`）增加 `YAMI_EDITOR_BRIDGE_PORT: '0'` 环境变量隔离，彻底杜绝本地前台运行的编辑器焦点输入状态干扰自动化回归测试；
+      - `node build.cjs --deploy` 51 项核心锚点全绿，生产目录逐文件 MD5 100% 一致；`test-ui-operation.cjs` 78/78 全绿，`test-ai-repair.cjs` 44/44 全绿，`test-ai-agent.cjs` 全绿，`test-ai-session.cjs` 35/35 全绿。
+
+28. **Home 快捷键捕获阶段事件监听与全键盘码适配（2026-09-13 用户实测反馈）**：
+    - **呼出菜单失效根因与剖析**：
+      - 原先 `hud-overlay.js` 中的 `window.addEventListener('keydown', ...)` 采用默认冒泡阶段监听（`capture: false`）；
+      - Open Yami 编辑器内部存在大量具备焦点管理的子组件（如 `command-list.ts`、`select-list.ts`、`tree-list.ts`、`animation-window.ts` 等），在组件获得焦点时自带针对 `Home` / `End` 键的监听并执行 `event.preventDefault()` 或截断事件传播；同时游戏运行时的 `input.ts` 更是以 `{ capture: true }` 优先捕获；
+      - 导致一旦用户在编辑器列表、树控件或试玩区域点击后，按键事件在冒泡到达 `window` 前即被截断，`toggleDock` 根本无法被调用；此外原判定仅限 `e.key === 'Home' || e.code === 'Home'`，小键盘（NumPad 7）与部分笔记本 Fn 组合键存在漏判盲区；
+    - **全链路重构与加固**：
+      1. **捕获阶段监听（`capture: true`）**：将按键监听升级为 `window.addEventListener('keydown', onGlobalKeyDown, true)` 与 `document.addEventListener('keydown', onGlobalKeyDown, true)` 双重捕获，在事件分发的第一阶段最优先拦截，彻底免疫引擎内部任何控件的冒泡截断；通过 `e.__yami_home_handled` 杜绝重复响应；
+      2. **全平台/全键位兼容性覆盖**：判定条件升级为 `e.key === 'Home' || e.code === 'Home' || e.code === 'NumpadHome' || e.keyCode === 36 || e.which === 36`，完美兼容标准全键盘、小键盘（NumLock 开关态）、笔记本 Fn 组合键以及各系统平台键码差异；
+      3. **可编辑文本框原生输入保护**：精准识别当前焦点元素是否为 `<input>`、`<textarea>` 或带有 `contenteditable` 的编辑区；若正在文本框打字且未按 Ctrl/Alt/Meta 修饰键，放行给输入框原生处理光标移至行首；按下 Ctrl+Home 或在其他任何区域按 Home 时 100% 触发呼出/收起；
+      4. **自由悬浮窗视口边界自愈保护**：在 `toggleDock` 展开时，如果处于自由悬浮窗模式，自动检测当前坐标是否因分辨率变化或意外拖拽掉出屏幕可视范围（`minVisible = 60`），若是则自动重置回安全可视区（右上方偏内），彻底杜绝“大盘已展开但因坐标越界而看不见”的假象；
+      5. **全局句柄与调试暴露**：将 `toggleDock` 挂载至 `window.__YAMI_PERF_TOGGLE_DOCK__` 与 `window.__DANJUAN_HUD_API__.toggleDock`，便于控制台调试与各模块一键调度。
+    - **构建与测试守护**：
+      - `node build.cjs --deploy` 51 项核心锚点全绿，生产目录逐文件 MD5 100% 一致；
+      - `test-subviews-floating.cjs` 补充 6 项 Home 快捷键捕获监听与视口自愈断言，21/21 项断言全绿；
+      - `node tests/test-static-health.cjs` 静态检查全绿；
+      - 全套 30 套测试 100% 全绿。
+
+29. **长历史对话空转打转根治与“继续”极简指令智能意图强化（2026-09-13 用户实测反馈）**：
+    - **长历史空转三大痛点根因**：
+      1. **免费确定性修剪被错误阻断**：原代码将第一级零成本的超长工具输出修剪（`pruneToolResults`）挡在 `decision.compact`（800,000 tokens）之后，导致对话在 6.8 万 tokens / 160 条消息时从来没有修剪过一次，上下文充斥废弃检索结果，轻量模型（deepseek-flash）长程注意力严重衰减；
+      2. **“继续”极简指令缺乏方向引导**：用户单发“继续”缺乏动作指导，模型在超长历史压力下产生概率塌缩，陷入确定性重复检索；
+      3. **重复调用缺乏早期强预警**：连续 2~3 次相同调用时系统毫无声息，等到第 4 次才直接掐断；前端在 `stuck` 状态下仅展示红字，缺乏一键破局入口。
+    - **全链路彻底根治四步落地**：
+      1. **确定性工具修剪常态化解绑**：在 `compressContext` 中无门槛常态化执行 `pruneToolResults`，把历史中冗余超长工具结果裁剪为紧凑头尾，零 token 成本随时瘦身；同时将动态摘要阈值收敛至 64k tokens，阻断历史失控滚雪球；
+      2. **“继续”极简指令意图自动强化**：在接收到极简继续词（“继续”、“接着干”、“下一步”、“continue” 等）时，后台自动追加明确动作指令（“请检查上一轮进展与已有搜索结果，直接执行下一步具体动作，不要重复调用同类检索工具”），强力聚焦模型注意力；
+      3. **重复调用早期强指令阻断（Loop Breaker）**：降低 `repeatHint` 阈值（5次 -> 3次），并在 `withHint` 中将系统警告置于 JSON 顶层键（`_SYSTEM_WARNING_`）；当模型发起与上一轮完全相同的调用（`repeats > 0`）时，在执行后直接在上下文追加强指令阻断，在第 2 次即把模型拉出死胡同，避免恶化至熔断；
+      4. **前端 stuck 状态贴心破局卡片**：在模型被熔断时，卡片下方自动提供【一键破局：跳过检索，直接基于已搜结果操作】与【开启新对话（保留当前历史，清爽接续）】快捷操作，彻底消除干瞪眼。
+    - **构建与测试守护**：
+      - `node build.cjs --deploy` 51 项核心锚点全绿，生产镜像 MD5 100% 对齐；
+      - `test-ai-session.cjs` 35/35 项断言全绿；
+      - `test-subviews-floating.cjs` 21/21 项全绿；
+      - `test-static-health.cjs` 静态检查全绿。
 
 ## 3.3 未完成 / 未验证 / 已知限制
 

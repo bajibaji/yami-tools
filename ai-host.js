@@ -46,9 +46,9 @@ const READ_ONLY_TOOLS = new Set([
 
 /* ============================== 会话存储与上下文预算 ============================== */
 // 会话落盘目录：关掉窗口、重启编辑器、甚至隔天回来都能接着聊（对标 Claude Code 的会话恢复）
-// 可配置项（便于测试与按机器调优）：YAMI_AI_SESSION_DIR / YAMI_AI_CONTEXT_BUDGET / YAMI_AI_CONTEXT_KEEP / YAMI_AI_MAX_STEPS
 const SESSION_DIR = process.env.YAMI_AI_SESSION_DIR || path.join(CONFIG_DIR, 'sessions')
-const MAX_STEPS = Number(process.env.YAMI_AI_MAX_STEPS || 12)      // 单轮最多连续工具调用步数
+const DEFAULT_MAX_STEPS = Number(process.env.YAMI_AI_MAX_STEPS || 0)      // 单轮最多连续工具调用步数（默认 0：无限制，仅防死循环打转）
+const MAX_STEPS = DEFAULT_MAX_STEPS
 const TOOL_RESULT_LIMIT = Number(process.env.YAMI_AI_TOOL_LIMIT || 24000)  // 工具结果进上下文时保留的总字符数（头+尾）
 const TOOL_RESULT_TAIL = Number(process.env.YAMI_AI_TOOL_TAIL || 4000)     // 其中留给尾部的字符数（报错原文与结论常在末尾）
 
@@ -386,27 +386,28 @@ function isCheckpoint(message) {
  */
 async function compressContext(session, config, key, tools) {
   const spec = contextSpec()
-  const usage = measureContext(session, tools)
-  const fixedOverhead = contextMeter.estimateTools(tools || toolsForModel)
-  const decision = contextMeter.shouldCompact({ tokens: usage.tokens, toolsTokens: fixedOverhead, thresholdTokens: spec.thresholdTokens })
-  if (!decision.compact) {
-    if (decision.reason === 'fixed-overhead') {
-      process.stderr.write(`[danjuan-ai] 工具定义本身约占 ${fixedOverhead} token，已达压缩阈值 ${spec.thresholdTokens}，压缩对话没有意义，已跳过\n`)
-    }
-    return false
-  }
-  if (session.messages.length <= spec.minKeepMessages + 3) return false
 
-  // ---- 第一级：确定性修剪（多数情况下这一步就够，且不花一分钱 token） ----
+  // ---- 第一级：确定性修剪无门槛常态化执行（纯本地零 token 成本，防超大输出撑爆上下文） ----
   const pruned = contextMeter.pruneToolResults(session.messages)
   if (pruned.pruned.length) {
     session.messages = pruned.messages
     session.tokenAnchor = null   // 消息内容被改写，真实用量锚点随之作废
     saveSession(session)
-    process.stderr.write(`[danjuan-ai] 上下文修剪：${pruned.pruned.length} 条超长工具结果改为头尾保留，省下约 ${pruned.savedTokens} token\n`)
+    process.stderr.write(`[danjuan-ai] 上下文常态修剪：${pruned.pruned.length} 条超长工具结果改为头尾保留，省下约 ${pruned.savedTokens} token\n`)
   }
-  const afterPrune = measureContext(session, tools)
-  if (afterPrune.tokens < spec.thresholdTokens) return pruned.pruned.length > 0
+
+  const usage = measureContext(session, tools)
+  const fixedOverhead = contextMeter.estimateTools(tools || toolsForModel)
+  // 现实中上下文超过 64k tokens 轻量模型注意力即严重衰减，收敛摘要触发上限
+  const effectiveThreshold = Number(process.env.YAMI_AI_COMPACT_MAX_TOKENS || 0) || Math.min(spec.thresholdTokens, 64000)
+  const decision = contextMeter.shouldCompact({ tokens: usage.tokens, toolsTokens: fixedOverhead, thresholdTokens: effectiveThreshold })
+  if (!decision.compact) {
+    if (decision.reason === 'fixed-overhead') {
+      process.stderr.write(`[danjuan-ai] 工具定义本身约占 ${fixedOverhead} token，已达压缩阈值 ${effectiveThreshold}，压缩对话没有意义，已跳过\n`)
+    }
+    return pruned.pruned.length > 0
+  }
+  if (session.messages.length <= spec.minKeepMessages + 3) return pruned.pruned.length > 0
 
   // ---- 第二级：模型摘要 ----
   const before = session.messages
@@ -599,13 +600,14 @@ function readStoredConfig() {
       processFold: data.processFold === 'standard' ? 'standard' : 'compact',
       // 繁忙时按发送：queue 排队 / interrupt 打断当前轮再发这条（默认排队）
       busySend: data.busySend === 'interrupt' ? 'interrupt' : 'queue',
+      maxSteps: data.maxSteps !== undefined ? Math.max(0, Math.min(9999, Number(data.maxSteps))) : Number(process.env.YAMI_AI_MAX_STEPS || DEFAULT_MAX_STEPS),
       encryptedKey: data.encryptedKey || '',
       keyTail: data.keyTail || '',
       keyInvalidReason: data.keyInvalidReason || '',
       approvalMode: data.approvalMode === 'auto' ? 'auto' : 'confirm'
     }
   } catch {
-    return { endpoint: DEFAULT_BASE_URL, model: DEFAULT_MODEL, thinkingMode: 'enabled', thinkingEffort: 'high', thinkingView: 'preview', processFold: 'compact', busySend: 'queue', encryptedKey: '', keyTail: '', keyInvalidReason: '', approvalMode: 'confirm' }
+    return { endpoint: DEFAULT_BASE_URL, model: DEFAULT_MODEL, thinkingMode: 'enabled', thinkingEffort: 'high', thinkingView: 'preview', processFold: 'compact', busySend: 'queue', maxSteps: DEFAULT_MAX_STEPS, encryptedKey: '', keyTail: '', keyInvalidReason: '', approvalMode: 'confirm' }
   }
 }
 
@@ -737,6 +739,7 @@ async function saveConfig(input) {
     thinkingView: ['expand', 'preview', 'collapse'].includes(input.thinkingView) ? input.thinkingView : (current.thinkingView || 'preview'),
     processFold: ['compact', 'standard'].includes(input.processFold) ? input.processFold : (current.processFold || 'compact'),
     busySend: ['queue', 'interrupt'].includes(input.busySend) ? input.busySend : (current.busySend || 'queue'),
+    maxSteps: input.maxSteps !== undefined ? Math.max(0, Math.min(9999, Number(input.maxSteps))) : (current.maxSteps !== undefined ? current.maxSteps : DEFAULT_MAX_STEPS),
     approvalMode: input.approvalMode === 'auto' ? 'auto' : 'confirm',
     encryptedKey: current.encryptedKey
   }
@@ -763,6 +766,7 @@ function publicConfig(config = readStoredConfig()) {
     thinkingView: config.thinkingView,
     processFold: config.processFold === 'standard' ? 'standard' : 'compact',
     busySend: config.busySend === 'interrupt' ? 'interrupt' : 'queue',
+    maxSteps: config.maxSteps !== undefined ? config.maxSteps : DEFAULT_MAX_STEPS,
     approvalMode: config.approvalMode,
     hasApiKey: !!(config.encryptedKey || process.env.DEEPSEEK_API_KEY),
     keyTail: config.keyTail || '',
@@ -1534,7 +1538,9 @@ async function continueSession(session, config, events = {}) {
     try { envSummary = await fetchEditorContextSummary() } catch {}
   }
 
-  for (let step = 0; step < MAX_STEPS; step++) {
+  const rawMaxSteps = (config && config.maxSteps !== undefined) ? Number(config.maxSteps) : Number(process.env.YAMI_AI_MAX_STEPS || DEFAULT_MAX_STEPS)
+  const maxSteps = rawMaxSteps > 0 ? rawMaxSteps : Infinity
+  for (let step = 0; step < maxSteps; step++) {
     if (cancelToken && cancelToken.cancelled) return aborted()
     // 步骤边界：把用户在这期间补充的话投递给模型（投递了才告知前端，没投递的一律不算数）
     const steers = drainSteer(session)
@@ -1624,6 +1630,16 @@ async function continueSession(session, config, events = {}) {
     if (cancelToken && cancelToken.cancelled) return aborted()
     if (outcome.approval) return outcome.approval
 
+    // 早期打转干预：模型开始重复调用时，在上下文末尾直接追加强干预提示，主动把模型拽出死循环
+    if (repeats > 0) {
+      const labels = calls.map(call => toolLabel(call.function && call.function.name)).join('、')
+      session.messages.push({
+        role: 'user',
+        content: `【系统干预指引】你刚刚连续第 ${repeats + 1} 次发起了与上一轮完全相同的「${labels}」调用。相同的检索结果前文已完整给出，严禁再次重复调用相同检索！请立即阅读前文已有结果，调用具体的读取/编辑工具（如 read_script、edit_script、append_event_commands）执行下一步，或直接向用户说明结论。`
+      })
+      saveSession(session)
+    }
+
     // 编译没通过 → 把编译器报错喂回去让模型自己修（有限次，避免无限重试）
     const failure = (outcome.results || []).map(entry => compileFailureOf(entry.name, entry.result)).find(Boolean)
     if (failure) {
@@ -1644,7 +1660,12 @@ async function continueSession(session, config, events = {}) {
       continue
     }
   }
-  throw new Error(`本次任务步骤过多（已达 ${MAX_STEPS} 步），已停止。请把需求拆成更小的任务后重试`)
+  if (events.onNotice) events.onNotice(`已完成单轮上限（${maxSteps} 步），所有改动已安全保留。回复“继续”即可接续执行。`)
+  return await attachChangelog(session, {
+    ok: true,
+    status: 'step-limit',
+    message: `本次任务已执行满单轮步数上限（共 ${maxSteps} 步）。已完成的修改均已安全保留；如需继续推进剩余任务，回复“继续”即可接续执行。`
+  })
 }
 
 /** 给前端看的工具中文名，用于「工具条」实时上屏 */
@@ -1716,9 +1737,9 @@ function repeatHint(session, name) {
   if (!session.toolTally) session.toolTally = {}
   session.toolTally[name] = (session.toolTally[name] || 0) + 1
   const count = session.toolTally[name]
-  if (count < 5) return null
+  if (count < 3) return null
   return `这是本次任务里第 ${count} 次调用「${toolLabel(name)}」。如果前面几次的结果没能推进任务，`
-    + '请立刻换策略：换关键词或换工具、直接读取具体文件，或者把已确认的结论先告诉用户——不要再重复同一种调用。'
+    + '请立刻换策略：不要再继续检索！直接读取具体文件（read_script / read_resource），或用 edit_script / append_event_commands 执行修改，或把已确认的结论先告诉用户。'
 }
 
 /**
@@ -1759,10 +1780,10 @@ function toolInfoOf(result) {
   return Object.keys(info).length ? info : null
 }
 
-/** 把提示并进工具结果（结果本身是 JSON，追加字段而不是拼字符串，免得破坏结构） */
+/** 把提示并进工具结果（将警告置于对象最顶部，确保大模型第一眼即能关注到，打破盲目重复） */
 function withHint(result, hint) {
   if (!hint || !result || typeof result !== 'object' || Array.isArray(result)) return result
-  return Object.assign({}, result, { __hint: hint })
+  return Object.assign({ _SYSTEM_WARNING_: hint }, result, { __hint: hint })
 }
 
 /**
@@ -1956,7 +1977,7 @@ async function handle(pathname, body, events = {}) {
     // 只更新传入的字段（模型 / 思考开关 / 思考强度），其余保持原值。
     // 快捷调节条每次改动都调它，不能用 /config —— 那会把未传字段按默认值覆盖掉。
     const patch = {}
-    for (const key of ['model', 'thinkingMode', 'thinkingEffort', 'thinkingView', 'processFold', 'busySend']) {
+    for (const key of ['model', 'thinkingMode', 'thinkingEffort', 'thinkingView', 'processFold', 'busySend', 'maxSteps']) {
       if (body[key] !== undefined) patch[key] = body[key]
     }
     const config = await saveConfig(patch)
@@ -2131,7 +2152,12 @@ async function handle(pathname, body, events = {}) {
       }
     }
     healSessionMessages(session, '发送前体检')
-    session.messages.push({ role: 'user', content: text })
+    let userText = String(text || '').trim()
+    const CONTINUATION_RE = /^(继续|继续吧|接着做|接着来|接着干|下一步|继续做|继续执行|接着执行|go\s*on|continue|next)$/i
+    if (CONTINUATION_RE.test(userText)) {
+      userText = `${userText}（请检查上一轮的实际进展与已有搜索结果，直接执行下一步具体动作，如读取文件、编辑代码或写入事件指令，不要重复调用已经产生过结果的同类检索工具）`
+    }
+    session.messages.push({ role: 'user', content: userText })
     session.busy = true
     session.repairs = 0     // 每条新需求重新给自动修复预算
     session.toolTally = {}  // 以及重新开始统计工具调用次数（重复提示按轮计）

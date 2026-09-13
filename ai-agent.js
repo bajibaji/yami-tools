@@ -1109,6 +1109,15 @@
         // 思考过程（reasoning_content）：一段一块，流式追加，默认展开
         if (event.reasoning) {
           hasReasoning = true;
+          // 若刚才已有正文输出，说明正文已告一段落，后续新思考属于后续阶段（在正文下方展示）
+          if (bubble && (text$.trim() || (contentBuffer && contentBuffer.length() > 0))) {
+            flushContent();
+            bubble = null;
+            bubbleTextNode = null;
+            text$ = '';
+            if (contentBuffer) contentBuffer = renderCore ? renderCore.createTextBuffer() : null;
+            if (currentTurn) { currentTurn.process = null; currentTurn.body = null; }
+          }
           // 上一段已封口（中间发生过工具调用或已开始写正文）→ 这是新一轮的思考：另起一段，
           // 并且**先**把累加缓冲换成新的，再写入这一段的字。
           const segment = thinkingSegments.accept();
@@ -1140,6 +1149,15 @@
         // 工具卡片承担过去那条「执行/完成」过程条：状态只来自冻结的调用结果，
         // 截断与否、差异多少、能不能定位文件，都写在卡片上（对齐 DSH 的工具展示）。
         if (event.phase === 'start') {
+          // 若刚才已有正文输出，说明正文已告一段落，后续新增调用的工具必须显示在最下方！
+          if (bubble && (text$.trim() || (contentBuffer && contentBuffer.length() > 0))) {
+            flushContent();
+            bubble = null;
+            bubbleTextNode = null;
+            text$ = '';
+            if (contentBuffer) contentBuffer = renderCore ? renderCore.createTextBuffer() : null;
+            if (currentTurn) { currentTurn.process = null; currentTurn.body = null; }
+          }
           const card = pushToolCard(event);
           if (card) {
             toolCards.set(cardKeyOf(event), card);
@@ -1212,7 +1230,15 @@
         }
       }
       if (!received && finalResult.message) addMessage(finalResult.ok === false ? 'error' : 'assistant', finalResult.message);
-      else if ((finalResult.status === 'stuck' || finalResult.status === 'compile-failed') && finalResult.message) pushNotice(finalResult.message, 'bad');
+      else if (finalResult.status === 'stuck' && finalResult.message) {
+        pushNotice(finalResult.message, 'bad');
+        offerStuckBreakerActions();
+      }
+      else if (finalResult.status === 'compile-failed' && finalResult.message) pushNotice(finalResult.message, 'bad');
+      else if (finalResult.status === 'step-limit' && finalResult.message) {
+        pushNotice(finalResult.message, 'wait');
+        offerContinuePrompt();
+      }
       if (finalResult.plan) renderPlan(finalResult.plan.items, finalResult.plan.summary);
       if (finalResult.changelog) renderChangelog(finalResult.changelog);
       renderTurnUsage(finalResult.turnUsage);   // 记账不全时它自己什么都不画
@@ -1223,6 +1249,74 @@
       }
     }
     return finalResult;
+  }
+
+  /** 模型陷入重复调用被掐断时，提供一键破局操作，防止用户干瞪眼 */
+  function offerStuckBreakerActions() {
+    const list = document.getElementById('yami-ai-messages');
+    if (!list) return;
+    const existing = document.getElementById('yami-ai-stuck-actions');
+    if (existing) existing.remove();
+    const box = document.createElement('div');
+    box.id = 'yami-ai-stuck-actions';
+    box.style.display = 'flex';
+    box.style.gap = '8px';
+    box.style.marginTop = '6px';
+    box.style.marginBottom = '8px';
+    box.style.flexWrap = 'wrap';
+
+    const breakBtn = document.createElement('div');
+    breakBtn.className = 'yami-ai-step-undo';
+    breakBtn.setAttribute('role', 'button');
+    breakBtn.setAttribute('tabindex', '0');
+    breakBtn.style.borderColor = '#d97706';
+    breakBtn.style.color = '#fbbf24';
+    breakBtn.style.background = 'rgba(217, 119, 6, 0.1)';
+    breakBtn.textContent = '一键破局：跳过检索，直接基于已搜结果操作';
+    activate(breakBtn, () => {
+      box.remove();
+      runMessage('停止重复检索，直接根据前面已经搜到的结果，读取对应代码并开始修改。');
+    });
+
+    const newChatBtn = document.createElement('div');
+    newChatBtn.className = 'yami-ai-step-undo';
+    newChatBtn.setAttribute('role', 'button');
+    newChatBtn.setAttribute('tabindex', '0');
+    newChatBtn.style.borderColor = '#38bdf8';
+    newChatBtn.style.color = '#38bdf8';
+    newChatBtn.style.background = 'rgba(56, 189, 248, 0.1)';
+    newChatBtn.textContent = '开启新对话（保留当前历史，清爽接续）';
+    activate(newChatBtn, () => {
+      box.remove();
+      startNewSession();
+    });
+
+    box.appendChild(breakBtn);
+    box.appendChild(newChatBtn);
+    list.appendChild(box);
+    autoScroll();
+  }
+
+  /** 单轮步数满额时，给用户一个一键接续执行的快捷入口，省去手动敲字 */
+  function offerContinuePrompt() {
+    const list = document.getElementById('yami-ai-messages');
+    if (!list) return;
+    const existing = document.getElementById('yami-ai-continue-action');
+    if (existing) existing.remove();
+    const bar = document.createElement('div');
+    bar.id = 'yami-ai-continue-action';
+    bar.className = 'yami-ai-step-undo';
+    bar.setAttribute('role', 'button');
+    bar.setAttribute('tabindex', '0');
+    bar.style.borderColor = '#2563eb';
+    bar.style.color = '#60a5fa';
+    bar.textContent = '单轮已满额：点击接续执行下一步（自动发送“继续”）';
+    activate(bar, () => {
+      bar.remove();
+      runMessage('继续');
+    });
+    list.appendChild(bar);
+    autoScroll();
   }
 
   /**
@@ -2327,9 +2421,13 @@
     const model = document.getElementById('yami-ai-model').value.trim();
     const apiKey = document.getElementById('yami-ai-key').value.trim();
     const approvalMode = document.getElementById('yami-ai-mode').checked ? 'auto' : 'confirm';
+    const maxStepsEl = document.getElementById('yami-ai-max-steps');
+    const maxSteps = maxStepsEl ? Number(maxStepsEl.value) : undefined;
     try {
       await ensureHost();
-      const config = await request('/config', { endpoint, baseUrl: endpoint, model, apiKey, approvalMode });
+      const payload = { endpoint, baseUrl: endpoint, model, apiKey, approvalMode };
+      if (Number.isInteger(maxSteps) && maxSteps >= 0) payload.maxSteps = maxSteps;
+      const config = await request('/config', payload);
       document.getElementById('yami-ai-key').value = '';
       document.getElementById('yami-ai-key').placeholder = config.hasApiKey ? '已安全保存，留空不修改' : 'DeepSeek API Key';
       document.getElementById('yami-ai-settings').classList.remove('show');
@@ -2420,6 +2518,10 @@
           if (sel) sel.value = config.processFold;
         }
       }
+      if (config && config.maxSteps !== undefined) {
+        const sel = document.getElementById('yami-ai-max-steps');
+        if (sel) sel.value = String(config.maxSteps);
+      }
       setStatus(config.hasApiKey || !/api\.deepseek\.com/i.test(config.endpoint) ? '就绪' : '请配置模型', config.hasApiKey ? 'ready' : 'waiting');
     } catch (e) { setStatus('尚未启动', 'idle'); }
   }
@@ -2494,11 +2596,24 @@
               '</select>' +
             '</div>' +
           '</div>' +
-          '<label for="yami-ai-busy-send">繁忙时发送</label>' +
-          '<select id="yami-ai-busy-send" title="AI 正在干活时你按发送 / 回车：排队等它做完，还是打断它立刻发这条">' +
-            '<option value="queue" selected>排队（等这一轮跑完再发）</option>' +
-            '<option value="interrupt">打断（停掉这一轮，立刻发）</option>' +
-          '</select>' +
+          '<div class="yami-ai-settings-row">' +
+            '<div class="yami-ai-settings-col">' +
+              '<label for="yami-ai-busy-send">繁忙时发送</label>' +
+              '<select id="yami-ai-busy-send" title="AI 正在干活时你按发送 / 回车：排队等它做完，还是打断它立刻发这条">' +
+                '<option value="queue" selected>排队（等这轮跑完发）</option>' +
+                '<option value="interrupt">打断（立刻发这条）</option>' +
+              '</select>' +
+            '</div>' +
+            '<div class="yami-ai-settings-col">' +
+              '<label for="yami-ai-max-steps">单轮步数上限</label>' +
+              '<select id="yami-ai-max-steps" title="单轮任务中 AI 连续调工具的最大步数">' +
+                '<option value="0" selected>无限制（彻底放飞，仅防打转）</option>' +
+                '<option value="35">35 步（阶段检查点）</option>' +
+                '<option value="50">50 步（复杂）</option>' +
+                '<option value="80">80 步（超长深度）</option>' +
+              '</select>' +
+            '</div>' +
+          '</div>' +
         '</div>' +
         '<div class="yami-ai-model-row">' +
           '<div class="yami-ai-secondary" id="yami-ai-test" role="button" tabindex="0">测试连接</div>' +
@@ -2621,6 +2736,13 @@
         else if (event.target && event.target.id === 'yami-ai-busy-send') {
           setBusySendMode(event.target.value);
           addMessage('system', '繁忙时发送：' + (state.busySend === 'interrupt' ? '打断当前一轮并立刻发出' : '排队，等这一轮跑完依次发出'));
+        }
+        else if (event.target && event.target.id === 'yami-ai-max-steps') {
+          const val = Number(event.target.value);
+          if (Number.isInteger(val) && val >= 0) {
+            quickUpdate({ maxSteps: val });
+            addMessage('system', '单轮步数上限：' + (val === 0 ? '无限制（彻底放飞，仅防死循环打转）' : val + ' 步'));
+          }
         }
       });
     }

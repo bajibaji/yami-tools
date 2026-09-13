@@ -5469,7 +5469,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.7.0 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.7.1 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
@@ -5785,7 +5785,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.7.0 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.7.1 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -6782,6 +6782,7 @@
     // 外部页面扩展点：AI 助手等独立模块通过同一 Views 契约注册，避免塞回 HUD 巨型闭包。
     window.__DANJUAN_HUD_API__ = {
       switchView,
+      toggleDock,
       registerPage(id, element, definition) {
         if (!id || !element || !definition) return false;
         pages[id] = element;
@@ -8711,6 +8712,22 @@
         // 大盘展开时，彻底隐藏右上角迷你帧数浮窗，防止穿透或半透明时穿帮透出
         if (hud) hud.style.setProperty('display', 'none', 'important');
         if (errorBubbleEl) errorBubbleEl.classList.remove('show');
+        // 自由悬浮窗模式下自愈检查，防止窗口坐标脱离可视区域导致展开后看不见
+        if (typeof isFloating !== 'undefined' && isFloating) {
+          try {
+            const rect = dock.getBoundingClientRect();
+            const minVisible = 60;
+            const outOfView = rect.right < minVisible || rect.bottom < minVisible || rect.left > window.innerWidth - minVisible || rect.top > window.innerHeight - minVisible;
+            if (outOfView) {
+              const defaultW = Math.min(520, window.innerWidth - 40);
+              const defaultH = Math.min(window.innerHeight - 80, 720);
+              const defaultX = Math.max(20, window.innerWidth - defaultW - 40);
+              const defaultY = Math.max(20, Math.min(window.innerHeight - defaultH - 20, 60));
+              dock.style.setProperty('left', defaultX + 'px', 'important');
+              dock.style.setProperty('top', defaultY + 'px', 'important');
+            }
+          } catch (e) {}
+        }
         // 进入大盘即视为已读: 已存在错误类型全部记入 seen, 退出后同源错误不再弹气泡
         markSeenExistingErrors();
         refreshDockData();
@@ -8726,6 +8743,9 @@
         }
       }
     }
+
+    // 全局句柄暴露，方便控制台、快捷键与外部模块一键呼出
+    window.__YAMI_PERF_TOGGLE_DOCK__ = toggleDock;
 
     document.getElementById('yami-capsule').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -9027,7 +9047,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.7.0';
+      const cur = (probe && probe.version) ? probe.version : '1.7.1';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -9093,7 +9113,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.7.0') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.7.1') + ')');
           refreshVersionBadge();
         }
       });
@@ -9475,14 +9495,38 @@
     // 快捷键 Home 呼出/收起，ESC 收起
     updateModeUI();
 
-    window.addEventListener('keydown', (e) => {
-      if (e.key === 'Home' || e.code === 'Home') {
+    function onGlobalKeyDown(e) {
+      if (e.__yami_home_handled) return;
+
+      // 覆盖全键位: 标准 Home 键 / 小键盘 Home / 笔记本 Fn 组合 / 各平台键码 keyCode 36
+      const isHome = e.key === 'Home' || e.code === 'Home' || e.code === 'NumpadHome' || e.keyCode === 36 || e.which === 36;
+      if (isHome) {
+        const active = document.activeElement;
+        const isTextInput = active && (
+          active.tagName === 'INPUT' ||
+          active.tagName === 'TEXTAREA' ||
+          active.isContentEditable ||
+          (typeof active.getAttribute === 'function' && active.getAttribute('contenteditable') === 'true')
+        );
+        // 若当前焦点在真实可编辑输入框中，且用户未按 Ctrl/Alt/Meta 组合键，放行给原生文本光标移动到行首
+        if (isTextInput && !e.ctrlKey && !e.altKey && !e.metaKey) {
+          return;
+        }
+        e.__yami_home_handled = true;
         e.preventDefault();
+        e.stopPropagation();
         toggleDock();
-      } else if (e.key === 'Escape' && isDockOpen) {
+      } else if ((e.key === 'Escape' || e.code === 'Escape' || e.keyCode === 27) && isDockOpen) {
+        e.__yami_home_handled = true;
+        e.preventDefault();
+        e.stopPropagation();
         toggleDock(false);
       }
-    });
+    }
+
+    // 关键铁律: 必须在捕获阶段（capture: true）监听，先于编辑器内部命令列表、树形组件及游戏 Input 截获按键
+    window.addEventListener('keydown', onGlobalKeyDown, true);
+    document.addEventListener('keydown', onGlobalKeyDown, true);
 
     // 胶囊实时数据刷新与告警
     window.addEventListener('yami-perf-jank', (e) => {

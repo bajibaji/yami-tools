@@ -124,6 +124,8 @@ function startHost(extraEnv = {}) {
       YAMI_AI_SESSION_DIR: path.join(CONFIG_DIR, 'sessions'),
       YAMI_PROJECT_ROOT: PROJECT,
       YAMI_TSC_JS: ENGINE_TSC,
+      // 隔离本机正在运行的编辑器：单测不应受开发者桌面上的编辑器输入框焦点状态影响
+      YAMI_EDITOR_BRIDGE_PORT: '0',
       ...extraEnv
     }
   })

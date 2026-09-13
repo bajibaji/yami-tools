@@ -47,7 +47,15 @@ assert.ok(cssContent.includes('.yami-ai-subpage-header'), 'src/style.css 必须�
 assert.ok(agentContent.includes('yami-ai-subpage-back'), 'ai-agent.js 必须在撤销和历史面板提供返回对话入口');
 assert.ok(agentContent.includes("setSubView('chat')"), '返回对话必须调用 setSubView 还原主对话');
 
-// 5. 0 原生 button 与 0 Emoji 断言 (此项为钢铁铁律)
+// 5. Home 快捷键捕获阶段监听与视口防脱逸自愈断言
+assert.ok(hudContent.includes("window.addEventListener('keydown', onGlobalKeyDown, true)"), 'Home 键必须使用 capture: true 捕获阶段监听，免疫编辑器内部截断');
+assert.ok(hudContent.includes("document.addEventListener('keydown', onGlobalKeyDown, true)"), 'document 必须同步挂载 capture: true 捕获监听');
+assert.ok(hudContent.includes("e.code === 'NumpadHome'") && hudContent.includes('keyCode === 36'), 'Home 键判定必须兼容小键盘与各平台 keyCode: 36');
+assert.ok(hudContent.includes('isTextInput') && hudContent.includes('active.tagName === \'INPUT\''), 'Home 键必须包含可编辑文本框原生输入保护');
+assert.ok(hudContent.includes('window.__YAMI_PERF_TOGGLE_DOCK__ = toggleDock'), 'toggleDock 必须挂载至全局 __YAMI_PERF_TOGGLE_DOCK__');
+assert.ok(hudContent.includes('minVisible = 60'), 'toggleDock 必须包含悬浮窗视口安全自愈检查');
+
+// 6. 0 原生 button 与 0 Emoji 断言 (此项为钢铁铁律)
 const nativeButtonRegex = /<button\b[^>]*>/i;
 assert.ok(!nativeButtonRegex.test(hudContent), 'hud-overlay.js 严禁包含原生 <button> 标签');
 assert.ok(!nativeButtonRegex.test(agentContent), 'ai-agent.js 严禁包含原生 <button> 标签');
@@ -57,4 +65,4 @@ assert.ok(!emojiRegex.test(hudContent), 'hud-overlay.js 严禁包含 Emoji');
 assert.ok(!emojiRegex.test(agentContent), 'ai-agent.js 严禁包含 Emoji');
 assert.ok(!emojiRegex.test(cssContent), 'src/style.css 严禁包含 Emoji');
 
-console.log('✅ 子视图全屏与自由悬浮窗专项测试全部通过 (15/15 断言 PASS)！');
+console.log('✅ 子视图全屏与自由悬浮窗专项测试全部通过 (21/21 断言 PASS)！');
