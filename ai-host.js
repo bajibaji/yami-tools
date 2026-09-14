@@ -15,9 +15,20 @@ const EditorBridge = require('./runtime/yami-mcp/modules/editor-bridge')
 const editorBridge = new EditorBridge()
 
 const PORT = Number(process.env.YAMI_AI_PORT || 5968)
-const TOKEN = process.env.YAMI_AI_TOKEN || crypto.randomBytes(24).toString('hex')
-const PARENT_PID = Number(process.env.YAMI_AI_PARENT_PID || 0)
 const CONFIG_DIR = process.env.YAMI_AI_CONFIG_DIR || path.join(process.env.APPDATA || os.homedir(), 'DanJuanDevSuite')
+function resolveHostToken() {
+  if (process.env.YAMI_AI_TOKEN) return process.env.YAMI_AI_TOKEN
+  try {
+    const tokenFile = path.join(CONFIG_DIR, 'agent-token')
+    if (fs.existsSync(tokenFile)) {
+      const saved = fs.readFileSync(tokenFile, 'utf8').trim()
+      if (saved) return saved
+    }
+  } catch {}
+  return crypto.randomBytes(24).toString('hex')
+}
+const TOKEN = resolveHostToken()
+const PARENT_PID = Number(process.env.YAMI_AI_PARENT_PID || 0)
 const CONFIG_PATH = path.join(CONFIG_DIR, 'ai-config.json')
 const MCP_PATH = path.join(__dirname, 'runtime', 'yami-mcp', 'server.js')
 const sessions = new Map()
@@ -174,11 +185,13 @@ function listSessions() {  try {
         try {
           const data = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, name), 'utf8'))
           const list = data.messages || []
-          const firstUser = list.find(message => message.role === 'user')
+          const firstUser = list.find(message => message && message.role === 'user' && !isCheckpoint(message))
+          let titleText = String(firstUser && firstUser.content || '新对话')
+          titleText = titleText.replace(/（请检查上一轮的实际进展[\s\S]*$/, '').replace(/\s+/g, ' ').slice(0, 40)
           return {
             id,
             updatedAt: data.updatedAt || 0,
-            title: String(firstUser && firstUser.content || '新对话').replace(/\s+/g, ' ').slice(0, 40),
+            title: titleText || '新对话',
             // 上屏给人看的"几轮"= 用户自己说了几句。messageCount 是内部消息条数，
             // 里面混着 system 和每条工具结果 —— 拿它上屏就会出现"问一句显示 2 条、
             // 调几次工具变几十条"这种对不上的数字。
@@ -2059,7 +2072,11 @@ async function handle(pathname, body, events = {}) {
         const name = call.function && call.function.name
         if (!FILE_MUTATIONS.has(name)) continue
         const args = safeArgs(call.function && call.function.arguments)
-        if (args.path && !touched.includes(args.path)) touched.push(args.path)
+        let filePath = args.path
+        if (!filePath && name === 'upsert_database_item' && args.table) {
+          filePath = `Data/${String(args.table).replace(/\.json$/i, '').toLowerCase()}.json`
+        }
+        if (filePath && !touched.includes(filePath)) touched.push(filePath)
       }
     }
     if (!touched.length) return { ok: true, files: [], hint: '本次对话还没有修改过任何工程文件' }
@@ -2072,6 +2089,9 @@ async function handle(pathname, body, events = {}) {
       files.push({
         path: rel,
         backupCount: backups.length,
+        isRestored: !!(list && list.isRestored),
+        canRedo: !!(list && list.canRedo),
+        redoBackup: (list && list.redoBackup) || null,
         newest: backups[0] && backups[0].savedAt,
         oldest: backups[backups.length - 1] && backups[backups.length - 1].savedAt,
         tools: Array.from(new Set(backups.map(item => item.tool).filter(Boolean)))
@@ -2083,16 +2103,19 @@ async function handle(pathname, body, events = {}) {
     const rel = String(body.path || '').trim()
     if (!rel) throw new Error('请指定要回退的文件')
     const client = await ensureMcp()
-    const preview = await client.call('restore_backup', { path: rel, dryRun: false })
+    const callArgs = { path: rel, dryRun: false }
+    if (body.backup) callArgs.backup = body.backup
+    const preview = await client.call('restore_backup', callArgs)
     if (preview && preview.ok === false) return preview
     return {
       ok: true,
       path: rel,
+      alreadyRestored: !!preview.alreadyRestored,
       savedAt: preview.savedAt,
       diff: preview.diff,
       diffStat: preview.diffStat,
       safetyBackup: preview.safetyBackup,
-      message: `已把 ${rel} 退回 ${preview.savedAt} 的版本`
+      message: preview.message || `已把 ${rel} 退回 ${preview.savedAt} 的版本`
     }
   }
   if (pathname === '/session/load') {
@@ -2190,23 +2213,23 @@ async function handle(pathname, body, events = {}) {
     const session = sessionFor(body.sessionId || 'default')
     if (!session.pending) throw new Error('没有等待确认的操作')
     const pending = session.pending
-    session.pending = null
     const rejected = pathname === '/reject'
+    if (!rejected && FILE_MUTATIONS.has(pending.name)) {
+      try {
+        const ctxRes = await editorBridge.getContext()
+        if (ctxRes && ctxRes.ok && ctxRes.context && ctxRes.context.hasPendingInput === true) {
+          throw new Error('检测到编辑器中有未失焦的输入正在进行，为防修改被冲掉，请先敲击回车或点击空白处失焦后再确认执行')
+        }
+      } catch (e) {
+        if (e.message && e.message.includes('未失焦的输入')) throw e
+      }
+    }
+    session.pending = null
     let result
     // 打包（裁剪 + 落盘）只做一次：事件里的"已截断/落在哪"与入历史的正文必须来自同一次打包
     let packedApproved = ''
     if (rejected) result = { ok: false, rejected: true, message: '用户取消了这项操作' }
     else {
-      if (FILE_MUTATIONS.has(pending.name)) {
-        try {
-          const ctxRes = await editorBridge.getContext()
-          if (ctxRes && ctxRes.ok && ctxRes.context && ctxRes.context.hasPendingInput === true) {
-            throw new Error('检测到编辑器中有未失焦的输入正在进行，为防修改被冲掉，请先敲击回车或点击空白处失焦后再确认执行')
-          }
-        } catch (e) {
-          if (e.message && e.message.includes('未失焦的输入')) throw e
-        }
-      }
       const args = FILE_MUTATIONS.has(pending.name)
         ? {
             ...pending.args,

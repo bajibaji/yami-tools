@@ -251,6 +251,18 @@ async function main() {
   check('回退后内容回到最初', fs.readFileSync(scriptAbs, 'utf8') === original)
   check('回退返回差异统计', !!undone.diffStat && typeof undone.diffStat.added === 'number', JSON.stringify(undone.diffStat || {}))
 
+  const backupsAfter = await json('/backups', 'POST', { sessionId: 'undo-1' })
+  const fileAfter = (backupsAfter.files || []).find(f => f.path === SCRIPT_REL)
+  check('回退后识别为已恢复初始版本 isRestored=true', !!(fileAfter && fileAfter.isRestored === true))
+  const prevBackupCount = fileAfter ? fileAfter.backupCount : 0
+
+  // 再次回退：幂等拦截，不重复写盘，不新增冗余备份
+  const secondUndo = await json('/backup-undo', 'POST', { path: SCRIPT_REL })
+  check('再次回退返回 alreadyRestored=true 幂等拦截', secondUndo.ok === true && secondUndo.alreadyRestored === true)
+  const backupsAfterSecond = await json('/backups', 'POST', { sessionId: 'undo-1' })
+  const fileAfterSecond = (backupsAfterSecond.files || []).find(f => f.path === SCRIPT_REL)
+  check('再次回退绝不新增冗余备份', !!(fileAfterSecond && fileAfterSecond.backupCount === prevBackupCount))
+
   console.log('\n########## 4. 修不好时必须如实报 compile-failed ##########')
   modelMode = 'always-broken'
   repairedOnce = false

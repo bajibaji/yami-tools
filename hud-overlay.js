@@ -217,7 +217,15 @@
         box-shadow: 0 0 6px rgba(56, 189, 248, 0.25) !important;
       }
 
-      /* 真正的自由悬浮窗模式 (可自由拖拽位置与调节窗口尺寸) */
+      /* 模式切换过渡态 (实现侧边停靠与自由悬浮窗互切时的极速平滑交叉淡入淡出) */
+      .yami-perf-dock.switching-mode {
+        opacity: 0 !important;
+        transform: scale(0.96) !important;
+        pointer-events: none !important;
+        transition: opacity 0.12s cubic-bezier(0.4, 0, 1, 1), transform 0.12s cubic-bezier(0.4, 0, 1, 1) !important;
+      }
+
+      /* 真正的自由悬浮窗模式 (可自由拖拽位置与调节窗口尺寸，自带丝滑淡入淡出与缩放动效) */
       .yami-perf-dock.floating {
         position: fixed !important;
         bottom: auto !important;
@@ -228,12 +236,32 @@
         min-height: 400px !important;
         box-shadow: 0 16px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
         border-radius: 6px !important;
-        display: none !important;
+        display: flex !important;
+        opacity: 0 !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+        transform: scale(0.96) translateY(8px) !important;
+        /* 出场收起动画：比进场更短更柔，结束后 visibility 变为 hidden */
+        transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0, 0, 1), visibility 0.16s !important;
       }
       .yami-perf-dock.floating.show {
-        display: flex !important;
-        transform: none !important;
         opacity: 1 !important;
+        visibility: visible !important;
+        transform: scale(1) translateY(0) !important;
+        pointer-events: auto !important;
+        /* 进场展开动画：优雅平滑弹升与淡入 */
+        transition: opacity 0.18s cubic-bezier(0.1, 0.9, 0.2, 1), transform 0.2s cubic-bezier(0.1, 0.9, 0.2, 1) !important;
+      }
+      /* 悬浮窗穿透模式双重物理级保障 */
+      .yami-perf-dock.floating.show.through {
+        pointer-events: none !important;
+        opacity: 0.75 !important;
+      }
+      .yami-perf-dock.floating.show.through * {
+        pointer-events: none !important;
+      }
+      .yami-perf-dock.floating.show.through .yami-perf-dock-header,
+      .yami-perf-dock.floating.show.through .yami-perf-dock-header * {
         pointer-events: auto !important;
       }
       .yami-perf-dock.floating .yami-perf-dock-header {
@@ -4240,13 +4268,50 @@
         border: 1px solid rgba(255, 255, 255, 0.06) !important;
         border-radius: 5px !important;
         background: #1f2026 !important;
+        transition: all 0.15s ease !important;
       }
-      .yami-ai-undo-info { display: flex !important; flex-direction: column !important; gap: 2px !important; min-width: 0 !important; }
+      .yami-ai-undo-item.is-restored {
+        background: rgba(16, 185, 129, 0.04) !important;
+        border-color: rgba(16, 185, 129, 0.18) !important;
+      }
+      .yami-ai-undo-info { display: flex !important; flex-direction: column !important; gap: 3px !important; min-width: 0 !important; flex: 1 !important; }
+      .yami-ai-undo-path-row {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        flex-wrap: wrap !important;
+      }
       .yami-ai-undo-path {
         color: #e5e7eb !important;
         font-size: 12px !important;
         overflow-wrap: anywhere !important;
         user-select: text !important;
+      }
+      .yami-ai-undo-tag {
+        font-size: 10px !important;
+        padding: 1px 5px !important;
+        border-radius: 3px !important;
+        line-height: 14px !important;
+        font-weight: 500 !important;
+        user-select: none !important;
+        display: inline-flex !important;
+        align-items: center !important;
+      }
+      .yami-ai-undo-tag.tag-modified {
+        background: rgba(245, 158, 11, 0.15) !important;
+        color: #fbbf24 !important;
+        border: 1px solid rgba(245, 158, 11, 0.3) !important;
+      }
+      .yami-ai-undo-tag.tag-restored {
+        background: rgba(16, 185, 129, 0.12) !important;
+        color: #34d399 !important;
+        border: 1px solid rgba(16, 185, 129, 0.25) !important;
+      }
+      .yami-ai-undo-actions {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        flex-shrink: 0 !important;
       }
       .yami-ai-undo-btn {
         flex: 0 0 auto !important;
@@ -4261,12 +4326,44 @@
         font-size: 11px !important;
         cursor: pointer !important;
         transition: all 0.15s ease !important;
+        user-select: none !important;
       }
       .yami-ai-undo-btn:hover {
         background: rgba(16, 185, 129, 0.18) !important;
         border-color: rgba(16, 185, 129, 0.5) !important;
       }
       .yami-ai-undo-btn:active { transform: scale(0.96) !important; }
+      .yami-ai-undo-btn.btn-done {
+        background: rgba(255, 255, 255, 0.05) !important;
+        border-color: rgba(255, 255, 255, 0.12) !important;
+        color: #9ca3af !important;
+        cursor: pointer !important;
+      }
+      .yami-ai-undo-btn.btn-done:hover {
+        background: rgba(255, 255, 255, 0.08) !important;
+        border-color: rgba(255, 255, 255, 0.2) !important;
+        color: #d1d5db !important;
+      }
+      .yami-ai-undo-btn.btn-redo {
+        background: rgba(56, 189, 248, 0.1) !important;
+        border-color: rgba(56, 189, 248, 0.3) !important;
+        color: #38bdf8 !important;
+      }
+      .yami-ai-undo-btn.btn-redo:hover {
+        background: rgba(56, 189, 248, 0.18) !important;
+        border-color: rgba(56, 189, 248, 0.5) !important;
+      }
+      .yami-ai-undo-btn.btn-dismiss {
+        background: transparent !important;
+        border-color: rgba(255, 255, 255, 0.08) !important;
+        color: #6b7280 !important;
+        padding: 3px 6px !important;
+      }
+      .yami-ai-undo-btn.btn-dismiss:hover {
+        background: rgba(255, 255, 255, 0.05) !important;
+        border-color: rgba(255, 255, 255, 0.15) !important;
+        color: #9ca3af !important;
+      }
 
       /* 会话历史面板 (History Panel) */
       .yami-ai-history {
@@ -5614,11 +5711,36 @@
     const floatBtn = document.getElementById('btn-dock-float');
     const resizer = document.getElementById('yami-dock-resizer');
     let isFloating = false;
+    let isSwitchingMode = false;
     const DOCK_FLOATING_KEY = 'yami-perf-dock-floating';
     const DOCK_POS_KEY = 'yami-perf-dock-pos';
     const DOCK_SIZE_KEY = 'yami-perf-dock-size';
 
-    function applyFloatingState(enable, notify) {
+    function applyFloatingState(enable, notify, animate) {
+      if (isSwitchingMode) return;
+      const isPanelOpen = dock.classList.contains('show') || (typeof isDockOpen !== 'undefined' && isDockOpen);
+      // 当大盘处于展开状态且显式指定 animate (如用户点击模式切换按钮) 时，执行平滑交叉淡入淡出动画
+      if (animate && isPanelOpen) {
+        isSwitchingMode = true;
+        dock.classList.add('switching-mode');
+        setTimeout(function() {
+          applyFloatingStateDirect(enable, notify);
+          requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+              dock.classList.remove('switching-mode');
+              setTimeout(function() {
+                isSwitchingMode = false;
+              }, 200);
+            });
+          });
+        }, 120);
+        return;
+      }
+
+      applyFloatingStateDirect(enable, notify);
+    }
+
+    function applyFloatingStateDirect(enable, notify) {
       isFloating = enable;
       dock.classList.toggle('floating', isFloating);
       if (floatBtn) {
@@ -5637,7 +5759,7 @@
         const w = size && size.w ? Math.max(380, Math.min(window.innerWidth - 20, size.w)) : defaultW;
         const h = size && size.h ? Math.max(400, Math.min(window.innerHeight - 20, size.h)) : defaultH;
         const defaultX = Math.max(20, window.innerWidth - w - 40);
-        const defaultY = Math.max(20, Math.min(window.innerHeight - h - 20, 60));
+        const defaultY = Math.max(20, Math.min(window.innerHeight - defaultH - 20, 60));
         const x = pos && typeof pos.x === 'number' ? Math.max(0, Math.min(window.innerWidth - 100, pos.x)) : defaultX;
         const y = pos && typeof pos.y === 'number' ? Math.max(0, Math.min(window.innerHeight - 50, pos.y)) : defaultY;
         dock.style.setProperty('left', x + 'px', 'important');
@@ -5665,7 +5787,7 @@
     if (floatBtn) {
       floatBtn.addEventListener('click', function(e) {
         e.stopPropagation();
-        applyFloatingState(!isFloating, true);
+        applyFloatingState(!isFloating, true, true);
       });
     }
     const dockHeaderEl = dock.querySelector('.yami-perf-dock-header');

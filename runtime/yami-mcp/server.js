@@ -1196,7 +1196,7 @@ async function callTool(name, args) {
         if (compile && !compile.ok && !compile.unavailable) {
           let rollback = null
           try { if (written.backup) rollback = restoreBackup(ROOT, rel, written.backup) } catch (e) { rollback = { error: e.message } }
-          rememberWrite({ path: rel, tool: 'edit_script', ok: false, compileOk: false, errorCount: compile.errorCount || 0, firstError: firstCompileError(compile), rolledBack: !!rollback && !rollback.error })
+          rememberWrite({ path: rel, tool: 'write_script', ok: false, compileOk: false, errorCount: compile.errorCount || 0, firstError: firstCompileError(compile), rolledBack: !!rollback && !rollback.error })
           return { ok: false, ...preview, compile, rollback, error: '编译未通过，已尝试自动恢复修改前脚本' }
         }
         await notifyEditorReload(rel)
@@ -1215,8 +1215,24 @@ async function callTool(name, args) {
       if (typeof args.newText !== 'string') return { ok: false, error: 'newText 必须是字符串；删除片段请传空字符串' }
       const oldText = readText(rel)
       if (oldText === null) return { ok: false, error: `脚本不存在: ${rel}` }
-      const target = args.oldText
-      const firstHit = oldText.indexOf(target)
+      let target = args.oldText
+      let firstHit = oldText.indexOf(target)
+      // 兼容 Windows CRLF / Linux LF 换行符差异：若直接找不到，尝试转换换行符匹配
+      if (firstHit === -1 && oldText.includes('\r\n') && target.includes('\n') && !target.includes('\r\n')) {
+        const crlfTarget = target.replace(/\n/g, '\r\n')
+        const crlfHit = oldText.indexOf(crlfTarget)
+        if (crlfHit !== -1) {
+          target = crlfTarget
+          firstHit = crlfHit
+        }
+      } else if (firstHit === -1 && !oldText.includes('\r\n') && target.includes('\r\n')) {
+        const lfTarget = target.replace(/\r\n/g, '\n')
+        const lfHit = oldText.indexOf(lfTarget)
+        if (lfHit !== -1) {
+          target = lfTarget
+          firstHit = lfHit
+        }
+      }
       if (firstHit === -1) {
         return { ok: false, error: '未在脚本中找到 oldText；请用 read_script 或 search_project 取到与文件逐字符一致的片段（注意缩进与换行）' }
       }
@@ -1513,7 +1529,14 @@ async function callTool(name, args) {
         const raw = fs.readFileSync(abs, 'utf8')
         const fullSha = sha256(raw)
         const parsed = JSON.parse(raw)
-        if (args.key && parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        if (args.key !== undefined && args.key !== null && args.key !== '' && parsed && typeof parsed === 'object') {
+          if (Array.isArray(parsed)) {
+            const idx = Number(args.key)
+            if (!Number.isInteger(idx) || idx < 0 || idx >= parsed.length) {
+              return { ok: false, error: `数组索引超出范围: ${args.key}（有效范围 0~${parsed.length - 1}）` }
+            }
+            return { ok: true, path: rel, key: String(idx), content: parsed[idx], sha256: fullSha }
+          }
           if (!(args.key in parsed)) return { ok: false, error: `文件中不存在指定的 key: ${args.key}` }
           return { ok: true, path: rel, key: args.key, content: parsed[args.key], sha256: fullSha }
         }
@@ -1736,16 +1759,49 @@ async function callTool(name, args) {
       const all = listBackups(ROOT, filterPath)
       const grouped = new Map()
       for (const item of all) grouped.set(item.path, (grouped.get(item.path) || 0) + 1)
+      let currentSha = null
+      let currentExists = false
+      let isRestored = false
+      let canRedo = false
+      let redoBackup = null
+      if (filterPath) {
+        const abs = resolveInside(ROOT, filterPath)
+        if (fs.existsSync(abs)) {
+          currentExists = true
+          try {
+            currentSha = sha256(fs.readFileSync(abs, 'utf8'))
+            const oldest = all[all.length - 1]
+            if (oldest && oldest.sha256) {
+              isRestored = (currentSha === oldest.sha256)
+            }
+            if (isRestored && all.length > 1) {
+              for (const b of all) {
+                if (b.sha256 && b.sha256 !== currentSha) {
+                  canRedo = true
+                  redoBackup = b.backup
+                  break
+                }
+              }
+            }
+          } catch (e) {}
+        }
+      }
       return {
         ok: true,
         count: all.length,
         fileCount: grouped.size,
+        currentExists,
+        currentSha,
+        isRestored,
+        canRedo,
+        redoBackup,
         backups: all.slice(0, limit).map(item => ({
           backup: item.backup,
           path: item.path,
           savedAt: item.savedAt,
           tool: item.tool,
           bytes: item.bytes,
+          sha256: item.sha256,
           olderVersions: grouped.get(item.path) || 1
         })),
         truncated: all.length > limit,
@@ -1770,7 +1826,10 @@ async function callTool(name, args) {
       const currentText = fs.readFileSync(abs, 'utf8')
       const backupAbs = resolveInside(ROOT, chosen.backup)
       const restoreText = fs.readFileSync(backupAbs, 'utf8')
-      if (args.expectedSha256 && sha256(currentText) !== args.expectedSha256) {
+      const currentSha = sha256(currentText)
+      const restoreSha = sha256(restoreText)
+
+      if (args.expectedSha256 && currentSha !== args.expectedSha256) {
         return { ok: false, conflict: true, error: '文件已被其他操作修改，expectedSha256 不匹配；请重新确认后再回退' }
       }
       const diff = unifiedDiff(currentText, restoreText, { label: `回退 ${rel} → ${chosen.savedAt}` })
@@ -1780,11 +1839,23 @@ async function callTool(name, args) {
         backup: chosen.backup,
         savedAt: chosen.savedAt,
         tool: chosen.tool,
-        oldSha256: sha256(currentText),
-        newSha256: sha256(restoreText),
+        oldSha256: currentSha,
+        newSha256: restoreSha,
         diff: diff.text,
         diffStat: { added: diff.added, removed: diff.removed, truncated: diff.truncated }
       }
+
+      // 幂等防御：若当前内容与目标备份完全一致，无需重复写盘，不新增冗余备份
+      if (currentSha === restoreSha) {
+        return {
+          ok: true,
+          dryRun: false,
+          alreadyRestored: true,
+          ...preview,
+          message: `当前文件已是 ${chosen.savedAt} 的版本（内容一致，无需重复回退）`
+        }
+      }
+
       if (args.dryRun !== false) return { ok: true, dryRun: true, ...preview, message: `将把 ${rel} 回退到 ${chosen.savedAt} 的版本，未写盘` }
       try {
         const writable = await ensureEditorWritable(rel)

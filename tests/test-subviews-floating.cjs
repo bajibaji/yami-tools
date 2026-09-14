@@ -18,6 +18,8 @@ const agentContent = fs.readFileSync(AGENT_PATH, 'utf8');
 // 1. 悬浮窗核心样式断言
 assert.ok(cssContent.includes('.yami-dock-float-btn'), 'src/style.css 必须包含 .yami-dock-float-btn 样式');
 assert.ok(cssContent.includes('.yami-perf-dock.floating'), 'src/style.css 必须包含 .yami-perf-dock.floating 悬浮窗样式');
+assert.ok(cssContent.includes('.yami-perf-dock.switching-mode'), 'src/style.css 必须包含 .switching-mode 模式切换平滑淡出过渡样式');
+assert.ok(cssContent.includes('visibility: hidden') && cssContent.includes('visibility: visible'), '悬浮窗必须使用 visibility+opacity 组合实现丝滑淡入淡出');
 assert.ok(cssContent.includes('.yami-dock-resizer'), 'src/style.css 必须包含 .yami-dock-resizer 缩放手柄样式');
 assert.ok(cssContent.includes('cursor: se-resize'), '缩放手柄必须具有右下缩放手势 cursor: se-resize');
 
@@ -25,6 +27,8 @@ assert.ok(cssContent.includes('cursor: se-resize'), '缩放手柄必须具有右
 assert.ok(hudContent.includes('id="btn-dock-float"'), 'hud-overlay.js 必须包含 #btn-dock-float 悬浮窗切换按钮');
 assert.ok(hudContent.includes('id="yami-dock-resizer"'), 'hud-overlay.js 必须包含 #yami-dock-resizer 拖拽手柄节点');
 assert.ok(hudContent.includes('applyFloatingState'), 'hud-overlay.js 必须实现 applyFloatingState 函数');
+assert.ok(hudContent.includes('switching-mode'), 'hud-overlay.js 必须在模式切换时调度 switching-mode 平滑动画');
+assert.ok(hudContent.includes('isSwitchingMode'), 'hud-overlay.js 必须包含 isSwitchingMode 动画互斥锁防抖');
 assert.ok(hudContent.includes('yami-perf-dock-floating'), '悬浮窗状态必须持久化到 localStorage: yami-perf-dock-floating');
 assert.ok(hudContent.includes('yami-perf-dock-pos'), '悬浮窗位置必须持久化到 localStorage: yami-perf-dock-pos');
 assert.ok(hudContent.includes('yami-perf-dock-size'), '悬浮窗尺寸必须持久化到 localStorage: yami-perf-dock-size');

@@ -17,10 +17,22 @@
       return token;
     } catch (e) { return localStorage.getItem('danjuan-ai-token') || ''; }
   }
+  const isPlaytestEnv = typeof location !== 'undefined' && (!location.href.includes('/resources/app/dist/') && !location.href.includes('/app/dist/'));
+  const SESSION_KEY = isPlaytestEnv ? 'danjuan-ai-session-playtest' : 'danjuan-ai-session';
+
+  function escapeHtml(text) {
+    return String(text == null ? '' : text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   const state = {
     token: '',
     child: null,
-    sessionId: localStorage.getItem('danjuan-ai-session') || ('session-' + Date.now().toString(36)),
+    sessionId: localStorage.getItem(SESSION_KEY) || ('session-' + Date.now().toString(36)),
     busy: false,
     pending: null,
     deciding: false,   // 审批卡正在提交（防连点），与 busy 分开：审批时 busy 完全可能是 true
@@ -36,7 +48,7 @@
     queueSeq: 0
   };
   state.token = sharedToken();
-  localStorage.setItem('danjuan-ai-session', state.sessionId);
+  localStorage.setItem(SESSION_KEY, state.sessionId);
 
   const AI_ICONS = {
     undo: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M5.828 7l2.536 2.536L6.95 10.95 2 6l4.95-4.95 1.414 1.414L5.828 5H13a8 8 0 1 1 0 16H4v-2h9a6 6 0 1 0 0-12H5.828z"/></svg>',
@@ -51,8 +63,13 @@
     cpu: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M13 4.055c4.5.496 8 4.31 8 8.945v5a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-5c0-4.635 3.5-8.449 8-8.945V2h2v2.055zM12 6a7 7 0 0 0-7 7v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5a7 7 0 0 0-7-7zm-4 5a2 2 0 1 1 0 4 2 2 0 0 1 0-4zm8 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/></svg>',
     brain: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M12 2l2.4 7.2L21.6 12l-7.2 2.4L12 21.6l-2.4-7.2L2.4 12l7.2-2.4L12 2zm0 4.6L10.6 10.6 6.6 12l4 1.4L12 17.4l1.4-4 4-1.4-4-1.4L12 6.6z"/></svg>',
     trash: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M7 6V3a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v3h5v2h-2v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V8H2V6h5zm2-2v2h6V4H9zm-3 4v12h12V8H6zm3 3h2v6H9v-6zm4 0h2v6h-2v-6z"/></svg>',
-    close: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 10.586l4.95-4.95 1.414 1.414L13.414 12l4.95 4.95-1.414 1.414L12 13.414l-4.95 4.95-1.414-1.414L10.586 12 5.636 7.05l1.414-1.414z"/></svg>'
+    close: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 10.586l4.95-4.95 1.414 1.414L13.414 12l4.95 4.95-1.414 1.414L12 13.414l-4.95 4.95-1.414-1.414L10.586 12 5.636 7.05l1.414-1.414z"/></svg>',
+    check: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M10 15.172l9.192-9.193 1.415 1.414L10 18l-6.364-6.364 1.414-1.414z"/></svg>',
+    redo: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M18.172 7l-2.536 2.536L17.05 10.95 22 6l-4.95-4.95-1.414 1.414L18.172 5H11a8 8 0 1 0 0 16h9v-2h-9a6 6 0 1 1 0-12h7.172z"/></svg>'
   };
+
+  // 本地临时已忽略/已移除的文件路径集合（按会话生命周期隔离，用户点“移除记录”后不再显示）
+  const dismissedUndoFiles = new Set();
 
   // 当前这一轮的思考过程块与起始时刻（严格模式下必须显式声明，否则出现隐式全局）
   let currentThinkingEl = null;
@@ -544,7 +561,8 @@
     panel.classList.add('show');
     try {
       const data = await request('/backups', { sessionId: state.sessionId });
-      const files = data.files || [];
+      const rawFiles = data.files || [];
+      const files = rawFiles.filter(f => !(f.isRestored && dismissedUndoFiles.has(f.path)));
       panel.innerHTML = '';
 
       const subHeader = document.createElement('div');
@@ -561,13 +579,17 @@
       if (!files.length) {
         const empty = document.createElement('div');
         empty.className = 'yami-ai-history-empty';
-        empty.textContent = data.hint || '本次对话还没有修改过工程文件。';
+        if (rawFiles.length > 0) {
+          empty.textContent = '本次对话所有改动已全部撤销至初始版本。';
+        } else {
+          empty.textContent = data.hint || '本次对话还没有修改过工程文件。';
+        }
         panel.appendChild(empty);
         return;
       }
       const tip = document.createElement('div');
       tip.className = 'yami-ai-undo-tip';
-      tip.textContent = '以下文件在本对话中被 AI 改过。点【撤销】退回它动手之前（回退本身也能再撤回）。';
+      tip.textContent = '以下文件在本对话中被 AI 改过。点【撤销】退回它动手前；已恢复初始状态的文件可随时重做或移除记录。';
       panel.appendChild(tip);
       // 当前批量授权（勾过"不再逐条确认"的文件）在此处可随时取消
       try {
@@ -605,41 +627,117 @@
           panel.appendChild(gbox);
         }
       } catch (e) { /* 授权信息读不到不影响撤销列表 */ }
+
       for (const file of files) {
         const row = document.createElement('div');
-        row.className = 'yami-ai-undo-item';
+        row.className = 'yami-ai-undo-item' + (file.isRestored ? ' is-restored' : '');
         const info = document.createElement('div');
         info.className = 'yami-ai-undo-info';
+
+        const pathRow = document.createElement('div');
+        pathRow.className = 'yami-ai-undo-path-row';
+
         const name = document.createElement('div');
         name.className = 'yami-ai-undo-path';
         name.textContent = file.path;
+        pathRow.appendChild(name);
+
+        const statusTag = document.createElement('span');
+        statusTag.className = 'yami-ai-undo-tag ' + (file.isRestored ? 'tag-restored' : 'tag-modified');
+        statusTag.textContent = file.isRestored ? '[已恢复初始版本]' : '[已修改]';
+        pathRow.appendChild(statusTag);
+
         const meta = document.createElement('div');
         meta.className = 'yami-ai-history-meta';
         const when = file.oldest ? new Date(file.oldest) : null;
-        meta.textContent = '改动前的版本：' + (when ? when.toLocaleString('zh-CN', { hour12: false }) : '未知')
-          + ' · 可回退版本 ' + file.backupCount + ' 个';
-        info.appendChild(name);
+        if (file.isRestored) {
+          meta.textContent = '当前内容已与 AI 动手前一致 (初始版本已生效)';
+        } else {
+          meta.textContent = '改动前的版本：' + (when ? when.toLocaleString('zh-CN', { hour12: false }) : '未知')
+            + ' · 可回退版本 ' + file.backupCount + ' 个';
+        }
+        info.appendChild(pathRow);
         info.appendChild(meta);
-        const btn = document.createElement('div');
-        btn.className = 'yami-ai-undo-btn';
-        btn.setAttribute('role', 'button');
-        btn.setAttribute('tabindex', '0');
-        btn.innerHTML = AI_ICONS.undo + '<span>撤销</span>';
-        activate(btn, async () => {
-          if (state.busy) return;
-          btn.textContent = '回退中';
-          try {
-            const result = await request('/backup-undo', { path: file.path });
-            addMessage('system', result.message || ('已回退 ' + file.path));
-            if (result.diffStat) pushNotice('回退差异：+' + result.diffStat.added + ' / -' + result.diffStat.removed, 'ok');
-            renderUndoList();
-          } catch (e) {
-            addMessage('error', '回退失败：' + e.message);
-            btn.textContent = '撤销';
+
+        const actions = document.createElement('div');
+        actions.className = 'yami-ai-undo-actions';
+
+        if (file.isRestored) {
+          // 1. 已是初始版本（只读提示，杜绝重复点击无限累加版本）
+          const doneBtn = document.createElement('div');
+          doneBtn.className = 'yami-ai-undo-btn btn-done';
+          doneBtn.setAttribute('role', 'button');
+          doneBtn.setAttribute('tabindex', '0');
+          doneBtn.setAttribute('title', '文件已恢复至改动前的原始状态');
+          doneBtn.innerHTML = AI_ICONS.check + '<span>已在初始版本</span>';
+          activate(doneBtn, () => {
+            pushNotice('当前文件已处于 AI 修改前的初始版本，无需重复撤销', 'ok');
+          });
+          actions.appendChild(doneBtn);
+
+          // 2. 如果存在可重做版本，提供重做按钮
+          if (file.canRedo && file.redoBackup) {
+            const redoBtn = document.createElement('div');
+            redoBtn.className = 'yami-ai-undo-btn btn-redo';
+            redoBtn.setAttribute('role', 'button');
+            redoBtn.setAttribute('tabindex', '0');
+            redoBtn.setAttribute('title', '反悔撤销：恢复为 AI 刚才修改的版本');
+            redoBtn.innerHTML = AI_ICONS.redo + '<span>重做修改</span>';
+            activate(redoBtn, async () => {
+              if (state.busy) return;
+              redoBtn.textContent = '恢复中…';
+              try {
+                const result = await request('/backup-undo', { path: file.path, backup: file.redoBackup });
+                addMessage('system', result.message || ('已恢复 ' + file.path + ' 的修改'));
+                pushNotice('已重做并恢复 AI 修改', 'ok');
+                renderUndoList();
+              } catch (e) {
+                addMessage('error', '重做失败：' + e.message);
+                renderUndoList();
+              }
+            });
+            actions.appendChild(redoBtn);
           }
-        });
+
+          // 3. 移除记录按钮（解决用户“为什么还在”的痛点）
+          const dismissBtn = document.createElement('div');
+          dismissBtn.className = 'yami-ai-undo-btn btn-dismiss';
+          dismissBtn.setAttribute('role', 'button');
+          dismissBtn.setAttribute('tabindex', '0');
+          dismissBtn.setAttribute('title', '从本次撤销列表中移除此项记录');
+          dismissBtn.textContent = '移除';
+          activate(dismissBtn, () => {
+            dismissedUndoFiles.add(file.path);
+            pushNotice('已从列表移除记录', 'ok');
+            renderUndoList();
+          });
+          actions.appendChild(dismissBtn);
+        } else {
+          // 待撤销状态：提供醒目的撤销按钮
+          const btn = document.createElement('div');
+          btn.className = 'yami-ai-undo-btn';
+          btn.setAttribute('role', 'button');
+          btn.setAttribute('tabindex', '0');
+          btn.innerHTML = AI_ICONS.undo + '<span>撤销</span>';
+          activate(btn, async () => {
+            if (state.busy) return;
+            btn.textContent = '回退中…';
+            try {
+              const result = await request('/backup-undo', { path: file.path });
+              addMessage('system', result.message || ('已回退 ' + file.path));
+              if (result.diffStat) pushNotice('已回退改动：+' + result.diffStat.added + ' / -' + result.diffStat.removed, 'ok');
+              else pushNotice('已成功退回初始版本', 'ok');
+              renderUndoList();
+            } catch (e) {
+              addMessage('error', '回退失败：' + e.message);
+              renderUndoList();
+            }
+          });
+          actions.appendChild(btn);
+        }
+
         row.appendChild(info);
-        row.appendChild(btn);
+        row.appendChild(actions);
         panel.appendChild(row);
       }
     } catch (e) {
@@ -776,6 +874,22 @@
         activate(row, () => loadSession(item.id, item.title));
         activate(del, async event => {
           event.stopPropagation();
+          if (del.dataset.confirming !== '1') {
+            del.dataset.confirming = '1';
+            del.innerHTML = AI_ICONS.trash + '<span>确定删除?</span>';
+            del.style.setProperty('color', '#f87171', 'important');
+            del.style.setProperty('border-color', '#ef4444', 'important');
+            setTimeout(() => {
+              if (del && del.isConnected) {
+                delete del.dataset.confirming;
+                del.innerHTML = AI_ICONS.trash + '<span>删除</span>';
+                del.style.removeProperty('color');
+                del.style.removeProperty('border-color');
+              }
+            }, 3000);
+            return;
+          }
+          delete del.dataset.confirming;
           try { await request('/session/delete', { sessionId: item.id }); } catch (e) { /* 忽略 */ }
           if (item.id === state.sessionId) startNewSession(false);
           renderHistory();
@@ -807,8 +921,9 @@
     try {
       const data = await request('/session/load', { sessionId: id });
       state.sessionId = data.sessionId || id;
-      localStorage.setItem('danjuan-ai-session', state.sessionId);
+      localStorage.setItem(SESSION_KEY, state.sessionId);
       state.pending = null;
+      dismissedUndoFiles.clear();
       currentThinkingEl = null;
       thinkingStartedAt = 0;
       endTurn();
@@ -833,6 +948,16 @@
         if (Array.isArray(message.steps)) {
           for (const step of message.steps) pushNotice('执行：' + step);
         }
+        if (message.content && message.role === 'assistant') {
+          const alignMatch = String(message.content).match(/<alignment-card>([\s\S]*?)<\/alignment-card>/i);
+          if (alignMatch) {
+            try {
+              const cardData = JSON.parse(alignMatch[1]);
+              renderAlignmentCard(cardData);
+            } catch (e) {}
+            message.content = String(message.content).replace(/<alignment-card>[\s\S]*?<\/alignment-card>/gi, '').trim();
+          }
+        }
         // 纯工具轮没有正文，不能凭空塞一个空气泡
         if (message.content) addMessage(message.role === 'user' ? 'user' : 'assistant', message.content);
       }
@@ -850,8 +975,9 @@
 
   function startNewSession(notify = true) {
     state.sessionId = 'session-' + Date.now().toString(36);
-    localStorage.setItem('danjuan-ai-session', state.sessionId);
+    localStorage.setItem(SESSION_KEY, state.sessionId);
     state.pending = null;
+    dismissedUndoFiles.clear();
     document.getElementById('yami-ai-approval')?.classList.remove('show');
     clearMessages('新对话已开始。告诉我你想做什么。');
     clearPlan();
@@ -2097,11 +2223,11 @@
         const firstOpt = (q.options && q.options[0]) || '';
         selections[qIdx] = firstOpt;
         qHtml += '<div class="yami-ai-align-q">';
-        qHtml += '<div class="yami-ai-align-q-title">' + (q.title || ('选项 ' + (qIdx + 1))) + '</div>';
+        qHtml += '<div class="yami-ai-align-q-title">' + escapeHtml(q.title || ('选项 ' + (qIdx + 1))) + '</div>';
         qHtml += '<div class="yami-ai-align-options">';
         (q.options || []).forEach((opt, optIdx) => {
           const selClass = optIdx === 0 ? ' selected' : '';
-          qHtml += '<div class="yami-ai-align-opt-btn' + selClass + '" role="button" tabindex="0" data-q="' + qIdx + '" data-val="' + opt + '">' + opt + '</div>';
+          qHtml += '<div class="yami-ai-align-opt-btn' + selClass + '" role="button" tabindex="0" data-q="' + qIdx + '" data-opt-idx="' + optIdx + '">' + escapeHtml(opt) + '</div>';
         });
         qHtml += '</div></div>';
       });
@@ -2109,7 +2235,7 @@
 
     let defHtml = '';
     if (Array.isArray(cardData.defaults) && cardData.defaults.length) {
-      defHtml = '<div class="yami-ai-align-defaults">其余按默认来：' + cardData.defaults.join('；') + '</div>';
+      defHtml = '<div class="yami-ai-align-defaults">其余按默认来：' + escapeHtml(cardData.defaults.join('；')) + '</div>';
     }
 
     card.innerHTML =
@@ -2117,7 +2243,7 @@
         AI_ICONS.brain +
         '<span>意图对齐确认</span>' +
       '</div>' +
-      '<div class="yami-ai-align-summary">' + (cardData.summary || '请确认接下来的实施方案：') + '</div>' +
+      '<div class="yami-ai-align-summary">' + escapeHtml(cardData.summary || '请确认接下来的实施方案：') + '</div>' +
       '<div class="yami-ai-align-questions">' + qHtml + '</div>' +
       defHtml +
       '<div class="yami-ai-align-actions">' +
@@ -2127,8 +2253,9 @@
 
     card.querySelectorAll('.yami-ai-align-opt-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        const qIdx = btn.getAttribute('data-q');
-        const val = btn.getAttribute('data-val');
+        const qIdx = parseInt(btn.getAttribute('data-q'), 10);
+        const optIdx = parseInt(btn.getAttribute('data-opt-idx'), 10);
+        const val = cardData.questions?.[qIdx]?.options?.[optIdx] ?? '';
         selections[qIdx] = val;
         btn.parentElement.querySelectorAll('.yami-ai-align-opt-btn').forEach(b => b.classList.remove('selected'));
         btn.classList.add('selected');
@@ -2272,6 +2399,11 @@
       if (e && (e.name === 'AbortError' || /已打断/.test(String(e.message)))) {
         setStatus('已打断', 'idle');
         resolvePendingCard(false, '已打断');
+      } else if (e && /未失焦/.test(String(e.message))) {
+        // 编辑器有输入尚未按回车确认，保留卡片不标记为失败，提醒用户失焦后可直接再次点击
+        document.getElementById('yami-ai-approval')?.classList.add('show');
+        hudToast(e.message || '编辑器中有未失焦的输入，请在编辑器中按回车失焦后重新点击');
+        setStatus('等待确认', 'wait');
       } else {
         addMessage('error', e.message + '。修改未完成，可重新发送需求。');
         resolvePendingCard(false, '执行失败');
@@ -2755,14 +2887,27 @@
       startNewSession();
     });
     document.addEventListener('keydown', event => {
-      if (event.key !== 'Escape' || !state.busy) return;
+      if (event.key !== 'Escape') return;
       // 只有「面板开着 + 正停在 AI 助手页」时才接管 Esc，不抢编辑器自己的 Esc 行为
       const dock = document.getElementById('yami-perf-dock');
       const page = document.getElementById('page-ai');
       const visible = dock && page && dock.classList.contains('show') && getComputedStyle(page).display !== 'none';
       if (!visible) return;
-      event.preventDefault();
-      stopStream();
+
+      // 1. 如果审批卡片正等待确认，按 Esc 快捷取消修改
+      const approvalBox = document.getElementById('yami-ai-approval');
+      const isApprovalVisible = approvalBox && approvalBox.classList.contains('show');
+      if ((isApprovalVisible || state.pending) && !state.busy && !state.deciding) {
+        event.preventDefault();
+        decide(false);
+        return;
+      }
+
+      // 2. 如果正在运行中，按 Esc 终止流
+      if (state.busy) {
+        event.preventDefault();
+        stopStream();
+      }
     });
     const inputArea = document.getElementById('yami-ai-input');
     inputArea.addEventListener('keydown', event => {

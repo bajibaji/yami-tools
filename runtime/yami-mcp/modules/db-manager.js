@@ -210,7 +210,7 @@ class DatabaseManager {
     }
 
     try {
-      const written = writeAtomic(this.root, relPath, outputJson)
+      const written = writeAtomic(this.root, relPath, outputJson, { tool: 'upsert_database_item' })
       return {
         ok: true,
         dryRun: false,

@@ -1278,6 +1278,30 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
       - `test-subviews-floating.cjs` 21/21 项全绿；
       - `test-static-health.cjs` 静态检查全绿。
 
+  - **【55】2026-09-13 · 撤销功能交互缺陷与幂等性彻底根治（消除“为什么还在，还可以一直撤销”盲区）**：
+    - **背景与深层根因**：
+      1. **为什么还可以一直撤销（版本越点越多）**：原 `restore_backup` 缺少内容一致性幂等拦截。当用户点击撤销将文件还原后，当前内容与初始备份已 100% 相同；但此时再次点击撤销，后端依然执行 `writeAtomic` 盲目写盘并生成新的 `.bak`，导致备份版本从 2 个被狂点到 6 个，产生无限撤销假象；
+      2. **为什么还在（状态不可感知）**：后端 `/backups` 仅统计工具修改记录，未对比当前磁盘真实文件 sha256 与基准备份 sha256；撤销成功后，前端重新渲染时依然显示未撤销时的绿色【撤销】按钮，用户无法得知是否生效；且缺少移出列表的交互出口。
+    - **全链路彻底根治落地**：
+      1. **服务端幂等防御**：在 `restore_backup` 中比较 `currentSha === restoreSha`，若已处于目标版本直接返回 `alreadyRestored: true`，绝不重复写盘，不增加垃圾备份；
+      2. **精准状态识别透传**：`list_backups` 与 `/backups` 对比当前文件与 oldest 备份 sha256，精准识别并透传 `isRestored`、`canRedo` 与 `redoBackup`；
+      3. **前端状态闭环与重做/移除交互**：
+         - 状态标签分流：未恢复显示 `[已改动]`，已恢复显示 `[已恢复初始版本]`；
+         - 杜绝重复点击：已恢复项右侧显示只读 `[已在初始版本]`（带 check 图标，点击 Toast 说明已处于初始状态，绝不写盘）；
+         - 反悔重做支持：对已恢复项提供 `[重做修改]`，可一键恢复 AI 刚才的改动；
+         - 列表移除支持：提供 `[移除]` 按钮，点击即可从本次撤销列表中隐去该项；
+      4. **测试与部署守护**：`test-ai-repair.cjs` 追加 3 项针对 `isRestored` 与 `alreadyRestored` 幂等防重复备份的严苛断言；全量 30/30 套测试 100% 通过；`build.cjs --deploy` 镜像同步至生产目录 MD5 100% 对齐。
+
+  - **【54】2026-09-13 · 自由悬浮窗模式切换与展开收起丝滑淡入淡出动效落地**：
+    - **背景与痛点**：
+      1. 原 `.yami-perf-dock.floating` 使用 `display: none !important;` 阻断了浏览器所有 CSS 过渡（transition），导致在悬浮窗模式下呼出（Home 键、点击迷你胶囊）与关闭（Esc、关闭按钮）时窗口生硬闪现/骤停；
+      2. 点击顶栏【切换自由悬浮窗 / 停靠面板】按钮时，几何坐标（`left/top/width/height`）与浮动状态为瞬时切换，窗口在屏幕中产生突兀跳闪；
+    - **极简工业级方案落地**：
+      1. **悬浮窗状态常驻 `display: flex !important;`**：收起时采用 `opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; transform: scale(0.96) translateY(8px) !important;` 组合，配合出场 `transition: opacity 0.14s, transform 0.16s, visibility 0.16s`。展开时 `visibility: visible` 立即就位，配合进场 `transition: opacity 0.18s, transform 0.2s` 实现优雅弹升与微缩淡出；
+      2. **模式切换平滑交叉淡入淡出（Crossfade & Re-layout）**：在 `applyFloatingState` 中引入 `isSwitchingMode` 动画锁与 `.switching-mode` 过渡类。展开状态下点击切换按钮时，先 120ms 原地极速淡出微缩，随后在微不可查的重绘间隙切换几何属性并借由双重 `requestAnimationFrame` 移除 `.switching-mode`，触发新形态的顺滑淡入，彻底杜绝坐标跳变与视觉撕裂；初始化与面板隐藏时直接就位，0 额外开销；
+      3. **鼠标拖拽与缩放 1:1 跟手零迟滞保证**：`left/top/width/height` 严格不设任何 CSS transition，平移与右下角缩放保持 60fps/120fps 原生手感；
+      4. **测试与部署守护**：`test-subviews-floating.cjs` 补全动画与模式切换断言，全套 30 套测试全绿（30/30 PASS），`build.cjs --deploy` 镜像部署 MD5 100% 一致。
+
 ## 3.3 未完成 / 未验证 / 已知限制
 
 | 项目 | 状态 | 说明 |

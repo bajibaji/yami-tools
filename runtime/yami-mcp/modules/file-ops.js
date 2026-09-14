@@ -144,6 +144,10 @@ function listBackups(root, filterPath = '') {
           : stat.mtime.toISOString())
     const relPath = (meta && meta.path) || (parsed ? parsed[3] : name.replace(/\.bak$/, ''))
     if (filterPath && relPath !== filterPath) continue
+    let backupSha = (meta && meta.sha256) || ''
+    if (!backupSha) {
+      try { backupSha = sha256(fs.readFileSync(full, 'utf8')) } catch {}
+    }
     entries.push({
       backup: `${BACKUP_DIR}/${name}`,
       path: relPath,
@@ -152,6 +156,7 @@ function listBackups(root, filterPath = '') {
       tool: (meta && meta.tool) || '',
       bytes: (meta && meta.bytes) || stat.size,
       kind: (meta && meta.kind) || 'update',
+      sha256: backupSha,
       hasMeta: !!meta
     })
   }

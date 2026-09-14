@@ -320,7 +320,7 @@ class EventBuilder {
     }
 
     try {
-      const written = writeAtomic(this.root, relPath, outputJson)
+      const written = writeAtomic(this.root, relPath, outputJson, { tool: 'append_event_commands' })
       return {
         ok: true,
         dryRun: false,
