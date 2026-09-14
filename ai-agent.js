@@ -10,7 +10,19 @@
       const os = require('os');
       const dir = path.join(process.env.APPDATA || os.homedir(), 'DanJuanDevSuite');
       const file = path.join(dir, 'agent-token');
-      if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8').trim();
+      for (let i = 0; i < 3; i++) {
+        try {
+          if (fs.existsSync(file)) {
+            const content = fs.readFileSync(file, 'utf8').trim();
+            if (content) return content;
+          }
+          break;
+        } catch (e) {
+          // 短暂争用时自旋重试
+          const start = Date.now();
+          while (Date.now() - start < 30) {}
+        }
+      }
       fs.mkdirSync(dir, { recursive: true });
       const token = newToken();
       fs.writeFileSync(file, token, { encoding: 'utf8', mode: 0o600 });
@@ -283,6 +295,13 @@
     }
     if (timer) clearTimeout(timer);
     const data = await response.json().catch(() => ({ ok: false, error: 'AI 助手响应无法解析' }));
+    if (response.status === 401) {
+      const authErr = new Error('AI 助手鉴权失败（401 未授权：令牌不匹配）');
+      authErr.isAuth = true;
+      authErr.status = 401;
+      authErr.payload = data;
+      throw authErr;
+    }
     if (!response.ok || data.ok === false) {
       const err = new Error(data.error || 'AI 助手请求失败');
       err.payload = data;   // 失败响应里可能带着"没赶上的引导"这类回执，别丢在异常里
@@ -293,10 +312,22 @@
 
   async function ensureHost() {
     if (!state.token) {
-      state.token = newToken();
+      state.token = sharedToken() || newToken();
       localStorage.setItem('danjuan-ai-token', state.token);
     }
-    try { return await request('/status'); } catch (e) {}
+    try {
+      return await request('/status');
+    } catch (e) {
+      if (e && e.isAuth) {
+        const fresh = sharedToken();
+        if (fresh && fresh !== state.token) {
+          state.token = fresh;
+          localStorage.setItem('danjuan-ai-token', state.token);
+          try { return await request('/status'); } catch (e2) {}
+        }
+        throw new Error('AI 助手鉴权失败（401 令牌不匹配）：请重启编辑器或检查 agent-token 文件');
+      }
+    }
     const root = pluginRoot();
     if (!root) throw new Error('找不到插件运行目录（ai-host.js）：确认插件装在 <引擎根>/extension/yami-perf-extension 后重启编辑器');
     const { spawn } = require('child_process');
@@ -316,7 +347,17 @@
     state.child.stderr.on('data', data => console.log('[DanJuan AI]', data.toString().trim()));
     for (let i = 0; i < 30; i++) {
       await new Promise(resolve => setTimeout(resolve, 150));
-      try { return await request('/status'); } catch (e) {}
+      try {
+        return await request('/status');
+      } catch (e) {
+        if (e && e.isAuth) {
+          const fresh = sharedToken();
+          if (fresh && fresh !== state.token) {
+            state.token = fresh;
+            localStorage.setItem('danjuan-ai-token', state.token);
+          }
+        }
+      }
     }
     throw new Error('AI 助手启动超时，请重启 Open Yami 后重试');
   }
@@ -985,6 +1026,8 @@
     setStatus('就绪', 'ready');
     renderContext(null);
     if (notify) pushNotice('已开启新对话（旧对话仍可在历史里找回）');
+    // 新会话开启时，给该会话异步初始化独立基线快照
+    request('/changelog-baseline', { sessionId: state.sessionId }).catch(() => {});
   }
 
   function setStatus(text, mode) {
@@ -2808,8 +2851,6 @@
       api.switchView('ai');
       loadSettings();
       refreshContext();
-      // 打开面板即把当前工程状态设为基线：之后的变更小结只报这次对话的增量
-      try { await ensureHost(); await request('/changelog-baseline', {}); } catch (e) { /* 没开工程时忽略 */ }
     });
     activate(document.getElementById('yami-ai-send'), () => { state.busy ? stopStream() : sendMessage(); });
     activate(document.getElementById('yami-ai-approve'), () => decide(true));

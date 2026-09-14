@@ -141,15 +141,16 @@ const runtimeBridge = new RuntimeBridge(5966, cdpClient)
 const editorBridge = new EditorBridge(5967)
 
 /* ============================== 变更小结的运行时状态 ============================== */
-// 基线快照：新任务开始时由 project_changelog(reset:true) 建立，之后只报增量
-let baselineSnapshot = null
-// 本轮写入记录（工具名、是否通过编译、是否被回滚），供小结标注"谁改的、编译过没过"
-const recentWrites = []
-const RECENT_WRITES_MAX = 200
-// 最近一次试玩冒烟结论
+// 基线快照、待办清单与写入历史：按 sessionId 分桶隔离，避免跨会话污染与相互冲刷
+const sessionBaselines = new Map()
+const sessionTodos = new Map()
+const sessionWrites = new Map()
 let lastPlaytest = null
-// 本次任务的待办清单（模型通过 todo_write 维护）
-let currentTodos = []
+const RECENT_WRITES_MAX = 200
+
+function getSessionKey(args) {
+  return String((args && (args.sessionId || args.session)) || 'default')
+}
 
 /** 从编译器输出里取第一条报错（给变更小结用） */
 function firstCompileError(compile) {
@@ -158,10 +159,20 @@ function firstCompileError(compile) {
   return line.slice(0, 200)
 }
 
-function rememberWrite(entry) {
+function rememberWrite(entry, sessionId) {
   if (!entry || !entry.path) return
-  recentWrites.push(entry)
-  if (recentWrites.length > RECENT_WRITES_MAX) recentWrites.splice(0, recentWrites.length - RECENT_WRITES_MAX)
+  const key = sessionId || 'default'
+  let writes = sessionWrites.get(key)
+  if (!writes) { writes = []; sessionWrites.set(key, writes) }
+  writes.push(entry)
+  if (writes.length > RECENT_WRITES_MAX) writes.splice(0, writes.length - RECENT_WRITES_MAX)
+  // 同时同步进全局 default 副本以兼容未传 sessionId 的场景
+  if (key !== 'default') {
+    let defWrites = sessionWrites.get('default')
+    if (!defWrites) { defWrites = []; sessionWrites.set('default', defWrites) }
+    defWrites.push(entry)
+    if (defWrites.length > RECENT_WRITES_MAX) defWrites.splice(0, defWrites.length - RECENT_WRITES_MAX)
+  }
 }
 
 /* ============================== 类型与规则 ============================== */
@@ -1096,11 +1107,14 @@ function hasForbiddenPatchKey(value) {
 async function ensureEditorWritable(rel) {
   const result = await editorBridge.action('preflight', { path: rel })
   const detail = result && result.data ? result.data : result
-  if (detail && detail.dirty) return { ok: false, error: detail.error || '编辑器里有未保存修改，请先保存或取消后重试' }
-  // 桥不可用 = 查不到编辑器里有没有未保存改动。此时仍放行（否则桥一挂就完全不能改文件），
-  // 但必须把"这次没查"如实带出去，别让调用方以为脏检查通过了。
-  if (!result || result.ok === false) {
-    return { ok: true, warning: '编辑器桥不可用，未能检查编辑器内的未保存改动' }
+  if (detail && detail.dirty) return { ok: false, dirty: true, error: detail.error || `编辑器中「${rel}」有未保存修改，请先保存或取消后重试` }
+  // 桥在线但显式拒绝（例如工程不匹配、被占用、或其他错误），坚决拦截
+  if (result && result.ok === false && !String(result.error || '').includes('未启动')) {
+    return { ok: false, error: result.error || '编辑器预检失败，拒绝写盘以防数据覆盖' }
+  }
+  // 仅在桥端口未监听（离线/独立 MCP 测试）时降级放行并给出 warning
+  if (!result || (result.ok === false && String(result.error || '').includes('未启动'))) {
+    return { ok: true, offline: true, warning: '编辑器桥未运行（离线/测试模式），未执行未保存修改检查' }
   }
   return { ok: true }
 }
@@ -1137,15 +1151,25 @@ async function callTool(name, args) {
       if (!guid || !isValidGuid(guid)) return { ok: false, error: `文件名需含合法 16 位 hex GUID（含 a-f）: ${base}` }
       if (fs.existsSync(resolveInside(ROOT, rel))) return { ok: false, error: `脚本已存在，拒绝覆盖: ${rel}；修改请使用 write_script` }
       const src = buildScriptSource(args.type, args.className, args.nameZh, args.params)
-      if (args.dryRun !== false) return { ok: true, dryRun: true, message: '模板已生成（未写盘，dryRun）', script: src }
+      const diffRes = unifiedDiff('', src, { label: rel })
+      const diffStat = { added: diffRes.added, removed: diffRes.removed, truncated: diffRes.truncated }
+      const preview = {
+        path: rel,
+        oldSha256: null,
+        newSha256: sha256(src),
+        changedBytes: Buffer.byteLength(src),
+        diff: diffRes.text,
+        diffStat
+      }
+      if (args.dryRun !== false) return { ok: true, dryRun: true, message: '模板已生成（未写盘，dryRun）', script: src, ...preview }
       try {
         const table = args.type === 'plugin' ? 'plugins' : args.type === 'command' ? 'commands' : null
         if (table) {
           const writable = await ensureEditorWritable(`Data/${table}.json`)
           if (!writable.ok) return writable
         }
-        const written = writeAtomic(ROOT, rel, src, { tool: 'write_resource' })
-        rememberWrite({ path: rel, tool: 'write_resource', ok: true })
+        const written = writeAtomic(ROOT, rel, src, { tool: 'create_script' })
+        rememberWrite({ path: rel, tool: 'create_script', ok: true })
         const registration = registerCreatedScript(args.type, guid, 'create_script')
         if (!registration.ok) {
           try { fs.unlinkSync(resolveInside(ROOT, rel)) } catch {}
@@ -1282,6 +1306,7 @@ async function callTool(name, args) {
         if (compile && !compile.ok && !compile.unavailable) {
           let rollback = null
           try { if (written.backup) rollback = restoreBackup(ROOT, rel, written.backup) } catch (e) { rollback = { error: e.message } }
+          rememberWrite({ path: rel, tool: 'edit_script', ok: false, compileOk: false, errorCount: compile.errorCount || 0, firstError: firstCompileError(compile), rolledBack: !!rollback && !rollback.error })
           return { ok: false, ...preview, compile, rollback, error: '编译未通过，已尝试自动恢复修改前脚本' }
         }
         await notifyEditorReload(rel)
@@ -1405,8 +1430,8 @@ async function callTool(name, args) {
       const stat = fs.statSync(abs)
       if (!stat.isFile()) return { ok: false, error: '暂不支持删除目录，请使用编辑器文件管理操作' }
       const guid = parseGuidFromName(path.basename(rel))
-      if (guid && !args.force) {
-        const referencingFiles = []
+      let referencingFiles = []
+      if (guid) {
         for (const f of listResourceFiles()) {
           if (f.path === rel || !DATA_TYPES.includes(f.type)) continue
           const fAbs = path.join(ROOT, f.path)
@@ -1416,7 +1441,7 @@ async function callTool(name, args) {
           } catch {}
           if (referencingFiles.length >= 5) break
         }
-        if (referencingFiles.length > 0) {
+        if (referencingFiles.length > 0 && !args.force) {
           return {
             ok: false,
             hasReferences: true,
@@ -1439,8 +1464,13 @@ async function callTool(name, args) {
         type: TYPE_BY_EXT[path.extname(rel).toLowerCase()] || 'other',
         bytes: stat.size,
         preview: rawText.split(/\r?\n/).slice(0, 12).join('\n').slice(0, 600),
-        backup: '.yami-mcp-backups/' + path.basename(backup)
+        backup: '.yami-mcp-backups/' + path.basename(backup),
+        referencingFiles: referencingFiles.length > 0 ? referencingFiles : undefined,
+        forced: referencingFiles.length > 0 && !!args.force
       }
+      const previewMsg = referencingFiles.length > 0
+        ? `【高危强删】该资源仍被 ${referencingFiles.length} 个文件引用（如 ${referencingFiles[0]}），删除可能导致工程损坏，请务必谨慎确认。`
+        : `将删除 ${path.basename(rel)}（${stat.size} 字节），删除前会自动备份；这是不可轻易撤销的操作，需要你确认。`
       const previewResult = {
         ok: true,
         dryRun: true,
@@ -1449,7 +1479,7 @@ async function callTool(name, args) {
         bytes: stat.size,
         oldSha256: currentSha256,
         impact,
-        message: `将删除 ${path.basename(rel)}（${stat.size} 字节），删除前会自动备份；这是不可轻易撤销的操作，需要你确认。`
+        message: previewMsg
       }
       if (args.dryRun !== false) {
         return { ...previewResult, confirmationToken: issueConfirmationToken('delete_resource', rel, currentSha256) }
@@ -1602,19 +1632,22 @@ async function callTool(name, args) {
       const text = JSON.stringify(args.content, null, 2) + '\n'
       const oldText = readText(rel)
       const oldSha256 = oldText === null ? null : sha256(oldText)
+      const diffRes = unifiedDiff(oldText || '', text, { label: rel })
+      const diffStat = { added: diffRes.added, removed: diffRes.removed, truncated: diffRes.truncated }
       if (args.expectedSha256 && oldSha256 !== args.expectedSha256) return { ok: false, conflict: true, error: '资源已被其他操作修改，拒绝覆盖' }
-      if (args.dryRun !== false) return { ok: true, dryRun: true, message: '校验通过（未写盘，dryRun）', preview: text, oldSha256, newSha256: sha256(text) }
+      if (args.dryRun !== false) return { ok: true, dryRun: true, message: '校验通过（未写盘，dryRun）', preview: text, diff: diffRes.text, diffStat, oldSha256, newSha256: sha256(text) }
       try {
         const writable = await ensureEditorWritable(rel)
         if (!writable.ok) return writable
-        const written = writeAtomic(ROOT, rel, text, { tool: 'create_script' })
+        const written = writeAtomic(ROOT, rel, text, { tool: 'write_resource' })
         let memoryStatus = null
         try {
           const reloadRes = await cdpClient.reloadEditorResource(rel, guid)
           if (reloadRes && reloadRes.ok) memoryStatus = '已自动热更新进编辑器内存，阻止反向覆盖'
         } catch (e) {}
         await notifyEditorReload(rel)
-        return { ok: true, dryRun: false, ...written, message: `已写入 ${rel}（${text.length} 字节）${memoryStatus ? ' · ' + memoryStatus : ''}`, memoryReloaded: !!memoryStatus }
+        rememberWrite({ path: rel, tool: 'write_resource', ok: true })
+        return { ok: true, dryRun: false, path: rel, diff: diffRes.text, diffStat, ...written, memoryStatus, message: `已写入 ${rel}${memoryStatus ? '（' + memoryStatus + '）' : ''}` }
       } catch (e) { return { ok: false, error: `写入失败: ${e.message}` } }
     }
     case 'cdp_eval':
@@ -1697,8 +1730,10 @@ async function callTool(name, args) {
       return result
     }
     case 'todo_write': {
+      const sKey = getSessionKey(args)
+      let currentTodos = sessionTodos.get(sKey) || []
       if (args.clear === true) {
-        currentTodos = []
+        sessionTodos.set(sKey, [])
         return { ok: true, cleared: true, items: [], summary: summarizeTodos([]) }
       }
       const { items, rejected } = normalizeTodos(args.todos)
@@ -1710,7 +1745,7 @@ async function callTool(name, args) {
       if (!transition.ok) {
         return { ok: false, regressed: transition.regressed, error: '不允许把已完成的步骤改回未完成：' + transition.regressed.join('、') }
       }
-      currentTodos = items
+      sessionTodos.set(sKey, items)
       const summary = summarizeTodos(items)
       return {
         ok: true,
@@ -1723,11 +1758,13 @@ async function callTool(name, args) {
       }
     }
     case 'project_changelog': {
+      const sKey = getSessionKey(args)
       const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 200)
       const current = snapshotProject(ROOT)
+      let baselineSnapshot = sessionBaselines.get(sKey)
       if (args.reset === true || !baselineSnapshot) {
         const isFirst = !baselineSnapshot
-        baselineSnapshot = current
+        sessionBaselines.set(sKey, current)
         return {
           ok: true,
           baseline: true,
@@ -1738,7 +1775,9 @@ async function callTool(name, args) {
         }
       }
       const diff = diffSnapshot(baselineSnapshot, current)
-      const changelog = buildChangelog({ snapshotDiff: diff, writes: recentWrites, playtest: lastPlaytest })
+      const writes = sessionWrites.get(sKey) || sessionWrites.get('default') || []
+      const changelog = buildChangelog({ snapshotDiff: diff, writes, playtest: lastPlaytest })
+      const currentTodos = sessionTodos.get(sKey) || []
       const todoSummary = summarizeTodos(currentTodos)
       return {
         ok: true,

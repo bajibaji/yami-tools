@@ -9,6 +9,7 @@
 const fs = require('fs')
 const path = require('path')
 const { resolveInside, sha256, writeAtomic } = require('./file-ops')
+const { unifiedDiff } = require('./diff')
 
 class EventBuilder {
   constructor(projectRoot) {
@@ -305,6 +306,8 @@ class EventBuilder {
     }
 
     const outputJson = JSON.stringify(eventData, null, 2) + '\n'
+    const diffRes = unifiedDiff(originalText, outputJson, { label: relPath })
+    const diffStat = { added: diffRes.added, removed: diffRes.removed, truncated: diffRes.truncated }
 
     if (dryRun !== false) {
       return {
@@ -312,9 +315,12 @@ class EventBuilder {
         dryRun: true,
         path: relPath,
         oldSha256: sha256(originalText),
+        newSha256: sha256(outputJson),
         appendedCount: compiledCommands.length,
         totalCommands: eventData.commands.length,
         previewCommands: compiledCommands,
+        diff: diffRes.text,
+        diffStat,
         message: `校验通过：成功装配 ${compiledCommands.length} 条指令（未落盘，dryRun）`
       }
     }
@@ -326,8 +332,11 @@ class EventBuilder {
         dryRun: false,
         path: relPath,
         oldSha256: sha256(originalText),
+        newSha256: sha256(outputJson),
         appendedCount: compiledCommands.length,
         totalCommands: eventData.commands.length,
+        diff: diffRes.text,
+        diffStat,
         ...written,
         message: `成功向 ${relPath} 写入 ${compiledCommands.length} 条指令（总计 ${eventData.commands.length} 步）`
       }

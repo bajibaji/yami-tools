@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.7.1';
+  const PROBE_VERSION = '1.7.2';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -4110,11 +4110,26 @@
             readJsonBody(req, 64 * 1024).then(async function(action) {
               const name = String(action && action.action || '');
               if (name === 'preflight' || name === 'reload') {
-                if (!Data || !Data.manifest || !File || typeof File.get !== 'function') {
-                  return { ok: false, engineUnavailable: true, error: '当前引擎没有暴露内部接口（window.YamiEngine），文件预检与重载不可用' };
-                }
                 const rel = String(action.path || '').replace(/\\/g, '/').replace(/^\.\//, '');
                 if (!rel || rel.includes('..')) return { ok: false, error: '编辑器桥收到非法工程路径' };
+
+                if (name === 'preflight') {
+                  const ctx = getEditorContext();
+                  if (ctx && ctx.hasPendingInput) {
+                    return { ok: false, dirty: true, hasPendingInput: true, path: rel, error: '编辑器中有未失焦的输入正在进行，请在编辑器中按回车或点击空白处失焦后再确认，以防修改被覆盖' };
+                  }
+                  if (ctx && ctx.selectedFile && ctx.selectedFile.path) {
+                    const selPath = String(ctx.selectedFile.path).replace(/\\/g, '/').replace(/^\.\//, '');
+                    if (selPath === rel && (!Data || !Data.manifest)) {
+                      return { ok: false, dirty: true, path: rel, error: `编辑器当前正打开着「${rel}」，且当前引擎版本无法侦测未保存状态。为防覆盖丢数据，请先保存编辑器或切换至其他文件后再确认` };
+                    }
+                  }
+                }
+
+                if (!Data || !Data.manifest || !File || typeof File.get !== 'function') {
+                  if (name === 'preflight') return { ok: true, dirty: false, engineUnavailable: true, path: rel };
+                  return { ok: false, engineUnavailable: true, error: '当前引擎没有暴露内部接口（window.YamiEngine），文件重载不可用' };
+                }
                 const dataMatch = rel.match(/^Data\/([a-zA-Z0-9_-]+)\.json$/);
                 const guidMatch = rel.match(/\.([0-9a-f]{16})\.[^.]+$/);
                 let meta = dataMatch

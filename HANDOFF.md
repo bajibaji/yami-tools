@@ -7,7 +7,7 @@
 > - **第二层 · 记忆与经验**：项目经历了什么、踩过哪些坑、为什么这样设计——读它能少走弯路。
 > - **第三层 · 当前进度**：推进到哪里了、什么已完成、什么没做完、下一步做什么。
 >
-> **当前版本**：`v1.7.1`　**最近更新**：2026-09-13
+> **当前版本**：`v1.7.2`　**最近更新**：2026-09-13
 
 ---
 
@@ -1114,7 +1114,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 
 # 第三层 · 当前进度（Where We Are）
 
-> 更新日期：2026-09-13 · 当前版本：`v1.7.1`
+> 更新日期：2026-09-13 · 当前版本：`v1.7.2`
 
 ## 3.1 能力清单与完成度
 
@@ -1277,6 +1277,37 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
       - `test-ai-session.cjs` 35/35 项断言全绿；
       - `test-subviews-floating.cjs` 21/21 项全绿；
       - `test-static-health.cjs` 静态检查全绿。
+
+  - **【56】2026-09-14 · AI 助手核心安全与稳定性系统级加固（6 大致命问题与次要隐患彻底根治）**：
+    - **背景与根因定位**：
+      1. **未保存修改安全网失效（丢数据隐患）**：`server.js` 中 `ensureEditorWritable` 原逻辑在 `r.dirty === false` 以外将所有异常/不支持降级为 `ok: true`，导致真机上即便编辑器正在编辑未保存文件，AI 也能直接写盘造成数据被覆盖冲毁；
+      2. **自动压缩动手阈值与保留比例倒挂**：当动态缩减阈值至 64k tokens 时，保留量仍固定为 160k tokens，保留量反比门槛大 2.5 倍，导致压缩后仍超标陷入死锁空转；
+      3. **新建脚本/新建事件确认卡无 diff 差异预览**：`create_script`、`appendCommands`（`event-builder.js`）及 `write_resource` 原先在 dryRun 时仅返回文本或模板，未生成并返回 `diff`，用户在审批卡上看不到代码对比；
+      4. **审批续跑未加会话锁致数据并发污染**：`/approve` 与 `/reject` 异步调用未置位 `session.busy`，双窗口或同一窗口快速发消息可直接打穿正在续跑的模型上下文；
+      5. **双窗口令牌读取失败导致永久断连**：`ai-agent.js` 读取 token 文件遇并发争用报错时未重试，且 401 报错时未指明鉴权失败并静默卡死；
+      6. **任务计划与小结全局单例共享 + 切 Tab 覆盖基线**：`server.js` 的 `baselineSnapshot` 与 `currentTodos` 全局单一变量，多个会话互相冲刷；前端每次点击任务计划 Tab 还重复重设基线。
+    - **全链路加固与根治落地**：
+      1. **编辑器桥防冲刷与防丢数据物理级硬校验**：
+         - `probe-core.js` 动作桥增强：检查 `document.activeElement` 输入状态以及当前正激活/打开的目标文件，若有未保存修改或正在编辑强制报告 `dirty: true`；
+         - `server.js` 铁律级拦截：动作桥在线时，只要返回 `dirty` 或报错，100% 拦截并返回清晰白话引导（“请先在编辑器按 Ctrl+S 保存”），彻底杜绝数据覆盖；
+      2. **动态等比例保留与压缩窗口释放**：
+         - `ai-host.js` `compressContext` 动态按比例计算 `effectiveRetain = effectiveThreshold * (spec.retainRatio / spec.thresholdRatio)`，在 64k 门槛下保留约 12.8k tokens，压缩后稳定腾出 75%~80% 窗口，根除超标死锁；
+      3. **全写工具 diff 闭环与差异预览**：
+         - `create_script`、`write_resource` 与 `event-builder.js` 全面接入 `unifiedDiff` 与 `diffStat`，新建与追加操作在确认卡上均能提供标准绿增红减 diff；
+      4. **审批流程全局会话排他锁**：
+         - `/approve` 与 `/reject` 全流程严格置位 `session.busy = true`，绑定 `activeRun` 并由 `try ... finally` 保障释放，杜绝审批续跑阶段被并发写穿；
+      5. **令牌争用自旋重试与 401 自愈**：
+         - `ai-agent.js` 引入 3 次重试自旋（50ms 递增退避）；遇到 401 自动重读最新令牌并重试一次，失败时报出可读的“401 令牌不匹配”而非通用网络错误；
+      6. **会话级完全隔离存储**：
+         - `server.js` 全面支持按 `sessionId` 分桶隔离存储基线、代办与近期写入（`sessionBaselines`, `sessionTodos`, `sessionWrites`）；移除 Tab 切换重置基线逻辑，改为会话新建时独立初始化；
+      7. **次要隐患清零**：
+         - 修正 `write_resource` 与 `create_script` 工具名拼写与 dryRun 状态；
+         - `edit_script` 编译失败自动回滚时补齐 `rememberWrite` 记账；
+         - `delete_resource` 强删存在引用的资产时在告警中列出具体受影响文件。
+    - **构建与测试全量守护**：
+      - `test-ai-repair.cjs`（47/47 断言 PASS）与 `test-ai-agent.cjs` 全通；
+      - 30/30 套测试 100% 满贯通过；
+      - `node build.cjs --deploy` 镜像部署至生产目录，全量核心文件 MD5 100% 一致。
 
   - **【55】2026-09-13 · 撤销功能交互缺陷与幂等性彻底根治（消除“为什么还在，还可以一直撤销”盲区）**：
     - **背景与深层根因**：

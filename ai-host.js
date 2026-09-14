@@ -424,8 +424,10 @@ async function compressContext(session, config, key, tools) {
 
   // ---- 第二级：模型摘要 ----
   const before = session.messages
-  // 保留范围：先按 token 预算从尾部累积，再对齐到工具调用组边界（切在 tool 消息上会造出坏序列）
-  const startIndex = messagePairs.alignStartIndex(before, contextMeter.selectStartIndex(before, spec.retainTokens, spec))
+  // 关键修复：保留预算必须与有效压缩阈值严格成比例（保留量永远不得大于触发门槛，保证压缩后腾出至少 75% 窗口）
+  const ratio = (spec.retainRatio && spec.thresholdRatio) ? (spec.retainRatio / spec.thresholdRatio) : 0.2
+  const effectiveRetain = Math.min(spec.retainTokens, Math.floor(effectiveThreshold * ratio))
+  const startIndex = messagePairs.alignStartIndex(before, contextMeter.selectStartIndex(before, effectiveRetain, spec))
   if (startIndex <= 1) return pruned.pruned.length > 0
   const system = before[0]
   const tail = before.slice(startIndex)
@@ -1340,7 +1342,7 @@ async function attachChangelog(session, result) {
   if (!result || !sessionTouchedFiles(session)) return result
   try {
     const client = await ensureMcp()
-    const summary = await client.call('project_changelog', {})
+    const summary = await client.call('project_changelog', { sessionId: session.id })
     // 还没建立基线（例如面板没打开就发了需求）→ 先补建基线，保证后续小结准确
     if (summary && summary.ok && summary.baseline) {
       result.changedFiles = 0
@@ -1823,6 +1825,9 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
     const call = calls[index]
     const name = call.function && call.function.name
     const args = safeArgs(call.function && call.function.arguments)
+    if ((name === 'todo_write' || name === 'project_changelog') && !args.sessionId) {
+      args.sessionId = session.id
+    }
 
     // 连续的只读调用合并成一批并发执行：模型一次要读好几个文件时，省掉串行等待的时间。
     // 结果仍按模型请求的顺序回填，保证对话消息序列与工具调用一一对应。
@@ -2055,9 +2060,9 @@ async function handle(pathname, body, events = {}) {
     }
   }
   if (pathname === '/changelog-baseline') {
-    // 打开面板/开始新任务时把当前工程状态设为基线，之后的变更小结只报增量
+    // 开始新任务时把当前工程状态设为该会话的独立基线，之后的变更小结只报增量
     const client = await ensureMcp()
-    const result = await client.call('project_changelog', { reset: true })
+    const result = await client.call('project_changelog', { reset: true, sessionId: body.sessionId || 'default' })
     return { ok: true, trackedFiles: (result && result.trackedFiles) || 0, message: (result && result.message) || '' }
   }
   if (pathname === '/sessions') return { ok: true, sessions: listSessions() }
@@ -2211,78 +2216,88 @@ async function handle(pathname, body, events = {}) {
   }
   if (pathname === '/approve' || pathname === '/reject') {
     const session = sessionFor(body.sessionId || 'default')
+    if (session.busy) throw new Error('当前会话已有任务正在运行中，请稍候')
     if (!session.pending) throw new Error('没有等待确认的操作')
-    const pending = session.pending
-    const rejected = pathname === '/reject'
-    if (!rejected && FILE_MUTATIONS.has(pending.name)) {
-      try {
-        const ctxRes = await editorBridge.getContext()
-        if (ctxRes && ctxRes.ok && ctxRes.context && ctxRes.context.hasPendingInput === true) {
-          throw new Error('检测到编辑器中有未失焦的输入正在进行，为防修改被冲掉，请先敲击回车或点击空白处失焦后再确认执行')
-        }
-      } catch (e) {
-        if (e.message && e.message.includes('未失焦的输入')) throw e
-      }
-    }
-    session.pending = null
-    let result
-    // 打包（裁剪 + 落盘）只做一次：事件里的"已截断/落在哪"与入历史的正文必须来自同一次打包
-    let packedApproved = ''
-    if (rejected) result = { ok: false, rejected: true, message: '用户取消了这项操作' }
-    else {
-      const args = FILE_MUTATIONS.has(pending.name)
-        ? {
-            ...pending.args,
-            expectedSha256: pending.preview && pending.preview.oldSha256,
-            dryRun: false,
-            // 高危操作（删除等）必须带上预览时发的一次性确认令牌，只靠 force 不足以执行
-            ...(pending.preview && pending.preview.confirmationToken ? { confirmationToken: pending.preview.confirmationToken } : {})
+    session.busy = true
+    try {
+      const pending = session.pending
+      const rejected = pathname === '/reject'
+      if (!rejected && FILE_MUTATIONS.has(pending.name)) {
+        try {
+          const ctxRes = await editorBridge.getContext()
+          if (ctxRes && ctxRes.ok && ctxRes.context && ctxRes.context.hasPendingInput === true) {
+            throw new Error('检测到编辑器中有未失焦的输入正在进行，为防修改被冲掉，请先敲击回车或点击空白处失焦后再确认执行')
           }
-        : pending.args
-      if (events.onTool) events.onTool({ phase: 'start', key: String(pending.call && pending.call.id || pending.name), name: pending.name, label: toolLabel(pending.name), target: String(pending.args.path || '') })
-      result = await (await ensureMcp()).call(pending.name, args)
-      packedApproved = clipToolResult(result, pending.name)   // 顺带在原对象上盖"是否被裁剪"的章
-      if (events.onTool) {
-        const key = String(pending.call && pending.call.id || pending.name)
-        events.onTool(result && result.ok === false
-          ? { phase: 'fail', key, name: pending.name, label: toolLabel(pending.name), detail: (result && (result.error || result.message)) || '执行失败', info: toolInfoOf(result) }
-          : { phase: 'done', key, name: pending.name, label: toolLabel(pending.name), info: toolInfoOf(result) })
+        } catch (e) {
+          if (e.message && e.message.includes('未失焦的输入')) throw e
+        }
       }
-      // 用户勾选"本次任务内该文件不再逐条确认"时才授予授权（删除类永不授权）
-      if (body.grantForSession === true && result && result.ok !== false) {
-        const key = addGrant(session, pending)
-        if (key && events.onNotice) events.onNotice(`已记住：${toolLabel(pending.name)} · ${pending.args.path || ''} 在本次任务内不再逐条确认（随时可撤销）`)
+      session.pending = null
+      let result
+      // 打包（裁剪 + 落盘）只做一次：事件里的"已截断/落在哪"与入历史的正文必须来自同一次打包
+      let packedApproved = ''
+      if (rejected) result = { ok: false, rejected: true, message: '用户取消了这项操作' }
+      else {
+        const args = FILE_MUTATIONS.has(pending.name)
+          ? {
+              ...pending.args,
+              expectedSha256: pending.preview && pending.preview.oldSha256,
+              dryRun: false,
+              // 高危操作（删除等）必须带上预览时发的一次性确认令牌，只靠 force 不足以执行
+              ...(pending.preview && pending.preview.confirmationToken ? { confirmationToken: pending.preview.confirmationToken } : {})
+            }
+          : pending.args
+        if (events.onTool) events.onTool({ phase: 'start', key: String(pending.call && pending.call.id || pending.name), name: pending.name, label: toolLabel(pending.name), target: String(pending.args.path || '') })
+        result = await (await ensureMcp()).call(pending.name, args)
+        packedApproved = clipToolResult(result, pending.name)   // 顺带在原对象上盖"是否被裁剪"的章
+        if (events.onTool) {
+          const key = String(pending.call && pending.call.id || pending.name)
+          events.onTool(result && result.ok === false
+            ? { phase: 'fail', key, name: pending.name, label: toolLabel(pending.name), detail: (result && (result.error || result.message)) || '执行失败', info: toolInfoOf(result) }
+            : { phase: 'done', key, name: pending.name, label: toolLabel(pending.name), info: toolInfoOf(result) })
+        }
+        // 用户勾选"本次任务内该文件不再逐条确认"时才授予授权（删除类永不授权）
+        if (body.grantForSession === true && result && result.ok !== false) {
+          const key = addGrant(session, pending)
+          if (key && events.onNotice) events.onNotice(`已记住：${toolLabel(pending.name)} · ${pending.args.path || ''} 在本次任务内不再逐条确认（随时可撤销）`)
+        }
       }
-    }
-    session.messages.push({ role: 'tool', tool_call_id: pending.call.id, content: packedApproved || clipToolResult(result, pending.name) })
-    saveSession(session)
-    const config = readStoredConfig()
-
-    // 用户确认的写入同样要过编译门禁；失败时把 tsc 报错喂回模型自动重修（与自动执行路径一致）
-    const failure = rejected ? null : compileFailureOf(pending.name, result)
-    if (rejected) {
-      // 用户明确取消：这一步与后面排队的调用都不再执行。剩余调用必须补上"未执行"应答——
-      // 否则它们会继续弹确认卡（用户刚说了不要），历史里还会留下没人应答的调用。
-      appendUnexecutedToolResults(session, pending.remaining || [], '用户取消了这项操作')
-    } else if (failure) {
-      if ((session.repairs || 0) >= MAX_REPAIR_ATTEMPTS) {
-        // 编译没过且修复预算用尽：本轮中止，队列里剩下的调用一律作废（补应答收尾）
-        appendUnexecutedToolResults(session, pending.remaining || [], '前一步编译未通过，本次已停止')
-        return await attachChangelog(session, {
-          ok: false,
-          status: 'compile-failed',
-          message: `脚本没能通过编译检查，已自动回滚、工程保持完好。最后一次报错：\n${failure.firstLine || failure.output.split('\n')[0] || '（无输出）'}`
-        })
-      }
-      session.repairs = (session.repairs || 0) + 1
-      session.messages.push(repairMessage(failure))
+      session.messages.push({ role: 'tool', tool_call_id: pending.call.id, content: packedApproved || clipToolResult(result, pending.name) })
       saveSession(session)
-      if (events.onNotice) events.onNotice(`编译没通过（${failure.errorCount} 处），已回滚并让 AI 自动重修（第 ${session.repairs}/${MAX_REPAIR_ATTEMPTS} 次）`)
-    } else if (pending.remaining && pending.remaining.length) {
-      const outcome = await processToolCalls(session, pending.remaining, config, '', events)
-      if (outcome.approval) return outcome.approval
+      const config = readStoredConfig()
+
+      // 用户确认的写入同样要过编译门禁；失败时把 tsc 报错喂回模型自动重修（与自动执行路径一致）
+      const failure = rejected ? null : compileFailureOf(pending.name, result)
+      if (rejected) {
+        // 用户明确取消：这一步与后面排队的调用都不再执行。剩余调用必须补上"未执行"应答——
+        // 否则它们会继续弹确认卡（用户刚说了不要），历史里还会留下没人应答的调用。
+        appendUnexecutedToolResults(session, pending.remaining || [], '用户取消了这项操作')
+      } else if (failure) {
+        if ((session.repairs || 0) >= MAX_REPAIR_ATTEMPTS) {
+          // 编译没过且修复预算用尽：本轮中止，队列里剩下的调用一律作废（补应答收尾）
+          appendUnexecutedToolResults(session, pending.remaining || [], '前一步编译未通过，本次已停止')
+          return await attachChangelog(session, {
+            ok: false,
+            status: 'compile-failed',
+            message: `脚本没能通过编译检查，已自动回滚、工程保持完好。最后一次报错：\n${failure.firstLine || failure.output.split('\n')[0] || '（无输出）'}`
+          })
+        }
+        session.repairs = (session.repairs || 0) + 1
+        session.messages.push(repairMessage(failure))
+        saveSession(session)
+        if (events.onNotice) events.onNotice(`编译没通过（${failure.errorCount} 处），已回滚并让 AI 自动重修（第 ${session.repairs}/${MAX_REPAIR_ATTEMPTS} 次）`)
+      } else if (pending.remaining && pending.remaining.length) {
+        const outcome = await processToolCalls(session, pending.remaining, config, '', events)
+        if (outcome.approval) return outcome.approval
+      }
+      const running = runTurn(session, config, events)
+      session.activeRun = running
+      return await running
+    } finally {
+      session.busy = false
+      session.activeRun = null
+      saveSession(session)
     }
-    return await runTurn(session, config, events)
   }
   if (pathname === '/clear') {
     // 只清空**这段对话的内容**，绝不删历史文件。
