@@ -663,9 +663,6 @@
   }
 
   /** 会话切换后重建消息区 */
-  // 进面板时"上次那段对话只回放一次"（G-12）：反复进出页面不该反复重建时间轴
-  let lastSessionRestored = false;
-
   function clearMessages(placeholder) {
     const list = document.getElementById('yami-ai-messages');
     if (!list) return;
@@ -944,29 +941,60 @@
     autoScroll();
   }
 
-  /** 任务计划卡片：多步任务有进度骨架，原地刷新 */
+  /** 折叠那一行显示的"当前任务"：进行中的那条 → 否则下一步 → 都做完了就说做完了 */
+  function planCurrent(items) {
+    const doing = items.find(item => item.status === 'in_progress');
+    if (doing) return '当前：' + doing.text;
+    const todo = items.find(item => item.status !== 'done');
+    return todo ? '下一步：' + todo.text : '全部完成';
+  }
+
+  /** 计划卡片的收起/展开：折叠时只占一行（进度 + 当前这一步） */
+  function setPlanExpanded(card, expanded) {
+    card.classList.toggle('collapsed', !expanded);
+    const head = card.querySelector('.yami-ai-plan-head');
+    if (head) head.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    const arrow = card.querySelector('.yami-ai-plan-arrow');
+    if (arrow) arrow.textContent = expanded ? '▾' : '▸';
+    autoScroll();
+  }
+
+  /**
+   * 任务计划卡片：多步任务有进度骨架，原地刷新。
+   * 默认**只占一行**：进度 + 当前这一步 —— 用户要看的是"现在在做什么"，
+   * 完整清单点一下展开即可（铺五六行会把对话挤走）。
+   * 展开状态记在元素上：原地刷新时保持用户的选择，不来回弹。
+   */
   function renderPlan(items, summary) {
     const list = document.getElementById('yami-ai-messages');
     if (!list || !Array.isArray(items) || !items.length) return;
     let card = document.getElementById('yami-ai-plan');
     if (!card || !card.isConnected) {
       card = document.createElement('div');
-      card.className = 'yami-ai-plan';
+      card.className = 'yami-ai-plan collapsed';
       card.id = 'yami-ai-plan';
+      card.innerHTML =
+        '<div class="yami-ai-plan-head" role="button" tabindex="0" aria-expanded="false">' +
+          '<span class="yami-ai-plan-arrow">▸</span>' +
+          '<span class="yami-ai-plan-title"></span>' +
+          '<span class="yami-ai-plan-current"></span>' +
+        '</div>' +
+        '<div class="yami-ai-plan-body"></div>';
       (currentTurn ? (messageSlot() || list) : list).appendChild(card);
+      activate(card.querySelector('.yami-ai-plan-head'), () => setPlanExpanded(card, card.classList.contains('collapsed')));
     }
-    card.innerHTML = '';
-    const head = document.createElement('div');
-    head.className = 'yami-ai-plan-head';
     const stats = summary || {};
-    head.textContent = '任务计划（' + (stats.done || 0) + '/' + (stats.total || items.length) + '）';
-    card.appendChild(head);
+    card.querySelector('.yami-ai-plan-title').textContent =
+      '任务计划 ' + (stats.done || 0) + '/' + (stats.total || items.length);
+    card.querySelector('.yami-ai-plan-current').textContent = planCurrent(items);
+    const body = card.querySelector('.yami-ai-plan-body');
+    body.innerHTML = '';
     for (const item of items) {
       const row = document.createElement('div');
       row.className = 'yami-ai-plan-item ' + (item.status || 'pending');
       const mark = item.status === 'done' ? '[完成]' : item.status === 'in_progress' ? '[进行中]' : '[待做]';
       row.textContent = mark + ' ' + item.text;
-      card.appendChild(row);
+      body.appendChild(row);
     }
     autoScroll();
   }
@@ -3096,11 +3124,14 @@
       api.switchView('ai');
       loadSettings();
       refreshContext();
-      // 【G-12】屏上与上下文必须说同一件事：模型本来就看得到上次那段对话的全部历史，
-      // 屏上却只有一句欢迎语 —— 那就是"它怎么记得上次的事"的来源。只回放一次。
-      if (!lastSessionRestored && messagesPristine()) {
-        lastSessionRestored = true;
-        restoreLastSession();
+      // 【G-12】进页面 = 开新对话：屏上和上下文必须说同一件事。
+      // 以前进页面会静默沿用上次那个 sessionId（模型看得到全部历史），屏上却只有一句欢迎语 ——
+      // 用户以为开了新对话，于是被上一轮的记忆吓一跳。旧对话没丢，都在【历史】里。
+      // 例外：正在跑的一轮不能换会话（换了就把它晾在后台），那种情况反过来 —— 把屏上和上下文对齐。
+      if (state.busy) {
+        if (messagesPristine()) restoreLastSession();
+      } else if (!messagesPristine()) {
+        startNewSession();
       }
     });
     activate(document.getElementById('yami-ai-send'), () => { state.busy ? stopStream() : sendMessage(); });

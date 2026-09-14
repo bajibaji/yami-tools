@@ -669,8 +669,18 @@ async function main() {
     // 屏上却只有欢迎语，用户就会以为"新对话怎么记得上次的事"
     assert.ok(/function restoreLastSession\(/.test(agentSource) && /function messagesPristine\(/.test(agentSource),
       'G-12：进面板要回放上次那段对话（空会话则保持欢迎语）')
-    assert.ok(/lastSessionRestored && messagesPristine\(\)/.test(agentSource) && /这是上次那段对话/.test(agentSource),
-      'G-12：只回放一次，并且如实说明这是上次那段对话')
+    assert.ok(/else if \(!messagesPristine\(\)\) \{\s*startNewSession\(\);/.test(agentSource),
+      'G-12：进页面默认开新会话（旧对话在【历史】里），不再默默沿用上次的上下文')
+    assert.ok(/if \(state\.busy\) \{\s*if \(messagesPristine\(\)\) restoreLastSession\(\);/.test(agentSource) && /这是上次那段对话/.test(agentSource),
+      'G-12：正在跑的一轮不能换会话，那种情况改成把屏上和上下文对齐')
+    // 任务计划：折叠成一行只显示当前任务（这张卡以前一个 CSS 都没有，是裸 div）
+    assert.ok(/function planCurrent\(/.test(agentSource) && /function setPlanExpanded\(/.test(agentSource) && /'yami-ai-plan collapsed'|className = 'yami-ai-plan collapsed'/.test(agentSource),
+      '任务计划默认折叠成一行（进度 + 当前这步），点开才铺完整清单')
+    assert.ok(/if \(doing\) return '当前：' \+ doing\.text/.test(agentSource) && /'全部完成'/.test(agentSource),
+      '折叠那一行要显示"当前任务"（没有进行中就下一步 / 全部完成）')
+    for (const cls of ['yami-ai-plan', 'yami-ai-plan-head', 'yami-ai-plan-current', 'yami-ai-plan-body']) {
+      assert.ok(new RegExp('\\.' + cls + ' \\{').test(styleSource), cls + ' 必须有样式（否则计划卡又变回裸 div）')
+    }
     for (const cls of ['yami-ai-history-dl', 'yami-ai-history-actions']) {
       assert.ok(new RegExp('\\.' + cls + ' \\{').test(styleSource), cls + ' 必须有样式（否则导出按钮是个裸文字）')
     }

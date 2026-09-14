@@ -4511,6 +4511,52 @@
         background: rgba(239, 68, 68, 0.15) !important;
         border-color: rgba(239, 68, 68, 0.45) !important;
       }
+      /* 任务计划卡片：折叠时只占一行（进度 + 当前这一步），点开才铺完整清单。
+         此前这张卡片一个 CSS 都没有，是排在下方的裸 div —— 一直占着好几行。 */
+      .yami-ai-plan {
+        display: flex !important;
+        flex-direction: column !important;
+        margin: 4px 0 !important;
+        border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        border-radius: 5px !important;
+        background: #1e1f25 !important;
+        overflow: hidden !important;
+      }
+      .yami-ai-plan-head {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        padding: 5px 8px !important;
+        font-size: 12px !important;
+        cursor: pointer !important;
+      }
+      .yami-ai-plan-head:hover { background: #252730 !important; }
+      .yami-ai-plan-arrow { color: #64748b !important; font-size: 10px !important; flex: 0 0 auto !important; }
+      .yami-ai-plan-title {
+        color: #94a3b8 !important;
+        font-size: 11px !important;
+        flex: 0 0 auto !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+      }
+      .yami-ai-plan-current {
+        color: #e5e7eb !important;
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+      }
+      .yami-ai-plan-body {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 3px !important;
+        padding: 2px 8px 6px 24px !important;
+      }
+      .yami-ai-plan.collapsed .yami-ai-plan-body { display: none !important; }
+      .yami-ai-plan-item { color: #94a3b8 !important; font-size: 12px !important; line-height: 1.45 !important; }
+      .yami-ai-plan-item.done { color: #64748b !important; text-decoration: line-through !important; }
+      .yami-ai-plan-item.in_progress { color: #93c5fd !important; }
+
       /* 历史条目上的「导出」：与「删除」同一套小按钮尺寸，语义色换成中性蓝 */
       .yami-ai-history-actions {
         align-self: flex-end !important;
@@ -5681,7 +5727,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.9.2 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.9.3 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
@@ -6022,7 +6068,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.9.2 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.9.3 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -9284,7 +9330,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.9.2';
+      const cur = (probe && probe.version) ? probe.version : '1.9.3';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -9350,7 +9396,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.9.2') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.9.3') + ')');
           refreshVersionBadge();
         }
       });
