@@ -44,9 +44,24 @@ assert.ok(agentContent.includes("historyToggle.classList.add('active')"), '激�
 
 // 4. 全屏子视图遮罩与排他展示断言 (不留其他内容)
 assert.ok(cssContent.includes('.yami-ai-page.view-undo #yami-ai-messages'), 'src/style.css 在 view-undo 下必须隐藏消息流');
-assert.ok(cssContent.includes('.yami-ai-page.view-undo #yami-ai-composer'), 'src/style.css 在 view-undo 下必须隐藏输入区');
 assert.ok(cssContent.includes('.yami-ai-page.view-history #yami-ai-messages'), 'src/style.css 在 view-history 下必须隐藏消息流');
-assert.ok(cssContent.includes('.yami-ai-page.view-history #yami-ai-composer'), 'src/style.css 在 view-history 下必须隐藏输入区');
+// 关键：选择器**指到的元素必须真的存在**。
+// 以前这里只断言"CSS 文本里含这串选择器"，于是 v1.7.0 写的 #yami-ai-quick-bar / #yami-ai-composer
+// （两个 id 在插件里根本不存在）照样全绿——"进子视图隐藏输入区"从发布起就没生效过（审计 G-10(d)）。
+const subviewRule = (cssContent.match(/\/\* 全界面子视图排版[\s\S]*?\}/) || [''])[0];
+assert.ok(subviewRule.length > 0, 'src/style.css 必须包含「全界面子视图排版」隐藏规则');
+const subviewTokens = Array.from(new Set(subviewRule.match(/[#.]yami-ai-[a-z-]+/g) || []));
+const required = ['yami-ai-messages', 'yami-ai-compose', 'yami-ai-devbar', 'yami-ai-scope'];
+const missingRequired = required.filter(name => !subviewTokens.some(token => token.slice(1) === name));
+assert.strictEqual(missingRequired.length, 0, '子视图隐藏规则必须覆盖消息流 / 输入区(compose+devbar) / 环境行，缺少: ' + missingRequired.join(', '));
+const dangling = subviewTokens.filter(token => {
+  const name = token.slice(1);
+  if (token[0] === '#') return !agentContent.includes('id="' + name + '"');
+  // 类名可能写在 className 赋值里（如 page.className = '… yami-ai-page'），
+  // 所以只要求这个名字在面板脚本里出现过；id 则必须真的有 id="…" 声明
+  return !agentContent.includes(name);
+});
+assert.strictEqual(dangling.length, 0, '子视图隐藏规则里有指向不存在元素的选择器（写了也不生效）: ' + dangling.join(', '));
 assert.ok(cssContent.includes('.yami-ai-subpage-header'), 'src/style.css 必须包含子视图头部说明条 .yami-ai-subpage-header');
 assert.ok(agentContent.includes('yami-ai-subpage-back'), 'ai-agent.js 必须在撤销和历史面板提供返回对话入口');
 assert.ok(agentContent.includes("setSubView('chat')"), '返回对话必须调用 setSubView 还原主对话');

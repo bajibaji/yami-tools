@@ -5,3 +5,7 @@ dist/
 .vscode/
 *.log
 .agents/
+# AgentTeams 运行/归档状态（进程产物，不入库；审计结论已入库在 audit/）
+.agent-teams/
+# 测试跑批的临时输出
+_last-run.txt

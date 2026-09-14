@@ -40,7 +40,10 @@ const FILE_MUTATIONS = new Set([
   'write_resource', 'create_script', 'write_script', 'edit_script', 'patch_resource',
   'delete_resource', 'append_event_commands', 'upsert_database_item', 'restore_backup'
 ])
-const OTHER_MUTATIONS = new Set(['click_element', 'trigger_playtest', 'editor_action', 'interact_editor', 'send_player_input', 'send_player_pointer', 'playtest_smoke'])
+// ui_steps（AI 在编辑器界面上逐步演示/操作）也是**有副作用**的动作：它会改属性、切页、点按钮。
+// 以前它不在任何审批集合里 → confirm 模式下也能不问就动界面（越界前不可裁决），
+// 只有事后「撤销这一步」；现在并入 OTHER_MUTATIONS：confirm 模式先问、auto 模式照旧自动。
+const OTHER_MUTATIONS = new Set(['click_element', 'trigger_playtest', 'editor_action', 'interact_editor', 'send_player_input', 'send_player_pointer', 'playtest_smoke', 'ui_steps'])
 const HIDDEN_TOOLS = new Set(['cdp_eval'])
 // 只读工具：可并发执行（模型常在一条消息里同时读好几个文件）。
 // 写盘 / 编辑器动作 / 试玩输入一律独占执行并保持顺序；未列出的工具按独占处理（将来新增写工具不会被误并发）。
@@ -154,6 +157,9 @@ function loadSessionFromDisk(id) {
  *  丢掉了，于是切回旧会话看起来就像"当时的思考凭空消失"。 */
 function visibleMessages(session, limit = 4000) {
   const reasoningLimit = limit * 2   // 思考通常比正文长，给两倍额度
+  // 用户消息的**绝对轮次号**（压缩检查点不算）：面板的历史窗口只显示后 60 条时，
+  // 气泡上的「重发 / 编辑」仍要能指到宿主眼里的同一条消息（G-1 的 /session/rewind 按这个号截断）。
+  let userTurn = -1
   return session.messages
     // 纯工具轮（有思考、没正文）也要回放：实时看到的是「思考① → 执行 → 思考② → …」，
     // 只回放带正文的那一条，用户切回旧会话就会以为"当时的思考和步骤都丢了"。
@@ -167,12 +173,15 @@ function visibleMessages(session, limit = 4000) {
         return { role: 'assistant', content: ('【早前对话已压缩，以下是要点】\n\n' + summary).slice(0, limit), reasoning: '' }
       }
       const calls = Array.isArray(message.tool_calls) ? message.tool_calls : []
+      const isUser = message.role === 'user'
+      if (isUser) userTurn += 1
       return {
         role: message.role,
         content: String(message.content || '').slice(0, limit),
         reasoning: message.reasoning_content ? String(message.reasoning_content).slice(0, reasoningLimit) : '',
         // 工具步骤一并回放（中文名与实时工具条用同一张表），前端照着还原「执行：xxx」行
-        steps: calls.map(call => toolLabel(call.function && call.function.name)).filter(Boolean)
+        steps: calls.map(call => toolLabel(call.function && call.function.name)).filter(Boolean),
+        ...(isUser ? { turnIndex: userTurn } : {})
       }
     })
 }
@@ -333,6 +342,9 @@ function contextStatus(session) {
     calibrated: usage.calibrated,
     messages: session.messages.length,
     summary: !!session.summary,
+    // 刻度点开时用：折叠规模 + 摘要正文（截断，避免把整份摘要塞进一次 /status）
+    summaryMeta: session.summaryMeta || null,
+    summaryText: session.summary ? String(session.summary).slice(0, 4000) : '',
     nearLimit: usage.tokens >= spec.thresholdTokens,
     label: contextMeter.formatTokens(usage.tokens) + '/' + contextMeter.formatTokens(spec.contextWindow) + ' · ' + percent + '%'
   }
@@ -397,7 +409,7 @@ function isCheckpoint(message) {
  * 触发条件是「占用达到窗口阈值（默认 1M 的 80%）」，而不是撞满窗口才动手。
  * 布局：system → 检查点(user) → ...最近消息，是合法且省事的对话序列。
  */
-async function compressContext(session, config, key, tools) {
+async function compressContext(session, config, key, tools, force = false) {
   const spec = contextSpec()
 
   // ---- 第一级：确定性修剪无门槛常态化执行（纯本地零 token 成本，防超大输出撑爆上下文） ----
@@ -414,7 +426,10 @@ async function compressContext(session, config, key, tools) {
   // 现实中上下文超过 64k tokens 轻量模型注意力即严重衰减，收敛摘要触发上限
   const effectiveThreshold = Number(process.env.YAMI_AI_COMPACT_MAX_TOKENS || 0) || Math.min(spec.thresholdTokens, 64000)
   const decision = contextMeter.shouldCompact({ tokens: usage.tokens, toolsTokens: fixedOverhead, thresholdTokens: effectiveThreshold })
-  if (!decision.compact) {
+  // force：用户在面板上点「立即压缩」时不等阈值。唯一例外仍是"工具 schema 本身就超阈值"——
+  // 那种情况下压缩对话没有意义，手动也跳过，免得白烧一次摘要调用。
+  const forced = force && decision.reason !== 'fixed-overhead'
+  if (!decision.compact && !forced) {
     if (decision.reason === 'fixed-overhead') {
       process.stderr.write(`[danjuan-ai] 工具定义本身约占 ${fixedOverhead} token，已达压缩阈值 ${effectiveThreshold}，压缩对话没有意义，已跳过\n`)
     }
@@ -494,6 +509,8 @@ async function compressContext(session, config, key, tools) {
     ].join('\n')
   }
   session.summary = summaryText
+  // 面板「上下文」刻度可点开看折叠了什么：把这次折叠的规模与时间记下来（不进提示词，只回传给界面）
+  session.summaryMeta = { folded: folded.length, before: before.length, after: session.messages.length, at: new Date().toISOString(), manual: !!force }
   session.messages = [system, {
     role: 'user',
     content: CHECKPOINT_PREAMBLE + '\n\n' + CHECKPOINT_OPEN + '\n' + summaryText + '\n' + CHECKPOINT_CLOSE
@@ -1378,23 +1395,28 @@ async function attachChangelog(session, result) {
 // 安全前提：写盘仍有备份与差异统计、收尾有改动小结、随时可一键撤销。
 const DELETE_TOOLS = new Set(['delete_resource'])
 
-function grantKeyOf(name, args) {
+/**
+ * 授权键：`工具::文件` 表示"这一个文件"，`工具::*` 表示"这类工具的所有文件"。
+ * 旧版对没有 path 参数的写盘工具（如 upsert_database_item）返回空串 → 永远拿不到授权、
+ * 只能一个事务一个事务地勾；而且用户想要的中间档（"这轮里这类写盘别问了"）压根不存在。
+ */
+function grantKeyOf(name, args, scope) {
   const rel = String((args && args.path) || '')
-  return rel ? `${name}::${rel}` : ''
+  if (scope === 'tool' || !rel) return `${name}::*`
+  return `${name}::${rel}`
 }
 
 function isGranted(session, name, args) {
   if (!session.grants) return false
   // 删除永远逐条确认：不可轻易撤销的动作不接受批量授权
   if (DELETE_TOOLS.has(name)) return false
-  const key = grantKeyOf(name, args)
-  return !!key && session.grants.includes(key)
+  return session.grants.includes(grantKeyOf(name, args)) || session.grants.includes(`${name}::*`)
 }
 
-function addGrant(session, pending) {
+function addGrant(session, pending, scope) {
   if (!pending) return null
   if (DELETE_TOOLS.has(pending.name)) return null
-  const key = grantKeyOf(pending.name, pending.args)
+  const key = grantKeyOf(pending.name, pending.args, scope)
   if (!key) return null
   if (!Array.isArray(session.grants)) session.grants = []
   if (!session.grants.includes(key)) session.grants.push(key)
@@ -1894,7 +1916,7 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
     const granted = isFileMutation && isGranted(session, name, args)
     const needsApproval = !granted && ((isFileMutation && !isPreviewOnly) || (OTHER_MUTATIONS.has(name) && config.approvalMode !== 'auto'))
     if (granted && events.onNotice) {
-      events.onNotice(`已授权：${toolLabel(name)} · ${String(args.path || '')}（本次任务内不再逐条确认，随时可撤销）`)
+      events.onNotice(`已授权：${toolLabel(name)} · ${String(args.path || '') || '全部分支'}（本对话内不再逐条确认，跨重启仍有效；可用 /clear 或【撤销】面板清除）`)
     }
     if (needsApproval) {
       const preview = isFileMutation ? await callToolWithCancel(client, name, { ...args, dryRun: true }, cancelToken) : null
@@ -1950,7 +1972,7 @@ async function handle(pathname, body, events = {}) {
     if (body.revoke) {
       session.grants = list.filter(key => key !== String(body.revoke))
       saveSession(session)
-      return { ok: true, grants: session.grants, message: '已撤销该授权，之后这个文件会重新逐条确认' }
+      return { ok: true, grants: session.grants, message: '已撤销该授权，之后会重新逐条确认' }
     }
     if (body.clear === true) {
       session.grants = []
@@ -1961,7 +1983,9 @@ async function handle(pathname, body, events = {}) {
       ok: true,
       grants: list.map(key => {
         const [tool, path] = key.split('::')
-        return { key, tool, toolLabel: toolLabel(tool), path }
+        // 工具::* = 这类工具的所有文件（G-6 的中间档）；path 置空 + allFiles 让面板显示「全部文件」
+        const allFiles = path === '*'
+        return { key, tool, toolLabel: toolLabel(tool), path: allFiles ? '' : path, allFiles }
       })
     }
   }
@@ -2145,6 +2169,53 @@ async function handle(pathname, body, events = {}) {
     try { fs.rmSync(sessionPath(id), { force: true }) } catch { /* 忽略删除失败 */ }
     return { ok: true }
   }
+
+  // 【G-1】重来：把对话时间轴截断到"某一条用户消息之前"，并把那条原文回填给面板改写重发。
+  // 只动对话、不动文件 —— 盘上的改动仍在，要回退请用【撤销】面板（restore_backup）。
+  // messageIndex 口径：**非压缩检查点**的用户消息序号（0 基），与面板上的用户气泡一一对应。
+  if (pathname === '/session/rewind') {
+    const id = safeSessionId(body.sessionId)
+    const session = sessions.get(id) || loadSessionFromDisk(id)
+    if (!session) throw new Error('没有找到这个会话')
+    if (session.busy) throw new Error('这一轮还在处理中：先按「停止」再重来')
+    if (session.pending) throw new Error('还有一项操作在等你确认：先执行或取消它，再重来')
+    const wanted = Number(body.messageIndex)
+    if (!Number.isInteger(wanted) || wanted < 0) throw new Error('要重来的那一轮编号不对')
+    let seen = -1
+    let cut = -1
+    for (let i = 0; i < session.messages.length; i++) {
+      const message = session.messages[i]
+      // 压缩检查点也是 role='user'，但它不是"用户说过的话"，不许占序号
+      if (message.role !== 'user' || isCheckpoint(message)) continue
+      seen++
+      if (seen === wanted) { cut = i; break }
+    }
+    if (cut < 0) throw new Error('这一轮已经不在会话里了（可能已被上下文压缩折叠）')
+    const text = String(session.messages[cut].content || '')
+    const removed = session.messages.length - cut
+    session.messages = session.messages.slice(0, cut)
+    session.pending = null
+    // 历史被截断：之前那批工具调用已不在上下文里，打转计数与修复预算跟着清零
+    session.repairs = 0
+    if (session.seen) session.seen.clear()
+    saveSession(session)
+    return { ok: true, message: text, removed, messages: visibleMessages(session) }
+  }
+
+  // 【G-8】手动压缩：复用已有的两级压缩路径（force 跳过阈值），让用户能在 80% 之前主动收一次，
+  // 而不是只能等它自动发生。压缩会改写历史（折叠成检查点），所以忙碌时直接拒绝。
+  if (pathname === '/compact') {
+    const session = sessionFor(body.sessionId || 'default')
+    if (session.busy) throw new Error('这一轮还在处理中：等它跑完或按停止后再压缩')
+    const config = readStoredConfig()
+    const key = await getApiKey(config)
+    const before = session.messages.length
+    const client = await ensureMcp()
+    toolsForModel = modelTools(client.tools)
+    const changed = await compressContext(session, config, key, toolsForModel, true)
+    saveSession(session)
+    return { ok: true, changed: !!changed, before, after: session.messages.length, context: contextStatus(session) }
+  }
   if (pathname === '/chat' || pathname === '/chat/stream') {
     const text = String(body.message || '').trim()
     if (!text) throw new Error('请输入要完成的事情')
@@ -2248,7 +2319,9 @@ async function handle(pathname, body, events = {}) {
             }
           : pending.args
         if (events.onTool) events.onTool({ phase: 'start', key: String(pending.call && pending.call.id || pending.name), name: pending.name, label: toolLabel(pending.name), target: String(pending.args.path || '') })
-        result = await (await ensureMcp()).call(pending.name, args)
+        // 与自动执行路径同源：等结果也要能被"停止"立刻放行，否则用户点了停止，
+        // 界面显示已打断、宿主却还在这里干等到写盘返回（事件流也拿不到取消回执）。
+        result = await callToolWithCancel(await ensureMcp(), pending.name, args, events.cancelToken)
         packedApproved = clipToolResult(result, pending.name)   // 顺带在原对象上盖"是否被裁剪"的章
         if (events.onTool) {
           const key = String(pending.call && pending.call.id || pending.name)
@@ -2256,10 +2329,18 @@ async function handle(pathname, body, events = {}) {
             ? { phase: 'fail', key, name: pending.name, label: toolLabel(pending.name), detail: (result && (result.error || result.message)) || '执行失败', info: toolInfoOf(result) }
             : { phase: 'done', key, name: pending.name, label: toolLabel(pending.name), info: toolInfoOf(result) })
         }
-        // 用户勾选"本次任务内该文件不再逐条确认"时才授予授权（删除类永不授权）
-        if (body.grantForSession === true && result && result.ok !== false) {
-          const key = addGrant(session, pending)
-          if (key && events.onNotice) events.onNotice(`已记住：${toolLabel(pending.name)} · ${pending.args.path || ''} 在本次任务内不再逐条确认（随时可撤销）`)
+        // 用户勾选「不再逐条确认」时才授予授权（删除类永不授权）。两档粒度（G-6）：
+        //   grantForSession = 只放行**这一个文件**（原有行为）；
+        //   grantForTool    = 放行**这类工具的所有文件**（跨 5 个文件的活不用停 5 次）。
+        if ((body.grantForSession === true || body.grantForTool === true) && result && result.ok !== false) {
+          const scope = body.grantForTool === true ? 'tool' : 'file'
+          const key = addGrant(session, pending, scope)
+          if (key && events.onNotice) {
+            const what = scope === 'tool'
+              ? toolLabel(pending.name) + ' 这类工具'
+              : toolLabel(pending.name) + ' · ' + String(pending.args.path || '')
+            events.onNotice(`已记住：${what} 在本对话内不再逐条确认（跨重启仍有效；可用 /clear 或【撤销】面板清除）`)
+          }
         }
       }
       session.messages.push({ role: 'tool', tool_call_id: pending.call.id, content: packedApproved || clipToolResult(result, pending.name) })
@@ -2287,7 +2368,9 @@ async function handle(pathname, body, events = {}) {
         saveSession(session)
         if (events.onNotice) events.onNotice(`编译没通过（${failure.errorCount} 处），已回滚并让 AI 自动重修（第 ${session.repairs}/${MAX_REPAIR_ATTEMPTS} 次）`)
       } else if (pending.remaining && pending.remaining.length) {
-        const outcome = await processToolCalls(session, pending.remaining, config, '', events)
+        // 第 6 个参数（cancelToken）以前漏传：processToolCalls 只认自己的形参、不读 events.cancelToken，
+        // 于是审批续跑期间"停止"要等这批工具全跑完才生效。
+        const outcome = await processToolCalls(session, pending.remaining, config, '', events, events.cancelToken || null)
         if (outcome.approval) return outcome.approval
       }
       const running = runTurn(session, config, events)

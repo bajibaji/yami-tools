@@ -3561,6 +3561,52 @@
         color: #fbbf24 !important;
       }
 
+      /* 上下文刻度点开的详情（G-8）：以前压缩是"到 80% 自己发生"的黑箱，用户既看不见折叠了什么，
+         也没法主动收一次。这里给折叠规模 + 摘要正文 + 手动压缩入口。 */
+      .yami-ai-context-detail {
+        display: none !important;
+        margin: 6px 10px 0 !important;
+        padding: 8px 10px !important;
+        border-radius: 8px !important;
+        background: rgba(255, 255, 255, 0.04) !important;
+        font-size: 11px !important;
+        color: #9aa4b2 !important;
+      }
+      .yami-ai-context-detail.show { display: block !important; }
+      .yami-ai-context-line { margin-bottom: 6px !important; }
+      .yami-ai-context-summary {
+        max-height: 160px !important;
+        overflow: auto !important;
+        margin: 0 0 8px !important;
+        padding: 6px 8px !important;
+        border-radius: 6px !important;
+        background: rgba(0, 0, 0, 0.25) !important;
+        white-space: pre-wrap !important;
+        word-break: break-word !important;
+        font-size: 11px !important;
+      }
+
+      /* 用户消息上的「重发 / 编辑」（G-1）：平时隐身，悬停或键盘聚焦时才出现，别让对话记录变吵 */
+      .yami-ai-msg-actions {
+        display: flex !important;
+        gap: 6px !important;
+        margin-top: 4px !important;
+        opacity: 0 !important;
+        transition: opacity 0.16s !important;
+      }
+      .yami-ai-message.user:hover .yami-ai-msg-actions,
+      .yami-ai-msg-actions:focus-within { opacity: 1 !important; }
+      .yami-ai-msg-action {
+        padding: 0 8px !important;
+        border-radius: 8px !important;
+        font-size: 11px !important;
+        line-height: 16px !important;
+        color: #9aa4b2 !important;
+        background: rgba(255, 255, 255, 0.06) !important;
+        cursor: pointer !important;
+      }
+      .yami-ai-msg-action:hover { color: #e6ebf2 !important; background: rgba(255, 255, 255, 0.12) !important; }
+
       /* 顶栏胶囊动作区 */
       .yami-ai-toolbar-actions,
       .yami-ai-actions {
@@ -4169,15 +4215,19 @@
       }
 
       /* 全界面子视图排版 (历史 / 撤销 打开时完全隐藏消息记录、输入区与环境行，整屏呈现) */
+      /* 选择器必须指向**真实存在**的 DOM：这条规则以前引用的是两个并不存在的 id
+         （yami-ai-quick-bar / yami-ai-composer；真实类名是 .yami-ai-compose / .yami-ai-devbar），
+         于是"进子视图隐藏输入区"从 v1.7.0 发布起就没生效过（审计 G-10(d)）。
+         注释里也不再写出带 # 的失效选择器：测试会把它当成规则令牌去核对元素是否存在。 */
       .yami-ai-page.view-undo #yami-ai-scope,
       .yami-ai-page.view-undo #yami-ai-messages,
-      .yami-ai-page.view-undo #yami-ai-quick-bar,
-      .yami-ai-page.view-undo #yami-ai-composer,
+      .yami-ai-page.view-undo .yami-ai-devbar,
+      .yami-ai-page.view-undo .yami-ai-compose,
       .yami-ai-page.view-undo #yami-ai-approval,
       .yami-ai-page.view-history #yami-ai-scope,
       .yami-ai-page.view-history #yami-ai-messages,
-      .yami-ai-page.view-history #yami-ai-quick-bar,
-      .yami-ai-page.view-history #yami-ai-composer,
+      .yami-ai-page.view-history .yami-ai-devbar,
+      .yami-ai-page.view-history .yami-ai-compose,
       .yami-ai-page.view-history #yami-ai-approval {
         display: none !important;
       }
@@ -4643,6 +4693,7 @@
       .yami-ai-approval-diff::-webkit-scrollbar-track,
       .yami-ai-system-body::-webkit-scrollbar-track,
       .yami-ai-queue::-webkit-scrollbar-track,
+      .yami-ai-context-summary::-webkit-scrollbar-track,
       #yami-ai-input::-webkit-scrollbar-track {
         background: #181818 !important;
       }
@@ -4666,6 +4717,7 @@
       .yami-ai-approval-diff::-webkit-scrollbar-thumb,
       .yami-ai-system-body::-webkit-scrollbar-thumb,
       .yami-ai-queue::-webkit-scrollbar-thumb,
+      .yami-ai-context-summary::-webkit-scrollbar-thumb,
       #yami-ai-input::-webkit-scrollbar-thumb {
         background: #383838 !important;
         border-radius: 2px !important;
@@ -4688,6 +4740,7 @@
       .yami-ai-thinking-body::-webkit-scrollbar-thumb:hover,
       .yami-ai-system-body::-webkit-scrollbar-thumb:hover,
       .yami-ai-queue::-webkit-scrollbar-thumb:hover,
+      .yami-ai-context-summary::-webkit-scrollbar-thumb:hover,
       #yami-ai-input::-webkit-scrollbar-thumb:hover {
         background: #4a4a4a !important;
       }
@@ -4704,6 +4757,7 @@
       .yami-ai-undo::-webkit-scrollbar-corner,
       .yami-ai-thinking-body::-webkit-scrollbar-corner,
       .yami-ai-approval-diff::-webkit-scrollbar-corner,
+      .yami-ai-context-summary::-webkit-scrollbar-corner,
       #yami-ai-input::-webkit-scrollbar-corner {
         background: #181818 !important;
       }
@@ -4716,6 +4770,7 @@
       .yami-ai-approval-diff::-webkit-scrollbar,
       .yami-ai-system-body::-webkit-scrollbar,
       .yami-ai-queue::-webkit-scrollbar,
+      .yami-ai-context-summary::-webkit-scrollbar,
       #yami-ai-input::-webkit-scrollbar,
       .yami-ai-messages::-webkit-scrollbar {
         width: 4px !important;
@@ -5566,7 +5621,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.7.2 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.8.0 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
@@ -5907,7 +5962,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.7.2 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.8.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -9169,7 +9224,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.7.2';
+      const cur = (probe && probe.version) ? probe.version : '1.8.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -9235,7 +9290,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.7.2') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.8.0') + ')');
           refreshVersionBadge();
         }
       });

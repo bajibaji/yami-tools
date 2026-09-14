@@ -51,7 +51,8 @@
     sessionId: localStorage.getItem(SESSION_KEY) || ('session-' + Date.now().toString(36)),
     busy: false,
     pending: null,
-    deciding: false,   // 审批卡正在提交（防连点），与 busy 分开：审批时 busy 完全可能是 true
+    deciding: false,   // 审批卡正在提交（防连点）。与 busy 分开是因为语义不同：busy = 本轮在跑，
+    //                    deciding = 正在提交这次选择。审批等待期本身 busy === false（见 decide() 的链路注释）
     mounted: false,
     balance: null,
     abort: null,
@@ -436,8 +437,10 @@
       const collapsed = box.classList.toggle('collapsed');
       toggle.textContent = collapsed ? '▸' : '▾';
       head.title = collapsed ? '展开执行过程' : '收起执行过程';
+      head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     });
     head.title = '收起执行过程';
+    head.setAttribute('aria-expanded', 'true');   // 过程区默认展开（a11y：读屏要知道它可折叠且当前是展开的）
     box.appendChild(head);
     box.appendChild(body);
     // 【顺序不变量】过程区**永远**排在正文槽之前。正文槽可能先被建出来 —— 模型先说一句
@@ -445,7 +448,9 @@
     // 甩到那段话下面，用户读到的就成了"答案在上、过程在下"。
     if (currentTurn.body) currentTurn.root.insertBefore(box, currentTurn.body);
     else currentTurn.root.appendChild(box);
-    currentTurn.process = { box, body, meta, steps: 0 };
+    // toolNames：收起后还要能回答"这轮跑过哪些工具"（G-7）。名字在 pushToolCard 时就记进数组，
+    // 刷新摘要时只读数组 —— 这段在流式过程中每帧都会被调到，绝不能去遍历 DOM。
+    currentTurn.process = { box, body, head, meta, steps: 0, toolNames: [] };
     return currentTurn.process;
   }
 
@@ -471,7 +476,15 @@
           info.rounds > 1 ? info.rounds + ' 段' : '',
           info.steps > 0 ? info.steps + ' 步' : ''
         ].filter(Boolean).join(' · ');
-    if (area.meta.textContent !== text) area.meta.textContent = text;
+    // 收起状态也要能回答"它跑过编译吗 / 看过哪些文件"：把这一轮用过的工具名附在摘要后面
+    const names = [];
+    for (const name of area.toolNames) if (names.indexOf(name) === -1) names.push(name);
+    const suffix = names.length
+      ? ' · ' + names.slice(0, 3).join('/') + (names.length > 3 ? ' 等 ' + names.length + ' 项' : '')
+      : '';
+    const full = text + suffix;
+    if (area.meta.textContent !== full) area.meta.textContent = full;
+    if (area.head && names.length) area.head.title = '执行过程：' + names.join(' · ');
   }
 
   /** 正文槽：过程区之后的位置，AI 的回答写在这里 */
@@ -486,7 +499,7 @@
     return currentTurn.body;
   }
 
-  function addMessage(kind, text) {
+  function addMessage(kind, text, meta) {
     const list = document.getElementById('yami-ai-messages');
     if (!list) return null;
     const item = document.createElement('div');
@@ -495,8 +508,62 @@
     // AI 的回答进当前回合的正文槽（排在过程之后）；历史回放/用户消息直接进列表
     const host = kind === 'assistant' && currentTurn ? (messageSlot() || list) : list;
     host.appendChild(item);
+    if (kind === 'user') attachUserActions(item, meta);
     autoScroll();
     return item;
+  }
+
+  /**
+   * 用户气泡上的「重发 / 编辑」两颗按钮（G-1）。
+   * 轮次号口径：宿主回放时给每条用户消息带上**绝对** turnIndex（历史窗口只显示后 60 条也不受影响）；
+   * 实时发出的消息用面板自己的序号，两者都按「非压缩检查点的用户消息」计数。
+   */
+  function attachUserActions(item, meta) {
+    const explicit = meta && Number.isInteger(meta.turnIndex) ? meta.turnIndex : null;
+    const index = explicit === null ? (state.userTurnSeq || 0) : explicit;
+    state.userTurnSeq = Math.max(state.userTurnSeq || 0, index + 1);
+    const bar = document.createElement('div');
+    bar.className = 'yami-ai-msg-actions';
+    const make = (label, title, handler) => {
+      const btn = document.createElement('div');
+      btn.className = 'yami-ai-msg-action';
+      btn.setAttribute('role', 'button');
+      btn.setAttribute('tabindex', '0');
+      btn.textContent = label;
+      btn.title = title;
+      activate(btn, event => { event.stopPropagation(); handler(); });
+      return btn;
+    };
+    bar.appendChild(make('重发', '从这一轮重来：截断这条之后的对话，然后原样再发一次', () => rewindTo(index, { resend: true })));
+    bar.appendChild(make('编辑', '改一个字再发：把这条需求填回输入框，改完自己按发送', () => rewindTo(index, { edit: true })));
+    item.appendChild(bar);
+  }
+
+  /**
+   * 从某一轮重来（G-1）：宿主把对话时间轴截断到那条用户消息之前并落盘，面板随后按磁盘重建时间轴
+   * （复用 loadSession 的回放路径，实时与回放长得一样）。
+   * 口径：**只回退对话，不回退文件** —— 盘上的改动仍在，要回退请用【撤销】面板。
+   */
+  async function rewindTo(index, opts) {
+    if (state.busy) { hudToast('这一轮还在跑：先按「停止」再重来'); return; }
+    if (state.pending) { hudToast('还有一项操作在等你确认：先执行或取消它，再重来'); return; }
+    try {
+      const data = await request('/session/rewind', { sessionId: state.sessionId, messageIndex: index });
+      if (!data || data.ok === false) throw new Error((data && data.error) || '重来失败');
+      const text = String(data.message || '');
+      await loadSession(state.sessionId, '', { quiet: true });
+      pushNotice('已从这一轮重来（对话时间轴已截断）；文件的改动没有回退，需要的话点【撤销】。', 'wait');
+      if (opts && opts.edit && input) {
+        input.value = text;
+        input.style.height = '';
+        input.focus();
+        hudToast('已把这条需求填回输入框，改完按发送即可');
+      } else if (opts && opts.resend) {
+        await runMessage(text);
+      }
+    } catch (e) {
+      addMessage('error', e.message + '。');
+    }
   }
 
   /**
@@ -532,9 +599,59 @@
     el.classList.add('show');
     el.classList.toggle('warn', !!context.nearLimit);
     const fullSuffix = context.summary ? ' · 已压缩' : (context.nearLimit ? ' · 即将自动压缩' : '');
+    state.lastContext = context;
+    renderContextDetail();
     el.title = '上下文用量: ' + context.label + fullSuffix + '\n' + (context.calibrated
       ? '按模型真实用量计（1M token 窗口，占用达到 80% 自动压缩：先精简长工具结果，再折叠成结构化检查点）'
       : '按官方换算估算（中文 0.6 token/字、英文 0.3 token/字符；发起一次对话后改用真实用量）');
+  }
+
+  /**
+   * 上下文刻度点开后的详情（G-8）：把"压缩折叠了什么"摊开，并给一个「立即压缩」入口。
+   * 以前压缩是"到 80% 自己发生"的黑箱：用户既看不见折叠了什么，也无法主动收一次。
+   */
+  function renderContextDetail() {
+    const box = document.getElementById('yami-ai-context-detail');
+    if (!box || !box.classList.contains('show')) return;
+    const context = state.lastContext || {};
+    box.textContent = '';
+    const meta = context.summaryMeta;
+    const line = document.createElement('div');
+    line.className = 'yami-ai-context-line';
+    line.textContent = context.summary
+      ? ('已压缩' + (meta ? '：折叠 ' + meta.folded + ' 条（' + meta.before + ' → ' + meta.after + ' 条）' + (meta.manual ? ' · 手动' : '') : ''))
+      : '还没有压缩过：占用到 80% 会自动压缩，也可以现在手动压一次';
+    box.appendChild(line);
+    if (context.summaryText) {
+      const pre = document.createElement('pre');
+      pre.className = 'yami-ai-context-summary';
+      pre.textContent = String(context.summaryText).slice(0, 1200);
+      box.appendChild(pre);
+    }
+    const btn = document.createElement('div');
+    btn.className = 'yami-ai-secondary';
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('tabindex', '0');
+    btn.textContent = '立即压缩';
+    btn.title = '把中段历史折叠成结构化检查点（会调用一次模型做摘要，压缩不可逆）';
+    activate(btn, () => compactNow());
+    box.appendChild(btn);
+  }
+
+  /** 手动压缩（G-8）：复用宿主已有的两级压缩路径，force 跳过 80% 阈值 */
+  async function compactNow() {
+    if (state.busy) { hudToast('这一轮还在跑：等它跑完再压缩'); return; }
+    try {
+      setStatus('正在压缩上下文', 'working');
+      const data = await request('/compact', { sessionId: state.sessionId });
+      if (data && data.context) renderContext(data.context);
+      renderContextDetail();
+      hudToast(data && data.changed ? '已压缩上下文' : '当前没有可压缩的中段历史');
+      setStatus('就绪', 'ready');
+    } catch (e) {
+      hudToast('压缩失败：' + e.message);
+      setStatus('需要处理', 'error');
+    }
   }
 
   async function refreshContext() {
@@ -549,6 +666,8 @@
     const list = document.getElementById('yami-ai-messages');
     if (!list) return;
     list.innerHTML = '';
+    // 用户轮次号跟着清空：回放时会按宿主给的绝对号重建（G-1 的重发/编辑要用）
+    state.userTurnSeq = 0;
     // 清空会把「回到最新」提示一起清掉，重建一个（否则上滚后就没有回去的入口了）
     ensureJumpButton();
     if (placeholder) addMessage('assistant', placeholder);
@@ -720,7 +839,7 @@
             redoBtn.setAttribute('title', '反悔撤销：恢复为 AI 刚才修改的版本');
             redoBtn.innerHTML = AI_ICONS.redo + '<span>重做修改</span>';
             activate(redoBtn, async () => {
-              if (state.busy) return;
+              if (state.busy) { hudToast('这一轮还在跑：等它结束或按「停止」后再重做'); return; }
               redoBtn.textContent = '恢复中…';
               try {
                 const result = await request('/backup-undo', { path: file.path, backup: file.redoBackup });
@@ -756,7 +875,7 @@
           btn.setAttribute('tabindex', '0');
           btn.innerHTML = AI_ICONS.undo + '<span>撤销</span>';
           activate(btn, async () => {
-            if (state.busy) return;
+            if (state.busy) { hudToast('这一轮还在跑：等它结束或按「停止」后再撤销'); return; }
             btn.textContent = '回退中…';
             try {
               const result = await request('/backup-undo', { path: file.path });
@@ -949,7 +1068,7 @@
     }
   }
 
-  async function loadSession(id, title) {
+  async function loadSession(id, title, options) {
     if (state.busy) {
       hudToast('AI 正在处理中，请先停止或等待本轮结束');
       return;
@@ -995,14 +1114,14 @@
           }
         }
         // 纯工具轮没有正文，不能凭空塞一个空气泡
-        if (message.content) addMessage(message.role === 'user' ? 'user' : 'assistant', message.content);
+        if (message.content) addMessage(message.role === 'user' ? 'user' : 'assistant', message.content, message.role === 'user' ? { turnIndex: message.turnIndex } : null);
       }
       autoScroll(true);   // 切过来先停在最新，历史由用户自己往上翻
       if (refreshRail) refreshRail();
       if (data.pending) renderApproval({ approval: data.pending });
       else setStatus('就绪', 'ready');
       setSubView('chat');
-      pushNotice('已切换到历史对话：' + (title || id));
+      if (!(options && options.quiet)) pushNotice('已切换到历史对话：' + (title || id));
       refreshContext();
     } catch (e) {
       addMessage('error', '打开历史对话失败：' + e.message);
@@ -1111,13 +1230,26 @@
     box.classList.toggle('danger', dangerous);
     if (approveBtn) approveBtn.textContent = dangerous ? '确认删除（会先备份）' : '执行修改';
     // 删除类操作不提供批量授权（不可轻易撤销的动作必须逐条确认）
+    const allowGrant = !dangerous;
     const grantBox = document.getElementById('yami-ai-grant');
+    const grantToolBox = document.getElementById('yami-ai-grant-tool');
+    const syncGrantBoxes = () => {
+      // 两档互斥：勾了"这类工具的所有文件"就没必要再勾"这一个文件"
+      if (grantBox && grantToolBox && grantToolBox.checked) grantBox.checked = false;
+    };
     if (grantBox) {
-      const grantLabel = grantBox.closest('.yami-ai-grant');
-      const allowGrant = !dangerous;
+      const row = document.getElementById('yami-ai-grant-row');
       grantBox.disabled = !allowGrant;
-      if (grantLabel) grantLabel.style.display = allowGrant ? '' : 'none';
+      if (row) row.style.display = allowGrant ? '' : 'none';
       grantBox.checked = allowGrant && localStorage.getItem('danjuan-ai-grant') === '1';
+    }
+    if (grantToolBox) {
+      const row = document.getElementById('yami-ai-grant-tool-row');
+      grantToolBox.disabled = !allowGrant;
+      if (row) row.style.display = allowGrant ? '' : 'none';
+      // 更宽的那一档默认不勾（避免"顺手"把授权放大；用户要用就自己点一下）
+      grantToolBox.checked = false;
+      grantToolBox.onchange = syncGrantBoxes;
     }
     if (diffBox) renderDiff(diffBox, preview.diff || '');
     if (statBox) {
@@ -1869,7 +2001,11 @@
     body.className = 'yami-ai-tool-body';
     el.appendChild(head); el.appendChild(body);
     host.appendChild(el);
-    if (area) { area.steps++; refreshProcessMeta(); }
+    if (area) {
+      area.steps++;
+      area.toolNames.push(String(event.label || event.name || '工具'));
+      refreshProcessMeta();
+    }
 
     if (event.target) {
       target.classList.add('clickable');
@@ -1880,7 +2016,9 @@
       e.stopPropagation();
       const collapsed = el.classList.toggle('collapsed');
       toggle.textContent = collapsed ? '▸' : '▾';
+      head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     });
+    head.setAttribute('aria-expanded', 'false');   // 工具卡片默认收起
     el.querySelector('.yami-ai-tool-head').title = event.target ? '展开看细节 · ' + event.target : '展开看细节';
 
     const writeLine = text => {
@@ -1962,7 +2100,9 @@
       e.stopPropagation();
       const collapsed = el.classList.toggle('collapsed');
       toggle.textContent = collapsed ? '▸' : '▾';
+      head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     });
+    head.setAttribute('aria-expanded', 'false');   // 系统提示词行默认收起
     autoScroll();
     return el;
   }
@@ -1971,21 +2111,29 @@
    * 审批有结论后给那张卡片收尾：不然它会永远停在"等待你确认"（黄点 + 一行"等待你确认"），
    * 用户以为还卡在那儿。
    */
+  /**
+   * 收尾「等待你确认」的工具卡。
+   * 以前用 querySelector 只命中**第一张**：一轮里若有多张等待卡，其余的永远停在黄点
+   * 「等待你确认」——用户以为还有事没做完（G-10(b)）。现在一次收尾全部；
+   * note 只写在第一张（它才是这次审批对应的那张）。
+   */
   function resolvePendingCard(approved, note) {
-    const dot = document.querySelector('.yami-ai-tool-dot.wait');
-    if (!dot) return false;
-    const card = dot.closest ? dot.closest('.yami-ai-tool') : null;
-    if (!card) return false;
-    dot.className = 'yami-ai-tool-dot ' + (approved ? 'ok' : 'bad');
-    const body = card.querySelector('.yami-ai-tool-body');
-    if (body) {
-      const line = document.createElement('div');
-      line.textContent = (approved ? '已确认并执行' : '已取消，工程未改动') + (note ? ' · ' + note : '');
-      body.appendChild(line);
-    }
-    card.classList.remove('collapsed');
-    const toggle = card.querySelector('.yami-ai-tool-toggle');
-    if (toggle) toggle.textContent = '▾';
+    const dots = Array.prototype.slice.call(document.querySelectorAll('.yami-ai-tool-dot.wait'));
+    if (!dots.length) return false;
+    dots.forEach((dot, index) => {
+      const card = dot.closest ? dot.closest('.yami-ai-tool') : null;
+      if (!card) return;
+      dot.className = 'yami-ai-tool-dot ' + (approved ? 'ok' : 'bad');
+      const body = card.querySelector('.yami-ai-tool-body');
+      if (body) {
+        const line = document.createElement('div');
+        line.textContent = (approved ? '已确认并执行' : '已取消，工程未改动') + (index === 0 && note ? ' · ' + note : '');
+        body.appendChild(line);
+      }
+      card.classList.remove('collapsed');
+      const toggle = card.querySelector('.yami-ai-tool-toggle');
+      if (toggle) toggle.textContent = '▾';
+    });
     return true;
   }
 
@@ -2395,9 +2543,11 @@
   }
 
   async function decide(approve) {
-    // 这里**不能**拿 state.busy 当闸门：审批卡弹出来的时候，本轮正处在"暂停等人"的状态，
-    // busy 完全可能是 true（SSE 还开着）。用 busy 一挡，「执行修改」就变成一个点了毫无反应的
-    // 死按钮 —— 用户报的"点击执行修改没有反应"正是这么来的。
+    // 这里**不能**拿 state.busy 当闸门。历史：V1.6.8 时代 /approve 还不是 SSE，审批期间流还挂着，
+    // busy 可能为 true，用 busy 一挡「执行修改」就变成一个点了没反应的死按钮（用户报过这个 bug）。
+    // 现状（V1.6.11 起续跑也走事件流）：renderApproval 与 runMessage 的 finally 里那次 setBusy(false)
+    // 之间没有 await，是同一个微任务里跑完的 —— 用户能碰卡片时 busy 恒为 false。
+    // 所以只需要 pending（有没有待确认项）与 deciding（防连点）这两道语义正确的闸门。
     if (!state.pending) { hudToast('这一步已经不需要确认了（可能已被新需求作废），直接说需求即可'); return; }
     if (state.deciding) return;   // 只有"正在提交"才需要防连点
     state.deciding = true;
@@ -2413,7 +2563,10 @@
     if (rejectBtn && !approve) rejectBtn.textContent = '取消中…';
     try {
       const grantBox = document.getElementById('yami-ai-grant');
-      const grantForSession = approve && grantBox && grantBox.checked && !grantBox.disabled;
+      const grantToolBox = document.getElementById('yami-ai-grant-tool');
+      // 更宽的那一档优先：勾了"这类工具的所有文件"就不再逐文件授权（G-6 的中间档）
+      const grantForTool = !!(approve && grantToolBox && grantToolBox.checked && !grantToolBox.disabled);
+      const grantForSession = !grantForTool && !!(approve && grantBox && grantBox.checked && !grantBox.disabled);
       if (grantBox) localStorage.setItem('danjuan-ai-grant', grantBox.checked ? '1' : '0');
       // 用户一旦做出选择，这张卡的任务就结束了 —— 立刻收起来。
       // 以前要等 /approve 返回才收，可那一轮在后台还要跑几分钟（模型调用 + 一串工具），
@@ -2426,7 +2579,7 @@
       // 而那时回合已经关了 —— 那一段就成了散在对话末尾、顺序对不上的一堆行。
       prepareTurn();
       const result = await streamTurn(approve ? '/approve/stream' : '/reject/stream',
-        { sessionId: state.sessionId, grantForSession }, approve ? '正在执行' : '正在取消');
+        { sessionId: state.sessionId, grantForSession, grantForTool }, approve ? '正在执行' : '正在取消');
       if (result && result.status === 'approval') renderApproval(result);
       else { state.pending = null; document.getElementById('yami-ai-approval')?.classList.remove('show'); setStatus('就绪', 'ready'); }
       resolvePendingCard(approve, approve ? '编译与回滚状态见上方小结' : '');
@@ -2452,6 +2605,10 @@
       if (approveBtn) approveBtn.textContent = '执行修改';
       if (rejectBtn) rejectBtn.textContent = '取消修改';
       finishTurn();
+      // 审批续跑也是一轮的结束：排队区里还等着的话要接着发出去。
+      // 以前只有 runMessage 的 finally 调 flushQueue、decide 没有 —— 用户点完「执行修改」，
+      // 之前排队的那条消息得等下一次普通回合才发得出去（看起来就是"点了没反应"）。
+      flushQueue();
     }
   }
 
@@ -2718,7 +2875,8 @@
           '<span class="yami-ai-status-pulse"></span>' +
           '<span class="yami-ai-status-text">尚未启动</span>' +
         '</div>' +
-        '<div class="yami-ai-context" id="yami-ai-context" role="status"></div>' +
+        '<div class="yami-ai-context" id="yami-ai-context" role="button" tabindex="0" title="点开看上下文详情，也可以手动压缩一次"></div>' +
+        '<div class="yami-ai-context-detail" id="yami-ai-context-detail"></div>' +
         '<div class="yami-ai-toolbar-actions">' +
           '<div class="yami-ai-tool-btn" id="yami-ai-undo-toggle" role="button" tabindex="0" title="查看并撤销文件改动">' + AI_ICONS.undo + '<span>撤销</span></div>' +
           '<div class="yami-ai-tool-btn" id="yami-ai-history-toggle" role="button" tabindex="0" title="会话历史记录">' + AI_ICONS.history + '<span>历史</span></div>' +
@@ -2795,14 +2953,18 @@
       '<div class="yami-ai-messages" id="yami-ai-messages" role="log" aria-live="polite">' +
         '<div class="yami-ai-message assistant">告诉我你想做什么。我会先查看工程，涉及文件修改时会让你确认。</div>' +
       '</div>' +
-      '<div class="yami-ai-approval" id="yami-ai-approval" role="alert">' +
-        '<div class="yami-ai-approval-title">确认执行</div>' +
+      '<div class="yami-ai-approval" id="yami-ai-approval" role="alertdialog" aria-modal="true" aria-labelledby="yami-ai-approval-title">' +
+        '<div class="yami-ai-approval-title" id="yami-ai-approval-title">确认执行</div>' +
         '<div class="yami-ai-approval-stat" id="yami-ai-approval-stat"></div>' +
         '<pre id="yami-ai-approval-detail"></pre>' +
         '<div class="yami-ai-approval-diff" id="yami-ai-approval-diff"></div>' +
-        '<label class="yami-ai-check yami-ai-grant">' +
+        '<label class="yami-ai-check yami-ai-grant" id="yami-ai-grant-row">' +
           '<input id="yami-ai-grant" type="checkbox">' +
-          '<span>本次任务内，这个文件不再逐条确认（随时可撤销）</span>' +
+          '<span>本对话内，这个文件不再逐条确认（随时可撤销）</span>' +
+        '</label>' +
+        '<label class="yami-ai-check yami-ai-grant" id="yami-ai-grant-tool-row">' +
+          '<input id="yami-ai-grant-tool" type="checkbox">' +
+          '<span>本对话内，这类操作的所有文件都不再确认（更省事，也更宽）</span>' +
         '</label>' +
         '<div class="yami-ai-approval-actions">' +
           '<div class="yami-ai-secondary" id="yami-ai-reject" role="button" tabindex="0">取消修改</div>' +
@@ -2848,7 +3010,13 @@
       refreshContext();
     });
     activate(document.getElementById('yami-ai-send'), () => { state.busy ? stopStream() : sendMessage(); });
-    activate(document.getElementById('yami-ai-approve'), () => decide(true));
+    activate(document.getElementById('yami-ai-context'), () => {
+    const box = document.getElementById('yami-ai-context-detail');
+    if (!box) return;
+    box.classList.toggle('show');
+    renderContextDetail();
+  });
+  activate(document.getElementById('yami-ai-approve'), () => decide(true));
     activate(document.getElementById('yami-ai-reject'), () => decide(false));
     activate(document.getElementById('yami-ai-settings-toggle'), () => {
       const page = document.getElementById('page-ai');

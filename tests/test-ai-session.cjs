@@ -295,6 +295,24 @@ async function main() {
   await json('/session/delete', 'POST', { sessionId: 'stream-1' })
   check('只有显式删除才真的移除文件', !fs.existsSync(path.join(SESSION_DIR, 'stream-1.json')))
 
+  console.log('\n########## 9. 从某一轮重来（/session/rewind） ##########')
+  // G-1：对话时间轴可截断到某条用户消息之前，并把那条原文交回面板改写重发。
+  await stream('/chat/stream', { sessionId: 'rewind-1', message: '第一句' })
+  await stream('/chat/stream', { sessionId: 'rewind-1', message: '第二句' })
+  const beforeRewind = (await json('/session/load', 'POST', { sessionId: 'rewind-1' })).data
+  const beforeTurns = (beforeRewind.messages || []).filter(m => m.role === 'user')
+  check('回放里用户消息带绝对轮次号（历史窗口截断也不影响对齐）',
+    beforeTurns.length === 2 && beforeTurns[1].turnIndex === 1, JSON.stringify(beforeTurns.map(m => m.turnIndex)))
+  const rewound = (await json('/session/rewind', 'POST', { sessionId: 'rewind-1', messageIndex: 1 })).data
+  check('重来返回被截断的那条原文', rewound.ok === true && rewound.message === '第二句', JSON.stringify(rewound.message))
+  const afterRewind = (await json('/session/load', 'POST', { sessionId: 'rewind-1' })).data
+  const afterTurns = (afterRewind.messages || []).filter(m => m.role === 'user')
+  check('时间轴已截断到这一轮之前（且落盘）', afterTurns.length === 1 && afterTurns[0].content === '第一句',
+    JSON.stringify(afterTurns.map(m => m.content)))
+  const continued = await stream('/chat/stream', { sessionId: 'rewind-1', message: '改写后的第二句' })
+  check('重来之后能正常继续对话', !!continued.find(e => e.type === 'result' && e.status === 'done'))
+  const badIndex = (await json('/session/rewind', 'POST', { sessionId: 'rewind-1', messageIndex: 99 })).data
+  check('越界的轮次号如实报错（不静默成功）', badIndex.ok === false && /不在会话里|编号不对/.test(String(badIndex.error)), String(badIndex.error))
   console.log(`\n########## AI 会话/上下文测试: ${passed} PASS / ${failed} FAIL ##########`)
   await stopHost()
   model.close()

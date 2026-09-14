@@ -597,6 +597,43 @@ async function main() {
     assert.strictEqual(presenceSandbox.result, '【当前环境】停在「攻击力」=25',
       '有停留点时必须只说这一件事（页面/场景用户自己看得见，不占顶栏那一行）')
 
+    // ---- 审计修复（G-1 / G-5 / G-6 / G-7 / G-8 / G-10 / G-11）的接线契约，防止被顺手改回去 ----
+    assert.ok(/processToolCalls\(session, pending\.remaining, config, '', events, events\.cancelToken \|\| null\)/.test(hostSource),
+      'G-5：审批续跑的剩余调用必须带上取消令牌（漏传过 → 停止要等这批工具全跑完）')
+    assert.ok(/callToolWithCancel\(await ensureMcp\(\), pending\.name, args, events\.cancelToken\)/.test(hostSource),
+      'G-5：被批准的写盘也要走 callToolWithCancel（否则宿主继续干等、拿不到取消回执）')
+    assert.ok(/function grantKeyOf\(name, args, scope\)/.test(hostSource) && /\$\{name}::\*/.test(hostSource),
+      'G-6：授权键要支持「工具::*」这一档（无 path 的写盘工具以前永远拿不到授权）')
+    assert.ok(/session\.grants\.includes\(grantKeyOf\(name, args\)\) \|\| session\.grants\.includes/.test(hostSource),
+      'G-6：isGranted 要同时认「这一个文件」和「这类工具的所有文件」')
+    assert.ok(/body\.grantForTool === true/.test(hostSource) && /grantForTool/.test(agentSource),
+      'G-6：/approve 与面板要能把「这类工具的所有文件」这一档传下来')
+    assert.ok(/'playtest_smoke', 'ui_steps'\]\)/.test(hostSource),
+      'G-11：ui_steps 必须进 OTHER_MUTATIONS（AI 改编辑器界面是有副作用的动作，confirm 模式下要先问）')
+    assert.ok(/if \(pathname === '\/session\/rewind'\)/.test(hostSource) && /function rewindTo\(index, opts\)/.test(agentSource),
+      'G-1：宿主要有 /session/rewind、面板要有 rewindTo（从某一轮重来）')
+    assert.ok(/attachUserActions\(item, meta\)/.test(agentSource) && /'重发'/.test(agentSource) && /'编辑'/.test(agentSource),
+      'G-1：用户气泡上要有「重发 / 编辑」两颗按钮')
+    assert.ok(/isUser \? \{ turnIndex: userTurn \}/.test(hostSource) && /meta\.turnIndex/.test(agentSource),
+      'G-1：回放要给用户消息带绝对轮次号（历史窗口只显示后 60 条时按钮仍指得对）')
+    assert.ok(/if \(pathname === '\/compact'\)/.test(hostSource) && /function compactNow\(\)/.test(agentSource),
+      'G-8：宿主要有 /compact、面板要有「立即压缩」入口')
+    assert.ok(/await compressContext\(session, config, key, toolsForModel, true\)/.test(hostSource) && /force = false/.test(hostSource),
+      'G-8：手动压缩要复用已有两级压缩路径并跳过 80% 阈值')
+    assert.ok(/summaryMeta/.test(hostSource) && /function renderContextDetail\(\)/.test(agentSource),
+      'G-8：刻度点开要能看到「折叠了多少条 + 摘要正文」')
+    assert.ok(/area\.toolNames\.push\(/.test(agentSource) && /等 ' \+ names\.length \+ ' 项/.test(agentSource),
+      'G-7：过程区收起后仍要能报出这一轮跑过哪些工具')
+    assert.ok(/querySelectorAll\('\.yami-ai-tool-dot\.wait'\)/.test(agentSource),
+      'G-10(b)：等待确认的卡片要一次收尾全部（以前只收第一张，其余永远停在黄点）')
+    // decide 的函数体里必须有 flushQueue（注释有多行，用函数体判定而不是单行正则）
+    const decideBody = (agentSource.match(/async function decide\(approve\) \{[\s\S]*?\n  \}/) || [''])[0]
+    assert.ok(decideBody && /flushQueue\(\)/.test(decideBody),
+      'G-10(a)：decide 的 finally 也要 flushQueue（否则审批续跑后排队消息不接力）')
+    assert.ok(/head\.setAttribute\('aria-expanded'/.test(agentSource) && /role="alertdialog" aria-modal="true"/.test(agentSource),
+      'G-10(e)：折叠控件要有 aria-expanded、审批卡要有 aria-modal')
+    assert.ok(!/与 busy 分开：审批时 busy 完全可能是 true/.test(agentSource),
+      '过期注释必须清掉：审批等待期 busy 实为 false（renderApproval 与 setBusy(false) 之间没有 await）')
     console.log('前端接线检查: 流式 / 历史面板 / 上下文刻度 / 工具卡片 / 思考过程显示 / 过程收起 / 每轮用量 / 系统提示词行 / 排队与引导 / 轮次导航 / 环境感知行为 全绿通过')
   } catch (error) {
     error.message += '\nAI host stderr:\n' + stderr
