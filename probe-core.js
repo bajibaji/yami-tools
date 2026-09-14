@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.8.0';
+  const PROBE_VERSION = '1.9.1';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -2397,15 +2397,15 @@
     if (at && at.label) {
       let line = '停在「' + at.label + '」';
       if (at.value) line += '=' + at.value;
-      // 区域级（比如"停在场景视图"）光说这块地方信息不够，补一条背景；
-      // 精确到控件时就不补 —— 用户要的是"AI 知道我在看哪儿"，不是一串背景。
-      if (at.vague) {
-        const one = (ctx.sceneTarget && ctx.sceneTarget.name)
-          ? '选中' + (ctx.sceneTarget.type && ctx.sceneTarget.type !== 'object' ? ctx.sceneTarget.type + ':' : '') + '「' + ctx.sceneTarget.name + '」'
-          : ((ctx.selectedFile && ctx.selectedFile.name) ? '选中「' + ctx.selectedFile.name + '」' : '');
-        if (one) line += '·' + one;
-      }
-      return '【当前环境】' + (ctx.playtest ? '试玩中·' : '') + line;
+      // 「我选中的是谁」永远要带上：用户说"这个技能/这个角色"时，指的就是资源树里选中的那个，
+      // 只报"停在哪个控件"等于让他再解释一遍（实测踩过：他明明选了技能，模型还是反问"先测哪个"）。
+      // 场景对象优先（他刚点的是场景里的东西），其次才是资源树选中项。
+      const picked = (ctx.sceneTarget && ctx.sceneTarget.name)
+        ? '选中' + (ctx.sceneTarget.type && ctx.sceneTarget.type !== 'object' ? ctx.sceneTarget.type + ':' : '') + '「' + ctx.sceneTarget.name + '」'
+        : ((ctx.selectedFile && ctx.selectedFile.name) ? '选中「' + ctx.selectedFile.name + '」' : '');
+      if (picked) line += '·' + picked;
+      const full = '【当前环境】' + (ctx.playtest ? '试玩中·' : '') + line;
+      return full.length > 120 ? full.slice(0, 117) + '...' : full;
     }
     const parts = [];
     parts.push(ctx.playtest ? '试玩中' : (ctx.environment === 'editor' ? '编辑器' : '独立运行'));

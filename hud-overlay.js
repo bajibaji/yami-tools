@@ -4473,6 +4473,28 @@
         background: rgba(239, 68, 68, 0.15) !important;
         border-color: rgba(239, 68, 68, 0.45) !important;
       }
+      /* 历史条目上的「导出」：与「删除」同一套小按钮尺寸，语义色换成中性蓝 */
+      .yami-ai-history-actions {
+        align-self: flex-end !important;
+        display: flex !important;
+        gap: 6px !important;
+      }
+      .yami-ai-history-dl {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 3px !important;
+        padding: 2px 6px !important;
+        border: 1px solid rgba(59, 130, 246, 0.3) !important;
+        border-radius: 3px !important;
+        color: #93c5fd !important;
+        background: rgba(59, 130, 246, 0.06) !important;
+        font-size: 11px !important;
+        transition: all 0.15s ease !important;
+      }
+      .yami-ai-history-dl:hover {
+        background: rgba(59, 130, 246, 0.16) !important;
+        border-color: rgba(59, 130, 246, 0.5) !important;
+      }
 
       /* 审批与高危确认面板 (Approval Modal) */
       .yami-ai-approval {
@@ -5621,7 +5643,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.8.0 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.9.1 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
@@ -5962,7 +5984,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.8.0 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.9.1 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -9224,7 +9246,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.8.0';
+      const cur = (probe && probe.version) ? probe.version : '1.9.1';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -9290,7 +9312,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.8.0') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.9.1') + ')');
           refreshVersionBadge();
         }
       });

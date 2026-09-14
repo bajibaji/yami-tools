@@ -144,6 +144,8 @@ const editorBridge = new EditorBridge(5967)
 // 基线快照与待办清单：按 sessionId 分桶隔离，避免跨会话污染与相互冲刷（写入历史不分桶：它记的是这个工程最近被谁改过，与对话无关）
 const sessionBaselines = new Map()
 const sessionTodos = new Map()
+// 每个会话"上次报告改动清单"的时间：只报这之后发生的写入，避免同一批文件被反复列出来
+const sessionReportedAt = new Map()
 // 本轮写入记录（工具名、是否通过编译、是否被回滚），供小结标注"谁改的、编译过没过"
 const recentWrites = []
 const RECENT_WRITES_MAX = 200
@@ -162,6 +164,7 @@ function firstCompileError(compile) {
 
 function rememberWrite(entry) {
   if (!entry || !entry.path) return
+  if (!entry.at) entry.at = Date.now()
   recentWrites.push(entry)
   if (recentWrites.length > RECENT_WRITES_MAX) recentWrites.splice(0, recentWrites.length - RECENT_WRITES_MAX)
 }
@@ -984,7 +987,8 @@ const tools = [
   },
   {
     name: 'playtest_smoke',
-    description: '试玩冒烟测试（本工程特色验证闭环）：按脚本驱动一遍游戏（方向键走位、确认对话等），跑完自动对比运行时诊断，报告「新出现的报错 / 变频繁的报错 / 新卡住的事件 / 性能是否恶化」。改完代码想确认"真的还能玩"时用它。需要先在编辑器里启动试玩。',
+    description: '试玩冒烟测试（本工程特色验证闭环）：按脚本驱动一遍游戏（方向键走位、确认对话等），跑完自动对比运行时诊断，报告「新出现的报错 / 变频繁的报错 / 新卡住的事件 / 性能是否恶化」。改完代码想确认"真的还能玩"时用它。需要先在编辑器里启动试玩。\n'
+      + '按键白名单：up/down/left/right/ok/cancel/space/z/x/c；数字键与 F1~F12 不支持（序列会被拒），别拿功能键做验证方案。',
     readOnlyHint: false,
     inputSchema: {
       type: 'object',
@@ -1003,7 +1007,8 @@ const tools = [
   },
   {
     name: 'send_player_input',
-    description: '向正在运行的试玩游戏下发虚拟按键操作（方向键、确定对话、取消等），用于自动化探索与跑图回归测试',
+    description: '向正在运行的试玩游戏下发虚拟按键操作（方向键、确定对话、取消等），用于自动化探索与跑图回归测试。'
+      + '白名单：up/down/left/right/ok/cancel/space/z/x/c；F1~F12 不支持。',
     readOnlyHint: false,
     inputSchema: {
       type: 'object',
@@ -1110,8 +1115,23 @@ async function ensureEditorWritable(rel) {
   return { ok: true }
 }
 
+// 写盘后的编辑器热更新结果（最近一次）。成功要记，失败更要记 —— 以前这里 try/catch 吞掉一切，
+// 于是"编辑器内存没刷新成功"谁都看不见，而它恰恰意味着：用户下次在编辑器里保存，会把刚才的改动覆盖掉。
+let lastReloadReport = null
 async function notifyEditorReload(rel) {
-  try { await editorBridge.action('reload', { path: rel }) } catch {}
+  const report = { rel: rel, ok: true, error: '', at: Date.now() }
+  try {
+    const res = await editorBridge.action('reload', { path: rel })
+    if (res && res.ok === false) {
+      report.ok = false
+      report.error = res.error || res.message || '编辑器桥拒绝了重载请求'
+    }
+  } catch (error) {
+    report.ok = false
+    report.error = error.message
+  }
+  lastReloadReport = report
+  return report
 }
 
 async function callTool(name, args) {
@@ -1752,21 +1772,33 @@ async function callTool(name, args) {
       const sKey = getSessionKey(args)
       const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 200)
       const current = snapshotProject(ROOT)
+      // 只报"上次汇报之后"的写入：同一轮里问好几次时，重复列同一批文件只是噪音
+      const since = sessionReportedAt.get(sKey) || 0
+      const writes = recentWrites.filter(item => (item.at || 0) > since)
+      sessionReportedAt.set(sKey, Date.now())
       let baselineSnapshot = sessionBaselines.get(sKey)
       if (args.reset === true || !baselineSnapshot) {
         const isFirst = !baselineSnapshot
         sessionBaselines.set(sKey, current)
+        // 首次调用只回一句"基线已建立"，模型就看不到"我刚才改了什么"（实测踩过：它发现这点后
+        // 干脆不报清单，用户最后拿不到"改了哪些文件"）。基线是给**之后**的增量用的，
+        // 写入记录是**已经发生**的事实，一并交出去。
+        const pending = buildChangelog({ snapshotDiff: { modified: [], created: [], deleted: [] }, writes, includeWriteOnly: true, playtest: lastPlaytest })
         return {
           ok: true,
           baseline: true,
           trackedFiles: current.size,
+          writes: writes.map(item => ({ path: item.path, tool: item.tool, ok: item.ok, rolledBack: item.rolledBack === true })),
+          summary: pending.summary,
+          headline: pending.headline,
+          files: pending.files.slice(0, limit),
           message: isFirst
             ? `已把当前状态设为基线（跟踪 ${current.size} 个文本资源），之后再来叫我就只报增量。`
+              + (pending.files.length ? `另外：这之前你已经改过 ${pending.files.length} 个文件，清单见 files（收尾时要如实报给用户）。` : '')
             : `已把当前状态重置为新基线（${current.size} 个文本资源）。`
         }
       }
       const diff = diffSnapshot(baselineSnapshot, current)
-      const writes = recentWrites
       const changelog = buildChangelog({ snapshotDiff: diff, writes, playtest: lastPlaytest })
       const currentTodos = sessionTodos.get(sKey) || []
       const todoSummary = summarizeTodos(currentTodos)
@@ -2037,9 +2069,19 @@ rl.on('line', (line) => {
   }
   if (msg.method === 'tools/call') {
     const { name, arguments: args } = msg.params || {}
+    const callStartedAt = Date.now()
     Promise.resolve()
       .then(() => callTool(name, args))
       .then((result) => {
+        // 这次调用里发生过编辑器热更新、而且是失败的 → 如实告诉模型：
+        // 它（和用户）必须知道"编辑器内存还是旧的，保存会覆盖这次改动"，否则就是拿假成功骗人。
+        const reload = lastReloadReport
+        if (reload && !reload.ok && reload.at >= callStartedAt && result && typeof result === 'object' && result.ok === true) {
+          result.editorReload = { ok: false, path: reload.rel, error: reload.error }
+          result.message = String(result.message || ('已写入 ' + reload.rel))
+            + '。但编辑器内存没有刷新成功（' + reload.error + '）：请提醒用户在编辑器里按【刷新资源树】或重启工程，'
+            + '否则他下次保存可能把这次改动覆盖掉。'
+        }
         send({
           jsonrpc: '2.0', id: msg.id,
           result: {

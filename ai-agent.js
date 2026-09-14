@@ -82,7 +82,8 @@
     trash: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M7 6V3a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v3h5v2h-2v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V8H2V6h5zm2-2v2h6V4H9zm-3 4v12h12V8H6zm3 3h2v6H9v-6zm4 0h2v6h-2v-6z"/></svg>',
     close: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M12 10.586l4.95-4.95 1.414 1.414L13.414 12l4.95 4.95-1.414 1.414L12 13.414l-4.95 4.95-1.414-1.414L10.586 12 5.636 7.05l1.414-1.414z"/></svg>',
     check: '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M10 15.172l9.192-9.193 1.415 1.414L10 18l-6.364-6.364 1.414-1.414z"/></svg>',
-    redo: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M18.172 7l-2.536 2.536L17.05 10.95 22 6l-4.95-4.95-1.414 1.414L18.172 5H11a8 8 0 1 0 0 16h9v-2h-9a6 6 0 1 1 0-12h7.172z"/></svg>'
+    redo: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M18.172 7l-2.536 2.536L17.05 10.95 22 6l-4.95-4.95-1.414 1.414L18.172 5H11a8 8 0 1 0 0 16h9v-2h-9a6 6 0 1 1 0-12h7.172z"/></svg>',
+    download: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M11 3h2v9.172l3.364-3.364 1.414 1.414L12 16l-5.778-5.778 1.414-1.414L11 12.172V3zM4 18h16v2H4z"/></svg>'
   };
 
   // 本地临时已忽略/已移除的文件路径集合（按会话生命周期隔离，用户点“移除记录”后不再显示）
@@ -991,14 +992,16 @@
           '<span class="yami-ai-subpage-desc">自动保存每次对话，可随时恢复、继续或删除</span>' +
         '</div>' +
         '<div class="yami-ai-subpage-actions" style="display:flex;align-items:center;gap:6px;">' +
-          '<div class="yami-ai-subpage-back yami-ai-subpage-new" role="button" tabindex="0" style="background:#1e293b;border-color:#334155;">新对话</div>' +
-          '<div class="yami-ai-subpage-back" role="button" tabindex="0">返回对话</div>' +
+          '<div class="yami-ai-subpage-back" id="yami-ai-history-export" role="button" tabindex="0" title="把所有历史对话导出成一个 Markdown 文件">导出全部</div>' +
+          '<div class="yami-ai-subpage-back yami-ai-subpage-new" id="yami-ai-history-new" role="button" tabindex="0" style="background:#1e293b;border-color:#334155;">新对话</div>' +
+          '<div class="yami-ai-subpage-back" id="yami-ai-history-back" role="button" tabindex="0">返回对话</div>' +
         '</div>';
-      activate(subHeader.querySelector('.yami-ai-subpage-new'), () => {
+      activate(subHeader.querySelector('#yami-ai-history-export'), () => exportConversation({ all: true }, '全部历史对话'));
+      activate(subHeader.querySelector('#yami-ai-history-new'), () => {
         startNewSession();
         setSubView('chat');
       });
-      activate(subHeader.querySelector('.yami-ai-subpage-back:not(.yami-ai-subpage-new)'), () => setSubView('chat'));
+      activate(subHeader.querySelector('#yami-ai-history-back'), () => setSubView('chat'));
       panel.appendChild(subHeader);
 
       if (!sessions.length) {
@@ -1049,9 +1052,23 @@
           if (item.id === state.sessionId) startNewSession(false);
           renderHistory();
         });
+        const exp = document.createElement('div');
+        exp.className = 'yami-ai-history-dl';
+        exp.setAttribute('role', 'button');
+        exp.setAttribute('tabindex', '0');
+        exp.setAttribute('title', '把这段对话导出成 Markdown 文件');
+        exp.innerHTML = AI_ICONS.download + '<span>导出</span>';
+        activate(exp, async event => {
+          event.stopPropagation();
+          await exportConversation({ sessionId: item.id }, '这段历史对话');
+        });
+        const actions = document.createElement('div');
+        actions.className = 'yami-ai-history-actions';
+        actions.appendChild(exp);
+        actions.appendChild(del);
         row.appendChild(title);
         row.appendChild(meta);
-        row.appendChild(del);
+        row.appendChild(actions);
         panel.appendChild(row);
       }
     } catch (e) {
@@ -1958,6 +1975,48 @@
       navigator.clipboard.writeText(full);
       hudToast('已复制完整路径：' + full);
     } catch (e) { hudToast('定位失败：' + full); }
+  }
+
+  /**
+   * 导出对话：宿主把会话排成 Markdown（/session/export），面板负责落盘。
+   * 落盘沿用性能大盘导出诊断报告那套做法（写进工程目录 + 在资源管理器里定位），
+   * 写不进去就退化成复制到剪贴板 —— 绝不假装"导出成功"。
+   */
+  /** 在系统资源管理器里定位一个**绝对路径**（导出的稿子在插件数据目录，不在工程里，所以不走 revealPath） */
+  function revealAbsolute(full) {
+    try {
+      const electron = require('electron');
+      if (electron && electron.shell && electron.shell.showItemInFolder) {
+        electron.shell.showItemInFolder(full);
+        return true;
+      }
+    } catch (e) { /* 没有 electron 就退化成复制路径 */ }
+    return false;
+  }
+
+  /**
+   * 导出对话：宿主负责排版与落盘（写进插件数据目录，**绝不落进用户工程** —— 那是他的 git 仓库），
+   * 面板只报落点并定位。落盘失败时宿主把正文交回来，这里退化成复制到剪贴板 —— 不假装导出成功。
+   */
+  async function exportConversation(payload, what) {
+    try {
+      const data = await request('/session/export', payload);
+      if (data.path) {
+        hudToast('已导出' + what + '：' + data.filename);
+        if (!revealAbsolute(data.path)) {
+          try { navigator.clipboard.writeText(data.path); hudToast('已复制文件路径：' + data.path); } catch (e) {}
+        }
+        return;
+      }
+      if (data.markdown && navigator.clipboard) {
+        await navigator.clipboard.writeText(data.markdown);
+        hudToast('导出目录写不进去，已把' + what + '复制到剪贴板');
+        return;
+      }
+      hudToast('导出失败：' + String(data.warning || '导出目录不可写'));
+    } catch (e) {
+      hudToast('导出失败：' + String(e.message || e));
+    }
   }
 
   function toolChipsOf(info) {
@@ -2880,6 +2939,7 @@
         '<div class="yami-ai-toolbar-actions">' +
           '<div class="yami-ai-tool-btn" id="yami-ai-undo-toggle" role="button" tabindex="0" title="查看并撤销文件改动">' + AI_ICONS.undo + '<span>撤销</span></div>' +
           '<div class="yami-ai-tool-btn" id="yami-ai-history-toggle" role="button" tabindex="0" title="会话历史记录">' + AI_ICONS.history + '<span>历史</span></div>' +
+          '<div class="yami-ai-tool-btn" id="yami-ai-export" role="button" tabindex="0" title="把这段对话导出成 Markdown 文件（存到插件数据目录，不落进工程）">' + AI_ICONS.download + '<span>导出</span></div>' +
           '<div class="yami-ai-tool-btn yami-ai-btn-new-chat" id="yami-ai-clear" role="button" tabindex="0" title="开启新对话">' + AI_ICONS.add + '<span>新对话</span></div>' +
           '<div class="yami-ai-tool-btn" id="yami-ai-settings-toggle" role="button" tabindex="0" title="模型与插件设置">' + AI_ICONS.settings + '<span>设置</span></div>' +
         '</div>' +
@@ -3031,6 +3091,7 @@
       const page = document.getElementById('page-ai');
       setSubView(page && page.classList.contains('view-history') ? 'chat' : 'history');
     });
+    activate(document.getElementById('yami-ai-export'), () => exportConversation({ sessionId: state.sessionId }, '这段对话'));
     activate(document.getElementById('yami-ai-save-settings'), saveSettings);
     activate(document.getElementById('yami-ai-fetch-models'), fetchModelList);
     activate(document.getElementById('yami-ai-balance'), showBalance);

@@ -107,11 +107,13 @@ function buildChangelog(input = {}) {
   for (const write of writings) writeByPath.set(write.path, write)
 
   const files = []
-  const push = (filePath, kind) => {
+  const push = (filePath, kind, fromWrite) => {
     const write = writeByPath.get(filePath)
     files.push({
       path: filePath,
       kind,
+      // 标注这条是"宿主记账"而不是"基线比对"出来的，读清单的人一眼能分清
+      fromWrite: fromWrite === true,
       tool: write ? write.tool : '',
       toolLabel: write ? (TOOL_LABELS[write.tool] || write.tool) : '',
       compileOk: write ? write.compileOk : undefined,
@@ -123,6 +125,17 @@ function buildChangelog(input = {}) {
   for (const file of diff.created) push(file, 'created')
   for (const file of diff.modified) push(file, 'modified')
   for (const file of diff.deleted) push(file, 'deleted')
+  // 只在**没有基线可比**时（首次调用）才把写入记录当成改动清单：那时 diff 必然为空，
+  // 写入记录是唯一的证据。有基线时一律以快照比对为准 —— 否则"写了又改回去"会被算成改动，
+  // 而那正是按内容哈希判定变更的意义所在（test-changelog.cjs 专门钉了这条）。
+  if (input.includeWriteOnly === true) {
+    const listed = new Set(files.map(item => item.path))
+    for (const write of writings) {
+      if (write.ok === false || write.rolledBack === true || listed.has(write.path)) continue
+      push(write.path, write.tool === 'create_script' ? 'created' : 'modified', true)
+      listed.add(write.path)
+    }
+  }
 
   const compileChecked = files.filter(item => item.compileOk !== undefined)
   const compileFailed = compileChecked.filter(item => item.compileOk === false)
@@ -131,9 +144,10 @@ function buildChangelog(input = {}) {
   const playtest = input.playtest || null
   const summary = {
     fileCount: files.length,
-    created: diff.created.length,
-    modified: diff.modified.length,
-    deleted: diff.deleted.length,
+    created: files.filter(item => item.kind === 'created').length,
+    modified: files.filter(item => item.kind === 'modified').length,
+    deleted: files.filter(item => item.kind === 'deleted').length,
+    fromWrite: files.filter(item => item.fromWrite).length,
     compileChecked: compileChecked.length,
     compileFailed: compileFailed.length,
     rolledBack: rolledBack.length,
@@ -167,6 +181,7 @@ function describeChangelog(summary) {
       ? `；编译检查 ${summary.compileChecked} 次，其中 ${summary.compileFailed} 次未通过`
       : `；编译检查 ${summary.compileChecked} 次全部通过`
   }
+  if (summary.fromWrite) text += `（其中 ${summary.fromWrite} 项来自本轮写入记录，基线比对没覆盖到）`
   if (summary.playtestVerdict === 'ok') text += '；试玩冒烟没有发现问题'
   else if (summary.playtestVerdict === 'warn') text += '；试玩冒烟有告警，建议看一眼'
   else if (summary.playtestVerdict === 'bad') text += '；试玩冒烟发现了问题'

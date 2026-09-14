@@ -152,9 +152,16 @@ async function main() {
     const log3 = await parse('project_changelog', {})
     check('新建文件被计入变更', log3.summary.created >= 1 || log3.summary.modified >= 1, JSON.stringify(log3.summary))
 
+    // F7：重置/首次建立基线的那一次调用，也must报出"这之前已经改过什么" ——
+    // 以前它只回一句"基线已建立"，模型据此只能说"无变更"，用户最后拿不到改动清单。
+    const fresh = await parse('project_changelog', { sessionId: 'changelog-fresh-' + Date.now() })
+    check('一个会话第一次问进度时也报出这之前已写入的文件（不是只回一句「基线已建立」）',
+      fresh.baseline === true && Array.isArray(fresh.files) && fresh.files.some(item => item.fromWrite === true),
+      JSON.stringify(fresh.summary))
     await parse('project_changelog', { reset: true })
     const log4 = await parse('project_changelog', {})
-    check('重置基线后回到空', log4.summary.fileCount === 0, JSON.stringify(log4.summary))
+    check('重置基线后回到空（有基线时一律以快照比对为准，写入记录不再单独成条）',
+      log4.summary.fileCount === 0 && log4.summary.fromWrite === 0, JSON.stringify(log4.summary))
   } finally {
     child.kill()
     fs.rmSync(project, { recursive: true, force: true })

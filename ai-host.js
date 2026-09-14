@@ -62,7 +62,13 @@ const READ_ONLY_TOOLS = new Set([
 // 会话落盘目录：关掉窗口、重启编辑器、甚至隔天回来都能接着聊（对标 Claude Code 的会话恢复）
 const SESSION_DIR = process.env.YAMI_AI_SESSION_DIR || path.join(CONFIG_DIR, 'sessions')
 const DEFAULT_MAX_STEPS = Number(process.env.YAMI_AI_MAX_STEPS || 0)      // 单轮最多连续工具调用步数（默认 0：无限制，仅防死循环打转）
+// 单轮工具调用预算：模型陷入"换个关键词接着查"时，per-name 的软提示拦不住（实测连提示 6 次照旧往下查），
+// 所以再上一道硬闸 —— 单个工具刷到 N 次、或本轮累计到 M 次，就如实停下把方向盘交回用户，而不是继续空转。
+const TOOL_REPEAT_LIMIT = Number(process.env.YAMI_AI_TOOL_REPEAT_LIMIT || 8)
+const TURN_CALL_BUDGET = Number(process.env.YAMI_AI_TURN_CALL_BUDGET || 30)
 const MAX_STEPS = DEFAULT_MAX_STEPS
+// 对话导出稿**不落进用户工程**：工程是他的 git 仓库，扔个 md 进去就是脏文件；统一放插件自己的数据目录。
+const EXPORT_DIR = process.env.YAMI_AI_EXPORT_DIR || path.join(CONFIG_DIR, 'exports')
 const TOOL_RESULT_LIMIT = Number(process.env.YAMI_AI_TOOL_LIMIT || 24000)  // 工具结果进上下文时保留的总字符数（头+尾）
 const TOOL_RESULT_TAIL = Number(process.env.YAMI_AI_TOOL_TAIL || 4000)     // 其中留给尾部的字符数（报错原文与结论常在末尾）
 
@@ -81,6 +87,43 @@ function contextSpec() {
     retainRatio: Number(process.env.YAMI_AI_COMPACT_RETAIN || contextMeter.DEFAULT_RETAIN_RATIO),
     minKeepMessages: Number(process.env.YAMI_AI_CONTEXT_KEEP || contextMeter.DEFAULT_MIN_KEEP_MESSAGES)
   })
+}
+
+/**
+ * 工程自带的「AI 阅读入口」文档（本工程是 `DANJUAN TOOLS/00-文档总索引（AI 阅读入口）.md` 这一套）：
+ * 里面写着这个工程的目录约定、引擎机制与既有做法，是最权威的上下文。存在就把路径交给模型，
+ * 不存在就一个字都不提（别的工程没这套文档，凭空提只会让它去找不存在的文件）。
+ * 按 projectRoot 缓存 —— 切换工程要重算，所以比的是 root 而不是"算过没有"。
+ */
+const PROJECT_DOC_CANDIDATES = [
+  path.join('DANJUAN TOOLS', '00-文档总索引（AI 阅读入口）.md'),
+  path.join('DANJUAN TOOLS', '00-文档总索引.md')
+]
+let docHintCache = { root: '', text: '' }
+function projectDocHint() {
+  if (!projectRoot) return ''
+  if (docHintCache.root === projectRoot) return docHintCache.text
+  let rel = ''
+  try {
+    rel = PROJECT_DOC_CANDIDATES.find(item => fs.existsSync(path.join(projectRoot, item))) || ''
+    if (!rel) {
+      // 兜底：工程根下任何叫「AI 阅读入口」的 md 都算（目录结构可能不叫 DANJUAN TOOLS）
+      const hit = fs.readdirSync(projectRoot, { withFileTypes: true })
+        .find(entry => entry.isDirectory() && /工具|TOOLS/i.test(entry.name))
+      if (hit) {
+        const inside = fs.readdirSync(path.join(projectRoot, hit.name))
+          .find(name => /AI ?阅读入口/.test(name) && name.endsWith('.md'))
+        if (inside) rel = path.join(hit.name, inside)
+      }
+    }
+  } catch { rel = '' }
+  const text = rel
+    ? '【工程文档入口】这个工程自带 AI 阅读入口：' + rel.replace(/\\/g, '/') + '。'
+      + '开工前先读它（read_resource 能直接读 md），按它的速查表只挑与本次需求相关的一两份文档；'
+      + '里面写着目录约定与引擎机制，读完再动手比你自己搜十次都准。索引之外不要通读（合计十几万字）。'
+    : ''
+  docHintCache = { root: projectRoot, text }
+  return text
 }
 
 /** 模型可见的工具 schema：整轮复用同一个数组实例，估算结果才能命中缓存 */
@@ -186,6 +229,13 @@ function visibleMessages(session, limit = 4000) {
     })
 }
 
+/** 会话标题：第一条"用户真说过的话"的前 40 字。历史列表与导出文件名共用同一口径 */
+function sessionTitleOf(list) {
+  const firstUser = (list || []).find(message => message && message.role === 'user' && !isCheckpoint(message))
+  const text = String((firstUser && firstUser.content) || '新对话')
+  return text.replace(/（请检查上一轮的实际进展[\s\S]*$/, '').replace(/\s+/g, ' ').slice(0, 40)
+}
+
 function listSessions() {  try {
     return fs.readdirSync(SESSION_DIR)
       .filter(name => name.endsWith('.json'))
@@ -194,9 +244,7 @@ function listSessions() {  try {
         try {
           const data = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, name), 'utf8'))
           const list = data.messages || []
-          const firstUser = list.find(message => message && message.role === 'user' && !isCheckpoint(message))
-          let titleText = String(firstUser && firstUser.content || '新对话')
-          titleText = titleText.replace(/（请检查上一轮的实际进展[\s\S]*$/, '').replace(/\s+/g, ' ').slice(0, 40)
+          const titleText = sessionTitleOf(list)
           return {
             id,
             updatedAt: data.updatedAt || 0,
@@ -216,6 +264,138 @@ function listSessions() {  try {
   } catch {
     return []
   }
+}
+
+/* ============================== 对话导出 ============================== */
+/**
+ * 把一段会话排成人能读的 Markdown。**只读**：不改会话状态、不碰落盘文件，导出失败也不该影响正在进行的对话。
+ * 三处刻意的取舍，都是为了"导出的就是真实发生过的那段对话"：
+ *   · system 提示词不进稿子（那是给模型看的几百行脚手架，会把人话淹掉），只在头部记条数；
+ *   · 工具结果不进正文（一条常几万字），只在步骤行交代"执行了什么"；
+ *   · 思考过程用 <details> 折叠 —— 与性能大盘导出诊断报告同一套写法。
+ */
+/**
+ * 会话里 role='user' 的消息并不全是用户打的字：打转干预、写入失败后的修复指令、
+ * 打断记录、工作期间补充说明都是宿主替模型追加的（它们要进上下文，但不该被读稿的人当成用户发言）。
+ * 导出稿据此换标题；模型看到的原文一个字不改。
+ */
+const HOST_NOTE_PATTERNS = [
+  /^【系统干预指引】/,
+  /^（用户在你工作期间补充：/,
+  /^（用户打断了这次操作/,
+  /^刚才的 \S+ 写入没有通过引擎的 TypeScript 编译检查/
+]
+
+function isHostNote(text) {
+  const head = String(text || '').trim()
+  return HOST_NOTE_PATTERNS.some(pattern => pattern.test(head))
+}
+
+function exportArgsHint(raw) {
+  // 只挑"指得出对象"的标量字段：write_script / edit_script 的 content 是整篇脚本，
+  // 原样 JSON.stringify 会把导出稿撑成一坨代码。
+  const args = safeArgs(raw)
+  const target = args.path || args.nameZh || args.className || args.table || args.query || args.key || args.action || ''
+  return String(target).replace(/\s+/g, ' ').slice(0, 80)
+}
+
+function sessionToMarkdown(session) {
+  const list = Array.isArray(session.messages) ? session.messages : []
+  const turns = list.filter(message => message.role === 'user' && !isCheckpoint(message)).length
+  const toolResults = list.filter(message => message.role === 'tool').length
+  const systems = list.filter(message => message.role === 'system').length
+  const out = []
+  out.push('# ' + sessionTitleOf(list))
+  out.push('')
+  out.push('- **导出时间**: ' + new Date().toLocaleString('zh-CN', { hour12: false }))
+  out.push('- **会话 ID**: `' + session.id + '`')
+  out.push('- **规模**: ' + turns + ' 轮对话 · ' + list.length + ' 条消息'
+    + (toolResults ? '（另有 ' + toolResults + ' 条工具结果未收进正文）' : '')
+    + (systems ? '；' + systems + ' 条系统提示词按惯例不导出' : ''))
+  for (const message of list) {
+    if (!message || message.role === 'system' || message.role === 'tool') continue
+    if (isCheckpoint(message)) {
+      const summary = String(message.content || '')
+        .replace(/[\s\S]*?<compacted-summary>\s*/, '')
+        .replace(/\s*<\/compacted-summary>[\s\S]*$/, '')
+        .trim()
+      out.push('')
+      out.push('---')
+      out.push('')
+      // 整段用同一个引用块：中间空一行会被 Markdown 拆成两个 blockquote，读起来像两段无关的话
+      out.push('> **【早前对话已压缩，以下是要点】**')
+      for (const line of summary.split('\n')) out.push('> ' + line)
+      continue
+    }
+    const content = String(message.content || '').trim()
+    const reasoning = String(message.reasoning_content || '').trim()
+    const calls = Array.isArray(message.tool_calls) ? message.tool_calls : []
+    if (message.role === 'user') {
+      out.push('')
+      out.push('---')
+      out.push('')
+      out.push(isHostNote(content) ? '### 系统提示（宿主自动追加，非用户发言）' : '### 你')
+      out.push('')
+      out.push(content)
+      continue
+    }
+    if (message.role !== 'assistant') continue
+    if (!content && !reasoning && !calls.length) continue
+    out.push('')
+    out.push('---')
+    out.push('')
+    out.push('### AI 助手')
+    if (reasoning) {
+      out.push('')
+      out.push('<details><summary>思考过程</summary>')
+      out.push('')
+      out.push(reasoning)
+      out.push('')
+      out.push('</details>')
+    }
+    if (content) {
+      out.push('')
+      out.push(content)
+    }
+    for (const call of calls) {
+      const fn = call.function || {}
+      const hint = exportArgsHint(fn.arguments)
+      out.push('')
+      out.push('- 执行：' + toolLabel(fn.name) + (hint ? '（`' + hint + '`）' : ''))
+    }
+  }
+  return out.join('\n').trim() + '\n'
+}
+
+/**
+ * 导出稿落盘：写进插件自己的数据目录（EXPORT_DIR），**绝不落进用户工程** ——
+ * 工程是他的 git 仓库，扔个 md 进去就是一条脏文件。写不进去就把正文交回面板走剪贴板，
+ * 并如实说明为什么没落盘（不假装成功）。
+ */
+function writeExport(filename, markdown, sessionCount) {
+  const bytes = Buffer.byteLength(markdown, 'utf8')
+  try {
+    fs.mkdirSync(EXPORT_DIR, { recursive: true })
+    const full = path.join(EXPORT_DIR, filename)
+    fs.writeFileSync(full, markdown, { encoding: 'utf8', mode: 0o600 })
+    return { ok: true, filename, path: full, bytes, sessions: sessionCount }
+  } catch (error) {
+    return {
+      ok: true,
+      filename,
+      path: '',
+      bytes,
+      sessions: sessionCount,
+      markdown,
+      warning: '导出目录写不进去（' + error.message + '），内容已交回面板复制到剪贴板'
+    }
+  }
+}
+
+/** 导出文件名：Windows 文件名里不能出现的字符一律去掉，别让标题把落盘搞失败 */
+function exportFileName(title, suffix) {
+  const safe = String(title || 'AI对话').replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim().slice(0, 30)
+  return (safe || 'AI对话') + suffix
 }
 
 /**
@@ -1574,6 +1754,9 @@ async function continueSession(session, config, events = {}) {
   if (!envSummary) {
     try { envSummary = await fetchEditorContextSummary() } catch {}
   }
+  // 工程文档入口跟着环境快照走同一条注入通道（它每轮都该在，但不参与顶栏那一行显示）
+  const docHint = projectDocHint()
+  if (docHint) envSummary = envSummary ? envSummary + '\n' + docHint : docHint
 
   const rawMaxSteps = (config && config.maxSteps !== undefined) ? Number(config.maxSteps) : Number(process.env.YAMI_AI_MAX_STEPS || DEFAULT_MAX_STEPS)
   const maxSteps = rawMaxSteps > 0 ? rawMaxSteps : Infinity
@@ -1654,6 +1837,33 @@ async function continueSession(session, config, events = {}) {
       }
     }
     repairJustInjected = false
+    // 硬闸：单工具刷屏 / 单轮总预算用尽。toolTally 记的是本轮**已执行**的调用次数（每轮清零），
+    // 直接拿来当预算计数器，不引入第二份状态。
+    {
+      const tally = session.toolTally || {}
+      const hotName = calls
+        .map(call => call.function && call.function.name)
+        .filter(Boolean)
+        .find(name => (tally[name] || 0) >= TOOL_REPEAT_LIMIT)
+      const usedTotal = Object.values(tally).reduce((sum, value) => sum + (Number(value) || 0), 0)
+      if (hotName || usedTotal >= TURN_CALL_BUDGET) {
+        const detail = Object.entries(tally)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 4)
+          .map(([name, times]) => toolLabel(name) + ' ' + times + ' 次')
+          .join('、')
+        appendUnexecutedToolResults(session, calls, '本轮工具调用预算用尽，本次未执行')
+        return await attachChangelog(session, {
+          ok: false,
+          status: 'stuck',
+          message: (hotName
+            ? `「${toolLabel(hotName)}」已经连续调用了 ${tally[hotName]} 次还没有收尾`
+            : `本轮工具调用已达上限 ${TURN_CALL_BUDGET} 次`)
+            + `，我先停下来，免得继续空转。本轮调用分布：${detail || '（无）'}。`
+            + '你可以直接告诉我下一步该看哪个文件、改哪里，或者说一句「继续」让我再跑一轮。'
+        })
+      }
+    }
     if (cancelToken && cancelToken.cancelled) {
       // 模型已给出工具调用但用户按下停止：本轮不再执行，避免"说停还在改文件"。
       // 注意：这条带 tool_calls 的 assistant 上面已经入历史了，这里**不能**再补一条去掉
@@ -1731,6 +1941,16 @@ function toolLabel(name) {
  * 只读工具可以并发（模型经常一次要读好几个文件）；写盘/编辑器动作/试玩输入必须独占且保序。
  * 未声明或未登记的工具一律按独占处理，宁可慢一点也不误并发写操作。
  */
+/**
+ * ui_steps 的动作分两类：focus / goto / wait 只是"看"（高亮、翻页、停一下），set / click 才是真改东西。
+ * 上一轮把整个 ui_steps 并进 OTHER_MUTATIONS（防界面被悄悄改），副作用是连"演示给你看"也要弹确认卡，
+ * 于是模型干脆不演示了 —— 用户要的"边做边演示"就这么没了。这里按步骤类型细分：只有真改的才拦。
+ */
+function uiStepsMutating(args) {
+  const steps = Array.isArray(args && args.steps) ? args.steps : []
+  return steps.some(step => step && ['set', 'click'].includes(String(step.kind || '')))
+}
+
 function isExclusiveCall(name) {
   if (FILE_MUTATIONS.has(name)) return true
   if (OTHER_MUTATIONS.has(name)) return true
@@ -1775,8 +1995,9 @@ function repeatHint(session, name) {
   session.toolTally[name] = (session.toolTally[name] || 0) + 1
   const count = session.toolTally[name]
   if (count < 3) return null
-  return `这是本次任务里第 ${count} 次调用「${toolLabel(name)}」。如果前面几次的结果没能推进任务，`
-    + '请立刻换策略：不要再继续检索！直接读取具体文件（read_script / read_resource），或用 edit_script / append_event_commands 执行修改，或把已确认的结论先告诉用户。'
+  return `这是本次任务里第 ${count} 次调用「${toolLabel(name)}」（同一工具上限 ${TOOL_REPEAT_LIMIT} 次，到点我会停下来把进度交回用户）。`
+    + '如果前面几次的结果没能推进任务，请立刻换策略：不要再继续检索！直接读取具体文件（read_script / read_resource），'
+    + '或用 edit_script / append_event_commands 执行修改，或把已确认的结论先告诉用户。'
 }
 
 /**
@@ -1899,7 +2120,9 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
     // P0-3: 写盘与界面改属性前，检查是否有未失焦/未提交的输入 (AutoReload 竞态防踩)。
     // ui_steps 也是一次"改属性"，用户打了一半的字同样会被 AutoReload 冲掉，所以一并拦。
     // 纯预览既不写盘也不碰控件，不拦。
-    if ((isFileMutation && !isPreviewOnly) || name === 'ui_steps') {
+    // 纯演示（只有高亮/翻页/等待）不写任何东西，也不该被"未失焦输入"拦住
+    const uiDemoOnly = name === 'ui_steps' && !uiStepsMutating(args)
+    if ((isFileMutation && !isPreviewOnly) || (name === 'ui_steps' && !uiDemoOnly)) {
       try {
         const ctxRes = await editorBridge.getContext()
         if (ctxRes && ctxRes.ok && ctxRes.context && ctxRes.context.hasPendingInput === true) {
@@ -1914,7 +2137,7 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
       } catch (e) {}
     }
     const granted = isFileMutation && isGranted(session, name, args)
-    const needsApproval = !granted && ((isFileMutation && !isPreviewOnly) || (OTHER_MUTATIONS.has(name) && config.approvalMode !== 'auto'))
+    const needsApproval = !granted && ((isFileMutation && !isPreviewOnly) || (OTHER_MUTATIONS.has(name) && !uiDemoOnly && config.approvalMode !== 'auto'))
     if (granted && events.onNotice) {
       events.onNotice(`已授权：${toolLabel(name)} · ${String(args.path || '') || '全部分支'}（本对话内不再逐条确认，跨重启仍有效；可用 /clear 或【撤销】面板清除）`)
     }
@@ -2168,6 +2391,43 @@ async function handle(pathname, body, events = {}) {
     sessions.delete(id)
     try { fs.rmSync(sessionPath(id), { force: true }) } catch { /* 忽略删除失败 */ }
     return { ok: true }
+  }
+
+  // 【导出对话】把一段会话（all=true 时是全部历史）铺成 Markdown 落盘，再把落点交回面板定位。
+  // 只读会话：不写会话文件、不动内存里的会话；渲染时也不去碰模型，所以忙碌中也能导出。
+  if (pathname === '/session/export') {
+    const stamp = new Date().toISOString().slice(0, 10)
+    if (body.all === true) {
+      const items = []
+      for (const name of fs.readdirSync(SESSION_DIR).filter(item => item.endsWith('.json'))) {
+        const restored = loadSessionFromDisk(name.replace(/\.json$/, ''))
+        if (!restored) continue
+        const turns = (restored.messages || []).filter(message => message.role === 'user' && !isCheckpoint(message)).length
+        if (!turns) continue   // 一句话没说的空会话不进导出稿
+        items.push({ id: restored.id, title: sessionTitleOf(restored.messages), updatedAt: restored.updatedAt || 0, markdown: sessionToMarkdown(restored) })
+      }
+      if (!items.length) throw new Error('还没有可以导出的对话')
+      items.sort((a, b) => b.updatedAt - a.updatedAt)
+      const parts = [
+        '# 妙妙插件 AI 对话全量导出',
+        '',
+        '- **导出时间**: ' + new Date().toLocaleString('zh-CN', { hour12: false }),
+        '- **会话数**: ' + items.length + ' 段对话',
+        '',
+        '## 目录',
+        ''
+      ]
+      items.forEach((item, index) => parts.push((index + 1) + '. ' + item.title + '（`' + item.id + '`）'))
+      for (const item of items) parts.push('', '---', '', item.markdown.trim())
+      return writeExport(exportFileName('AI对话-全部', '-' + stamp + '.md'), parts.join('\n') + '\n', items.length)
+    }
+    const id = safeSessionId(body.sessionId)
+    const session = sessions.get(id) || loadSessionFromDisk(id)
+    if (!session) throw new Error('没有找到这个会话')
+    const turns = (session.messages || []).filter(message => message.role === 'user' && !isCheckpoint(message)).length
+    if (!turns) throw new Error('这段对话还没有内容')
+    const markdown = sessionToMarkdown(session)
+    return writeExport(exportFileName(sessionTitleOf(session.messages), '-' + stamp + '.md'), markdown, 1)
   }
 
   // 【G-1】重来：把对话时间轴截断到"某一条用户消息之前"，并把那条原文回填给面板改写重发。

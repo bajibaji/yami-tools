@@ -594,8 +594,14 @@ async function main() {
     // 在场优先：有停留点时就只讲停留点 —— 用户要的是"AI 知道我在看哪儿"，不是一串背景
     const presenceSandbox = {}
     vm.runInNewContext(fnExtract[0] + '; result = formatEditorContextSummary({ environment: "editor", scene: "测试场景", selectedFile: { name: "木剑.item", type: "item" }, presence: { label: "攻击力", value: "25" } });', presenceSandbox)
-    assert.strictEqual(presenceSandbox.result, '【当前环境】停在「攻击力」=25',
-      '有停留点时必须只说这一件事（页面/场景用户自己看得见，不占顶栏那一行）')
+    // 停留点之外**必须**带上"选中的是谁"：用户说"这个技能/这个角色"时指的就是选中的那个资源，
+    // 只报"停在哪个控件"等于让他再解释一遍（实测踩过：他明明选了技能，模型还是反问"先测哪个"）。
+    // 页面/场景这类他自己看得见的背景仍然不占那一行。
+    assert.strictEqual(presenceSandbox.result, '【当前环境】停在「攻击力」=25·选中「木剑.item」',
+      '有停留点：停留点 + 选中的资源（两句封顶，不堆背景）')
+    const longSandbox = {}
+    vm.runInNewContext(fnExtract[0] + '; result = formatEditorContextSummary({ environment: "editor", selectedFile: { name: "很长的资源名字".repeat(20), type: "item" }, presence: { label: "攻击力".repeat(20), value: "25" } });', longSandbox)
+    assert.ok(String(longSandbox.result).length <= 120, '顶栏只有一行：摘要必须有长度上限（120 字）')
 
     // ---- 审计修复（G-1 / G-5 / G-6 / G-7 / G-8 / G-10 / G-11）的接线契约，防止被顺手改回去 ----
     assert.ok(/processToolCalls\(session, pending\.remaining, config, '', events, events\.cancelToken \|\| null\)/.test(hostSource),
@@ -634,7 +640,35 @@ async function main() {
       'G-10(e)：折叠控件要有 aria-expanded、审批卡要有 aria-modal')
     assert.ok(!/与 busy 分开：审批时 busy 完全可能是 true/.test(agentSource),
       '过期注释必须清掉：审批等待期 busy 实为 false（renderApproval 与 setBusy(false) 之间没有 await）')
-    console.log('前端接线检查: 流式 / 历史面板 / 上下文刻度 / 工具卡片 / 思考过程显示 / 过程收起 / 每轮用量 / 系统提示词行 / 排队与引导 / 轮次导航 / 环境感知行为 全绿通过')
+    // 对话导出：会话本来就完整躺在宿主硬盘上，面板手里只有最近 60 条 —— 排版必须在宿主侧
+    assert.ok(/if \(pathname === '\/session\/export'\)/.test(hostSource), '宿主必须提供 /session/export（否则导不出完整历史）')
+    assert.ok(/function sessionToMarkdown\(/.test(hostSource) && /function exportFileName\(/.test(hostSource), '稿件排版与文件名规则要在宿主侧（面板只有一屏历史）')
+    assert.ok(/message\.role === 'system' \|\| message\.role === 'tool'\) continue/.test(hostSource), 'system 提示词与工具结果不进正文（几百行脚手架会把人话淹掉）')
+    assert.ok(/body\.all === true/.test(hostSource), '/session/export 要支持一次性导出全部历史会话')
+    assert.ok(/id="yami-ai-export"/.test(agentSource) && /exportConversation\(\{ sessionId: state\.sessionId \}/.test(agentSource), '工具条要有「导出」入口，导出的是当前会话')
+    assert.ok(/exportConversation\(\{ all: true \}/.test(agentSource), '历史子页要有「导出全部」')
+    assert.ok(/exportConversation\(\{ sessionId: item\.id \}/.test(agentSource), '历史列表里每一段都要能单独导出')
+    assert.ok(/function writeExport\(/.test(hostSource) && /const EXPORT_DIR =/.test(hostSource), '导出稿要落进插件自己的数据目录（工程是用户的 git 仓库，扔 md 进去就是脏文件）')
+    assert.ok(/data\.path/.test(agentSource) && !/writeExportFile/.test(agentSource), '面板按宿主给的落点定位，不再自己往工程里写文件')
+    assert.ok(/navigator\.clipboard\.writeText\(data\.markdown/.test(agentSource), '宿主导出目录写不进去时，面板要退化成复制正文，不许假装导出成功')
+    // v1.9.1：用户实测反馈的三件事（文档入口 / 编辑器刷新 / 选中的技能）+ 打转止损与收尾清单
+    assert.ok(/function projectDocHint\(/.test(hostSource) && /【工程文档入口】/.test(hostSource), 'F1：工程自带的 AI 阅读入口文档要交给模型（否则它盲搜几十次还猜错约定）')
+    assert.ok(/projectDocHint\(\)/.test(hostSource) && /envSummary = envSummary \? envSummary \+ '\\n' \+ docHint : docHint/.test(hostSource), 'F1：文档入口要跟环境快照走同一条注入通道')
+    assert.ok(/TOOL_REPEAT_LIMIT/.test(hostSource) && /TURN_CALL_BUDGET/.test(hostSource) && /status: 'stuck'/.test(hostSource), 'F2：单工具/单轮调用预算用尽要如实停下（只给软提示拦不住打转）')
+    assert.ok(/lastReloadReport/.test(mcpServerSource) && /编辑器内存没有刷新成功/.test(mcpServerSource), 'F3：写盘后的编辑器热更新失败必须如实上报（否则用户下次保存会覆盖这次改动）')
+    assert.ok(/name: 'playtest_smoke',[\s\S]{0,700}?F1~F12 不支持/.test(mcpServerSource)
+      && /name: 'send_player_input',[\s\S]{0,400}?F1~F12 不支持/.test(mcpServerSource),
+      'F4：按键白名单要写进两个试玩工具的说明（否则模型会设计出 F5 这种自己跑不了的测试）')
+    assert.ok(/function uiStepsMutating\(/.test(hostSource) && /\['set', 'click'\]/.test(hostSource), 'F5：ui_steps 只有 set/click 才算改动，纯演示不再弹确认卡')
+    const changelogSource = fs.readFileSync(path.join(ROOT, 'runtime/yami-mcp/modules/changelog.js'), 'utf8')
+    assert.ok(/const sessionReportedAt = new Map\(\)/.test(mcpServerSource) && /fromWrite/.test(changelogSource)
+      && /writes: writes\.map/.test(mcpServerSource),
+      'F7：收尾清单要合并"本轮写入记录"，首次调用也要给（否则它只能说"无变更"）')
+    assert.ok(/const picked = \(ctx\.sceneTarget/.test(probeSource) && /if \(picked\) line \+=/.test(probeSource), 'F8：环境摘要必须带上用户选中的资源（他鼠标选中的技能）')
+    for (const cls of ['yami-ai-history-dl', 'yami-ai-history-actions']) {
+      assert.ok(new RegExp('\\.' + cls + ' \\{').test(styleSource), cls + ' 必须有样式（否则导出按钮是个裸文字）')
+    }
+    console.log('前端接线检查: 流式 / 历史面板 / 上下文刻度 / 工具卡片 / 思考过程显示 / 过程收起 / 每轮用量 / 系统提示词行 / 排队与引导 / 轮次导航 / 环境感知行为 / 对话导出 全绿通过')
   } catch (error) {
     error.message += '\nAI host stderr:\n' + stderr
     throw error

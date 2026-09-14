@@ -39,6 +39,10 @@ let toolCallMode = 'none'      // none | list_scripts | validate_project
 let hugeResult = false
 let stickyToolCall = false
 let modelCallCount = 0
+// 预算用例专用计数：modelCallCount 是全流程累计的，用它当上限会被前面几节推过头（第一次跑就踩了）
+let budgetLoopCalls = 0
+// 最近一次请求里模型实际看到的 system 正文：用来验证"工程文档入口"这类注入真的到了模型手里
+let lastSystemPrompt = ''
 
 function sse(res, chunks) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
@@ -55,8 +59,27 @@ const model = http.createServer((req, res) => {
     let body = {}
     try { body = JSON.parse(raw || '{}') } catch { /* 忽略 */ }
     const messages = body.messages || []
+    const systemMessage = messages.find(message => message.role === 'system')
+    if (systemMessage) lastSystemPrompt = String(systemMessage.content || '')
     const lastUserIndex = messages.map(m => m.role).lastIndexOf('user')
     const hasToolResult = lastUserIndex >= 0 && messages.slice(lastUserIndex + 1).some(m => m.role === 'tool')
+    // 界面演示（ui_steps）：focus 只有高亮、set 真改控件 —— 审批粒度必须不一样，用两种模式分别跑
+    if ((toolCallMode === 'ui_focus' || toolCallMode === 'ui_set') && !hasToolResult) {
+      const steps = toolCallMode === 'ui_focus'
+        ? [{ kind: 'focus', target: '#fileItem-demo', label: '看这里（演示高亮）' }]
+        : [{ kind: 'set', target: '#fileSkill-name', value: '演示值', label: '改一个属性' }]
+      const args = JSON.stringify({ steps })
+      const message = { role: 'assistant', content: '', tool_calls: [{ id: 'ui_' + modelCallCount, type: 'function', function: { name: 'ui_steps', arguments: args } }] }
+      if (body.stream) return sse(res, [{ choices: [{ delta: { content: '我在界面上演一下。' } }] }, { choices: [{ delta: { tool_calls: [{ index: 0, id: 'ui_' + modelCallCount, type: 'function', function: { name: 'ui_steps', arguments: args } }] } }] }])
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify({ choices: [{ message }] }))
+    }
+    // 预算止损：每次换一组参数接着查同一个工具（不是"完全相同的调用"，打转保护认不出来）
+    if (toolCallMode === 'budget_loop' && ++budgetLoopCalls <= 15) {
+      const message = { role: 'assistant', content: '', tool_calls: [{ id: 'bud_' + budgetLoopCalls, type: 'function', function: { name: 'list_resources', arguments: JSON.stringify({ type: 'skill', offset: budgetLoopCalls }) } }] }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify({ choices: [{ message }] }))
+    }
     // stickyToolCall=true 时无条件重复调用，用于验证宿主的「打转保护」
     if (toolCallMode === 'list_scripts' && !hasToolResult) {
       const message = { role: 'assistant', content: '', tool_calls: [{ id: 'call_' + modelCallCount, type: 'function', function: { name: 'list_scripts', arguments: '{}' } }] }
@@ -182,7 +205,10 @@ async function waitReady() {
 async function main() {
   await new Promise(resolve => model.listen(MODEL_PORT, '127.0.0.1', resolve))
   startHost({
-    YAMI_AI_CONTEXT_WINDOW: '12000',
+    // 窗口是**夹具**不是断言：它只要大到"固定开销（系统提示 + 模型可见工具 schema）+ 可压缩的历史"
+    // 里后者占多数即可。工具集每次长一点，这份固定开销就跟着长 —— 12k 时余量已不到 100 token，
+    // 工具说明加两行就翻过阈值（实测 9683 > 9600）。断言本身一个字没改，仍然要求压到阈值以下。
+    YAMI_AI_CONTEXT_WINDOW: '14000',
     YAMI_AI_CONTEXT_KEEP: '4',
     YAMI_AI_TOOL_LIMIT: '500'
   })
@@ -201,6 +227,13 @@ async function main() {
   const result = events.find(event => event.type === 'result')
   check('收到 result 事件', !!result)
   check('result 状态为 done', result && result.status === 'done', result && result.status)
+  // F1：工程自带"AI 阅读入口"文档时，它必须出现在模型看到的系统提示词里（否则模型只会盲搜几十次）
+  if (fs.existsSync(path.join(PROJECT, 'DANJUAN TOOLS'))) {
+    check('工程文档入口被注入系统提示词', /【工程文档入口】/.test(lastSystemPrompt) && /AI 阅读入口/.test(lastSystemPrompt),
+      lastSystemPrompt.split('\n').filter(line => /工程文档入口/.test(line)).join('').slice(0, 80))
+  } else {
+    console.log('  SKIP  这个测试工程没有 DANJUAN TOOLS 文档入口，跳过该断言（行为由静态契约兜底）')
+  }
 
   console.log('\n########## 2. 会话落盘与列表 ##########')
   const list = await json('/sessions')
@@ -212,7 +245,7 @@ async function main() {
 
   console.log('\n########## 3. 宿主重启后恢复历史 ##########')
   await stopHost()
-  startHost({ YAMI_AI_CONTEXT_WINDOW: '12000', YAMI_AI_CONTEXT_KEEP: '4', YAMI_AI_TOOL_LIMIT: '500' })
+  startHost({ YAMI_AI_CONTEXT_WINDOW: '14000', YAMI_AI_CONTEXT_KEEP: '4', YAMI_AI_TOOL_LIMIT: '500' })
   await waitReady()
   const loaded = await json('/session/load', 'POST', { sessionId: 'stream-1' })
   check('/session/load 返回历史消息', loaded.data.ok === true && Array.isArray(loaded.data.messages))
@@ -230,7 +263,8 @@ async function main() {
   check('压缩后占用回落到阈值以下', status.data.context.tokens < status.data.context.thresholdTokens,
     status.data.context.tokens + ' < ' + status.data.context.thresholdTokens)
   check('压缩后标记了摘要', status.data.context.summary === true)
-  check('刻度按 token 与真实窗口显示', /\/12k · \d+%$/.test(String(status.data.context.label)), String(status.data.context.label))
+  // 断的是"刻度格式"这件事（占用/真实窗口 · 百分比），窗口数字跟着夹具走，不写死成某个常量
+  check('刻度按 token 与真实窗口显示', /^[\d.]+k\/14k · \d+%$/.test(String(status.data.context.label)), String(status.data.context.label))
   const compressFile = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'compress-1.json'), 'utf8'))
   check('落盘历史第一条为 system', compressFile.messages[0].role === 'system')
   check('落盘历史包含结构化检查点', /<compacted-summary>/.test(JSON.stringify(compressFile.messages[1])))
@@ -313,6 +347,67 @@ async function main() {
   check('重来之后能正常继续对话', !!continued.find(e => e.type === 'result' && e.status === 'done'))
   const badIndex = (await json('/session/rewind', 'POST', { sessionId: 'rewind-1', messageIndex: 99 })).data
   check('越界的轮次号如实报错（不静默成功）', badIndex.ok === false && /不在会话里|编号不对/.test(String(badIndex.error)), String(badIndex.error))
+
+  console.log('\n########## 10. 导出对话（/session/export） ##########')
+  // 导出是**只读**操作：稿件要能被人读懂，也不能因为导出而改动会话本身。
+  toolCallMode = 'list_scripts'
+  await stream('/chat/stream', { sessionId: 'export-1', message: '看看工程里有哪些脚本' })
+  toolCallMode = 'none'
+  const sessionFile = path.join(SESSION_DIR, 'export-1.json')
+  const beforeExport = fs.readFileSync(sessionFile, 'utf8')
+  const exported = (await json('/session/export', 'POST', { sessionId: 'export-1' })).data
+  check('导出成功并给出 .md 文件名', exported.ok === true && /\.md$/.test(String(exported.filename)), String(exported.filename))
+  check('导出稿落在宿主数据目录、绝不落进用户工程',
+    !!exported.path && fs.existsSync(exported.path) && !path.resolve(exported.path).startsWith(path.resolve(PROJECT)),
+    String(exported.path))
+  const markdown = exported.path ? fs.readFileSync(exported.path, 'utf8') : String(exported.markdown || '')
+  check('稿件里有用户原话与助手回话', markdown.includes('### 你') && markdown.includes('看看工程里有哪些脚本') && markdown.includes('### AI 助手'))
+  check('工具步骤记成一行「执行：」', /- 执行：/.test(markdown))
+  check('头部交代会话 ID 与规模', markdown.includes('**会话 ID**') && markdown.includes('**规模**'))
+  const rawSession = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'export-1.json'), 'utf8'))
+  const systemText = String((rawSession.messages.find(item => item.role === 'system') || {}).content || '')
+  const toolText = String((rawSession.messages.find(item => item.role === 'tool') || {}).content || '')
+  check('system 提示词不进稿子（只在头部记条数）', systemText.length > 200 && !markdown.includes(systemText.slice(0, 120)))
+  check('工具结果原文不进正文（只留步骤行）', !toolText || !markdown.includes(toolText.slice(0, 120)))
+  const injected = rawSession.messages.filter(item => item.role === 'user' && /^【系统干预指引】/.test(String(item.content))).length
+  check('宿主自动追加的说明不许被写成用户发言', !markdown.includes('### 你\n\n【系统干预指引】'), '本轮干预 ' + injected + ' 条')
+  check('干预说明仍完整收进稿件（只换标题）', injected === 0 || markdown.includes('### 系统提示（宿主自动追加，非用户发言）'))
+  const everything = (await json('/session/export', 'POST', { all: true })).data
+  const allText = everything.path && fs.existsSync(everything.path) ? fs.readFileSync(everything.path, 'utf8') : ''
+  check('导出全部：带目录且含各段会话',
+    everything.ok === true && everything.sessions >= 1 && allText.includes('## 目录') && allText.includes('export-1'),
+    'sessions=' + everything.sessions)
+  const missing = (await json('/session/export', 'POST', { sessionId: 'no-such-session' })).data
+  check('导出不存在的会话如实报错（不返回空稿）', missing.ok === false && /没有找到/.test(String(missing.error)), String(missing.error))
+  check('导出（单段 + 全量）是只读操作：会话文件一个字节都没变', fs.readFileSync(sessionFile, 'utf8') === beforeExport)
+  console.log('\n########## 11. 界面演示的审批粒度（ui_steps） ##########')
+  // 上一轮把整个 ui_steps 并进 OTHER_MUTATIONS，副作用是"演给你看"也要弹确认卡 —— 用户要的"边做边演示"就没了。
+  // 现在按步骤类型细分：focus/goto/wait 只是看，set/click 才是改。
+  toolCallMode = 'ui_focus'
+  const demoEvents = await stream('/chat/stream', { sessionId: 'ui-demo-1', message: '演给我看' })
+  toolCallMode = 'none'
+  check('纯演示（只有高亮）不再弹确认卡', !demoEvents.some(event => event.type === 'result' && event.status === 'approval'))
+  check('演示仍然真的走了一遍工具（跑不通也如实回报）', demoEvents.some(event => event.type === 'tool' && event.name === 'ui_steps'))
+  toolCallMode = 'ui_set'
+  const setEvents = await stream('/chat/stream', { sessionId: 'ui-demo-2', message: '改个属性给我看' })
+  toolCallMode = 'none'
+  check('真改控件的演示照旧先确认（set 仍要用户点「执行修改」）',
+    setEvents.some(event => event.type === 'result' && event.status === 'approval'))
+
+  console.log('\n########## 12. 工具预算（换个关键词接着查也要停） ##########')
+  // 实测踩过：模型换了 5 组关键词连着检索、宿主连提示 6 次它照旧往下查，最后 2 轮 37 次调用还没收尾。
+  // per-name 的软提示拦不住，所以有一道硬闸：单工具 8 次 / 单轮 30 次，到点如实停下。
+  const callsBefore = modelCallCount
+  budgetLoopCalls = 0
+  toolCallMode = 'budget_loop'
+  const budgetEvents = await stream('/chat/stream', { sessionId: 'budget-1', message: '随便看看' })
+  toolCallMode = 'none'
+  const budgetResult = budgetEvents.find(event => event.type === 'result') || {}
+  check('单工具刷到上限就如实停下（status=stuck）', budgetResult.status === 'stuck', String(budgetResult.status))
+  check('停下时说清是哪个工具、刷了多少次',
+    /列出资源/.test(String(budgetResult.message)) && /次/.test(String(budgetResult.message)),
+    String(budgetResult.message).slice(0, 90))
+  check('是宿主预算拦下的，不是撞到模型自己的第 16 次调用', modelCallCount - callsBefore <= 12, 'calls=' + (modelCallCount - callsBefore))
   console.log(`\n########## AI 会话/上下文测试: ${passed} PASS / ${failed} FAIL ##########`)
   await stopHost()
   model.close()
