@@ -3434,6 +3434,7 @@
         text-overflow: ellipsis !important;
         white-space: nowrap !important;
         min-width: 0 !important;
+        max-width: 65px !important;
       }
       .yami-ai-status.ready .yami-ai-status-pulse {
         background: #10b981 !important;
@@ -3469,7 +3470,7 @@
       .yami-ai-context {
         display: none !important;
         flex: 0 0 auto !important;
-        padding: 1px 6px !important;
+        padding: 1px 5px !important;
         border: 1px solid rgba(255, 255, 255, 0.08) !important;
         border-radius: 4px !important;
         background: rgba(0, 0, 0, 0.3) !important;
@@ -3478,6 +3479,9 @@
         font-size: 10px !important;
         line-height: 1.4 !important;
         white-space: nowrap !important;
+        max-width: 130px !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
       }
       .yami-ai-context.show { display: inline-flex !important; align-items: center !important; }
       .yami-ai-context.warn {
@@ -3540,6 +3544,7 @@
         gap: 4px !important;
         flex: 0 0 auto !important;
         flex-wrap: nowrap !important;
+        min-width: 0 !important;
       }
       .yami-ai-tool-btn,
       .yami-ai-primary,
@@ -3561,6 +3566,39 @@
         user-select: none !important;
         white-space: nowrap !important;
         transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1) !important;
+      }
+      /* 辅助工具按钮极简工业图标化：撤销、历史、导出、设置采用 24x24 纯图标，隐藏冗余汉字，消除视觉杂乱并彻底解决狭窄侧栏挤爆截断与设置按钮不可见问题 */
+      .yami-ai-toolbar-actions .yami-ai-tool-btn:not(.yami-ai-btn-new-chat) {
+        width: 24px !important;
+        min-width: 24px !important;
+        max-width: 24px !important;
+        padding: 0 !important;
+        flex: 0 0 24px !important;
+      }
+      .yami-ai-toolbar-actions .yami-ai-tool-btn:not(.yami-ai-btn-new-chat) span {
+        display: none !important;
+      }
+      /* 主操作按钮（新对话）保留加号与文字高亮 */
+      .yami-ai-toolbar-actions .yami-ai-btn-new-chat {
+        padding: 0 8px !important;
+        background: #1e293b !important;
+        border-color: rgba(59, 130, 246, 0.3) !important;
+        color: #93c5fd !important;
+        font-weight: 500 !important;
+      }
+      .yami-ai-toolbar-actions .yami-ai-btn-new-chat:hover {
+        background: #2563eb !important;
+        border-color: #3b82f6 !important;
+        color: #ffffff !important;
+      }
+      /* 设置按钮：动作区最右侧，防挤出截断与高光反馈 */
+      #yami-ai-settings-toggle {
+        margin-left: 2px !important;
+        flex: 0 0 24px !important;
+      }
+      #yami-ai-settings-toggle:hover {
+        color: #60a5fa !important;
+        border-color: rgba(96, 165, 250, 0.35) !important;
       }
       .yami-ai-tool-btn svg,
       .yami-ai-primary svg,

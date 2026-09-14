@@ -665,6 +665,12 @@ async function main() {
       && /writes: writes\.map/.test(mcpServerSource),
       'F7：收尾清单要合并"本轮写入记录"，首次调用也要给（否则它只能说"无变更"）')
     assert.ok(/const picked = \(ctx\.sceneTarget/.test(probeSource) && /if \(picked\) line \+=/.test(probeSource), 'F8：环境摘要必须带上用户选中的资源（他鼠标选中的技能）')
+    // G-12：屏上与上下文必须说同一件事 —— 面板继续用上次的 sessionId 说话（模型看得到全部历史），
+    // 屏上却只有欢迎语，用户就会以为"新对话怎么记得上次的事"
+    assert.ok(/function restoreLastSession\(/.test(agentSource) && /function messagesPristine\(/.test(agentSource),
+      'G-12：进面板要回放上次那段对话（空会话则保持欢迎语）')
+    assert.ok(/lastSessionRestored && messagesPristine\(\)/.test(agentSource) && /这是上次那段对话/.test(agentSource),
+      'G-12：只回放一次，并且如实说明这是上次那段对话')
     for (const cls of ['yami-ai-history-dl', 'yami-ai-history-actions']) {
       assert.ok(new RegExp('\\.' + cls + ' \\{').test(styleSource), cls + ' 必须有样式（否则导出按钮是个裸文字）')
     }

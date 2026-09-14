@@ -3509,6 +3509,7 @@
         text-overflow: ellipsis !important;
         white-space: nowrap !important;
         min-width: 0 !important;
+        max-width: 65px !important;
       }
       .yami-ai-status.ready .yami-ai-status-pulse {
         background: #10b981 !important;
@@ -3544,7 +3545,7 @@
       .yami-ai-context {
         display: none !important;
         flex: 0 0 auto !important;
-        padding: 1px 6px !important;
+        padding: 1px 5px !important;
         border: 1px solid rgba(255, 255, 255, 0.08) !important;
         border-radius: 4px !important;
         background: rgba(0, 0, 0, 0.3) !important;
@@ -3553,6 +3554,9 @@
         font-size: 10px !important;
         line-height: 1.4 !important;
         white-space: nowrap !important;
+        max-width: 130px !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
       }
       .yami-ai-context.show { display: inline-flex !important; align-items: center !important; }
       .yami-ai-context.warn {
@@ -3615,6 +3619,7 @@
         gap: 4px !important;
         flex: 0 0 auto !important;
         flex-wrap: nowrap !important;
+        min-width: 0 !important;
       }
       .yami-ai-tool-btn,
       .yami-ai-primary,
@@ -3636,6 +3641,39 @@
         user-select: none !important;
         white-space: nowrap !important;
         transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1) !important;
+      }
+      /* 辅助工具按钮极简工业图标化：撤销、历史、导出、设置采用 24x24 纯图标，隐藏冗余汉字，消除视觉杂乱并彻底解决狭窄侧栏挤爆截断与设置按钮不可见问题 */
+      .yami-ai-toolbar-actions .yami-ai-tool-btn:not(.yami-ai-btn-new-chat) {
+        width: 24px !important;
+        min-width: 24px !important;
+        max-width: 24px !important;
+        padding: 0 !important;
+        flex: 0 0 24px !important;
+      }
+      .yami-ai-toolbar-actions .yami-ai-tool-btn:not(.yami-ai-btn-new-chat) span {
+        display: none !important;
+      }
+      /* 主操作按钮（新对话）保留加号与文字高亮 */
+      .yami-ai-toolbar-actions .yami-ai-btn-new-chat {
+        padding: 0 8px !important;
+        background: #1e293b !important;
+        border-color: rgba(59, 130, 246, 0.3) !important;
+        color: #93c5fd !important;
+        font-weight: 500 !important;
+      }
+      .yami-ai-toolbar-actions .yami-ai-btn-new-chat:hover {
+        background: #2563eb !important;
+        border-color: #3b82f6 !important;
+        color: #ffffff !important;
+      }
+      /* 设置按钮：动作区最右侧，防挤出截断与高光反馈 */
+      #yami-ai-settings-toggle {
+        margin-left: 2px !important;
+        flex: 0 0 24px !important;
+      }
+      #yami-ai-settings-toggle:hover {
+        color: #60a5fa !important;
+        border-color: rgba(96, 165, 250, 0.35) !important;
       }
       .yami-ai-tool-btn svg,
       .yami-ai-primary svg,
@@ -5643,7 +5681,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.9.1 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.9.2 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
@@ -5984,7 +6022,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.9.1 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.9.2 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -9246,7 +9284,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.9.1';
+      const cur = (probe && probe.version) ? probe.version : '1.9.2';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -9312,7 +9350,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.9.1') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.9.2') + ')');
           refreshVersionBadge();
         }
       });

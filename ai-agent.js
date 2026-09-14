@@ -663,6 +663,9 @@
   }
 
   /** 会话切换后重建消息区 */
+  // 进面板时"上次那段对话只回放一次"（G-12）：反复进出页面不该反复重建时间轴
+  let lastSessionRestored = false;
+
   function clearMessages(placeholder) {
     const list = document.getElementById('yami-ai-messages');
     if (!list) return;
@@ -1143,6 +1146,31 @@
     } catch (e) {
       addMessage('error', '打开历史对话失败：' + e.message);
     }
+  }
+
+  /**
+   * 进面板时把**上次那段对话**原样放回屏上（G-12）。
+   * 不这么做的话：面板继续用 localStorage 里那个 sessionId 说话（模型看得到全部历史），
+   * 屏上却只剩一句欢迎语 —— 用户以为开了新对话，实际是接着上一轮在聊，
+   * 于是就有了"我刚进来它怎么记得上次的事"（实测反馈）。
+   * 口径：屏上和上下文必须说同一件事。空会话/读不到就保持欢迎语，一个字都不多说。
+   */
+  async function restoreLastSession() {
+    if (state.busy || !state.sessionId) return;
+    try {
+      const probe = await request('/session/load', { sessionId: state.sessionId });
+      const all = probe.messages || [];
+      if (!all.some(message => message.role === 'user')) return;   // 还没聊过的会话：保持欢迎语
+      await loadSession(state.sessionId, '', { quiet: true });
+      pushNotice('这是上次那段对话，接着聊即可；想从头开始点【新对话】。');
+    } catch (e) { /* 读不到就当新会话，保持欢迎语 */ }
+  }
+
+  /** 消息区是否还是"刚挂载的样子"（只有那句静态欢迎语）：只有这时才自动回放上次的对话 */
+  function messagesPristine() {
+    const list = document.getElementById('yami-ai-messages');
+    if (!list) return false;
+    return !list.querySelector('.yami-ai-message.user, .yami-ai-turn');
   }
 
   function startNewSession(notify = true) {
@@ -2937,11 +2965,11 @@
         '<div class="yami-ai-context" id="yami-ai-context" role="button" tabindex="0" title="点开看上下文详情，也可以手动压缩一次"></div>' +
         '<div class="yami-ai-context-detail" id="yami-ai-context-detail"></div>' +
         '<div class="yami-ai-toolbar-actions">' +
-          '<div class="yami-ai-tool-btn" id="yami-ai-undo-toggle" role="button" tabindex="0" title="查看并撤销文件改动">' + AI_ICONS.undo + '<span>撤销</span></div>' +
-          '<div class="yami-ai-tool-btn" id="yami-ai-history-toggle" role="button" tabindex="0" title="会话历史记录">' + AI_ICONS.history + '<span>历史</span></div>' +
-          '<div class="yami-ai-tool-btn" id="yami-ai-export" role="button" tabindex="0" title="把这段对话导出成 Markdown 文件（存到插件数据目录，不落进工程）">' + AI_ICONS.download + '<span>导出</span></div>' +
+          '<div class="yami-ai-tool-btn" id="yami-ai-undo-toggle" role="button" tabindex="0" title="撤销：查看并回滚文件改动">' + AI_ICONS.undo + '<span>撤销</span></div>' +
+          '<div class="yami-ai-tool-btn" id="yami-ai-history-toggle" role="button" tabindex="0" title="历史：查看历史会话记录">' + AI_ICONS.history + '<span>历史</span></div>' +
+          '<div class="yami-ai-tool-btn" id="yami-ai-export" role="button" tabindex="0" title="导出：把这段对话导出成 Markdown 文件（存到插件数据目录，不落进工程）">' + AI_ICONS.download + '<span>导出</span></div>' +
           '<div class="yami-ai-tool-btn yami-ai-btn-new-chat" id="yami-ai-clear" role="button" tabindex="0" title="开启新对话">' + AI_ICONS.add + '<span>新对话</span></div>' +
-          '<div class="yami-ai-tool-btn" id="yami-ai-settings-toggle" role="button" tabindex="0" title="模型与插件设置">' + AI_ICONS.settings + '<span>设置</span></div>' +
+          '<div class="yami-ai-tool-btn" id="yami-ai-settings-toggle" role="button" tabindex="0" title="设置：模型、API Key 与高级参数设置">' + AI_ICONS.settings + '<span>设置</span></div>' +
         '</div>' +
       '</div>' +
       '<div class="yami-ai-scope" id="yami-ai-scope" role="region" title="点击纠偏或重新识别当前环境">' +
@@ -3068,6 +3096,12 @@
       api.switchView('ai');
       loadSettings();
       refreshContext();
+      // 【G-12】屏上与上下文必须说同一件事：模型本来就看得到上次那段对话的全部历史，
+      // 屏上却只有一句欢迎语 —— 那就是"它怎么记得上次的事"的来源。只回放一次。
+      if (!lastSessionRestored && messagesPristine()) {
+        lastSessionRestored = true;
+        restoreLastSession();
+      }
     });
     activate(document.getElementById('yami-ai-send'), () => { state.busy ? stopStream() : sendMessage(); });
     activate(document.getElementById('yami-ai-context'), () => {
