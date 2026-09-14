@@ -10,25 +10,29 @@
       const os = require('os');
       const dir = path.join(process.env.APPDATA || os.homedir(), 'DanJuanDevSuite');
       const file = path.join(dir, 'agent-token');
-      for (let i = 0; i < 3; i++) {
-        try {
-          if (fs.existsSync(file)) {
-            const content = fs.readFileSync(file, 'utf8').trim();
-            if (content) return content;
-          }
-          break;
-        } catch (e) {
-          // 短暂争用时自旋重试
-          const start = Date.now();
-          while (Date.now() - start < 30) {}
+      // 只读一次：读不到就往下走（重新生成一个）。不在这里重试 —— 同步空转会把界面卡住，
+      // 而"文件被锁"这种事等几毫秒也不会变好，真正的兜底是下面的重新生成。
+      try {
+        if (fs.existsSync(file)) {
+          const content = fs.readFileSync(file, 'utf8').trim();
+          if (content) return content;
         }
-      }
+      } catch (e) { /* 读不到就当没有，交给下面重新生成 */ }
       fs.mkdirSync(dir, { recursive: true });
       const token = newToken();
       fs.writeFileSync(file, token, { encoding: 'utf8', mode: 0o600 });
       return token;
     } catch (e) { return localStorage.getItem('danjuan-ai-token') || ''; }
   }
+  /** 令牌对不上时重读磁盘：另一个窗口可能刚重建过 Host，换了新令牌。返回是否真的换了 */
+  function refreshToken() {
+    const fresh = sharedToken();
+    if (!fresh || fresh === state.token) return false;
+    state.token = fresh;
+    localStorage.setItem('danjuan-ai-token', state.token);
+    return true;
+  }
+
   const isPlaytestEnv = typeof location !== 'undefined' && (!location.href.includes('/resources/app/dist/') && !location.href.includes('/app/dist/'));
   const SESSION_KEY = isPlaytestEnv ? 'danjuan-ai-session-playtest' : 'danjuan-ai-session';
 
@@ -319,12 +323,8 @@
       return await request('/status');
     } catch (e) {
       if (e && e.isAuth) {
-        const fresh = sharedToken();
-        if (fresh && fresh !== state.token) {
-          state.token = fresh;
-          localStorage.setItem('danjuan-ai-token', state.token);
-          try { return await request('/status'); } catch (e2) {}
-        }
+        const fresh = refreshToken();
+        if (fresh) { try { return await request('/status'); } catch (e2) {} }
         throw new Error('AI 助手鉴权失败（401 令牌不匹配）：请重启编辑器或检查 agent-token 文件');
       }
     }
@@ -350,13 +350,8 @@
       try {
         return await request('/status');
       } catch (e) {
-        if (e && e.isAuth) {
-          const fresh = sharedToken();
-          if (fresh && fresh !== state.token) {
-            state.token = fresh;
-            localStorage.setItem('danjuan-ai-token', state.token);
-          }
-        }
+        // 401 说明磁盘上的令牌换了（另一个窗口刚重建过 Host）：重读一次，下一轮继续试
+        if (e && e.isAuth) refreshToken();
       }
     }
     throw new Error('AI 助手启动超时，请重启 Open Yami 后重试');

@@ -141,15 +141,16 @@ const runtimeBridge = new RuntimeBridge(5966, cdpClient)
 const editorBridge = new EditorBridge(5967)
 
 /* ============================== 变更小结的运行时状态 ============================== */
-// 基线快照、待办清单与写入历史：按 sessionId 分桶隔离，避免跨会话污染与相互冲刷
+// 基线快照与待办清单：按 sessionId 分桶隔离，避免跨会话污染与相互冲刷（写入历史不分桶：它记的是这个工程最近被谁改过，与对话无关）
 const sessionBaselines = new Map()
 const sessionTodos = new Map()
-const sessionWrites = new Map()
-let lastPlaytest = null
+// 本轮写入记录（工具名、是否通过编译、是否被回滚），供小结标注"谁改的、编译过没过"
+const recentWrites = []
 const RECENT_WRITES_MAX = 200
+let lastPlaytest = null
 
 function getSessionKey(args) {
-  return String((args && (args.sessionId || args.session)) || 'default')
+  return String((args && args.sessionId) || 'default')
 }
 
 /** 从编译器输出里取第一条报错（给变更小结用） */
@@ -159,20 +160,10 @@ function firstCompileError(compile) {
   return line.slice(0, 200)
 }
 
-function rememberWrite(entry, sessionId) {
+function rememberWrite(entry) {
   if (!entry || !entry.path) return
-  const key = sessionId || 'default'
-  let writes = sessionWrites.get(key)
-  if (!writes) { writes = []; sessionWrites.set(key, writes) }
-  writes.push(entry)
-  if (writes.length > RECENT_WRITES_MAX) writes.splice(0, writes.length - RECENT_WRITES_MAX)
-  // 同时同步进全局 default 副本以兼容未传 sessionId 的场景
-  if (key !== 'default') {
-    let defWrites = sessionWrites.get('default')
-    if (!defWrites) { defWrites = []; sessionWrites.set('default', defWrites) }
-    defWrites.push(entry)
-    if (defWrites.length > RECENT_WRITES_MAX) defWrites.splice(0, defWrites.length - RECENT_WRITES_MAX)
-  }
+  recentWrites.push(entry)
+  if (recentWrites.length > RECENT_WRITES_MAX) recentWrites.splice(0, recentWrites.length - RECENT_WRITES_MAX)
 }
 
 /* ============================== 类型与规则 ============================== */
@@ -1114,7 +1105,7 @@ async function ensureEditorWritable(rel) {
   }
   // 仅在桥端口未监听（离线/独立 MCP 测试）时降级放行并给出 warning
   if (!result || (result.ok === false && String(result.error || '').includes('未启动'))) {
-    return { ok: true, offline: true, warning: '编辑器桥未运行（离线/测试模式），未执行未保存修改检查' }
+    return { ok: true, warning: '编辑器桥未运行（离线/测试模式），未执行未保存修改检查' }
   }
   return { ok: true }
 }
@@ -1775,7 +1766,7 @@ async function callTool(name, args) {
         }
       }
       const diff = diffSnapshot(baselineSnapshot, current)
-      const writes = sessionWrites.get(sKey) || sessionWrites.get('default') || []
+      const writes = recentWrites
       const changelog = buildChangelog({ snapshotDiff: diff, writes, playtest: lastPlaytest })
       const currentTodos = sessionTodos.get(sKey) || []
       const todoSummary = summarizeTodos(currentTodos)
