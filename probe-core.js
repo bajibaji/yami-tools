@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.10.2';
+  const PROBE_VERSION = '1.10.4';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -2114,6 +2114,32 @@
     return '';
   }
 
+  /**
+   * 图标字形：引擎的角标/锁/可见性图标都是私有区码点或 emoji，混进名字里就变成方块乱码。
+   * 实测（用户截图）：界面树的「背景」被读成「背景E⣿⣿」—— E 是"有事件"角标，后面两坨是锁与可见性图标。
+   */
+  const ICON_GLYPHS = /[\uE000-\uF8FF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D]|[\u{1F000}-\u{1FAFF}]/gu;
+
+  /**
+   * 树节点（<node-item>）的名字要在哪儿读：引擎把纯名字写在 element.textNode 里
+   * （tree-list.ts:283/365，parseName 就是 item.name），角标是**后加的元素** ——
+   * 按 textContent 读必然把角标一起捞进来。资源树/界面树/事件列表/动画层全是这个形状。
+   */
+  function readTreeNodeLabel(el) {
+    try {
+      let node = el;
+      for (let i = 0; node && i < 5; i++, node = node.parentElement) {
+        if (String(node.tagName || '').toLowerCase() !== 'node-item') continue;
+        const raw = (node.textNode && node.textNode.nodeValue)
+          || (node.item && typeof node.item.name === 'string' && node.item.name)
+          || '';
+        const clean = String(raw).replace(ICON_GLYPHS, '').replace(/\s+/g, ' ').trim();
+        if (clean) return { label: clean.slice(0, 40), host: node };
+      }
+    } catch (e) {}
+    return null;
+  }
+
   /** 把一个 DOM 元素翻译成"用户停在什么东西上"。找不到有意义的身份就返回 null（不硬凑）。 */
   function describePresenceElement(el, via, heldMs) {
     try {
@@ -2130,6 +2156,11 @@
         if (found) { label = found; host = node; break; }
       }
       if (!label) {
+        // 树节点：按引擎自己写进 textNode 的纯名字读（角标不进名字）
+        const tree = readTreeNodeLabel(el);
+        if (tree) { label = tree.label; host = tree.host; }
+      }
+      if (!label) {
         // 标签写在自己内部的那种控件（见 readInnerLabel）
         const inner = readInnerLabel(el);
         if (inner) { label = inner; host = el; }
@@ -2144,19 +2175,23 @@
       }
       if (!label) {
         // 兜底：可见文字（按钮、列表项、命令、标签页都属于这一类）
-        const text = String(el.textContent || '').replace(/\s+/g, ' ').trim();
+        // 图标字形先剥掉：名字里混进私有区码点就是方块乱码，不如不要
+        const text = String(el.textContent || '').replace(ICON_GLYPHS, '').replace(/\s+/g, ' ').trim();
         if (!text || text.length > 60) return null;
         label = text.slice(0, 30);
         host = el;
       }
       let value = '';
       try {
-        const raw = host && 'value' in host ? host.value : undefined;
+        // 树节点没有"值"：它的 textContent 除了名字就只剩角标（E / 锁 / 可见性图标），
+        // 取出来就是「选中「背景」=E⣿⣿」这种乱码（实测截图里就是它）
+        const isTreeNode = String((host && host.tagName) || '').toLowerCase() === 'node-item';
+        const raw = (!isTreeNode && host && 'value' in host) ? host.value : undefined;
         if (typeof raw === 'string' && raw && raw.length <= 24) value = raw;
-        else {
+        else if (!isTreeNode) {
           // custom-box / number-box 这类控件的值就写在它自己的文字里（引擎标记无 value 属性）；
           // 若标签本身就在内部（<text class="label">speed:</text>1.0），把标签部分剥掉只留值
-          const own = String((host && host.textContent) || '').replace(/\s+/g, ' ').trim();
+          const own = String((host && host.textContent) || '').replace(ICON_GLYPHS, '').replace(/\s+/g, ' ').trim();
           const stripped = label ? own.split(label).join('').trim() : own;
           if (stripped && stripped !== label && stripped.length <= 24) value = stripped;
         }
@@ -2200,7 +2235,11 @@
       }
       // 鼠标停留：要真的停住才算，划过不算
       if (presence.el && presence.since) {
-        candidates.push({ el: presence.el, since: presence.since, via: 'hover', needHold: true });
+        // 但停着的正是他刚点选的那个（引擎给的那圈高亮，含它内部）→ 那是"选中"不是"划过"：
+        // 点了树节点/界面元素/列表项之后鼠标本来就压在上面，报"停在"他会以为 AI 没认出他选的东西。
+        const withinSelection = !!(presence.selEl && presence.selEl.contains
+          && (presence.el === presence.selEl || presence.selEl.contains(presence.el)));
+        candidates.push({ el: presence.el, since: presence.since, via: 'hover', needHold: true, asSelected: withinSelection });
       }
       // 最新的信号优先：他刚刚指的那个，比他十分钟前点过的地方更能说明现在想要什么。
       // 同一毫秒内撞车时按语义定序（右键/选中是"明确指着它"，比被动悬停硬）——
@@ -2219,15 +2258,28 @@
       // 顺序很关键：不能"先把所有候选的精确描述都试一遍"，否则鼠标已经停在 canvas 上了，
       // 却因为上一次右键的那个控件更好描述而被报成"停在那个控件上"（实测踩过）。
       function resolveGroup(group) {
+        // 分两轮：先把"能叫出名字"的问完，都问不出来才退区域级。
+        // 不分轮的话，一个含糊的区域级候选会把下面那个精确候选整个盖掉 —— 实测就是这么翻车的：
+        // 用户点了界面树里的「删除存档数据」，那个列表同时拿到焦点（区域级「界面元素列表」），
+        // 于是顶栏报"停在「界面元素列表」"，他真正点的那个反而看不见了。
+        let vagueResult = null;
         for (let i = 0; i < group.length; i++) {
           const c = group[i];
           if (c.needHold && (now - c.since) < PRESENCE_HOLD_MS) continue;
           const desc = describePresenceElement(c.el, c.via, now - c.since);
-          if (desc) return desc;
+          if (desc) {
+            if (c.asSelected) desc.via = 'selected';
+            return desc;
+          }
+          if (vagueResult) continue;
           const region = describePresenceRegion(c.el);
-          if (region) { region.via = c.via; region.restingMs = now - c.since; return region; }
+          if (region) {
+            region.via = c.asSelected ? 'selected' : c.via;
+            region.restingMs = now - c.since;
+            vagueResult = region;
+          }
         }
-        return null;
+        return vagueResult;
       }
       // 唯一的让位规则：**区域级**的鼠标停留是弱信号 —— 鼠标扫过网格空白、停在检视器背景上
       // 都会命中它，而它只能说出"大概在哪一块"。实测（用户会话日志里抓到的原话）：
@@ -2351,16 +2403,19 @@
     try {
       // 1. 资源树/文件浏览器选中项 (优先取无 16位 GUID 的别名 alias)
       const fb = document.querySelector('file-browser');
+      // 文件夹不是"文件"：引擎的 FolderItem 连 type 字段都没有（file/folder-item.ts:7-14），
+      // 把亮着的文件夹报成"选中「粒子」"，模型就会去改一个目录（实测用户踩到）。
+      const isFileItem = function (f) { return !!(f && f.type); };
       if (fb && fb.body) {
-        const af = fb.body.activeFile;
+        const af = isFileItem(fb.body.activeFile) ? fb.body.activeFile : null;
         if (af) {
           result.selectedFile = {
             name: af.alias || af.name || '',
             path: af.path || '',
             type: af.type || ''
           };
-        } else if (Array.isArray(fb.body.selections) && fb.body.selections.length > 0) {
-          const first = fb.body.selections[0];
+        } else if (Array.isArray(fb.body.selections) && fb.body.selections.filter(isFileItem).length > 0) {
+          const first = fb.body.selections.filter(isFileItem)[0];
           result.selectedFile = {
             name: first.alias || first.name || '',
             path: first.path || '',
@@ -2371,7 +2426,7 @@
       // 多选：只报第一个会让模型以为"他就选了这一个"（引擎 file-body-pane.ts:29 `selections: any[]`）
       if (fb && fb.body) {
         try {
-          const picked = Array.isArray(fb.body.selections) ? fb.body.selections : [];
+          const picked = (Array.isArray(fb.body.selections) ? fb.body.selections : []).filter(isFileItem);
           if (picked.length > 1) {
             result.selectedCount = picked.length;
             result.selectedFiles = picked.slice(0, 8).map(function (f) {
@@ -2425,6 +2480,25 @@
         const scenePath = (sceneMeta && (sceneMeta.path || (sceneMeta.file && sceneMeta.file.path))) || '';
         if (scenePath) result.sceneFile = { name: String(scenePath).split('/').pop() || '', path: String(scenePath) };
       } catch (e) {}
+      // 3c. 编辑器里**正在编辑的那个文件**：界面页看 UI.meta、场景页看 Scene.meta
+      // （引擎真实字段：ui-window.ts:534 / scene-window.ts:779 都把当前文件的 FileMeta 存进 .meta；
+      //  metadata.ts:30 它有 path）。为什么需要它：用户点了界面树里的节点时，要改的是它所在的
+      //  .ui 文件，而资源树里亮着的可能只是个目录（实测：顶栏报"选中「粒子」"，他根本没选粒子）。
+      try {
+        const page = (scope && scope.index) || '';
+        const pickMeta = function (win) {
+          try { return (typeof win !== 'undefined' && win && win.meta) || null; } catch (e) { return null; }
+        };
+        const editing = (page === 'ui' ? pickMeta(typeof UI !== 'undefined' ? UI : null) : (page === 'scene' ? pickMeta(typeof Scene !== 'undefined' ? Scene : null) : null))
+          || pickMeta(typeof UI !== 'undefined' ? UI : null) || pickMeta(typeof Scene !== 'undefined' ? Scene : null);
+        const editPath = (editing && (editing.path || (editing.file && editing.file.path))) || '';
+        if (editPath) {
+          result.editingFile = {
+            name: (editing.file && (editing.file.alias || editing.file.name)) || String(editPath).split('/').pop() || '',
+            path: String(editPath)
+          };
+        }
+      } catch (e) {}
     } catch (e) {}
 
     return result;
@@ -2460,17 +2534,29 @@
     // 用户要的是"AI 知道我在看哪儿"，而页面/场景他自己正看着，不必再占那一行。
     // （试玩窗口例外：那是另一个窗口，必须说出来。）
     if (at && at.label) {
-      let line = '停在「' + at.label + '」';
+      // 这一格说的是"他此刻指着/刚点着的那个东西"：来自引擎选中态（他点的）就说"选中"，
+      // 来自鼠标停留才说"停在" —— 用户点了树节点却看到"停在「…」"，会以为 AI 没认出他选了什么。
+      let line = (at.via === 'selected' ? '选中「' : '停在「') + at.label + '」';
       if (at.value) line += '=' + at.value;
-      // 「我选中的是谁」永远要带上：用户说"这个技能/这个角色"时，指的就是资源树里选中的那个，
+      // 「我选中的是谁」永远要带上：用户说"这个技能/这个角色"时，指的就是那个东西，
       // 只报"停在哪个控件"等于让他再解释一遍（实测踩过：他明明选了技能，模型还是反问"先测哪个"）。
-      // 场景对象优先（他刚点的是场景里的东西），其次才是资源树选中项。
-      const pickedName = (ctx.sceneTarget && ctx.sceneTarget.name) || (ctx.selectedFile && ctx.selectedFile.name) || '';
-      const picked = (ctx.sceneTarget && ctx.sceneTarget.name)
-        ? '选中' + (ctx.sceneTarget.type && ctx.sceneTarget.type !== 'object' ? ctx.sceneTarget.type + ':' : '') + '「' + ctx.sceneTarget.name + '」' + selectedFileSuffix(ctx.sceneTarget.file)
-        : ((ctx.selectedFile && ctx.selectedFile.name) ? '选中「' + ctx.selectedFile.name + '」' + selectedCountSuffix(ctx.selectedCount) + selectedFileSuffix(ctx.selectedFile) : '');
-      // 停留点就是那个选中项时别再重复一遍（区域级停留点让位给选中态之后，这种情形会经常出现）
-      if (picked && pickedName !== at.label) line += '·' + picked;
+      if (ctx.sceneTarget && ctx.sceneTarget.name) {
+        // ① 场景对象优先（他刚点的是场景里的东西），箭头后面是它的源文件
+        const classLabel = ctx.sceneTarget.type && ctx.sceneTarget.type !== 'object' ? ctx.sceneTarget.type + ':' : '';
+        line += '·选中' + classLabel + '「' + ctx.sceneTarget.name + '」' + selectedFileSuffix(ctx.sceneTarget.file);
+      } else if (at.via === 'selected' && at.label) {
+        // ② 他刚点选的是编辑器里的某个东西（树节点/列表项/界面元素）—— 这时最要紧的是"它在哪个文件里"：
+        // 优先正在编辑的那个文件（界面页 UI.meta / 场景页 Scene.meta），取不到才退回资源树里亮着的。
+        const target = ctx.editingFile || ctx.selectedFile || null;
+        if (target && target.name && target.name !== at.label) {
+          line += '·文件「' + target.name + '」' + selectedFileSuffix(target);
+        } else if (target && target.name) {
+          line += selectedFileSuffix(target);          // 点选的就是这个文件本身：路径直接跟在后面
+        }
+      } else if (ctx.selectedFile && ctx.selectedFile.name) {
+        // ③ 鼠标停留/焦点在别处时，资源树里选中的那个文件就是他说的"这个/它"（提示词第 28 条）
+        line += '·选中「' + ctx.selectedFile.name + '」' + selectedCountSuffix(ctx.selectedCount) + selectedFileSuffix(ctx.selectedFile);
+      }
       const full = '【当前环境】' + (ctx.playtest ? '试玩中·' : '') + line;
       return full.length > 120 ? full.slice(0, 117) + '...' : full;
     }
@@ -2492,6 +2578,8 @@
       } else if (ctx.selectedFile && ctx.selectedFile.name) {
         const typeLabel = ctx.selectedFile.type ? ctx.selectedFile.type + '/' : '';
         bg.push('选中「' + typeLabel + ctx.selectedFile.name + '」' + selectedCountSuffix(ctx.selectedCount) + selectedFileSuffix(ctx.selectedFile));
+      } else if (ctx.editingFile && ctx.editingFile.name) {
+        bg.push('文件「' + ctx.editingFile.name + '」' + selectedFileSuffix(ctx.editingFile));
       } else if (ctx.inspector && ctx.inspector.metaName) {
         bg.push('检视「' + ctx.inspector.metaName + '」');
       }

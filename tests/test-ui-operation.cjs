@@ -640,7 +640,9 @@ async function main() {
     check('没有指针信号时，引擎的选中态（右键/点选出的那圈高亮）会被认出来',
       !!lone && lone.label === '火球术' && lone.via === 'selected', JSON.stringify(lone))
     const loneSummary = selOnly.sandbox.__YAMI_CTX_SUMMARY__()
-    check('摘要切到选中项，仍然是一行短句', /停在「火球术」/.test(loneSummary) && loneSummary.length <= 60, loneSummary)
+    // 停留点来自"引擎选中态"（他点的那圈高亮）时，措辞是"选中"而不是"停在" ——
+    // 用户点了东西却看到"停在「…」"，会以为 AI 没认出他选的是什么（实测反馈）
+    check('摘要切到选中项，措辞用"选中"，仍然是一行短句', /选中「火球术」/.test(loneSummary) && loneSummary.length <= 60, loneSummary)
 
     // 真实检视器结构（照抄引擎静态标记）：
     //   <text>Icon</text><custom-box id="fileSkill-icon" type="file"></custom-box>
@@ -680,9 +682,9 @@ async function main() {
       !!innerLabelled && innerLabelled.label === 'speed:' && innerLabelled.value === '1.0', JSON.stringify(innerLabelled))
     boot.document.activeElement = null
 
-    // 区域级停留点是**弱信号**（只能说清"大概在哪一块"）。实测（用户会话日志里抓到的原话）：
-    // 他明明选中了「329.落雷.skill」，鼠标停在检视器空白处，顶栏却报"停在「检视器」"——
-    // 划过说不清是什么的地方，不许顶掉他高亮选中的东西。这一 boot 里 pickedItem 就是那个高亮选中项。
+    // 分两轮问：含糊的"区域级"候选不许盖掉更早的**精确**候选（实测用户踩到：点了界面树里的节点，
+    // 那个列表同时拿到焦点 → 区域级「界面元素列表」把他真正点的节点整个盖掉了）。
+    // 这一 boot 里前面右键过「流派」（精确），鼠标再停在 canvas 上（区域级）→ 该报那个精确的。
     boot.document.activeElement = null
     const sceneBox = new boot.El('box', 'scene-screen')
     const canvasInner = new boot.El('div')          // 无文字、无 tip、无 name
@@ -691,21 +693,28 @@ async function main() {
     boot.document.dispatchEvent({ type: 'pointerover', target: canvasInner })
     await new Promise(r => setTimeout(r, 700))
     const onCanvas = boot.probe.getPresence()
-    check('划过说不出是什么的地方（canvas）时，他高亮选中的东西照样报到',
-      !!onCanvas && onCanvas.label === '火球术' && onCanvas.via === 'selected', JSON.stringify(onCanvas))
+    check('含糊的区域级候选不许盖掉更早的精确候选（右键指过的东西）',
+      !!onCanvas && onCanvas.label === '流派' && onCanvas.via === 'rightclick', JSON.stringify(onCanvas))
 
-    // 同一处境换成引擎真实标记里的检视器容器（<page-frame id="inspector-page-manager">），也就是用户踩到的那一下
-    const inspectorFrame = new boot.El('page-frame', 'inspector-page-manager')
-    const inspectorBlank = new boot.El('div')
-    inspectorFrame.appendChild(inspectorBlank)
-    boot.document.body.appendChild(inspectorFrame)
-    boot.document.dispatchEvent({ type: 'pointerover', target: inspectorBlank })
+    // 反过来：**没有任何精确候选**时，区域级停留点是弱信号 —— 他高亮选中的东西优先。
+    // 实测（用户会话日志）：他明明选中了「329.落雷.skill」，鼠标停在检视器空白处，顶栏却报"停在「检视器」"。
+    // 单开一个干净沙盒（没有右键残留）钉这条，容器用引擎真实标记 <page-frame id="inspector-page-manager">。
+    const weakBoot = await bootProbe({ engine: true })
+    weakBoot.document.activeElement = null
+    const weakItem = new weakBoot.El('common-item', 'weak-picked')
+    weakItem.tip = '火球术'
+    weakItem.classList.add('selected')
+    weakBoot.document.body.appendChild(weakItem)
+    const weakFrame = new weakBoot.El('page-frame', 'inspector-page-manager')
+    const weakBlank = new weakBoot.El('div')
+    weakFrame.appendChild(weakBlank)
+    weakBoot.document.body.appendChild(weakFrame)
+    weakBoot.document.dispatchEvent({ type: 'pointerover', target: weakBlank })
     await new Promise(r => setTimeout(r, 700))
-    const onInspectorBlank = boot.probe.getPresence()
+    const weakAt = weakBoot.probe.getPresence()
     check('停在检视器空白处不许报成"停在检视器"（他高亮选中的是那个技能）',
-      !!onInspectorBlank && onInspectorBlank.via === 'selected' && onInspectorBlank.label === '火球术',
-      JSON.stringify(onInspectorBlank))
-    const blankSummary = boot.sandbox.__YAMI_CTX_SUMMARY__()
+      !!weakAt && weakAt.via === 'selected' && weakAt.label === '火球术', JSON.stringify(weakAt))
+    const blankSummary = weakBoot.sandbox.__YAMI_CTX_SUMMARY__()
     check('摘要里不再出现"停在「检视器」"', !/停在「检视器」/.test(blankSummary), blankSummary)
 
     // 反过来：什么也没选中时，区域级停留点照样要报出来（不是什么都不说）—— 单开一个干净沙盒验
@@ -724,34 +733,34 @@ async function main() {
     const regionSummary = regionOnly.sandbox.__YAMI_CTX_SUMMARY__()
     check('区域级停留点照样是一行短句', /停在「场景视图」/.test(regionSummary) && regionSummary.length <= 60, regionSummary)
 
-    // 没有标签的控件：退到"所在窗口的名字"（引擎把窗口名写在 <title-bar> 里）
+    // 没有标签的控件：退到"所在窗口的名字"（引擎把窗口名写在 <title-bar> 里）——
+    // 换个干净沙盒验，免得被这一 boot 里前面的右键残留影响（这里测的是"名字取得对不对"，不是优先级）
     // 真实标记：<window-frame id="showText"><title-bar>Show Text<close></close></title-bar><content-frame>…
-    const win = new boot.El('window-frame', 'showText')
-    const winTitle = new boot.El('title-bar')
+    const labelBoot = await bootProbe({ engine: true })
+    labelBoot.document.activeElement = null
+    const win = new labelBoot.El('window-frame', 'showText')
+    const winTitle = new labelBoot.El('title-bar')
     winTitle.textContent = 'Show Text'
-    const winBody = new boot.El('content-frame')
-    const winField = new boot.El('text-area', 'showText-content')
+    const winBody = new labelBoot.El('content-frame')
+    const winField = new labelBoot.El('text-area', 'showText-content')
     win.appendChild(winTitle); win.appendChild(winBody); winBody.appendChild(winField)
-    sceneBox.appendChild(win)
-    boot.document.activeElement = winField
-    await new Promise(r => setTimeout(r, 30))
-    const inWindow = boot.probe.getPresence()
+    labelBoot.document.body.appendChild(win)
+    labelBoot.document.activeElement = winField
+    const inWindow = labelBoot.probe.getPresence()
     check('没标签的控件退到「所在窗口的名字」（取自引擎的 title-bar）',
       !!inWindow && inWindow.label === 'Show Text' && inWindow.vague === true, JSON.stringify(inWindow))
 
     // ...或者所在分组的 legend：<field-set id="event-commands-fieldset"><legend>Content</legend>…
-    const fieldSet = new boot.El('field-set', 'event-commands-fieldset')
-    const legend = new boot.El('legend')
+    const fieldSet = new labelBoot.El('field-set', 'event-commands-fieldset')
+    const legend = new labelBoot.El('legend')
     legend.textContent = 'Content'
-    const cmdList = new boot.El('command-list', 'event-commands')
+    const cmdList = new labelBoot.El('command-list', 'event-commands')
     fieldSet.appendChild(legend); fieldSet.appendChild(cmdList)
-    boot.document.body.appendChild(fieldSet)
-    boot.document.activeElement = cmdList
-    await new Promise(r => setTimeout(r, 30))
-    const inField = boot.probe.getPresence()
+    labelBoot.document.body.appendChild(fieldSet)
+    labelBoot.document.activeElement = cmdList
+    const inField = labelBoot.probe.getPresence()
     // legend 是紧邻的前一个兄弟 → 走精确路径拿到名字（比区域兜底更好）；区域兜底只是它够不着时的补网
     check('分组里的控件能取到 legend 当名字', !!inField && inField.label === 'Content', JSON.stringify(inField))
-    boot.document.activeElement = null
 
     // 反过来：区域兜底不许盖掉已经识别出来的具体控件
     boot.document.dispatchEvent({ type: 'pointerover', target: iconBox })
@@ -759,6 +768,42 @@ async function main() {
     const backToField = boot.probe.getPresence()
     check('换回具体控件时仍然精确识别（区域兜底不会顶掉它）',
       !!backToField && backToField.label === 'Icon' && !backToField.vague, JSON.stringify(backToField))
+
+    /* ---------------- A3d. 用户实测那一下：点界面树节点 + 列表拿到焦点 + 资源树亮着个文件夹 ---------------- */
+    console.log('\n--- A3d. 界面树节点（用户截图那一下，整条链一起验）---')
+    const shotBoot = await bootProbe({ engine: true })
+    shotBoot.sandbox.Layout = { manager: { index: 'ui', switch(p) { shotBoot.sandbox.Layout.manager.index = p } } }
+    // 界面页正在编辑的文件（引擎真实字段 UI.meta，ui-window.ts:534）
+    shotBoot.sandbox.UI = {
+      meta: { guid: 'aabbccdd11223344', path: 'Assets/UI/大地图.aabbccdd11223344.ui', file: { alias: '大地图.ui', path: 'Assets/UI/大地图.aabbccdd11223344.ui' } }
+    }
+    // 被点选的界面树节点（引擎 shape：纯名字写在 textNode；E 是"有事件"角标，后面是锁/可见性字形）
+    const uiList = new shotBoot.El('node-list', 'ui-element')
+    const uiNode = new shotBoot.El('node-item', 'ui-node-del')
+    uiNode.textNode = { nodeValue: '删除存档数据' }
+    uiNode.textContent = '删除存档数据' + 'E' + '\uE001\uE002'
+    uiList.appendChild(uiNode)
+    shotBoot.document.body.appendChild(uiList)
+    uiNode.classList.add('selected')
+    // 点节点 → 列表同时拿到焦点（那个含糊的区域级候选就是这么来的）
+    shotBoot.document.activeElement = uiList
+    shotBoot.document.dispatchEvent({ type: 'pointerover', target: uiNode })
+    // 资源树里亮着的是个**文件夹**（用户："我没有选择项目里的粒子"）
+    const shotBrowser = new shotBoot.El('file-browser', 'project-browser')
+    shotBrowser.body = { activeFile: { name: '粒子', path: 'Assets/粒子' }, selections: [{ name: '粒子', path: 'Assets/粒子' }] }
+    shotBoot.document.body.appendChild(shotBrowser)
+    await new Promise(r => setTimeout(r, 700))
+    const shotAt = shotBoot.probe.getPresence()
+    check('点过的树节点不许被列表焦点（区域级）盖掉',
+      !!shotAt && shotAt.label === '删除存档数据' && shotAt.via === 'selected', JSON.stringify(shotAt))
+    const shotCtx = shotBoot.probe.getEditorContext()
+    check('文件夹不算"选中的文件"（不然模型会去改一个目录）', !shotCtx.selectedFile, JSON.stringify(shotCtx.selectedFile))
+    check('正在编辑的那个文件要给出来（界面页 = UI.meta）',
+      !!(shotCtx.editingFile && shotCtx.editingFile.path === 'Assets/UI/大地图.aabbccdd11223344.ui'), JSON.stringify(shotCtx.editingFile))
+    const shotSummary = shotBoot.sandbox.__YAMI_CTX_SUMMARY__()
+    check('摘要 = 选中「删除存档数据」·文件「大地图.ui」→ 路径（不再出现粒子 / 界面元素列表）',
+      /^【当前环境】选中「删除存档数据」·文件「大地图\.ui」 → Assets\/UI\//.test(shotSummary)
+      && shotSummary.indexOf('粒子') < 0 && shotSummary.indexOf('界面元素列表') < 0, shotSummary)
 
     /* ---------------- A3b. 场景对象与资源树多选：模糊指代要落得到一个具体文件 ---------------- */
     console.log('\n--- A3b. 场景里选中的对象 / 资源树多选（"改这个"到底改哪个文件）---')
@@ -803,6 +848,51 @@ async function main() {
     const multiSummary = multiBoot.sandbox.__YAMI_CTX_SUMMARY__()
     check('多选时摘要标出个数（不许当成"只选了那一个"）',
       /等 2 个/.test(multiSummary) && /Assets\/技能\//.test(multiSummary), multiSummary)
+
+    /* ---------------- A3c. 树节点：名字要干净，点了就是"选中"不是"停在" ---------------- */
+    console.log('\n--- A3c. 树节点（界面树/资源树）---')
+    const treeBoot = await bootProbe({ engine: true })
+    treeBoot.document.activeElement = null
+    // 引擎真实形状：<node-item> 里是「纯名字文本节点 + 角标元素」
+    // （tree-list.ts:283 element.textNode = 纯名字；E = 有事件角标，后面两坨是锁/可见性图标字形）
+    const nodeItem = new treeBoot.El('node-item', 'tree-background')
+    nodeItem.textNode = { nodeValue: '背景' }
+    nodeItem.textContent = '背景' + 'E' + '\uE001\uE002'   // 真 DOM 的 textContent 就是这个样子
+    nodeItem.appendChild(new treeBoot.El('lock-icon'))
+    treeBoot.document.body.appendChild(nodeItem)
+    nodeItem.classList.add('selected')                        // 用户点了它 → 引擎 addClass('selected')
+    treeBoot.document.dispatchEvent({ type: 'pointerover', target: nodeItem })
+    await new Promise(r => setTimeout(r, 700))
+    const treeAt = treeBoot.probe.getPresence()
+    check('树节点的名字取引擎写进 textNode 的纯名字（角标与图标字形不进名字）',
+      !!treeAt && treeAt.label === '背景' && !treeAt.value, JSON.stringify(treeAt))
+    check('树节点没有"值"（角标不许被当成值，否则摘要会出现 选中「背景」=E 这种乱码）',
+      /^【当前环境】选中「背景」$/.test(treeBoot.sandbox.__YAMI_CTX_SUMMARY__()), treeBoot.sandbox.__YAMI_CTX_SUMMARY__())
+    check('鼠标压在他刚点选的节点上时算"选中"，不算"划过"',
+      !!treeAt && treeAt.via === 'selected', treeAt && treeAt.via)
+    // 资源树里另有一个"打开着的文件"：它只是打开着，不是他刚点选的那个东西
+    const treeBrowser = new treeBoot.El('file-browser', 'project-browser')
+    treeBrowser.body = {
+      activeFile: { alias: '003 - 法师技能.skill', name: '003 - 法师技能.aaaabbbbccccdddd.skill', path: 'Assets/技能/003-法师技能/003 - 法师技能.aaaabbbbccccdddd.skill', type: 'skill' },
+      selections: []
+    }
+    treeBoot.document.body.appendChild(treeBrowser)
+    const treeSummary = treeBoot.sandbox.__YAMI_CTX_SUMMARY__()
+    check('摘要说的是"选中「背景」"，不是"停在"', /^【当前环境】选中「背景」/.test(treeSummary), treeSummary)
+    check('打开着的那个文件不再冒充"选中"（两个"选中"会让人分不清他指哪个）',
+      /文件「003 - 法师技能.skill」/.test(treeSummary) && treeSummary.indexOf('·选中「003') < 0, treeSummary)
+
+    // 反向：没有点选过任何树节点时，资源树选中项照旧是"选中「…」→ 路径"
+    const plainBoot = await bootProbe({ engine: true })
+    const plainBrowser = new plainBoot.El('file-browser', 'project-browser')
+    plainBrowser.body = {
+      activeFile: { alias: '落雷.skill', name: '落雷.627cc278af411ab0.skill', path: 'Assets/技能/012-元素使技能/落雷.627cc278af411ab0.skill', type: 'skill' },
+      selections: []
+    }
+    plainBoot.document.body.appendChild(plainBrowser)
+    const plainSummary = plainBoot.sandbox.__YAMI_CTX_SUMMARY__()
+    check('没有树节点选中时，资源树选中项照旧报"选中「落雷.skill」→ 路径"',
+      /选中「skill\/落雷.skill」|选中「落雷.skill」/.test(plainSummary) && /Assets\/技能\//.test(plainSummary), plainSummary)
 
     /* ---------------- A2. 引擎接口缺失时（官方预编译版）桥仍须可用 ---------------- */
     console.log('\n--- A2. 引擎接口缺失时（官方预编译版）桥仍须可用 ---')
@@ -928,6 +1018,8 @@ async function main() {
       check('提示词规定场景对象给的是源文件、实例数据在场景文件里',
         editorSystem.indexOf('源文件') >= 0 && editorSystem.indexOf('sceneFile') >= 0)
       check('提示词规定资源树多选时不许默认只改一个', editorSystem.indexOf('selectedFiles') >= 0)
+      check('提示词分清"选中（他点选的）"与"文件（打开着的）"',
+        editorSystem.indexOf('他点选的那个东西') >= 0 && editorSystem.indexOf('「文件」后面') >= 0)
 
       // C4：内置模型**实际拿到**的工具表 —— 这才是"模型看不看得见"的唯一真源
       const lastReq = captured[captured.length - 1] || {}

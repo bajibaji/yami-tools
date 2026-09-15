@@ -612,6 +612,12 @@ async function main() {
       '选中的资源必须带上工程路径（模型据此决定改哪个文件），实际产出：' + pathSandbox.result)
     assert.ok(String(pathSandbox.result).length <= 120, '带上路径后仍不得超过 120 字上限，实际 ' + String(pathSandbox.result).length)
 
+    // 他点选的是编辑器里的某个东西（树节点/界面元素）时：既要说他选了什么，也要说清在哪个文件里
+    const selSandbox = {}
+    vm.runInNewContext(fnExtract[0] + '; result = formatEditorContextSummary({ environment: "editor", selectedFile: { name: "003 - 法师技能.skill", type: "skill", path: "Assets/技能/003-法师技能/003 - 法师技能.aaaabbbbccccdddd.skill" }, editingFile: { name: "大地图.ui", path: "Assets/UI/大地图.aabbccdd11223344.ui" }, presence: { label: "删除存档数据", via: "selected" } });', selSandbox)
+    assert.ok(/^【当前环境】选中「删除存档数据」·文件「大地图\.ui」 → Assets\/UI\//.test(selSandbox.result),
+      '点选树节点时：说清"选中了什么"+"在哪个文件里"，实际：' + selSandbox.result)
+
     // 多选：只说"选中「A」"会让模型以为他只选了一个 —— 必须标出个数，且路径照旧带上
     const multiSandbox = {}
     vm.runInNewContext(fnExtract[0] + '; result = formatEditorContextSummary({ environment: "editor", selectedFile: { name: "落雷.skill", type: "skill", path: "Assets/技能/012-元素使技能/落雷.627cc278af411ab0.skill" }, selectedCount: 3, presence: { label: "攻击力", value: "25" } });', multiSandbox)
@@ -688,8 +694,9 @@ async function main() {
     assert.ok(/const sessionReportedAt = new Map\(\)/.test(mcpServerSource) && /fromWrite/.test(changelogSource)
       && /writes: writes\.map/.test(mcpServerSource),
       'F7：收尾清单要合并"本轮写入记录"，首次调用也要给（否则它只能说"无变更"）')
-    assert.ok(/const picked = \(ctx\.sceneTarget/.test(probeSource) && /if \(picked && pickedName !== at\.label\) line \+=/.test(probeSource),
-      'F8：环境摘要必须带上用户选中的资源（他鼠标选中的技能）；停留点就是它时不再重复两遍')
+    assert.ok(/line \+= '·选中「' \+ ctx\.selectedFile\.name/.test(probeSource)
+      && /const target = ctx\.editingFile \|\| ctx\.selectedFile/.test(probeSource),
+      'F8：环境摘要必须带上用户选中的资源（他鼠标选中的技能）；他点选树节点/界面元素时要说清"在哪个文件里"')
     // G-12：屏上与上下文必须说同一件事 —— 面板继续用上次的 sessionId 说话（模型看得到全部历史），
     // 屏上却只有欢迎语，用户就会以为"新对话怎么记得上次的事"
     assert.ok(/function restoreLastSession\(/.test(agentSource) && /function messagesPristine\(/.test(agentSource),
