@@ -585,7 +585,10 @@ async function main() {
     // 动态运行断言：抽取 formatEditorContextSummary 验证真实产出
     const vm = require('vm')
     const fnExtract = probeSource.match(/function formatEditorContextSummary\(ctx\) \{[\s\S]*?\n  \}/)
+    const suffixExtract = probeSource.match(/function selectedFileSuffix\(file\) \{[\s\S]*?\n  \}/)
     assert.ok(fnExtract, '必须能提取 formatEditorContextSummary 函数实现')
+    assert.ok(suffixExtract, '必须能提取 selectedFileSuffix（选中项要带上工程路径，否则模型只能靠名字猜文件）')
+    fnExtract[0] = suffixExtract[0] + '\n' + fnExtract[0]
     const sandbox = {}
     vm.runInNewContext(fnExtract[0] + '; result = formatEditorContextSummary({ playtest: true, scene: "测试场景", selectedFile: { name: "木剑.item", type: "item" }, sceneTarget: { name: "主角", type: "actor" }, inspector: { metaName: "木剑.item" } });', sandbox)
     assert.strictEqual(sandbox.result, '【当前环境】试玩中·场景「测试场景」·选中actor:「主角」',
@@ -599,6 +602,13 @@ async function main() {
     // 页面/场景这类他自己看得见的背景仍然不占那一行。
     assert.strictEqual(presenceSandbox.result, '【当前环境】停在「攻击力」=25·选中「木剑.item」',
       '有停留点：停留点 + 选中的资源（两句封顶，不堆背景）')
+    // 选中项必须带上工程路径：只给"329.落雷"这种显示名，模型只能自己去搜同名文件，搜错就写到别处
+    const pathSandbox = {}
+    vm.runInNewContext(fnExtract[0] + '; result = formatEditorContextSummary({ environment: "editor", selectedFile: { name: "329.落雷.skill", type: "skill", path: "Assets/技能/012-元素使技能/329.落雷.627cc278af411ab0.skill" }, presence: { label: "攻击力", value: "25" } });', pathSandbox)
+    assert.ok(String(pathSandbox.result).indexOf('Assets/技能/012-元素使技能/329.落雷.627cc278af411ab0.skill') !== -1,
+      '选中的资源必须带上工程路径（模型据此决定改哪个文件），实际产出：' + pathSandbox.result)
+    assert.ok(String(pathSandbox.result).length <= 120, '带上路径后仍不得超过 120 字上限，实际 ' + String(pathSandbox.result).length)
+
     const longSandbox = {}
     vm.runInNewContext(fnExtract[0] + '; result = formatEditorContextSummary({ environment: "editor", selectedFile: { name: "很长的资源名字".repeat(20), type: "item" }, presence: { label: "攻击力".repeat(20), value: "25" } });', longSandbox)
     assert.ok(String(longSandbox.result).length <= 120, '顶栏只有一行：摘要必须有长度上限（120 字）')
@@ -614,8 +624,13 @@ async function main() {
       'G-6：isGranted 要同时认「这一个文件」和「这类工具的所有文件」')
     assert.ok(/body\.grantForTool === true/.test(hostSource) && /grantForTool/.test(agentSource),
       'G-6：/approve 与面板要能把「这类工具的所有文件」这一档传下来')
-    assert.ok(/'playtest_smoke', 'ui_steps'\]\)/.test(hostSource),
-      'G-11：ui_steps 必须进 OTHER_MUTATIONS（AI 改编辑器界面是有副作用的动作，confirm 模式下要先问）')
+    // 钉「这几个工具必须在 OTHER_MUTATIONS 里」，不钉数组的最后一项是谁 ——
+    // 后来新增 finish_stuck_event / suspend_runtime_kind 时，原来那条匹配「结尾是 ui_steps]」的断言就误报了。
+    const mutationSet = (hostSource.match(/const OTHER_MUTATIONS = new Set\(\[([^\]]*)\]\)/) || [])[1] || ''
+    for (const name of ['ui_steps', 'playtest_smoke', 'finish_stuck_event', 'suspend_runtime_kind']) {
+      assert.ok(mutationSet.includes("'" + name + "'"),
+        'G-11：' + name + ' 必须进 OTHER_MUTATIONS（有副作用的动作，confirm 模式下要先问）')
+    }
     assert.ok(/if \(pathname === '\/session\/rewind'\)/.test(hostSource) && /function rewindTo\(index, opts\)/.test(agentSource),
       'G-1：宿主要有 /session/rewind、面板要有 rewindTo（从某一轮重来）')
     assert.ok(/attachUserActions\(item, meta\)/.test(agentSource) && /'重发'/.test(agentSource) && /'编辑'/.test(agentSource),

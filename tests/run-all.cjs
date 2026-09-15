@@ -37,6 +37,10 @@ const SUITE = [
   ['test-acceptance.cjs',     '整体验收(工作流串联+真实工程只读体检)'],
   ['test-ui-operation.cjs',   '界面操作(收束边框+步骤执行+急停)'],
   ['test-subviews-floating.cjs', '子视图全屏与自由悬浮窗(高亮+排他+拖拽+尺寸)'],
+  ['test-ai-selection-grant.cjs', '选中文件默认放行(打开着的直接改+打开之外要先确认)'],
+  ['test-mcp-meta-rules.cjs',   'MCP 元数据对齐引擎(CRLF解析+类型守卫+默认值校验+生成器自检)'],
+  ['test-mcp-command-name.cjs', '指令中文名解析(按编辑器显示名→GUID+未知名字如实拒绝)'],
+  ['test-update-recovery.cjs',  '更新失败自愈(bootstrap 把写坏的插件回退到旧版本)'],
   ['test-autoupdate.mjs',   '热更新端到端 (需联网)'],
 ];
 

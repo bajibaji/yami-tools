@@ -195,10 +195,21 @@ class CdpClient {
    */
   async dispatchKey({ key, code, type = 'rawKeyDown', targetType = 'player' }) {
     // 常用键与 windowsVirtualKeyCode 映射
+    // F1~F12 必须在这里：5966 桥直连时走引擎的 Input.simulateKey（它自己认功能键），
+    // 而 CDP 兜底路径若拿不到 windowsVirtualKeyCode，Chromium 生成的按键事件里 vk 是 undefined，
+    // 引擎按键表就查不到这个键 —— 表现出来就是「按了没反应」（真机踩过：让 AI 写 F5 触发的事件，跑不起来）。
     const vkMap = {
       ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39,
-      Enter: 13, Escape: 27, Space: 32, KeyZ: 90, KeyX: 88, KeyC: 67,
-      ShiftLeft: 16, ControlLeft: 17
+      Enter: 13, Escape: 27, Space: 32, Tab: 9, Backspace: 8, Delete: 46,
+      Home: 36, End: 35, PageUp: 33, PageDown: 34,
+      KeyA: 65, KeyB: 66, KeyC: 67, KeyD: 68, KeyE: 69, KeyF: 70, KeyG: 71, KeyH: 72, KeyI: 73, KeyJ: 74,
+      KeyK: 75, KeyL: 76, KeyM: 77, KeyN: 78, KeyO: 79, KeyP: 80, KeyQ: 81, KeyR: 82, KeyS: 83, KeyT: 84,
+      KeyU: 85, KeyV: 86, KeyW: 87, KeyX: 88, KeyY: 89, KeyZ: 90,
+      Digit0: 48, Digit1: 49, Digit2: 50, Digit3: 51, Digit4: 52,
+      Digit5: 53, Digit6: 54, Digit7: 55, Digit8: 56, Digit9: 57,
+      F1: 112, F2: 113, F3: 114, F4: 115, F5: 116, F6: 117,
+      F7: 118, F8: 119, F9: 120, F10: 121, F11: 122, F12: 123,
+      ShiftLeft: 16, ShiftRight: 16, ControlLeft: 17, ControlRight: 17, AltLeft: 18, AltRight: 18
     }
     const realCode = code || key
     const vk = vkMap[realCode] || undefined

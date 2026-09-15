@@ -197,35 +197,92 @@ function isValidGuid(g) {
   return typeof g === 'string' && /^[0-9a-f]{16}$/.test(g) && /[a-f]/.test(g)
 }
 
-/** 各数据类型的必需字段（schema 校验用，按《Yami引擎编写规则.md》第二部） */
+/**
+ * 各数据类型的必需字段（schema 校验用）。
+ * 【规则实据】这份表是把工程里**每一种资源的每个实例**都读一遍、取「100% 出现的顶层字段」得到的
+ * （实测样本：event 90 / ui 16 / animation 62 / scene 7 / tileset 6 / particle 35 / skill 69 /
+ *  trigger 53 / item 20 / state 18 / equipment 54 / actor 63）。
+ * 旧表有几处与真实资源不符，会冤枉合法文件：
+ *   · skill/item/equipment/state 被要求有 name —— 真实资源**根本没有 name 字段**（名字来自文件名）；
+ *   · tileset 被要求有 image —— 6 个真实图集里只有 4 个有 image（新建空图集没有）；
+ *   · particle 被要求有 sprites —— 真实粒子只有 layers。
+ * 少列比多列安全：这里的定位是「拦下必然装不上的文件」，不是复刻引擎的字段表。
+ */
 const REQUIRED_FIELDS = {
   event: ['type', 'enabled', 'commands'],
   scene: ['width', 'height', 'tileWidth', 'tileHeight', 'ambient', 'objects'],
   ui: ['width', 'height', 'nodes'],
   trigger: ['shape', 'events'],
   actor: ['sprites', 'attributes'],
-  tileset: ['image', 'width', 'height', 'tileWidth', 'tileHeight'],
+  tileset: ['width', 'height', 'tileWidth', 'tileHeight'],
   animation: ['sprites', 'motions'],
-  particle: ['sprites'],
-  skill: ['name', 'events'],
-  item: ['name', 'events'],
-  equipment: ['name', 'events'],
-  state: ['name', 'events']
+  particle: ['layers'],
+  skill: ['icon', 'events'],
+  item: ['icon', 'events'],
+  equipment: ['icon', 'events'],
+  state: ['icon', 'events']
 }
 
 /* ============================== 规则一：脚本元数据（复刻引擎 plugin.js parseMeta 规则） ============================== */
 
 const META_SELECTOR = /\/\*\s*@plugin\s[\s\S]+?(?=\*\/)/
-const META_STATEMENT = /@([a-z\-\[\]]+)([\s\S]*?)(?=\s@|$)/g
+// 标签只在**行首**出现：` * @number x`（CRLF / LF 都要认）。
+// 引擎自己的写法是 (?=\s@|$)，但这在 CRLF 文件上行不通 —— 
+// '*' 既不是 @ 也不是 \s，正则在这里匹配失败，于是整个元数据块被当成**一个**匹配，
+// 结果只有第一个标签被处理、后面的参数全部不存在（实测：把工程文件存成 LF 就能复现）。
+// 只在行首认标签还顺带修掉另一件事：@lang 块里的正文如果提到 @xxx，不再被当成标签。
+// 工具侧用的**严格**版：标签只在行首（` * @number x`）才算数。
+// 为什么不能用引擎那条正则：它的前瞻是 (?=\s@|$)，而注释续行的 ' * ' 里 '*' 既不是 @ 也不是 \s，
+// 于是在 CRLF 文件里前瞻永远不成立 —— 整个元数据块被当成**一个**匹配，
+// 结果只有第一个标签被处理、后面全部丢失，连 @version 都会粘进 @plugin 的值里（实测踩过）。
+const META_STATEMENT = /@([a-z\-\[\]]+)((?:[ \t]*\r?\n[ \t]*\*)?[\s\S]*?)(?=\r?\n[ \t]*\*[ \t]*@|$)/g
+// 引擎同款的**宽松**版（plugin.ts:362 原样），只给体检用：
+// 它会把 ' * @clamp 1 10' 这种续行当成新标签，正好是体检要暴露的东西 ——
+// 引擎真的会把它算成一个参数（key 就是 '1 10'），所以我们的报错不是误报。
+const META_STATEMENT_LOOSE = /@([a-z\-\[\]]+)([\s\S]*?)(?=\s@|$)/g
+
+/** 段内容清洗：去掉注释每行的 ' * ' 前缀，压成一行 */
+function metaStatementContent(raw) {
+  return String(raw || '')
+    .replace(/^[ \t]*[*]/, ' ')
+    .split(/\r?\n/)
+    .map(line => line.replace(/^[ \t]*[*][ \t]?/, ''))
+    .join(' ')
+    .trim()
+}
 const META_OPTION = /^(.+?)\{([\s\S]+?)\}$/
 const META_LANG_NAME = /^([a-zA-Z\-]+)(?:\s+extends\s+([a-zA-Z\-]+))?/
 const META_LANG_PROP = /(#\S+)\s+([\s\S]+?)(?=\s+#|$)/g
 
-const PARAM_TYPES = ['boolean', 'number', 'variable-number', 'string', 'number[]', 'string[]', 'keycode', 'color', 'option', 'easing', 'team', 'variable', 'attribute', 'attribute-key', 'attribute-group', 'enum', 'enum-value', 'enum-group', 'actor', 'region', 'light', 'animation', 'particle', 'parallax', 'tilemap', 'element', 'element-id', 'file', 'variable-getter', 'variable-setter', 'actor-getter', 'skill-getter', 'state-getter', 'equipment-getter', 'item-getter', 'element-getter', 'position-getter', 'group', 'group[]']
+// 元数据**标签**白名单：逐条对照引擎 PluginManager.parseMeta 的 processors 表（plugin.ts:1120-1181）。
+// 刻意把两件事分开（旧版混成一个数组，埋了两个坑）：
+//   · group / group[] 是标签不是参数类型 —— 引擎把 group[] 收成一个 type='repeatable-group' 的参数；
+//   · repeatable-group 才是引擎真正落盘的类型（type-registry.ts 同名注册），旧版没列它，
+//     于是带 repeatable-group 的元数据被解析器当未知标签**静默丢掉**。
+const COMMA_SEP = /\s*,\s*/
+const META_TAGS = ['plugin', 'author', 'link', 'version', 'deprecated', 'require', 'boolean', 'number', 'variable-number', 'string', 'number[]', 'string[]', 'keycode', 'color', 'option', 'easing', 'team', 'variable', 'attribute', 'attribute-key', 'attribute-group', 'enum', 'enum-value', 'enum-group', 'actor', 'region', 'light', 'animation', 'particle', 'parallax', 'tilemap', 'element', 'element-id', 'file', 'variable-getter', 'variable-setter', 'actor-getter', 'skill-getter', 'state-getter', 'equipment-getter', 'item-getter', 'element-getter', 'position-getter', 'clamp', 'decimals', 'placeholder', 'default', 'alias', 'desc', 'suffix', 'prefix', 'readonly', 'hidden', 'validate', 'cond', 'lang', 'group', 'group[]', 'repeatable-group']
+// 会产生一个参数值的标签（引擎 processors 里走 setParameter / setNumber / setOption / setAttribute / setEnum / setFile 的那批）
+const PARAM_TYPES = ['boolean', 'number', 'variable-number', 'string', 'number[]', 'string[]', 'keycode', 'color', 'option', 'easing', 'team', 'variable', 'attribute', 'attribute-key', 'attribute-group', 'enum', 'enum-value', 'enum-group', 'actor', 'region', 'light', 'animation', 'particle', 'parallax', 'tilemap', 'element', 'element-id', 'file', 'variable-getter', 'variable-setter', 'actor-getter', 'skill-getter', 'state-getter', 'equipment-getter', 'item-getter', 'element-getter', 'position-getter', 'repeatable-group', 'group', 'group[]']
+// 只对某些类型生效的修饰标签：对照引擎各 setXxx 里的 switch(parameter.type) 守卫（plugin.ts:638-783）
+const MODIFIER_TYPES = {
+  clamp: ['number', 'variable-number'],
+  decimals: ['number', 'variable-number'],
+  placeholder: ['string', 'number', 'variable-number']
+}
 const PARAM_MODIFIERS = ['alias', 'desc', 'default', 'filter', 'clamp', 'decimals', 'cond', 'placeholder', 'suffix', 'prefix', 'readonly', 'hidden', 'validate']
 const OVERVIEW_TAGS = ['plugin', 'version', 'author', 'link', 'desc', 'deprecated', 'require']
 
 /** 解析 .ts 源码中的 /* @plugin *\/ 元数据注释块（规则一 DSL） */
+/** 解析 .ts 源码的 /* @plugin *\/ 元数据块（tags 口径逐条对照引擎 plugin.ts:1120-1181 的 processors 表） */
+/** 取引号里的字符串：引擎 parseString 的口径（plugin.ts:422-430），不是引号包裹就返回 null */
+function unquoteText(value) {
+  const text = String(value == null ? '' : value)
+  if (text.length < 2) return null
+  const head = text[0]
+  const foot = text[text.length - 1]
+  const quoted = (head === String.fromCharCode(39) && foot === String.fromCharCode(39)) || (head === String.fromCharCode(34) && foot === String.fromCharCode(34))
+  return quoted ? text.slice(1, -1) : null
+}
 function parsePluginMeta(code) {
   const m = META_SELECTOR.exec(code)
   if (!m) return { ok: false, error: '未找到 /* @plugin ... */ 元数据注释块' }
@@ -235,25 +292,15 @@ function parsePluginMeta(code) {
   let st
   while ((st = META_STATEMENT.exec(m[0])) !== null) {
     const tag = st[1]
-    const content = (st[2] || '').trim()
-    if (PARAM_TYPES.includes(tag)) {
-      if (tag === 'group' || tag === 'group[]') { current = null; out.parameters.push({ key: content, type: tag }); continue }
-      current = { key: content, type: tag }
-      if (tag === 'option') {
-        const om = META_OPTION.exec(content)
-        if (om) {
-          current.key = om[1].trim()
-          current.options = om[2].split(/\s*,\s*/).map(s => s.trim())
-        }
-      }
-      out.parameters.push(current)
-    } else if (PARAM_MODIFIERS.includes(tag)) {
-      if (current) current[tag] = content
-      else if (tag === 'desc') out.overview.desc = content
-    } else if (OVERVIEW_TAGS.includes(tag)) {
-      if (tag === 'require') { (out.overview.requires = out.overview.requires || []).push(content) }
+    const content = metaStatementContent(st[2])
+    // 概览标签（@plugin/@version/@author/@link/@desc/@deprecated/@require）在引擎里各走各的 setter，
+    // 只有走 setParameter/setNumber/setOption/setAttribute/setEnum/setFile 的标签才产生参数（plugin.ts:1127-1154）。
+    if (OVERVIEW_TAGS.includes(tag)) {
+      if (tag === 'require') (out.overview.requires = out.overview.requires || []).push(content)
       else out.overview[tag] = content
-    } else if (tag === 'lang') {
+      continue
+    }
+    if (tag === 'lang') {
       const ln = META_LANG_NAME.exec(content)
       if (ln) {
         const lang = { name: ln[1], extends: ln[2] || null, props: {} }
@@ -262,9 +309,139 @@ function parsePluginMeta(code) {
         while ((lp = META_LANG_PROP.exec(content)) !== null) lang.props[lp[1]] = lp[2].trim()
         out.langMap[ln[1]] = lang
       }
+      continue
+    }
+    if (PARAM_TYPES.includes(tag)) {
+      current = { key: content, type: tag }
+      if (tag === 'option') {
+        const om = META_OPTION.exec(content)
+        if (om) {
+          current.key = om[1].trim()
+          // 选项值要**去掉引号**：引擎解析 @option 时走 parseString，参数值就是不带引号的 'a'；
+          // 留着引号的话，跟 @default 的引号值比较会永远不相等（实测：生成器自己的模板被判成非法）。
+          current.options = om[2].split(COMMA_SEP).map(s => { const unquoted = unquoteText(s.trim()); return unquoted === null ? s.trim() : unquoted })
+        }
+      }
+      if (tag === 'group' || tag === 'group[]') current = null
+      if (current) out.parameters.push(current)
+      continue
+    }
+    // @alias / @default / @clamp ... 是修饰标签：挂到当前参数上；没有当前参数时按引擎的 setDesc 特例处理
+    if (PARAM_MODIFIERS.includes(tag)) {
+      if (current) current[tag] = content
+      else if (tag === 'desc') out.overview.desc = content
     }
   }
   return out
+}
+
+/** 过滤器白名单：逐条抄引擎（fileFilters / attrFilters / enumFilters，plugin.ts:676-722） */
+const FILE_FILTERS = ['actor', 'skill', 'trigger', 'item', 'equipment', 'state', 'event', 'scene', 'tileset', 'ui', 'animation', 'particle', 'image', 'audio', 'video', 'script', 'font', 'other']
+const ATTR_FILTERS = ['actor', 'skill', 'state', 'item', 'equipment', 'element']
+const ENUM_FILTERS = ['shortcut-key', 'cooldown-key', 'equipment-slot', 'global-event', 'scene-event', 'actor-event', 'skill-event', 'state-event', 'equipment-event', 'item-event', 'region-event', 'light-event', 'animation-event', 'particle-event', 'parallax-event', 'tilemap-event', 'element-event']
+
+
+/**
+ * 按引擎的 @default 解析规则把文本还原成值（plugin.ts:496-520）：
+ * 解析不出来就是 null —— 引擎认定这个 default 不合法，会退回该类型的初始值。
+ */
+function parseDefaultByType(type, raw) {
+  const text = String(raw == null ? '' : raw).trim()
+  if (!text) return null
+  const num = value => { const n = parseFloat(value); return isNaN(n) ? null : n }
+  const bool = value => (value === 'true' ? true : value === 'false' ? false : null)
+  switch (type) {
+    case 'boolean': return bool(text)
+    case 'number':
+    case 'variable-number': return num(text)
+    case 'string':
+    case 'keycode': return unquoteText(text)
+    case 'color': return /^[0-9a-f]{8}$/.test(text) ? text : null
+    case 'number[]': {
+      if (text[0] !== '[' || text[text.length - 1] !== ']') return null
+      const list = []
+      for (const slice of text.slice(1, -1).split(COMMA_SEP)) { const n = num(slice); if (n !== null) list.push(n) }
+      return list
+    }
+    case 'string[]': {
+      if (text[0] !== '[' || text[text.length - 1] !== ']') return null
+      const list = []
+      const quoted = /(?:[\u0027][^\u0027]*[\u0027]|"[^"]")(?=\s*,?)/g
+      let hit
+      while ((hit = quoted.exec(text)) !== null) { const v = unquoteText(hit[0]); if (v !== null) list.push(v) }
+      return list
+    }
+    default: {
+      const asString = unquoteText(text)
+      if (asString !== null) return asString
+      const asNumber = num(text)
+      if (asNumber !== null) return asNumber
+      return bool(text)
+    }
+  }
+}
+/**
+ * 元数据体检：判定口径全部对着引擎源码（plugin.ts / type-registry.ts），注释里给行号 —— 改规则前先回去看引擎。
+ * 严重度：error = 写了等于白写或装配必失败；warn = 引擎容忍但有坑。
+ */
+function validatePluginMeta(meta, code) {
+  const issues = []
+  const text = String(code || "")
+  const metaBlock = String((meta && meta.raw) || "")
+  // ① 块外残留 @标签：引擎只在 /* @plugin ... */ 里找标签（selector.exec(code)，plugin.ts:1200），块外一律不存在
+  const outside = text.replace(new RegExp('/[*][\\s\\S]*?[*]/', 'g'), '')
+  if (/@[a-z][a-z\-\[\]]*/.test(outside)) {
+    issues.push({ severity: 'error', code: 'tags-outside-block', message: '有 @ 标签写在元数据注释块外面：引擎只在块内解析（plugin.ts:1200），块外的一律不存在' })
+  }
+  // ② 参数 key 不合法：引擎的 key 就是标签后面那段文本，带空格或 # 的 key 在检视器里是垃圾值
+  for (const p of meta.parameters || []) {
+    if (!/^[A-Za-z_$][\w$]*$/.test(String(p.key || ''))) {
+      issues.push({ severity: 'error', code: 'bad-key', target: p.key, message: '参数 key 不合法：「' + p.key + '」—— 引擎把标签后那一段原样当 key（plugin.ts:549），含空格 / # / 中文都会变成检视器里的垃圾键；改成英文标识符' })
+    }
+  }
+  // ③ 参数 key 重复：引擎只保留第一个（plugin.ts:548 if (!paramMap[content])）
+  const seen = new Set()
+  for (const p of meta.parameters || []) {
+    if (seen.has(p.key)) issues.push({ severity: 'warn', code: 'duplicate-key', target: p.key, message: '参数 key 重复：引擎只保留第一个（plugin.ts:548），重复的那个会被丢掉' })
+    seen.add(p.key)
+    const isGetter = /-getter$/.test(String(p.type))
+    if (!isGetter && p.default !== undefined && p.default !== '') {
+      const parsed = parseDefaultByType(p.type, p.default)
+      if (parsed === null) {
+        issues.push({ severity: 'error', code: 'bad-default', target: p.key, message: '@default 与参数类型 ' + p.type + ' 不匹配（引擎 plugin.ts:496-520 解析不出来就退回该类型的初始值）：' + String(p.default).slice(0, 60) })
+      } else if (p.type === 'option' && Array.isArray(p.options) && !p.options.includes(parsed)) {
+        issues.push({ severity: 'error', code: 'default-not-in-options', target: p.key, message: '@default 不在本参数的 @option 列表里（引擎 plugin.ts:505-508 判为 null 并退回第一个选项）' })
+      }
+    }
+  }
+  // ④ 修饰标签的类型守卫：逐条对引擎各 setXxx 里的 switch(parameter.type)（plugin.ts:638-783）
+  const guarded = {
+    clamp: { types: ['number', 'variable-number'], need: '需要恰好两个数值：@clamp 最小值 最大值' },
+    decimals: { types: ['number', 'variable-number'], need: '取一个 0-10 的整数' },
+    placeholder: { types: ['string', 'number', 'variable-number'], need: '' }
+  }
+  let owner = ""
+  let st
+  META_STATEMENT_LOOSE.lastIndex = 0
+  while ((st = META_STATEMENT_LOOSE.exec(metaBlock)) !== null) {
+    const tag = st[1]
+    const content = metaStatementContent(st[2])
+    if (PARAM_TYPES.includes(tag)) { owner = tag; continue }
+    const guard = guarded[tag]
+    if (!guard) continue
+    if (owner && !guard.types.includes(owner)) {
+      issues.push({ severity: 'warn', code: 'modifier-scope', target: tag, message: '@' + tag + ' 写在 ' + owner + ' 上：引擎只对 ' + guard.types.join(' / ') + ' 生效（plugin.ts:638-783 的类型守卫），这里是白写。' + guard.need })
+      continue
+    }
+    if (tag === 'clamp' || tag === 'decimals') {
+      const parts = content.split(/\s+/)
+      const okShape = tag === 'clamp' ? (parts.length === 2 && parts.every(v => !isNaN(parseFloat(v)))) : (parts.length === 1 && /^\d+$/.test(parts[0]) && Number(parts[0]) <= 10)
+      if (!okShape) {
+        issues.push({ severity: 'warn', code: tag === 'clamp' ? 'bad-clamp' : 'bad-decimals', target: tag, message: '@' + tag + ' 写法不对（' + guard.need + '），当前是「' + content + '」，引擎会整条忽略' })
+      }
+    }
+  }
+  return issues
 }
 
 /** 四类脚本模板（骨架，参数可注入） */
@@ -291,20 +468,41 @@ const SCRIPT_TEMPLATES = {
   }
 }
 
-function buildScriptSource(type, className, nameZh, params) {
+function buildScriptSource(type, className, nameZh, params, extra) {
   const tpl = SCRIPT_TEMPLATES[type]
-  const lines = ['/* @plugin #plugin', ' * @version 1.0', ' * @author', ' * @link', ' * @desc #desc']
+  const author = String((extra && extra.author) || '').trim()
+  const link = String((extra && extra.link) || '').trim()
+  // @author / @link 只在有内容时才写：引擎对它们没有非空要求（plugin.ts:524-534 的 setAuthor/setLink
+  // 直接存值，@link 还要过 httpLink 正则），空标签只是占位噪音。
+  const lines = ['/* @plugin #plugin', ' * @version 1.0']
+  if (author) lines.push(' * @author ' + author)
+  if (link && /^https?:\/\/.+$/.test(link)) lines.push(' * @link ' + link)
+  lines.push(' * @desc #desc')
   for (const p of params || []) {
     if (p.type === 'option') lines.push(` * @option ${p.key} {${(p.options || ['a', 'b']).map(v => `'${v}'`).join(', ')}}`)
     else lines.push(` * @${p.type} ${p.key}`)
     lines.push(` * @alias #${p.key}`)
-    if (p.default !== undefined && p.default !== '') lines.push(` * @default ${typeof p.default === 'string' ? `'${p.default}'` : p.default}`)
+    if (p.default !== undefined && p.default !== '') {
+      // 引号由类型决定，不能由 JS 里传进来的值决定：引擎 parseString 只认引号包裹的字符串，
+      // 而 option 的 default 必须是 'a' 这种带引号的形式（plugin.ts:422-430 / 505-508），
+      // 写成 @default a 会被判为 null 并退回第一个选项 —— 实测就是这条把生成器自己的模板卡住了。
+      const quoted = typeof p.default === 'string'
+        ? (p.type === 'number' || p.type === 'variable-number' || p.type === 'boolean' || p.type === 'number[]'
+            ? p.default
+            : `'${p.default}'`)
+        : p.default
+      lines.push(` * @default ${quoted}`)
+    }
   }
   lines.push(' * @lang zh', ` * #plugin ${nameZh}`, ' * #desc 描述', ...(params || []).map(p => ` * #${p.key} ${p.key}`))
   lines.push(' */', '', `export default class ${className} implements Script<${tpl.interface}> {`)
   for (const p of params || []) lines.push(`  ${p.key}!: ${p.type.startsWith('number') || p.type === 'variable-number' ? 'number' : p.type.startsWith('string') || p.type === 'color' || p.type === 'keycode' || p.type === 'option' ? 'string' : p.type === 'boolean' ? 'boolean' : 'any'}`)
   lines.push('  ' + tpl.body.split('\n').join('\n  '), '}')
-  return lines.join('\n') + '\n'
+  const source = lines.join('\n') + '\n'
+  // 生成完立刻自检：模板 + 参数拼出来的元数据同样要过引擎规则那一关 ——
+  // 否则 create_script 会造出一个「预览看着没问题、装到编辑器里参数不出现」的脚本。
+  const meta = parsePluginMeta(source)
+  return { source, metaIssues: meta.ok ? validatePluginMeta(meta, source) : [] }
 }
 
 /** 生成 16 位 hex GUID（引擎要求含 a-f） */
@@ -484,28 +682,56 @@ function readDataJson(name) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch (e) { return { __parseError: e.message } }
 }
 
-/** 收集磁盘上所有 GUID → 文件（跨 Assets + Data） */
+/**
+ * 收集磁盘上所有 GUID → 来源（跨 Assets 文件 + Data 表）。
+ * 除了「文件名里的 GUID」，还必须收**数据表里注册的 id** —— 否则 eventId / easingId 这类引用
+ * 会被判成悬空（实测：引擎自带的缓动曲线 id 全在 Data/easings.json 里，不是文件名）。
+ */
 function collectAllGuids(files) {
   const map = new Map()
-  const add = (relPath) => {
-    const g = parseGuidFromName(path.basename(relPath))
-    if (g) {
-      if (!map.has(g)) map.set(g, [])
-      map.get(g).push(relPath)
-    }
+  const add = (source, g) => {
+    if (!g) return
+    if (!map.has(g)) map.set(g, [])
+    if (!map.get(g).includes(source)) map.get(g).push(source)
   }
-  for (const f of files || listResourceFiles()) add(f.path)
-  for (const f of walk(path.join(ROOT, 'Data'))) add(path.relative(ROOT, f).replace(/\\/g, '/'))
+  for (const f of files || listResourceFiles()) add(f.path, parseGuidFromName(path.basename(f.path)))
+  for (const f of walk(path.join(ROOT, 'Data'))) add(path.relative(ROOT, f).replace(/\\/g, '/'), parseGuidFromName(path.basename(f)))
+  // 数据表里注册的 id（缓动/图集/插件/指令/队伍/变量/枚举/属性…）
+  for (const name of ['easings', 'autotiles', 'plugins', 'commands', 'teams', 'variables', 'enumeration', 'attribute']) {
+    const data = readDataJson(name + '.json')
+    if (!data || data.__parseError) continue
+    const rel = 'Data/' + name + '.json'
+    const visit = (value, depth) => {
+      if (!value || typeof value !== 'object' || depth > 8) return
+      if (Array.isArray(value)) { for (const item of value) visit(item, depth + 1); return }
+      if (typeof value.id === 'string' && isValidGuid(value.id)) add(rel, value.id)
+      for (const key of ['children', 'list', 'items']) if (value[key]) visit(value[key], depth + 1)
+      for (const [key, child] of Object.entries(value)) {
+        if (child && typeof child === 'object' && key !== 'id') visit(child, depth + 1)
+      }
+    }
+    visit(data, 0)
+  }
   return map
 }
 
-/** 从对象树收集所有 GUID 引用（递归，含 tilesetMap/events/scripts/attributes/引用字段） */
+/**
+ * 哪些键的值才是「资源 GUID」：只认这两个，其余一律不判。
+ *
+ * 为什么收得这么紧：variable.key / attributes.key / presetId / sprites.id / motions.id / layers.sprite
+ * 这些字段里的 16 位 hex **不是资源引用**（是变量、属性、节点、动作 id）；旧实现按「任何 16 位 hex 都算引用」
+ * 全量扫，实测在本机工程上报出 **6093 条悬空引用**，把真问题彻底淹没了。
+ * 代价是「别处引用不存在的资源」这类问题查不全 —— 宁可少报，也不拿 6000 条假警报糊住用户。
+ */
+const REF_KEYS = new Set(['eventId', 'easingId'])
+
+/** 从对象树收集**资源引用**（只认 REF_KEYS 里的键；其余 16 位 hex 是变量/属性/节点 id，不是资源） */
 function collectRefs(obj, refs, seen = new Set()) {
   if (!obj || typeof obj !== 'object' || seen.has(obj)) return
   seen.add(obj)
   if (Array.isArray(obj)) { for (const v of obj) collectRefs(v, refs, seen); return }
   for (const [k, v] of Object.entries(obj)) {
-    if (typeof v === 'string' && isValidGuid(v)) refs.push(v)
+    if (typeof v === 'string') { if (REF_KEYS.has(k) && isValidGuid(v)) refs.push(v) }
     else if (typeof v === 'object' && v !== null) collectRefs(v, refs, seen)
   }
 }
@@ -552,6 +778,19 @@ function validateResourceFile(relPath) {
     }
     if (type === 'ui') for (const n of data.nodes || []) visit(n)
     if (type === 'scene') for (const o of data.objects || []) visit(o)
+    // 4) presetId 格式：引擎新生成时一律用 GUID.generate64bit()（16 位 hex 且必含 a-f，guid.ts:11-17），
+    //    非法格式虽然能被读进来，但一旦节点被复制/重建就会被引擎换掉，引用它的指令会指向旧 id。
+    if (type === 'ui' || type === 'scene') {
+      const badFormat = []
+      const checkFormat = node => {
+        if (!node || typeof node !== 'object') return
+        if (typeof node.presetId === 'string' && node.presetId !== '' && !isValidGuid(node.presetId)) badFormat.push(node.presetId)
+        for (const key of ['children', 'nodes', 'objects']) if (Array.isArray(node[key])) node[key].forEach(checkFormat)
+      }
+      if (type === 'ui') for (const n of data.nodes || []) checkFormat(n)
+      if (type === 'scene') for (const o of data.objects || []) checkFormat(o)
+      if (badFormat.length) issues.push({ severity: 'warning', code: 'bad-preset-id', message: `presetId 格式不是 16 位 hex 含 a-f（引擎新生成的都是这个格式）: ${badFormat.slice(0, 3).join('、')}` })
+    }
   }
   return { ok: issues.length === 0, type, guid, issues }
 }
@@ -563,9 +802,14 @@ function validateProject() {
   // （collectAllGuids / 引用完整性 / manifest 一致性 / 统计各来一次），工程越大越明显。
   const files = listResourceFiles()
   const guidMap = collectAllGuids(files)
-  // 1) GUID 唯一性
-  for (const [g, files] of guidMap) {
-    if (files.length > 1) issues.push({ severity: 'error', code: 'duplicate-guid', guid: g, message: `GUID 重复（${files.length} 个文件）: ${g}`, files })
+  // 1) GUID 唯一性：只比**文件路径**。
+  //    数据表里注册的同名 id（自定义指令的 commands.json 条目 = 脚本文件名里的那个 GUID）不是冲突，
+  //    旧实现把两者混在一起比，本机工程直接报出 47 条假冲突。
+  for (const [g, sources] of guidMap) {
+    //    另外**要把 Data 表本身排除掉**：plugins.json / commands.json 里的条目 id 就等于脚本文件名里的 GUID，
+    //    那是「同一个资源的两处登记」，不是两个文件撞 GUID（本机工程实测 47 条全是这种）。
+    const filePaths = sources.filter(item => typeof item === 'string' && item.startsWith('Assets/'))
+    if (filePaths.length > 1) issues.push({ severity: 'error', code: 'duplicate-guid', guid: g, message: `GUID 重复（${filePaths.length} 个文件）: ${g}`, files: filePaths })
   }
   // 2) 数据文件引用完整性：所有 16hex 引用须能在磁盘找到
   const known = new Set(guidMap.keys())
@@ -583,7 +827,50 @@ function validateProject() {
       if (!known.has(r)) issues.push({ severity: 'warning', code: 'dangling-ref', message: `${f.path} 引用不存在的资源: ${r}` })
     }
   }
-  // 3) manifest 一致性：磁盘文件 vs manifest 条目
+  // 3) presetId 跨文件唯一性：引擎把场景/界面的默认对象注册成**全局**键（scenePresets / uiPresets），
+  //    冲突时后注册的会直接覆盖前一个（scene-window.ts:1270-1276 `scenePresets[node.presetId] = {...}`），
+  //    于是引用旧 id 的指令会悄悄指到另一个场景的对象上 —— 单文件内查重看不出来，必须跨文件查。
+  {
+    const owners = new Map()
+    const collect = (file, node) => {
+      if (!node || typeof node !== 'object') return
+      if (typeof node.presetId === 'string' && node.presetId !== '') {
+        const list = owners.get(node.presetId) || []
+        if (!list.includes(file.path)) list.push(file.path)
+        owners.set(node.presetId, list)
+      }
+      for (const key of ['children', 'nodes', 'objects']) if (Array.isArray(node[key])) node[key].forEach(child => collect(file, child))
+    }
+    for (const f of files) {
+      if (f.type !== 'scene' && f.type !== 'ui') continue
+      let data
+      try { data = JSON.parse(fs.readFileSync(path.join(ROOT, f.path), 'utf8')) } catch { continue }
+      const roots = f.type === 'ui' ? (data.nodes || []) : (data.objects || [])
+      if (Array.isArray(roots)) roots.forEach(node => collect(f, node))
+    }
+    for (const [presetId, ownerFiles] of owners) {
+      if (ownerFiles.length > 1) issues.push({ severity: 'error', code: 'duplicate-preset-id', presetId, files: ownerFiles.slice(0, 3), message: `presetId 在多份资源里重复: ${presetId}（${ownerFiles.length} 份）—— 引擎注册时后写的会覆盖前一个，引用它的指令会指错对象` })
+    }
+    // 3b) 界面里 reference 节点的 prefabId 指向**某个界面节点的 presetId**（不是资源 GUID）。
+    //     实据：ui-window.ts:697 `reference.prefabId = prefab.presetId`、reference-element.ts:29 `Data.uiPresets[value]`。
+    //     指不到任何 presetId 时引擎**静默**什么都不加载（reference-element.ts:30 `if (preset && ...)`）——
+      //     界面上那个位置就是空的，不报错、不提示，属于最难查的一类坏。
+    const knownPresets = new Set(owners.keys())
+    const collectPrefabs = (file, node) => {
+      if (!node || typeof node !== 'object') return
+      if (typeof node.prefabId === 'string' && node.prefabId && !knownPresets.has(node.prefabId)) {
+        issues.push({ severity: 'warning', code: 'dangling-prefab', message: `${file.path} 的 reference 节点指向的 prefabId 不存在: ${node.prefabId}（引擎会静默不加载，界面上那块是空的）` })
+      }
+      for (const key of ['children', 'nodes', 'objects']) if (Array.isArray(node[key])) node[key].forEach(child => collectPrefabs(file, child))
+    }
+    for (const f of files) {
+      if (f.type !== 'ui') continue
+      let data
+      try { data = JSON.parse(fs.readFileSync(path.join(ROOT, f.path), 'utf8')) } catch { continue }
+      if (Array.isArray(data.nodes)) data.nodes.forEach(node => collectPrefabs(f, node))
+    }
+  }
+  // 4) manifest 一致性：磁盘文件 vs manifest 条目
   const manifest = readDataJson('manifest.json')
   if (manifest && !manifest.__parseError) {
     const manifestPaths = new Set()
@@ -690,6 +977,8 @@ const tools = [
         className: { type: 'string', description: 'TS 类名（如 MyCommand）' },
         nameZh: { type: 'string', description: '中文名称（@plugin 语言包显示名）' },
         params: { type: 'array', items: { type: 'object' }, description: '可选参数声明 [{key, type: number|string|boolean|option, default, options}]' },
+        author: { type: 'string', description: '可选：@author 作者名；不填就不生成这一行（空标签只是占位噪音）' },
+        link: { type: 'string', description: '可选：@link 链接，必须是 http(s):// 开头（引擎自己会校验，不合法会被丢弃）' },
         dryRun: { type: 'boolean', description: '默认 true 只预览；false 写入文件' }
       },
       required: ['type', 'path', 'className', 'nameZh']
@@ -774,17 +1063,27 @@ const tools = [
   },
   {
     name: 'editor_action',
-    description: '执行受限的编辑器原生操作：保存、撤销、重做、刷新资源、启动试玩；不接受任意 JS',
+    // reload_resource：把磁盘上的改动重读进编辑器内存（引擎 5967 桥的 reload 动作，逐类型重建映射 + 派发 datachange）。
+    // 定位要写清：「把磁盘重读进内存」而不是反过来 —— AI 写盘后自动重载走的就是它。
+    // 前置条件与失败长相写清楚：官方预编译版没有 window.YamiEngine，这几项一律报 engineUnavailable ——
+    // 说明里不写，模型会反复重试同一个动作、甚至向用户承诺「已经保存好了」。
+    description: '执行受限的编辑器原生操作：保存、撤销、重做、刷新资源树、启动试玩、把某个资源从磁盘重读进编辑器内存（reload_resource 需给 path）；不接受任意 JS。前提：这些动作都依赖引擎内部接口，编辑器若没暴露（官方预编译版就是这样）会返回 engineUnavailable 并说明原因，此时不要重试、也不要向用户承诺已经保存/已启动试玩',
     readOnlyHint: false,
     inputSchema: {
       type: 'object',
-      properties: { action: { type: 'string', enum: ['save', 'undo', 'redo', 'refresh', 'playtest'], description: '编辑器动作' } },
+      properties: {
+        action: { type: 'string', enum: ['save', 'undo', 'redo', 'refresh', 'playtest', 'reload_resource'], description: '编辑器动作；reload_resource 需同时给 path' },
+        path: { type: 'string', description: 'action=reload_resource 时的资源路径（工程内相对路径）' }
+      },
       required: ['action']
     }
   },
   {
     name: 'interact_editor',
-    description: '在编辑器中操作具体控件：按选择器输入文本、切换选项，或按坐标移动、点击、拖动；只作结构化工具缺失时的兜底',
+    // 与 ui_steps 的分工写清楚：ui_steps 走引擎公开入口（进撤销栈、有高亮演出），是**首选**；
+    // interact_editor 是鼠标级模拟（pointerdown/up + click），只在 ui_steps 够不着时用 ——
+    // 两段说明原先各自只说自己是「兜底/首选」，模型很容易选错。
+    description: '用鼠标级模拟操作编辑器控件（pointerdown/up + click、按坐标拖动、直接写控件值）。只在这些情况下用：ui_steps 够不着的目标（canvas 里的东西、需要真拖拽、没有稳定选择器的控件）；能用 ui_steps 的一律优先 ui_steps（它走引擎公开入口、会进撤销栈、有高亮演出）',
     readOnlyHint: false,
     inputSchema: {
       type: 'object',
@@ -988,7 +1287,9 @@ const tools = [
   {
     name: 'playtest_smoke',
     description: '试玩冒烟测试（本工程特色验证闭环）：按脚本驱动一遍游戏（方向键走位、确认对话等），跑完自动对比运行时诊断，报告「新出现的报错 / 变频繁的报错 / 新卡住的事件 / 性能是否恶化」。改完代码想确认"真的还能玩"时用它。需要先在编辑器里启动试玩。\n'
-      + '按键白名单：up/down/left/right/ok/cancel/space/z/x/c；数字键与 F1~F12 不支持（序列会被拒），别拿功能键做验证方案。',
+      // 旧说明写「数字键与 F1~F12 不支持」，但 5966 桥的白名单其实是 ArrowUp/Down/Left/Right|Enter|Escape|Space|Key[A-Z]|Digit[0-9]|F[1-12]；
+      // 当时功能键失败是 CDP 兜底路径没给 windowsVirtualKeyCode（已修），说明写错会让模型白白放弃可行的验证方案。
+      + '按键白名单：up/down/left/right/ok/cancel/space/字母键/数字键/F1~F12。',
     readOnlyHint: false,
     inputSchema: {
       type: 'object',
@@ -1007,8 +1308,11 @@ const tools = [
   },
   {
     name: 'send_player_input',
-    description: '向正在运行的试玩游戏下发虚拟按键操作（方向键、确定对话、取消等），用于自动化探索与跑图回归测试。'
-      + '白名单：up/down/left/right/ok/cancel/space/z/x/c；F1~F12 不支持。',
+    description: '向正在运行的试玩游戏下发虚拟按键操作，用于自动化探索与跑图回归测试。'
+      // 【规则实据】5966 桥的按键白名单是 ArrowUp/Down/Left/Right|Enter|Escape|Space|Key[A-Z]|Digit[0-9]|F[1-12]
+      // （probe-core.js executeRuntimeAction），也就是**功能键是支持的**；旧说明写「F1~F12 不支持」是
+      // 因为 CDP 兜底路径当时没给功能键 windowsVirtualKeyCode（已修）—— 说明写错会让模型白白放弃可行的验证方案。
+      + '支持的键：方向键 / Enter(ok) / Escape(cancel) / Space / 字母键 / 数字键 / F1~F12（功能键可用）。',
     readOnlyHint: false,
     inputSchema: {
       type: 'object',
@@ -1021,7 +1325,7 @@ const tools = [
   },
   {
     name: 'send_player_pointer',
-    description: '向试玩游戏发送鼠标移动、按下、弹起或点击，用于界面和地图交互回归',
+    description: '向试玩游戏发送鼠标移动、按下、弹起或点击，用于界面和地图交互回归。注意：每次都会先派发一次 pointermove（引擎靠它更新指针位置），再执行你要的动作',
     readOnlyHint: false,
     inputSchema: {
       type: 'object',
@@ -1032,6 +1336,33 @@ const tools = [
         button: { type: 'number', description: '鼠标键，默认 0' }
       },
       required: ['action', 'x', 'y']
+    }
+  },
+  {
+    name: 'finish_stuck_event',
+    // 引擎侧 probe 已有 finishEventById（调引擎原生 finish() 拔引用），旧实现只有界面上的「一键结束」按钮，
+    // 模型看得见卡住事件却拔不掉。eventId 就用 diagnose_runtime 里卡住事件条目带的 id。
+    description: '结束一个卡住的事件（试玩中）：用 diagnose_runtime 报出的卡住事件 id 调用，引擎会调事件原生的 finish() 把它结束掉，并解除它对场景对象的引用。用户说「卡住了/不动了/帮我结束它」时用这个',
+    readOnlyHint: false,
+    inputSchema: {
+      type: 'object',
+      properties: { eventId: { type: 'string', description: '卡住事件的 id（diagnose_runtime 的卡住/幽灵事件列表里有）' } },
+      required: ['eventId']
+    }
+  },
+  {
+    name: 'suspend_runtime_kind',
+    // 引擎侧 probe 的 state.suspend 有 7 个类别开关（actors/animations/emitters/triggers/ui/events/audio），
+    // 定位「谁在拖帧/谁在死循环」时按类别二分是最快的办法；旧实现只把它们藏在面板上，模型一条都用不了。
+    description: '暂停或恢复试玩里某一类内容的更新，用来二分定位卡顿/死循环的来源。kind：actors 角色更新 / animations 动画 / emitters 粒子发射器 / triggers 触发器 / ui 界面 / events 事件系统 / audio 音频；on=true 暂停、false 恢复。暂停只是让那一类不再更新，不改动任何工程内容',
+    readOnlyHint: false,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['actors', 'animations', 'emitters', 'triggers', 'ui', 'events', 'audio'], description: '要暂停/恢复的类别' },
+        on: { type: 'boolean', description: 'true 暂停、false 恢复' }
+      },
+      required: ['kind', 'on']
     }
   },
   {
@@ -1151,8 +1482,16 @@ async function callTool(name, args) {
       const rel = normalizeRelPath(args.path)
       const abs = path.join(ROOT, rel)
       if (!fs.existsSync(abs)) return { ok: false, error: `文件不存在: ${rel}` }
-      const meta = parsePluginMeta(fs.readFileSync(abs, 'utf8'))
-      return meta.ok ? { ok: true, path: rel, ...meta } : meta
+      const code = fs.readFileSync(abs, 'utf8')
+      const meta = parsePluginMeta(code)
+      if (!meta.ok) return meta
+      const metaIssues = validatePluginMeta(meta, code)
+      return {
+        ok: true, path: rel, ...meta, metaIssues,
+        metaIssuesNote: metaIssues.length
+          ? '以上按引擎规则（plugin.ts / type-registry.ts）逐条判过：error = 写了等于白写或装配失败，warn = 引擎容忍但有坑'
+          : '元数据符合引擎规则'
+      }
     }
     case 'create_script': {
       const rel = normalizeRelPath(args.path)
@@ -1161,7 +1500,8 @@ async function callTool(name, args) {
       if (!SCRIPT_TEMPLATES[args.type]) return { ok: false, error: `未知类型: ${args.type}（应为 ${Object.keys(SCRIPT_TEMPLATES).join('/')}）` }
       if (!guid || !isValidGuid(guid)) return { ok: false, error: `文件名需含合法 16 位 hex GUID（含 a-f）: ${base}` }
       if (fs.existsSync(resolveInside(ROOT, rel))) return { ok: false, error: `脚本已存在，拒绝覆盖: ${rel}；修改请使用 write_script` }
-      const src = buildScriptSource(args.type, args.className, args.nameZh, args.params)
+      const built = buildScriptSource(args.type, args.className, args.nameZh, args.params, { author: args.author, link: args.link })
+      const src = built.source
       const diffRes = unifiedDiff('', src, { label: rel })
       const diffStat = { added: diffRes.added, removed: diffRes.removed, truncated: diffRes.truncated }
       const preview = {
@@ -1172,7 +1512,17 @@ async function callTool(name, args) {
         diff: diffRes.text,
         diffStat
       }
-      if (args.dryRun !== false) return { ok: true, dryRun: true, message: '模板已生成（未写盘，dryRun）', script: src, ...preview }
+      const metaIssues = Array.isArray(built.metaIssues) ? built.metaIssues : []
+      const metaErrors = metaIssues.filter(item => item.severity === 'error')
+      if (metaErrors.length) {
+        return { ok: false, dryRun: true, metaIssues, error: '生成的元数据不符合引擎规则（装上去参数不会出现），未写盘：' + metaErrors.map(item => (item.target ? item.target + '：' : '') + item.message).join('；') }
+      }
+      if (args.dryRun !== false) {
+        return {
+          ok: true, dryRun: true, message: '模板已生成（未写盘，dryRun）', script: src, ...preview, metaIssues,
+          metaCheck: metaIssues.length ? '引擎规则体检有 ' + metaIssues.length + ' 条提醒（见 metaIssues）' : '元数据符合引擎规则'
+        }
+      }
       try {
         const table = args.type === 'plugin' ? 'plugins' : args.type === 'command' ? 'commands' : null
         if (table) {
@@ -1207,7 +1557,8 @@ async function callTool(name, args) {
       if (!/\.(ts|js)$/i.test(rel) || !rel.startsWith('Assets/')) return { ok: false, error: '只允许读取 Assets 内的 .ts 或 .js 脚本' }
       const text = readText(rel)
       if (text === null) return { ok: false, error: `脚本不存在: ${rel}` }
-      return { ok: true, path: rel, content: text, sha256: sha256(text), meta: parsePluginMeta(text) }
+      const meta = parsePluginMeta(text)
+      return { ok: true, path: rel, content: text, sha256: sha256(text), meta, metaIssues: meta.ok ? validatePluginMeta(meta, text) : [] }
     }
     case 'write_script': {
       const rel = normalizeRelPath(args.path)
@@ -1220,6 +1571,11 @@ async function callTool(name, args) {
       }
       const nextMeta = parsePluginMeta(args.content)
       if (!nextMeta.ok) return { ok: false, error: '脚本缺少合法 /* @plugin ... */ 元数据块，未写入' }
+      const metaIssues = validatePluginMeta(nextMeta, args.content)
+      const metaErrors = metaIssues.filter(item => item.severity === 'error')
+      if (metaErrors.length) {
+        return { ok: false, metaIssues, error: '元数据不符合引擎规则（引擎会忽略或装不上），未写入：' + metaErrors.map(item => (item.target ? item.target + '：' : '') + item.message).join('；') }
+      }
       const preview = { path: rel, oldSha256: sha256(oldText), newSha256: sha256(args.content), changedBytes: Buffer.byteLength(args.content) - Buffer.byteLength(oldText), meta: nextMeta }
       if (args.dryRun !== false) return { ok: true, dryRun: true, ...preview, message: '脚本校验通过，未写盘' }
       try {
@@ -1298,6 +1654,11 @@ async function callTool(name, args) {
       // 片段替换不改元数据块，但仍校验一次：避免把 @plugin 块改坏却毫无提示
       const nextMeta = parsePluginMeta(nextText)
       if (!nextMeta.ok) return { ok: false, ...preview, error: '替换后脚本的 /* @plugin ... */ 元数据块不合法，未写入' }
+      const metaIssues = validatePluginMeta(nextMeta, nextText)
+      const metaErrors = metaIssues.filter(item => item.severity === 'error')
+      if (metaErrors.length) {
+        return { ok: false, ...preview, metaIssues, error: '替换后元数据不符合引擎规则（引擎会忽略或装不上），未写入：' + metaErrors.map(item => (item.target ? item.target + '：' : '') + item.message).join('；') }
+      }
       if (args.dryRun !== false) {
         return {
           ok: true,
@@ -1625,6 +1986,42 @@ async function callTool(name, args) {
       for (const f of required) {
         if (!(f in args.content)) issues.push({ severity: 'error', code: 'missing-field', message: `缺少必需字段: ${f}` })
       }
+      // 校验：压缩字段（RLE）不许被写短。
+      // 实据：scene 的 terrains 与 tilemap 的 code 是引擎 Codec 编码出来的 RLE 文本（codec.ts:215-260），
+      // 空间地图的 scene 里它占全文 32%（本机实测：27.5k 的 scene 有 17.1k 是 RLE）。
+      // 真实故障链：read_resource 对 >200KB 的文件只回字段名清单 → 模型拿到不完整内容却照原样 write_resource
+      // → 引擎加载时 decodeTerrains/decodeTiles 直接抛 RangeError（codec.ts:205-211），地图就坏了。
+      // 所以这里只拦「写短了」：内容一模一样或更长的压缩串一律放行。
+      {
+        const oldRaw = readText(rel)
+        if (oldRaw) {
+          let oldData = null
+          try { oldData = JSON.parse(oldRaw) } catch { oldData = null }
+          if (oldData) {
+            const shrink = (where, from, to) => {
+              if (typeof from !== 'string' || typeof to !== 'string') return
+              if (to.length >= from.length) return
+              issues.push({ severity: 'error', code: 'rle-shrunk', message: `${where}的压缩字段被写短了（${from.length} → ${to.length} 字符）：这是引擎算出来的 RLE，手改会让地图直接读不出来；请原样保留，或改用 patch_resource 只改别的字段` })
+            }
+            const collectRle = (root, map) => {
+              const stack = Array.isArray(root) ? root.slice() : [root]
+              while (stack.length) {
+                const node = stack.pop()
+                if (!node || typeof node !== 'object') continue
+                if (typeof node.code === 'string' && node.code) map.push(node)
+                if (Array.isArray(node.children)) stack.push(...node.children)
+              }
+            }
+            if (type === 'scene') {
+              shrink('场景', oldData.terrains, args.content.terrains)
+              const oldNodes = [], newNodes = []
+              collectRle(oldData.objects || [], oldNodes)
+              collectRle(args.content.objects || [], newNodes)
+              for (let i = 0; i < Math.min(oldNodes.length, newNodes.length); i++) shrink('瓦片地图', oldNodes[i].code, newNodes[i].code)
+            }
+          }
+        }
+      }
       // 校验：presetId 文件内唯一
       if (type === 'ui' || type === 'scene') {
         const seen = new Set()
@@ -1637,6 +2034,27 @@ async function callTool(name, args) {
           for (const key of ['children', 'nodes', 'objects']) if (Array.isArray(n[key])) n[key].forEach(visit)
         }
         for (const arr of [args.content.nodes, args.content.objects]) if (Array.isArray(arr)) arr.forEach(visit)
+        // 跨文件查重：引擎把场景/界面的默认对象注册成**全局**键（scenePresets / uiPresets），
+        // 撞 id 时注册阶段会直接覆盖前一个（scene-window.ts:1270-1276）——
+        // 而引擎自己在加载时又会对「已存在的 presetId」重新发号（1270 行的 node.presetId in scenePresets），
+        // 于是引用旧 id 的指令会指到另一个场景的对象上。写盘前必须拦。
+        const collided = []
+        for (const other of listResourceFiles()) {
+          if (other.path === rel) continue
+          if (other.type !== 'scene' && other.type !== 'ui') continue
+          let otherData
+          try { otherData = JSON.parse(fs.readFileSync(path.join(ROOT, other.path), 'utf8')) } catch { continue }
+          const stack = [...(otherData.objects || []), ...(otherData.nodes || [])]
+          while (stack.length) {
+            const node = stack.pop()
+            if (!node || typeof node !== 'object') continue
+            if (typeof node.presetId === 'string' && node.presetId && seen.has(node.presetId)) collided.push({ presetId: node.presetId, file: other.path })
+            for (const key of ['children', 'nodes', 'objects']) if (Array.isArray(node[key])) stack.push(...node[key])
+          }
+        }
+        if (collided.length) {
+          issues.push({ severity: 'error', code: 'preset-id-conflict', message: `presetId 与其它资源冲突: ${collided.slice(0, 3).map(c => c.presetId + '@' + c.file).join('、')} —— 引擎注册时会覆盖，引用它的指令会指错对象；请换一个 id` })
+        }
       }
       const errors = issues.filter(i => i.severity === 'error')
       if (errors.length > 0) return { ok: false, issues: errors, dryRun: true, message: '校验未通过，未写入' }
@@ -1689,6 +2107,14 @@ async function callTool(name, args) {
         redo: "(() => { " + pick + " const U = E.UndoManager; if (!U || !U.redo) return {ok:false, error:'UndoManager.redo 不可用（引擎未暴露 YamiEngine.UndoManager）'}; U.redo(); return {ok:true, action:'redo'}; })()",
         refresh: "(() => { " + pick + " const D = E.Directory; if (!D || !D.update) return {ok:false, error:'Directory.update 不可用（引擎未暴露 YamiEngine.Directory）'}; return Promise.resolve(D.update()).then(() => ({ok:true, action:'refresh'})); })()",
         playtest: "(() => { " + pick + " const T = E.Title; if (!T || !T.playGame) return {ok:false, error:'Title.playGame 不可用（引擎未暴露 YamiEngine.Title）'}; const r = T.playGame(); return Promise.resolve(r).then(() => ({ok:true, action:'playtest'})); })()"
+      }
+      // 把磁盘重读进编辑器内存：引擎桥自己逐类型重建（Data 表重建映射、资源按扩展名回填 Data.xxx + Directory.update）
+      if (args.action === 'reload_resource') {
+        const rel = normalizeRelPath(args.path)
+        if (!rel) return { ok: false, error: 'reload_resource 需要 path（工程内相对路径）' }
+        const res = await editorBridge.action('reload', { path: rel })
+        if (res && res.ok === false) return res
+        return { ok: true, action: 'reload_resource', path: rel, message: `已把 ${rel} 从磁盘重读进编辑器内存` }
       }
       if (!expressions[args.action]) return { ok: false, error: `不支持的编辑器动作: ${args.action}` }
       const directActions = new Set(['save', 'undo', 'redo', 'refresh', 'playtest'])
@@ -1937,6 +2363,10 @@ async function callTool(name, args) {
       return await runtimeBridge.sendInput(args.key, args.action)
     case 'send_player_pointer':
       return await runtimeBridge.sendPointer(args)
+    case 'finish_stuck_event':
+      return await runtimeBridge.finishEvent(args.eventId || args.id)
+    case 'suspend_runtime_kind':
+      return await runtimeBridge.suspend(args.kind, args.on)
     default:
       return { ok: false, error: `未知工具: ${name}` }
   }

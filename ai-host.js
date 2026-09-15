@@ -43,7 +43,9 @@ const FILE_MUTATIONS = new Set([
 // ui_steps（AI 在编辑器界面上逐步演示/操作）也是**有副作用**的动作：它会改属性、切页、点按钮。
 // 以前它不在任何审批集合里 → confirm 模式下也能不问就动界面（越界前不可裁决），
 // 只有事后「撤销这一步」；现在并入 OTHER_MUTATIONS：confirm 模式先问、auto 模式照旧自动。
-const OTHER_MUTATIONS = new Set(['click_element', 'trigger_playtest', 'editor_action', 'interact_editor', 'send_player_input', 'send_player_pointer', 'playtest_smoke', 'ui_steps'])
+// 新增两个试玩侧动作同样要进来：结束卡住事件会真的结束用户正在跑的事件、suspend 会真的改
+// 引擎状态，confirm 模式下都必须先问（auto 模式照旧自动）。
+const OTHER_MUTATIONS = new Set(['click_element', 'trigger_playtest', 'editor_action', 'interact_editor', 'send_player_input', 'send_player_pointer', 'playtest_smoke', 'ui_steps', 'finish_stuck_event', 'suspend_runtime_kind'])
 const HIDDEN_TOOLS = new Set(['cdp_eval'])
 // 只读工具：可并发执行（模型常在一条消息里同时读好几个文件）。
 // 写盘 / 编辑器动作 / 试玩输入一律独占执行并保持顺序；未列出的工具按独占处理（将来新增写工具不会被误并发）。
@@ -1421,7 +1423,12 @@ const SYSTEM_PROMPT = `你是 Open Yami RPG Editor 内置开发副驾。用简�
     如实说明这一项在当前引擎上用不了、需要引擎侧补丁，然后把能做的部分做完。
 
 27. 环境提示的「停在「攻击力」=25」= 用户此刻正停在那个控件上：他话说得含糊就按它理解，别反问"你指哪个"；
-    停在"场景视图"这类区域级说明信息不足，该问就问；他明确说了别处，以他说的为准。`
+    停在"场景视图"这类区域级说明信息不足，该问就问；他明确说了别处，以他说的为准。
+
+28. 环境提示里「选中「xxx」→ Assets/....」箭头后面那个路径 = **用户此刻在编辑器里打开着的那个工程文件**：
+    他说的"这个/它/我选中的那个"指的就是它，它也是你这次要改的**首要目标** —— 直接对这个路径动手，
+    不要按名字去工程里另找一个同名文件（同名资源很常见，找错就写到别处去了）。
+    为了把这件事做完而必须连带改别的文件时，先用一句白话说明"另外还要改 X"，再动它 —— 不要闷头写。`
 
 
 
@@ -1601,6 +1608,53 @@ function addGrant(session, pending, scope) {
   if (!Array.isArray(session.grants)) session.grants = []
   if (!session.grants.includes(key)) session.grants.push(key)
   return key
+}
+
+/**
+ * 这次写盘动的是哪个工程文件：写盘类工具的 path，或 upsert_database_item 的 Data/<表>.json。
+ * 同一条口径也用在 /backups 上（那儿原先自己拼了一遍），这里收成一处，免得两处对不上。
+ */
+function fileTargetOf(name, args) {
+  if (!FILE_MUTATIONS.has(name)) return ''
+  const rel = String((args && args.path) || '').replace(/\\/g, '/')
+  if (rel) return rel
+  if (name === 'upsert_database_item' && args && args.table) {
+    return 'Data/' + String(args.table).replace(/\.json$/i, '').toLowerCase() + '.json'
+  }
+  return ''
+}
+
+/** 编辑器里"当前打开着的那个文件"：只能问 5967 桥，拿不到就当没有 */
+async function selectedEditorFile() {
+  try {
+    const res = await editorBridge.getContext()
+    const selected = res && res.ok && res.context && res.context.selectedFile
+    return (selected && selected.path) ? String(selected.path).replace(/\\/g, '/') : ''
+  } catch (e) { return '' }
+}
+
+/**
+ * 用户此刻在编辑器里打开着的那个文件（这一轮认定一次，之后不再重复问桥）。
+ * 它代表"我要改这个"的意图：这一轮动它不再逐条确认，动别的文件照旧要先问。
+ */
+async function noteEditorSelection(session) {
+  const selected = await selectedEditorFile()
+  session.editorSelection = selected || ''
+  return session.editorSelection
+}
+
+/** 写盘正好落在选中文件上时，把"这一个文件"加进授权表（每个工具一份键，删除类永远不加） */
+function grantSelectionHit(session, name, args, events) {
+  const selected = session && session.editorSelection
+  if (!selected) return false
+  if (fileTargetOf(name, args) !== selected) return false
+  if (isGranted(session, name, args)) return false
+  if (!addGrant(session, { name: name, args: args }, 'file')) return false
+  saveSession(session)
+  if (events && events.onNotice) {
+    events.onNotice(`「${selected}」是你此刻在编辑器里打开着的文件，这一步直接改它、不再逐条确认；打开之外的文件仍然会先问你。`)
+  }
+  return true
 }
 
 // ============================================================
@@ -1925,6 +1979,7 @@ const TOOL_LABELS = {
   upsert_database_item: '更新数据表', editor_action: '编辑器操作', interact_editor: '操作编辑器界面',
   dump_ui_hierarchy: '读取界面结构', click_element: '点击界面元素', trigger_playtest: '启动试玩',
   get_runtime_state: '读取运行状态', playtest_smoke: '试玩冒烟测试', send_player_input: '发送按键', send_player_pointer: '发送鼠标',
+  finish_stuck_event: '结束卡住的事件', suspend_runtime_kind: '暂停/恢复某类更新',
   search_project: '工程内检索', edit_script: '精确改脚本', diagnose_runtime: '读取运行诊断',
   project_changelog: '生成改动小结', todo_write: '更新待办清单',
   ui_steps: '在界面上演示操作'
@@ -2136,9 +2191,12 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
         }
       } catch (e) {}
     }
+    // 选中文件是用户"我要改这个"的意图：先按它放行，再照常判要不要确认
+    const grantedBySelection = isFileMutation && !isPreviewOnly && grantSelectionHit(session, name, args, events)
     const granted = isFileMutation && isGranted(session, name, args)
     const needsApproval = !granted && ((isFileMutation && !isPreviewOnly) || (OTHER_MUTATIONS.has(name) && !uiDemoOnly && config.approvalMode !== 'auto'))
-    if (granted && events.onNotice) {
+    // 选中放的行走上面那条（说的是"因为你在编辑器里开着它"）；这句只在勾选授权那条路上说
+    if (granted && !grantedBySelection && events.onNotice) {
       events.onNotice(`已授权：${toolLabel(name)} · ${String(args.path || '') || '全部分支'}（本对话内不再逐条确认，跨重启仍有效；可用 /clear 或【撤销】面板清除）`)
     }
     if (needsApproval) {
@@ -2322,12 +2380,7 @@ async function handle(pathname, body, events = {}) {
       if (!Array.isArray(message.tool_calls)) continue
       for (const call of message.tool_calls) {
         const name = call.function && call.function.name
-        if (!FILE_MUTATIONS.has(name)) continue
-        const args = safeArgs(call.function && call.function.arguments)
-        let filePath = args.path
-        if (!filePath && name === 'upsert_database_item' && args.table) {
-          filePath = `Data/${String(args.table).replace(/\.json$/i, '').toLowerCase()}.json`
-        }
+        const filePath = fileTargetOf(name, safeArgs(call.function && call.function.arguments))
         if (filePath && !touched.includes(filePath)) touched.push(filePath)
       }
     }
@@ -2531,6 +2584,8 @@ async function handle(pathname, body, events = {}) {
     } else if (body.envSummary && !events.envSummary) {
       events.envSummary = String(body.envSummary).trim()
     }
+    // 这一轮认定一次"用户在编辑器里打开着哪个文件"（选中即意图），动别的文件照旧要先问
+    await noteEditorSelection(session)
     const running = runTurn(session, readStoredConfig(), events)
     session.activeRun = running
     session.activeCancel = events.cancelToken || null

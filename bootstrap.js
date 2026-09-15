@@ -47,6 +47,97 @@
     return bases.filter((v, i) => v && bases.indexOf(v) === i);
   }
 
+
+  /* ------------------------------------------------------------------
+   * 更新恢复（真机事故的兜底）：一键热更新把新版本写坏时，症状是「重启后插件整个消失」，
+   * 而且控制台一条报错都没有 —— 用户没有任何出路。这里在注入**之前**先看更新器留下的
+   * 「进行中」标记：标记还在 = 上一次更新没走完（写盘崩了 / 编辑器被杀），
+   * 此时把 _backup/previous 里的旧版本原样拷回来，插件自己活过来，不用人工拷贝。
+   * 前提：主世界有 Node（引擎两个窗口都是 nodeIntegration: true + contextIsolation: false）。
+   * ------------------------------------------------------------------ */
+  const UPDATE_MARKER = '.yami-update-in-progress.json';
+  const BACKUP_DIR = '_backup/previous';
+  const RECOVERY_ENTRY = ['manifest.json'].concat(FILES);
+
+  function nodeModules() {
+    try {
+      if (typeof require !== 'function') return null;
+      return { fs: require('fs'), path: require('path'), zlib: require('zlib') };
+    } catch (e) { return null; }
+  }
+
+  /** 把插件目录从 chrome-extension:// / file:// 基址反推出来（主世界可用 fs 直接读） */
+  function resolvePluginDir(fs, path) {
+    const bases = candidateBases();
+    for (let i = 0; i < bases.length; i++) {
+      let dir = '';
+      try {
+        const base = bases[i];
+        // 交给 URL 解析，别自己切前缀：file:///D:/x 剥掉协议后开头会多一个 '/'，
+        // path.join('/D:/x', 'manifest.json') 在 Windows 上会被当成 UNC 路径（\\D:\x…）而查不到文件 ——
+        // 源码布局的安装就靠这条路径恢复，错了等于恢复功能不存在。
+        // 只认扩展基址与 file: 基址；Chrome 给的三段斜杠形式由 pathname 统一处理。
+        if (base.slice(0, 19) === 'chrome-extension://' || base.slice(0, 7) === 'file://') {
+          dir = decodeURIComponent(new URL(base).pathname);
+          if (/^\/[a-zA-Z]:/.test(dir)) dir = dir.slice(1);
+        } else {
+          continue;
+        }
+      } catch (e) { continue; }
+      if (!dir) continue;
+      try { if (fs.existsSync(path.join(dir, 'manifest.json'))) return dir; } catch (e) {}
+    }
+    return '';
+  }
+
+  function showRecoveryNotice(text) {
+    try {
+      const paint = () => {
+        try {
+          if (document.getElementById('yami-recovery-notice')) return;
+          const el = document.createElement('div');
+          el.id = 'yami-recovery-notice';
+          el.setAttribute('style', 'position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:2147483647;'
+            + 'background:#1e293b;color:#e2e8f0;border:1px solid #f59e0b;border-radius:6px;padding:8px 14px;'
+            + 'font:13px/1.6 system-ui,sans-serif;max-width:80vw;box-shadow:0 4px 16px rgba(0,0,0,.4)');
+          el.textContent = text;
+          (document.body || document.documentElement).appendChild(el);
+          setTimeout(() => { try { el.remove() } catch (e) {} }, 15000);
+        } catch (e) {}
+      };
+      if (document.body) paint();
+      else document.addEventListener('DOMContentLoaded', paint, { once: true });
+    } catch (e) {}
+  }
+
+  async function recoverFromInterruptedUpdate() {
+    const mods = nodeModules();
+    if (!mods) return '';   // 没有 Node 权限时不要卡住装载流程
+    const { fs, path } = mods;
+    const dir = resolvePluginDir(fs, path);
+    if (!dir) return '';
+    let markerRaw = null;
+    try { markerRaw = fs.readFileSync(path.join(dir, UPDATE_MARKER), 'utf8'); } catch (e) { return ''; }
+    const info = (function () { try { return JSON.parse(markerRaw) } catch (e) { return {} } })();
+    const backupRoot = path.join(dir, BACKUP_DIR);
+    const notice = 'DanJuan妙妙插件：检测到上次更新没有正常完成，已把插件回退到更新前的版本（v'
+      + String(info && info.previousVersion || '?') + '）。重开一次窗口即可正常使用；想再试更新请先看控制台日志。';
+    try {
+      let restored = 0;
+      for (let i = 0; i < RECOVERY_ENTRY.length; i++) {
+        const rel = RECOVERY_ENTRY[i];
+        const from = path.join(backupRoot, rel.split('/').join(path.sep));
+        if (!fs.existsSync(from)) continue;
+        fs.writeFileSync(path.join(dir, rel.split('/').join(path.sep)), fs.readFileSync(from));
+        restored++;
+      }
+      // 入口文件必须都回来了才算恢复成功；回不来就留着标记，等下一次（或用户手动换插件目录）
+      if (restored < RECOVERY_ENTRY.length) return '';
+      try { fs.rmSync(path.join(dir, UPDATE_MARKER), { force: true }); } catch (e) {}
+      showRecoveryNotice(notice);
+      return notice;
+    } catch (e) { return ''; }
+  }
   function loadScript(src) {
     return new Promise(resolve => {
       let settled = false;
@@ -80,6 +171,11 @@
     for (let i = 0; i < 60 && !document.documentElement; i++) {
       await new Promise(resolve => setTimeout(resolve, 4));
     }
+    // 先把上一次没走完的更新回退掉，再注入界面（顺序不能反：注入的是刚回退回来的旧版本）
+    try {
+      const recovered = await recoverFromInterruptedUpdate();
+      if (recovered) console.warn('[DanJuan妙妙插件] ' + recovered);
+    } catch (e) {}
     const bases = candidateBases();
     for (const base of bases) {
       if (await injectFrom(base)) return;

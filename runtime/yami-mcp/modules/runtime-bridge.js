@@ -195,6 +195,56 @@ class RuntimeBridge {
     }
   }
 
+  /**
+   * 向试玩桥发一个动作（共用管道：取令牌 → POST /action）。
+   * sendPointer / finishEvent / suspend 都走这里，避免每个动作各抄一遍取令牌+超时处理。
+   */
+  async sendAction(payload, timeoutMs = 1500) {
+    const token = await this.requestJson('/token')
+    if (!token.ok || !token.data || !token.data.bridgeToken) return { ok: false, error: '试玩运行时桥未启动（游戏没在试玩）' }
+    const body = Buffer.from(JSON.stringify(payload), 'utf8')
+    return await new Promise((resolve) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: this.port, path: '/action', method: 'POST', timeout: timeoutMs,
+        headers: { 'Content-Type': 'application/json', 'Content-Length': body.length, 'x-yami-bridge-token': token.data.bridgeToken }
+      }, res => {
+        let raw = ''
+        res.on('data', chunk => { raw += chunk })
+        res.on('end', () => {
+          try { resolve(JSON.parse(raw || '{}')) } catch { resolve({ ok: false, error: '运行时动作响应无法解析' }) }
+        })
+      })
+      req.on('error', error => resolve({ ok: false, error: `运行时动作失败: ${error.message}` }))
+      req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: '运行时动作请求超时' }) })
+      req.end(body)
+    })
+  }
+
+  /**
+   * 结束一个卡住的事件（引擎侧 probe.finishEventById）。
+   * 诊断里报出来的「卡住/幽灵事件」带的 id 就是这里要传的 eventId。
+   */
+  async finishEvent(eventId) {
+    const id = String(eventId || '').trim()
+    if (!id) return { ok: false, error: '缺少 eventId（用 diagnose_runtime 的卡住事件列表拿 id）' }
+    // 先在本地把参数校验掉：桥没起来时，参数写错也会被报成「游戏没在试玩」，把模型引到错的方向
+    if (!/^[0-9a-f]{16}$/.test(id)) return { ok: false, error: `eventId 必须是 16 位 hex（诊断里给的卡住事件 id 就是这种）: ${id}` }
+    return await this.sendAction({ type: 'finishEvent', id })
+  }
+
+  /**
+   * 暂停/恢复某一类内容的更新（引擎侧 probe 的 suspend 开关）。
+   * 用途：卡顿或事件死循环时按类别二分，判断到底是哪一类在拖。
+   */
+  async suspend(kind, on) {
+    const name = String(kind || '').trim()
+    // 类别清单与引擎侧 state.suspend 的键一一对应（probe-core.js:25）
+    const kinds = ['actors', 'animations', 'emitters', 'triggers', 'ui', 'events', 'audio']
+    if (!name) return { ok: false, error: '缺少 kind' }
+    if (!kinds.includes(name)) return { ok: false, error: `不支持的类别: ${name}（只能是 ${kinds.join(' / ')}）` }
+    return await this.sendAction({ type: 'suspend', kind: name, on: !!on })
+  }
+
   async sendPointer({ action = 'move', x, y, button = 0 } = {}) {
     if (!Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) return { ok: false, error: '鼠标坐标必须是有限数值' }
     const token = await this.requestJson('/token')

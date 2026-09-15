@@ -193,7 +193,12 @@ async function main() {
   check('新增模块自动纳入 (老事故回归: 清单模式必漏)', installed.includes('runtime/yami-mcp/modules/brand-new-tool.js'));
   check('开发物料不进插件目录 (src/tests/docs/tools/build.cjs/bump.cmd)', !installed.some(f => /^(src|tests|docs|tools)\//.test(f) || f === 'build.cjs' || f === 'bump.cmd'), installed.filter(f => /^(src|tests|docs|tools)\//.test(f) || f === 'build.cjs').join(',') || '干净');
   check('manifest.json 最后落盘 (版本门闩)', trackers.renames[trackers.renames.length - 1].endsWith('manifest.json'), trackers.renames[trackers.renames.length - 1]);
-  check('先落入口脚本 bootstrap.js', trackers.writes[0].endsWith('bootstrap.js') || trackers.writes[0].endsWith('bootstrap.js.tmp'), trackers.writes[0]);
+  // 写盘一开始会先落「更新进行中」标记（bootstrap 靠它在下次启动时自愈），所以入口脚本是第二个写操作；
+  // 断言改成：标记必须最先写、bootstrap.js 必须是第一个**真正的文件**。
+  const firstWrites = trackers.writes.slice(0, 3).map(p => p.split(/[\\/]/).pop());
+  check('先落「更新进行中」标记', trackers.writes[0].endsWith('.yami-update-in-progress.json'), firstWrites[0]);
+  check('紧接着落入口脚本 bootstrap.js', firstWrites[1] === 'bootstrap.js.tmp' || firstWrites[1] === 'bootstrap.js', firstWrites.join(' → '));
+  check('全部写完后删掉「更新进行中」标记', !existsSync(path.join(dstDir, '.yami-update-in-progress.json')))
   check('每个文件走 .tmp -> rename 原子替换', trackers.renames.length === res.updatedFiles, trackers.renames.length + '/' + res.updatedFiles);
   check('覆盖前先备份旧内容', readText(path.join(dstDir, '_backup/previous/manifest.json')) === snapshotManifest('1.0.0') && res.backedUp >= 7, 'backedUp=' + res.backedUp);
   check('旧文件已被新版本覆盖', readText(path.join(dstDir, 'probe-core.js')).includes("'9.9.9'"));

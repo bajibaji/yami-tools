@@ -2383,6 +2383,18 @@
   }
 
   /**
+   * 选中项后面补上**工程路径**：模型说"改这个"时，得知道这个到底对应哪个文件。
+   * 只给中文显示名时它只能自己去搜同名文件，搜错就写到别处去了（实测：用户选了 329.落雷，
+   * 模型拿到的是"选中「329.落雷」"，路径得自己猜）。路径太长时退化成文件名。
+   */
+  function selectedFileSuffix(file) {
+    const full = String((file && file.path) || '').replace(/\\/g, '/');
+    if (!full) return '';
+    const text = full.length > 72 ? full.slice(full.lastIndexOf('/') + 1) : full;
+    return text ? ' → ' + text : '';
+  }
+
+  /**
    * 环境摘要：这条会同时上屏（面板顶栏）与进系统提示词，所以**必须短**。
    * 排序原则：先说"用户此刻停在哪"（在场感知），其次才是场景/选中项这类背景；
    * 有停留点时不再堆背景信息 —— 顶栏只有一行，堆满了等于什么都没说。
@@ -2402,7 +2414,7 @@
       // 场景对象优先（他刚点的是场景里的东西），其次才是资源树选中项。
       const picked = (ctx.sceneTarget && ctx.sceneTarget.name)
         ? '选中' + (ctx.sceneTarget.type && ctx.sceneTarget.type !== 'object' ? ctx.sceneTarget.type + ':' : '') + '「' + ctx.sceneTarget.name + '」'
-        : ((ctx.selectedFile && ctx.selectedFile.name) ? '选中「' + ctx.selectedFile.name + '」' : '');
+        : ((ctx.selectedFile && ctx.selectedFile.name) ? '选中「' + ctx.selectedFile.name + '」' + selectedFileSuffix(ctx.selectedFile) : '');
       if (picked) line += '·' + picked;
       const full = '【当前环境】' + (ctx.playtest ? '试玩中·' : '') + line;
       return full.length > 120 ? full.slice(0, 117) + '...' : full;
@@ -2424,7 +2436,7 @@
         bg.push('选中' + classLabel + '「' + ctx.sceneTarget.name + '」');
       } else if (ctx.selectedFile && ctx.selectedFile.name) {
         const typeLabel = ctx.selectedFile.type ? ctx.selectedFile.type + '/' : '';
-        bg.push('选中「' + typeLabel + ctx.selectedFile.name + '」');
+        bg.push('选中「' + typeLabel + ctx.selectedFile.name + '」' + selectedFileSuffix(ctx.selectedFile));
       } else if (ctx.inspector && ctx.inspector.metaName) {
         bg.push('检视「' + ctx.inspector.metaName + '」');
       }
@@ -4928,6 +4940,9 @@
   }
 
   // 定位插件安装目录: 逐个候选必须真的能读到 manifest.json 才认
+  // 「更新进行中」标记文件名：bootstrap.js 里的 UPDATE_MARKER 必须与它同名（两处一起改）
+  const UPDATE_MARKER_NAME = '.yami-update-in-progress.json';
+
   function resolveInstallDir() {
     const fs = requireNode('fs');
     const path = requireNode('path');
@@ -4982,6 +4997,16 @@
     const backups = [];
     const created = [];
     emitProgress(onProgress, { phase: 'verify', current: 0, total: total, percent: 0, detail: '准备安装 ' + total + ' 个文件' });
+    // 「更新进行中」标记：写盘一开始就落盘，全部写完才删。
+    // 它的用途不是给我们看日志，而是给**下一次启动的 bootstrap.js** 看：
+    // 标记还在 = 上一次更新没走完（写盘崩了 / 编辑器被杀 / 新版装载失败），
+    // bootstrap 会据此把 _backup/previous 里的旧版本拷回来 —— 这是「更新完插件消失」那条路的唯一出路。
+    const markerPath = path.join(targetDir, UPDATE_MARKER_NAME);
+    try {
+      fs.writeFileSync(markerPath, JSON.stringify({
+        previousVersion: diskVersion, nextVersion: nextVersion, at: new Date().toISOString(), total: total
+      }, null, 2))
+    } catch (e) { /* 标记写不下去不阻断安装：它只是恢复用的线索 */ }
     let written = 0;
     try {
       for (let i = 0; i < total; i++) {
@@ -5015,6 +5040,8 @@
       rollbackInstall(fs, path, targetDir, backups, created);
       throw fatalError('写入失败, 已回滚到更新前状态: ' + err.message);
     }
+    // 全部写完才算成功：到这里才把「进行中」标记收掉（回滚路径故意留标记，交给下次启动兜底）
+    try { fs.rmSync(markerPath, { force: true }) } catch (e) {}
     UPDATE_CONFIG.currentVersion = nextVersion;
     if (window.__YAMI_PERF_PROBE__) window.__YAMI_PERF_PROBE__.version = nextVersion;
     return {

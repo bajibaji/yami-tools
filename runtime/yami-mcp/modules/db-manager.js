@@ -84,6 +84,21 @@ function appendVariableChild(node, parentId, newVar) {
   return false
 }
 
+/**
+ * 数据表的真实形状与「容器键」（引擎侧结构，不是可编辑的条目）：
+ *   · attribute.json   = { settings, keys }        —— 两个都是引擎结构，不是条目
+ *   · enumeration.json = { settings, strings }     —— 同上
+ *   · config.json      = { gameId, deployed, deadzone, window, resolution, ... } —— 平铺配置，没有条目概念
+ *   · teams/variables/easings/autotiles/plugins/commands = list 或数组，条目才有 id
+ * 为什么要写死这份表：字典型分支会把 rawData[id] 整个换掉，
+ * 传错一个键（比如 attribute 的 settings）就会把引擎结构覆盖成 {__probe:1} —— 实测 dryRun 都放行。
+ */
+const TABLE_SHAPES = {
+  attribute: { kind: 'dict', containers: ['settings', 'keys'] },
+  enumeration: { kind: 'dict', containers: ['settings', 'strings'] },
+  config: { kind: 'flat' }
+}
+
 class DatabaseManager {
   constructor(projectRoot, guidGenerator) {
     this.root = projectRoot
@@ -131,7 +146,28 @@ class DatabaseManager {
     let action = 'updated'
     let targetId = id
 
-    if (cleanTable === 'variables') {
+    if (cleanTable === 'config' && !id) {
+      // config.json 是平铺配置，没有条目概念：把 item 的字段补丁到根对象上
+      // （旧实现要求「必须指定 id 键名」，而这表根本没有条目 id —— 等于 AI 换不了任何一项配置）
+      const next = mergePatch(rawData, item)
+      const outputJson = JSON.stringify(next, null, 2) + '\n'
+      if (dryRun !== false) {
+        return { ok: true, dryRun: true, action: 'patched', table: cleanTable, path: relPath, oldSha256: sha256(originalText), message: `校验通过：补丁 config 的 ${Object.keys(item).join('、')}（未落盘，dryRun）` }
+      }
+      try {
+        const written = writeAtomic(this.root, relPath, outputJson, { tool: 'upsert_database_item' })
+        return { ok: true, dryRun: false, action: 'patched', table: cleanTable, path: relPath, oldSha256: sha256(originalText), ...written, message: `成功落盘更新 ${relPath}：补丁 ${Object.keys(item).join('、')}` }
+      } catch (e) {
+        return { ok: false, error: `写盘失败: ${e.message}` }
+      }
+    }
+    if (rawData && typeof rawData === 'object' && !Array.isArray(rawData)) {
+      const shape = TABLE_SHAPES[cleanTable]
+      const containers = (shape && shape.containers) || []
+      if (targetId && containers.includes(targetId)) {
+        return { ok: false, error: `「${targetId}」是 ${cleanTable} 的引擎结构键（容器），不是可编辑的条目；写它会覆盖整块结构。改这里的子字段请用 read_resource 的 key 参数读出结构后再决定` }
+      }
+    }    if (cleanTable === 'variables') {
       // 变量树处理
       if (targetId) {
         const found = updateVariableNode(rawData, targetId, item)

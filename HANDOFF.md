@@ -736,6 +736,9 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
   1. 所有用户可见文案必须中文白话直白（空指针 / 已隐藏 / 角色 / 触发器 / 粒子…），内部英文枚举必须经统一中文映射（如 `CAT_LABEL`）后再进 UI；
   2. 同一功能的重复入口收敛为一条小白路径（如场景实体只保留主页白话检视页，专业模式 tab 不重复暴露）；
   3. 专业术语默认藏在专业模式，普通模式禁止出现英文键名与代码残留。高频重复错误不虚增未读数，彻底杜绝计数器无界溢出。
+  4. **对用户本人汇报时同样适用**（2026-09-14 用户明确反馈"我有点看不懂你发的文字"，并要求"以后就说这种语言"）：
+     聊天里的汇报只说三件事 —— **做了什么 / 你要做什么 / 会看到什么**；提交号、文件哈希、门禁、台账、
+     测试套数这类词是写给维护者的，只进文档，不进给用户的回复。用户说"看不懂"就是这条铁律被违反了。
 
 ### ⑲ 全局心跳/轮询刷新必须带守卫（Heartbeat Guard）
 - **现象**：存档台手动输入数值 150ms 后被磁盘旧值覆盖、输入框失焦；报错页展开的源码自动收起、滚动位置反复回顶；场景实体台二次进入后行展开失效、搜索框每敲一个字就失焦。
@@ -1395,6 +1398,95 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
     - **任务计划折叠（用户提）**：这张卡以前**一个 CSS 都没有**（`yami-ai-plan` / `-head` / `-item` 在整个 `src/style.css` 里查不到任何规则），是排在下方的裸 div，一次铺五六行。现在默认折叠成一行：`任务计划 1/4 · 当前：<进行中那一步>`（没有进行中就是「下一步：…」，全做完是「全部完成」），点一下展开完整清单；展开状态记在元素上，原地刷新不来回弹。
     - **进页面 = 开新会话（口径由用户拍板，取代第 33 项的回放方案）**：进 AI 助手页时若消息区已经聊过，就 `startNewSession()` 换一个新 sessionId —— 旧对话都在【历史】里（`turns > 0` 的会话照常列出）。例外：**正在跑的一轮不换会话**（换了就把它晾在后台），那种情况反过来，把上次那段回放到屏上，让用户看见它在做什么。理由还是第 33 项那句话：屏上和上下文必须说同一件事。
     - **验证**：`test-ai-agent.cjs` 更新 G-12 契约（进页面开新会话 / 忙时回放）+ 计划卡折叠与样式断言（`planCurrent` / `setPlanExpanded` / 四个类必须有 CSS）；全量 `tests/run-all.cjs` 30/30 套通过；`build.cjs --bump patch --deploy` 门禁全绿、镜像 MD5 一致。
+
+35. **「我说的明明是选中的那个，它写到别的地方去了」—— 选中项带上路径 + 打开着的文件默认放行（2026-09-14，用户提）**：
+    - **现象与实锤**：用户拿真实会话问「我提的需求它写到别处去了」。查 `session-mu0moxka.json`：`get_editor_context` 的返回里**有完整路径**（`Assets/技能/012-元素使技能/329.落雷.627cc278af411ab0.skill`），但拼给模型的那行环境摘要（`formatEditorContextSummary`）只取了 `name` —— 模型看到的是「选中「329.落雷」」，**路径得自己猜**。它于是自己决定「放出来要改角色技能栏和事件」，在用户眼里就成了写到别的地方。
+    - **修法一（让模型知道该改哪个文件）**：摘要里选中项后面补 `→ <工程路径>`（`probe-core.js` 的 `selectedFileSuffix`，路径超 72 字退化成文件名，仍在 120 字上限内）；系统提示词加第 28 条：箭头后面那个路径就是他此刻在编辑器里打开着的文件、**是首要目标，不要按名字另找同名文件**；为了把事做完必须连带改别的文件时，先用一句白话说明「另外还要改 X」。
+    - **修法二（选中即授权，别的文件照旧问 —— 口径由用户拍板）**：宿主每轮开工前问一次 5967 桥「用户打开着哪个文件」（`noteEditorSelection`），写盘正好落在它头上时**直接执行、不弹确认卡**（`grantSelectionHit` 复用既有「工具::文件」授权表，删除类永不在此列），并在过程里如实说一句「这是你打开着的文件，这一步直接改它」；**打开之外的文件仍然逐条确认**。
+    - **验证**：新增 `tests/test-ai-selection-grant.cjs`（真宿主 + 假模型 + 假 5967 桥，11 PASS）：同一回合先改选中文件、再改另一个 —— 断言选中的当场落盘且没有 approval 事件、另一个在审批前一个字节没动、点「执行修改」后才写盘、preflight 真走了桥；`test-ai-agent.cjs` 新增「摘要必须带工程路径且不超 120 字」行为断言；全量 `tests/run-all.cjs` **31/31 套通过**。
+
+36. **MCP 元数据规则对照引擎源码：修掉「CRLF 工程里元数据只认第一个标签」（2026-09-14，用户定方向）**：
+    - **口径**（用户拍板）：审核标准不是「面板上还有什么功能没接进来」，而是**「这套 MCP 有没有把 Open Yami 的规则摸准」** —— 对照引擎源码，一条条核；核到不对就改，改到没有错为止。引擎源码只读参考 `D:\Documents\GitHub\2`。
+    - **查到的真错（最重的一条）**：MCP 的元数据标签正则抄的是引擎 `plugin.ts:362` 的 `(?=\s@|$)`，但注释续行是 ` * @alias`，**`*` 既不是 `@` 也不是 `\s`**，前瞻永远不成立 —— 于是整个 `/* @plugin ... */` 块被当成**一个**匹配，只有第一个标签被处理，后面全部丢失（连 `@version` 都会粘进 `@plugin` 的值里）。工程文件是 CRLF 时必然发生，把同一份文件存成 LF 就好了 —— 这种「换行符决定能不能解析」正是最该被消灭的规则偏差。
+    - **改法**：工具侧改用**行首严格版**正则（只在 ` * @tag` 处切标签），并逐行剥掉注释的 ` * ` 前缀（否则 `@version` 会变成 `"1.0\n *"`、`@default` 变成 `"5\n *"`）。
+    - **同时按引擎规则补的校验**（每条都在代码注释里写了引擎行号）：`@default` 按引擎 `parseDefault` 口径解析，解析不出来就是 error（引擎会退回类型初始值）；`@default` 不在 `@option` 列表里是 error（`plugin.ts:505-508`）；`@clamp`/`@decimals`/`@placeholder` 写在引擎不认的类型上是 warn（`plugin.ts:638-783` 的类型守卫）；注释块外的 `@标签` 是 error（引擎只在块内解析）。error 拦写盘，warn 只提醒。
+    - **顺带修的三处**：`@option` 的值去掉引号（引擎走 `parseString`，参数值本身不带引号；留着引号会让「默认值在不在选项里」永远判不相等）；生成器按**类型**决定 `@default` 要不要加引号（option/string 加，number/boolean 不加 —— 以前 option 的默认值不带引号，生成的模板自己都过不了自检）；`repeatable-group` 补进类型表（引擎 `type-registry.ts` 真正落盘的 38 个类型之一，旧表把它漏了）。
+    - **验证**：新增 `tests/test-mcp-meta-rules.cjs`（18 PASS：CRLF/LF 双换行解析、四类引擎规则抓错、写盘门禁 error 拦 warn 放行、生成器默认值引号）；真实工程 **66 个脚本**逐个 `parse_plugin_meta`：**0 条误报**（新校验不冤枉任何现有脚本）。
+    - **已核对无偏差**：GUID 规则 —— 引擎 `file-system-core.ts:333` 的 `/ (?<=\.)[0-9a-f]{16}(?=\.\S+$)/` 与 MCP 的 `parseGuidFromName` 逐字符一致；`guid.ts:3` 要求「GUID 必须含字母 a-f」，`generate_guid` 已照做。
+    - **还没核的**（下一轮继续）：事件指令装配与 `Data/commands.json` 的对应关系、`Data` 各表的真实结构、编辑器/试玩动作的前置条件。
+
+37. **MCP 指令中文名对照引擎：修掉「照着编辑器里的名字下指令会失败」（2026-09-14，第 36 项的续）**：
+    - **真错**：事件装配要把「编辑器里显示的中文名」翻成指令 GUID，而 `loadCustomCommands` 只读 `Data/commands.json` 的 `alias` / `name`。实测本机这份 `commands.json`：**30 条记录，`alias` 全是空串、根本没有 `name` 字段**（真实字段是 `id / enabled / alias / keywords`）—— 这条读取路径等于永远走不到，模型只能靠文件名猜。
+    - **引擎规则**：编辑器里那条指令的名字来自脚本 `@lang` 段的 `#plugin`（引擎 `plugin.ts` 的 `LanguageMap`：overview 用 `#plugin`、参数用 `#key`）。所以正确来源是**脚本的语言包**，不是 commands.json。
+    - **改法**：扫 `Assets/插件/自定义指令/*.ts` 时顺手解析语言包，把 `#plugin` 的中文名也登记进名称→GUID 表（文件名去 `.指令` 与完整文件名两条老路径照旧保留）。为此在 event-builder 里放了一个**只取语言包**的轻量解析器，刻意不引 server.js 的解析器，避免模块依赖成环。
+    - **验证**：新增 `tests/test-mcp-command-name.cjs`（5 PASS）：夹具里文件名与显示名**故意不同**（`内部代号.指令.<guid>.ts` ↔ 显示名「事件广播·单独发送」），断言按显示名能装配出正确 GUID、按文件名两条老路径照旧可用、未知名字如实报错；真实工程上另外实测三个真实指令名（事件广播·单独发送 / Steamworks API / Excel操作）全部解析成功。
+
+38. **MCP 数据表规则对照真实形状：修掉 5 处误报 + 1 处能覆盖引擎结构的危险写入（2026-09-14，第 36/37 项的续）**：
+    - **误报（会冤枉合法文件）**：`REQUIRED_FIELDS` 有三处与真实资源不符 —— `skill/item/equip/state` 被要求有 `name`（真实资源**根本没有这个字段**，名字来自文件名）；`tileset` 被要求有 `image`（实测 6 个图集里只有 4 个有）；`particle` 被要求有 `sprites`（真实粒子只有 `layers`）。把工程里**每种资源的每个实例**都读一遍取「100% 出现的顶层字段」后重写：现状 12 种资源各抽一个真实文件校验，**12/12 通过**（改前 5 种报错）。
+    - **危险写入**：`upsert_database_item` 的字典型分支会把 `rawData[id]` 整个换掉，而 `attribute.json` 的顶层 `settings`/`keys`、`enumeration.json` 的 `settings`/`strings` 是**引擎结构**不是条目 —— 传 `id: settings` 在 dryRun 阶段就被放行（实测），一旦确认就会把整块结构覆盖成传入的对象。现在按表登记「容器键」，命中即拒并说明这是引擎结构。
+    - **够不着的一格**：`config.json` 是平铺配置、没有条目概念，旧实现却要求「必须指定 id 键名」，于是 AI 换不了任何一项配置；而 `patch_resource` 又只收 `Assets/` 内的资源，Data 表走不通。现在 `upsert_database_item` 支持 `table: config` 不传 id 时按字段补丁到根对象。
+    - **验证**：`tests/test-mcp-meta-rules.cjs` 增至 **29 PASS**（新增 §6 六种资源的最小合法文件必须过 + 缺字段必须拦、§7 容器键拒写 / 字典型条目可写 / config 补丁 / list 表自动生成 id）；真实工程 10 张表逐个 dryRun：`plugins/commands/teams/variables/easings/autotiles/localization` 可写、`attribute/enumeration` 按要求给条目键后可写、`config` 走补丁路径可写。
+
+39. **MCP 事件指令对照引擎：`!` 禁用前缀 + wait 时长语义（2026-09-14，第 36-38 项的续）**：
+    - **`!` 前缀是引擎原生的「这条指令被禁用」**：解析显示时剥掉（`schema.ts:324`）、执行时直接跳过（`command-parse.ts:54`）、列表里启用/禁用就是加/去这个前缀（`command-list.ts:1100-1114`）。真实工程里 **14 种指令、上百条**都带这个前缀（`!setNumber` 26 条、`!loop` 17 条……），而旧实现把它当未知指令直接抛错 —— 既读不了既有事件，也没法让 AI 把某条指令停掉。现在前缀原样保留、裸名照旧解析。
+    - **wait 的时长单位是毫秒**：引擎 `getTimer().set(duration)`（工程文档《Yami引擎机制》第 271 行与引擎源码口径一致），真实事件里是 `{duration:200}` 这种写法；`duration` **还可能是对象**（变量取值），旧实现 `Number(...)` 会把它拍成 NaN。现在对象原样透传。
+    - **验证**：`tests/test-mcp-command-name.cjs` 增至 **8 PASS**（新增 §4：`!` 前缀原样保留、wait 按毫秒写入、变量对象不被硬转）；另外把真实工程 90 个事件里的指令 id 与参数形状全量扫了一遍（92 种指令、`setNumber` 390 条 / `if` 249 条 / `wait` 29 条…）作为规则依据存进注释。
+
+40. **MCP 试玩输入对照引擎：功能键其实一直可用 + 指针动作的真实语义（2026-09-14，第 39 项的续）**：
+    - **查证结论：功能键本来就是支持的**。5966 桥的按键白名单（`probe-core.js` executeRuntimeAction）是 `ArrowUp/Down/Left/Right | Enter | Escape | Space | Key[A-Z] | Digit[0-9] | F[1-12]`，`playtest.js` 的 `ALLOWED_KEY` 同样认 F1~F12。但工具说明里写着「数字键与 F1~F12 不支持，别拿功能键做验证方案」—— 模型照着说明走，就白白放弃了唯一能验证「按 F5 触发技能」这类需求的方案（真实会话里正是这么卡住的）。
+    - **真正的原因查到了**：CDP 兜底路径的 `windowsVirtualKeyCode` 映射表只有方向键/Enter/Esc/Space/Z/X/C（12 个），**功能键与数字键全都不在表里** → Chromium 生成的按键事件 vk 是 undefined → 引擎按键表查不到这个键。5966 桥直连时走引擎自己的 `Input.simulateKey` 所以没事，一旦走兜底就失灵。现在把字母键、数字键、F1~F12、Tab/Home/End/方向键等补全（F1=112 … F12=123）。
+    - **说明改对**：`send_player_input` / `playtest_smoke` 的说明改成「方向键 / ok / cancel / space / 字母键 / 数字键 / F1~F12」；另外写明 `send_player_pointer` **每次都会先派发一次 pointermove**（引擎靠它更新指针位置）—— 这条语义以前没写，模型不知道点击前指针位置已经被更新过。
+    - **验证**：改完后全量 `tests/run-all.cjs` 33 套通过；`test-playtest-smoke.cjs` 的按键白名单断言（本来就把 F1~F12 当合法键）与 `test-tool-schema.cjs` 均未受影响。
+
+41. **MCP 全工程校验对照引擎：把 6000 条假警报收成 105 条真问题（2026-09-14，第 40 项的续）**：
+    - **发现**：`validate_project` 在本机工程上报出 **6093 条「悬空引用」+ 47 条「GUID 重复」**，`ok=false` —— 也就是 AI 每次做全工程体检都会拿到一屏假问题，真问题彻底被淹没。
+    - **假在哪（逐条查证）**：① 引用收集把**任何 16 位 hex 字符串**都当资源引用，而 `variable.key` / `attributes.key` / `presetId` / `sprites.id` / `motions.id` / `layers.sprite` 这些字段里装的是**变量、属性、节点、动作 id**，不是资源；② 收 ID 时只认文件名，漏了**数据表里注册的 id**（引擎自带 9 条缓动曲线的 id 全在 `Data/easings.json` 里，不是文件名）；③ `plugins.json` / `commands.json` 的条目 id 就等于脚本文件名里的 GUID，是「同一资源的两处登记」，被当成两个文件撞 GUID。
+    - **改法**：引用只认 `REF_KEYS = { eventId, easingId }` 两个键（收窄是刻意的：宁可少报，也不拿几千条假警报糊住用户，注释里写明了这个取舍）；`collectAllGuids` 补收 `easings/autotiles/plugins/commands/teams/variables/enumeration/attribute` 八张表里注册的 id；GUID 冲突只比 `Assets/` 内的文件路径。
+    - **结果**：同一工程 **6093 → 105 条**、重复 GUID **47 → 0 条**，剩下的 105 条是真引用（例如 8 个动画引用了不存在的缓动曲线 `a42fe5b0bf716fb2` —— 它只出现在 anim 里，`easings.json` 里确实没有）。
+    - **顺带补的规则**：`presetId` **跨文件**唯一（引擎把场景/界面的默认对象注册成全局键 `scenePresets/uiPresets`，冲突时后注册的直接覆盖前一个，`scene-window.ts:1270-1276` —— 单文件内查重看不出来）；以及 `presetId` 格式提醒（引擎新生成的一律是 `GUID.generate64bit()`：16 位 hex 且必含 a-f）。
+    - **验证**：`tests/test-mcp-meta-rules.cjs` 增至 **33 PASS**（新增 §8：合法 presetId 不报、手写 presetId 报提醒、跨文件冲突被抓、变量 key 不被误报成悬空引用）；真实工程 `validate_project` 耗时约 400ms。
+
+42. **MCP 编辑器动作补齐一格：把资源从磁盘重读进内存（2026-09-14，第 41 项的收尾）**：
+    - **缺口**：5967 桥本身有 `reload` 动作（逐类型重建映射、资源按扩展名回填 `Data.xxx` + `Directory.update`），AI 写盘后自动重载走的也是它，但 `editor_action` 只暴露了 save/undo/redo/refresh/playtest 五个 —— 用户在编辑器里改完、或外部工具改了文件之后，AI 没有任何手段让编辑器重读那一个资源。
+    - **改法**：`editor_action` 增加 `reload_resource`（需同时给 `path`），说明里点明方向是「把磁盘重读进内存」（不是反过来），避免模型把它当保存用。
+    - **验证**：`test-tool-schema.cjs`（工具提示与 schema 一致性）通过；全量 `tests/run-all.cjs` **33/33 套通过**；真实工程 `validate_project` 现在 `ok=true`、耗时约 437ms。
+
+43. **MCP 试玩能力对齐面板：AI 现在能拔掉卡住的事件、也能按类别二分卡顿（2026-09-14，第 42 项的续）**：
+    - **缺口**：引擎侧 probe 早就实现了 `finishEventById`（调事件原生 `finish()` 拔引用）与 `state.suspend` 的 7 个类别开关（actors/animations/emitters/triggers/ui/events/audio），但**只有面板按钮能用**，MCP 一个都没暴露 —— AI 在诊断里看得见「卡住/幽灵事件」，却拔不掉；定位卡顿也只能靠猜。
+    - **改法**：runtime-bridge 抽出共用管道 `sendAction()`（取令牌 + POST /action + 超时），新增 `finishEvent()` 与 `suspend()`；MCP 注册 `finish_stuck_event`（eventId）与 `suspend_runtime_kind`（kind + on）两个工具；宿主侧同时登记进 `OTHER_MUTATIONS` 与中文名表（confirm 模式先问、auto 模式自动），说明里写清「暂停只是让那一类不再更新，不改工程内容」。
+    - **参数校验前置**：桥没起来时，参数写错也会被报成「游戏没在试玩」，把模型引到错方向 —— 现在 `eventId` 必须是 16 位 hex、`kind` 必须在 7 类之内，都在本地先校验掉（实测：非法 kind 直接回「不支持的类别: nonsense（只能是 actors / …）」）。
+    - **验证**：工具注册后共 **39 项**（模型可见 38，`cdp_eval` 仍隐藏）；无试玩时两个工具都如实回「试玩运行时桥未启动（游戏没在试玩）」而不是假成功；全量 `tests/run-all.cjs` 33 套通过。
+
+44. **测试断言的脆性修掉一处：G-11 钉「数组最后一项是谁」改成钉工具名（2026-09-14）**：
+    - **现象**：新增 `finish_stuck_event` / `suspend_runtime_kind` 之后 `test-ai-agent.cjs` 报「ui_steps 必须进 OTHER_MUTATIONS」，但 ui_steps 明明还在集合里。
+    - **根因**：那条断言写的是 `/'playtest_smoke', 'ui_steps'\]\)/` —— 它钉的是「OTHER_MUTATIONS 的结尾正好是这两个」，集合一加东西就误报。
+    - **改法**：改成先把集合内容抽出来，再逐个工具名断言（ui_steps / playtest_smoke / finish_stuck_event / suspend_runtime_kind），新增工具不会再撞这条。
+
+45. **MCP 结构规则对照引擎：界面 reference 节点指不到 prefab 时是「静默空白」（2026-09-14，第 44 项的续）**：
+    - **规则实据**：界面里的 `reference` 节点，`prefabId` 指的是**某个界面节点的 presetId**（不是资源 GUID）：`ui-window.ts:697 reference.prefabId = prefab.presetId`、`reference-element.ts:29 Data.uiPresets[value]`；指不到任何 presetId 时引擎**静默什么都不加载**（`reference-element.ts:30 if (preset && ...)`）—— 界面上那块就是空的，不报错、不提示。
+    - **查证结果**：本机工程 16 份界面共 **624 个 presetId**，9 个 `prefabId` **全部能对上**（我一开始按「只在本文件里找」误判成 0/9，展开查证后确认是跨界面引用，规则本身没问题）。
+    - **补的体检**：`validate_project` 增加 `dangling-prefab` 提醒（reference 节点指向不存在的 presetId）—— 以前这种坏法完全查不出来，而它恰好是「界面上莫名其妙少一块」的典型原因。
+    - **确认无需改的**：节点嵌套**只用 `children`**（实测 592 处嵌套全是它；`nodes`/`objects` 是顶层容器键），校验与写盘门禁的递归已经覆盖；`terrains` / `code` 这类引擎算出来的 RLE 字段继续禁止手改（`hasForbiddenPatchKey`）。
+    - **验证**：全量 `tests/run-all.cjs` 33 套通过；真实工程 `validate_project` 现在 `ok=true`、耗时约 477ms、无假警报。
+
+46. **MCP 工具说明的最后一轮对齐：分工写清 + 前置条件写明（2026-09-14，第 45 项的收尾）**：
+    - **interact_editor 与 ui_steps 的分工**：ui_steps 走引擎公开入口（`el.input()` + `change` 事件 + `blur`，所以改动会进撤销栈；`kind:'goto'` 走 `Layout.manager.switch`），是**首选**；interact_editor 是鼠标级模拟（pointerdown/up + `.click()`、坐标拖拽、直接写控件值），只在 ui_steps 够不着时用（canvas 里的东西、真拖拽、没有稳定选择器）。原先两段说明各自只说自己是「兜底/首选」，模型容易选错，现在两边都写明了判据。
+    - **editor_action 的前置条件**：save/undo/redo/refresh/playtest/reload_resource 全都依赖引擎内部接口（`window.YamiEngine` 那套），官方预编译版没有 → 一律返回 `engineUnavailable`。说明里写清这一点，模型才不会反复重试、更不会向用户承诺「已经保存好了」。
+    - **验证**：`test-tool-schema.cjs`（39 个工具、52 个参数名的一致性检查）通过；全量 `tests/run-all.cjs` 33 套通过。
+
+47. **MCP 写盘安全网：压缩字段（RLE）被写短直接拦下（2026-09-14，第七轮）**：
+    - **规则实据**：scene 的 `terrains` 与 tilemap 的 `code` 是引擎 `Codec` 编码出来的 RLE 文本（`codec.ts:215-260`），加载时 `decodeTerrains/decodeTiles` 解码，长度对不上会直接抛 `RangeError`（`codec.ts:205-211`）。空间地图里它占 scene 全文 **32%**（实测：27.5k 的 scene 有 17.1k 是 RLE；单个 tilemap `code` 12933 字符）。
+    - **真实故障链**：`read_resource` 对 >200KB 的文件只回字段名清单，模型却可能照原样 `write_resource` —— 那样写下去地图直接读不出来。
+    - **改法**：`write_resource` 增加一道只拦「写短了」的校验（内容一样或更长一律放行）：场景 `terrains` 与瓦片地图 `code` 被写短时拒绝，并提示改用 `patch_resource` 只改别的字段。删除节点导致 `code` 数量变少仍放行（只比同位置的长度）。
+    - **验证**：实测把真实场景的 `code` 从 12933 砍到 20 → 拒绝并给出「瓦片地图的压缩字段被写短了（12933 → 20 字符）…」；原样写回 → 放行。`tests/test-mcp-meta-rules.cjs` 增至 **42 PASS**（新增 §11 三条断言）。
+
+48. **自动更新「更新完插件消失」的根因排查与自愈兜底（2026-09-14，用户报）**：
+    - **用户报的现象**：点一键热更新，提示成功；重启编辑器后插件整个消失（面板/HUD/AI 副驾全没）。
+    - **查证（把更新器整段抽出来在 Node 里真跑）**：① 本地整包安装装 48 个文件、入口文件一个不少、`manifest` 声明的文件全部落盘、`runtime/yami-mcp` 递归带上、开发物料没进包；② **安装器从不删除目标目录里的任何文件**（`installSnapshot` 只写不删，`removeFileQuietly` 只用于 `.tmp` 与回滚），所以「新版多出来的文件被清掉」这条不成立；③ 现状不再复现：远端 `extension` 分支与本地 HEAD 同一个提交（8a188b1 / v1.9.3），安装目录 7 个入口文件 MD5 与仓库逐一对齐，`_backup` 干净、无嵌套 `manifest.json`。
+    - **历史上真因（HANDOFF 铁律第 929 行那次事故）**：老客户端按**自己烧死的 15 文件清单**下载，却把远端新版内容写进那 15 个名字里 —— 新版多出来的文件一个都没装，重启后主世界装载器找不到依赖，插件静默消失、控制台连一条报错都没有。那次已用「整包快照」改造修掉（本机安装目录里的 probe-core 已经是快照版，可确认）。
+    - **这次补的兜底（针对「写盘中途崩 / 编辑器被杀」这条仅剩的路）**：更新器在**开始写盘时**落一个 `.yami-update-in-progress.json` 标记，全部写完才删；`bootstrap.js` 在注入界面**之前**先看这个标记 —— 标记还在就说明上一次更新没走完，于是把 `_backup/previous/` 里的旧版本拷回来、删掉标记、并在屏幕上给一句白话提示。**这是「更新完插件消失」那条路上唯一的出路：新版本装载失败时，旧版本自己回来。** 备份不齐时不回退、保留标记留给下次（不报假成功）。
+    - **顺带修掉两个真 bug**（都在新写的恢复路径里，被测试抓出来）：① 反推插件目录时用 `slice(0,18)` 去认 `chrome-extension:/`（少一个斜杠），源码布局下会把 `file:///D:/…` 的前 18 个字符当成协议切掉，推出来的目录是垃圾 —— 结果「恢复功能等于不存在」；② Windows 上 `file:///D:/x` 剥协议后多一个前导斜杠，`path.join('/D:/x', 'manifest.json')` 会被当成 UNC 路径而查不到文件。现在统一交给 `new URL(base).pathname` 解析。
+    - **验证**：新增 `tests/test-update-recovery.cjs`（7 PASS：检测到未完成更新 → 五个入口文件全部回退 → 删标记不重复回退 → 备份不齐时不报假成功且留标记）；更新器本体用「真实仓库当本地整包」跑了 10 项断言全过；全量 `tests/run-all.cjs` 通过（`test-autoupdate.mjs` 56 → **59 PASS**：新增「先落进行中标记 / 紧接着落 bootstrap.js / 全部写完后删掉标记」三条断言）。
 ## 3.3 未完成 / 未验证 / 已知限制
 
 | 项目 | 状态 | 说明 |
@@ -1402,6 +1494,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 | 编辑器动作桥（5967）在源码构建版的实际可用性 | **已实测可用（2026-09-12）** | 需要重启编辑器后看控制台是否出现 `[Yami Perf Bridge] 编辑器动作服务已就绪: http://127.0.0.1:5967`；本机引擎源码构建此前不暴露引擎全局，已通过 `YamiEngine` 补上 |
 | `playtest_smoke` 真实试玩链路 | 待真机验证 | 需要编辑器 + 启动试玩窗口（自动化只能覆盖桩） |
 | 界面细节验收（思考块 / 过程区 / 成本行 / 打断手感） | 待用户确认 | 助手不启动编辑器、不截图，一律由用户看 |
+| 选中文件默认放行的真机表现（第 35 项） | 待用户确认 | 宿主侧已由 `test-ai-selection-grant.cjs` 真链路验收（选中文件不弹卡直接改 / 另一个文件先确认）；真机请确认两件事：顶栏摘要里出现「选中「xxx」→ Assets/…路径」，以及在编辑器里打开着某个文件时让 AI 改它不再弹确认卡 |
 | 对话导出的界面手感（工具条【导出】/ 历史【导出】【导出全部】） | 待用户确认 | 落盘 = 插件数据目录 `%APPDATA%/DanJuanDevSuite/exports/<首条用户消息前 30 字>-<日期>.md`（v1.9.1 起不再落进工程）；导出接口与排版由 `test-ai-session.cjs` §10 真链路验收，面板 DOM 仍只做静态契约断言 |
 | 进面板是否回放上次那段对话（G-12） | 待用户确认 | 面板侧行为，静态契约已钉（`restoreLastSession` / `messagesPristine`）；真机由用户进页面看：屏上应当出现上次那段对话 + 一句"这是上次那段对话" |
 | 编辑器热更新失败时的真机表现（F3） | 待用户确认 | 失败会挂到工具结果上让模型转告用户；"编辑器内存是否真的刷新了"只能由用户看（引擎未暴露 YamiEngine 时热更新本就不可用） |

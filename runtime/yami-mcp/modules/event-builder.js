@@ -11,6 +11,35 @@ const path = require('path')
 const { resolveInside, sha256, writeAtomic } = require('./file-ops')
 const { unifiedDiff } = require('./diff')
 
+
+/** 取语言包里的第一个语言代码（优先 zh） */
+function pickFirstLang(langs) {
+  const keys = Object.keys(langs || {})
+  return keys[0] || ''
+}
+
+/**
+ * 只取脚本 @lang 段里的 #plugin 显示名（引擎 plugin.ts 的 LanguageMap：overview 用 #plugin）。
+ * 刻意不引 server.js 的解析器：event-builder 是被 require 的模块，反过来引会把依赖绕成环。
+ */
+function parsePluginMeta(code) {
+  const block = /\/\*[\s\S]*?@plugin[\s\S]*?\*\//.exec(String(code || ''))
+  if (!block) return { ok: false, langMap: {} }
+  const langMap = {}
+  const langRe = /@lang\s+([a-zA-Z-]+)(?:\s+extends\s+([a-zA-Z-]+))?([\s\S]*?)(?=\r?\n\s*\*\s*@lang|\r?\n\s*\*\/|$)/g
+  let m
+  while ((m = langRe.exec(block[0])) !== null) {
+    const props = {}
+    const propRe = /#(\S+)[ \t]+([^\r\n]*)/g
+    let p
+    while ((p = propRe.exec(m[3] || '')) !== null) {
+      const name = p[1]
+      if (!props['#' + name]) props['#' + name] = String(p[2] || '').trim()
+    }
+    langMap[m[1]] = { name: m[1], extends: m[2] || null, props }
+  }
+  return { ok: true, langMap }
+}
 class EventBuilder {
   constructor(projectRoot) {
     this.root = projectRoot
@@ -42,18 +71,30 @@ class EventBuilder {
       }
     }
 
-    // 2. 从 Assets/插件/自定义指令/ 目录下的文件名解析
+    // 2. 从 Assets/插件/自定义指令/ 目录下的文件名 + 脚本里的中文显示名解析
+    //    【规则实据】编辑器里那条指令的中文名来自脚本 @lang 段的 #plugin（plugin.ts 的 LanguageMap：
+    //    overview 用 #plugin、参数用 #key）；而 Data/commands.json 只有 { id, enabled, alias, keywords }，
+    //    alias 实测（本机 30 条）**全是空串**、也没有 name 字段 —— 只认 alias/name 的那条路等于永远走不到，
+    //    模型照着「编辑器里看到的名字」下指令就会失败。
     const cmdDir = path.join(this.root, 'Assets', '插件', '自定义指令')
     if (fs.existsSync(cmdDir)) {
       try {
         const files = fs.readdirSync(cmdDir)
         for (const f of files) {
           const m = f.match(/^(.*?)\.([0-9a-f]{16})\.ts$/)
-          if (m) {
-            const rawName = m[1].replace(/\.指令$/, '').trim()
-            map.set(rawName, m[2])
-            map.set(m[1].trim(), m[2])
-          }
+          if (!m) continue
+          const guid = m[2]
+          const rawName = m[1].replace(/\.指令$/, '').trim()
+          map.set(rawName, guid)
+          map.set(m[1].trim(), guid)
+          // 脚本里的中文显示名：模型与用户都按这个名字说话
+          try {
+            const meta = parsePluginMeta(fs.readFileSync(path.join(cmdDir, f), 'utf8'))
+            const langs = (meta && meta.langMap) || {}
+            const pack = langs.zh || langs[pickFirstLang(langs)]
+            const display = pack && pack.props && pack.props['#plugin']
+            if (display) map.set(String(display).trim(), guid)
+          } catch (e) { /* 单个脚本解析失败不影响其它指令 */ }
         }
       } catch (e) {
         // 忽略目录扫描错误
@@ -65,16 +106,29 @@ class EventBuilder {
   }
 
   /**
-   * 将指令标识解析为合法 ID（如果是自定义指令中文名，则转换为 GUID）
+   * 将指令标识解析为合法 ID（自定义指令中文名 → GUID；保留 `!` 前缀）。
+   *
+   * 【引擎规则】`!` 前缀 = **这条指令被禁用**：
+   *   · 解析（显示）时剥掉前缀：schema.ts:324 `if (id[0] === '!') id = id.slice(1)`；
+   *   · 执行时直接跳过：command-parse.ts:54 `if (id == null || id[0] === '!') continue`；
+   *   · 列表里启用/禁用就是加/去这个前缀：command-list.ts:1100-1114。
+   * 真实工程里这种 id 很常见（本机实测 14 种、上百条），旧实现会把它当未知指令直接抛错 ——
+   * 既读不了既有事件，也没法让 AI 把某条指令停掉。
    */
   resolveCommandId(rawId) {
     if (!rawId || typeof rawId !== 'string') return ''
     const trimmed = rawId.trim()
-    // 如果已经是 16 位 hex GUID 或内置小驼峰指令名，直接使用
-    if (/^[0-9a-f]{16}$/.test(trimmed) || /^[a-z][a-zA-Z0-9]*$/.test(trimmed)) {
-      return trimmed
+    const disabled = trimmed.startsWith('!')
+    const bare = disabled ? trimmed.slice(1) : trimmed
+    // 如果已经是 16 位 hex GUID 或内置小驼峰指令名，直接使用（前缀原样带回）
+    if (/^[0-9a-f]{16}$/.test(bare) || /^[a-z][a-zA-Z0-9]*$/.test(bare)) {
+      return disabled ? '!' + bare : bare
     }
     const map = this.loadCustomCommands()
+    if (map.has(bare)) {
+      const resolved = map.get(bare)
+      return disabled ? '!' + resolved : resolved
+    }
     if (map.has(trimmed)) {
       return map.get(trimmed)
     }
@@ -149,11 +203,14 @@ class EventBuilder {
         }
 
       case 'wait':
-      case '等待':
-        return {
-          id: 'wait',
-          params: { duration: Number(cmd.duration ?? cmd.time ?? cmd.ms ?? 1000) }
-        }
+      case '等待': {
+        // 引擎：wait(duration) → getTimer().set(duration)，单位毫秒。
+        // duration 还可以是**对象**（变量取值），实测真实事件里两种都有 —— 所以对象原样透传，不硬转成数字。
+        const rawDuration = cmd.duration !== undefined ? cmd.duration : (cmd.time !== undefined ? cmd.time : cmd.ms)
+        const duration = rawDuration === undefined ? 1000
+          : (rawDuration && typeof rawDuration === 'object' ? rawDuration : Number(rawDuration))
+        return { id: 'wait', params: { duration } }
+      }
 
       case 'showText':
       case '显示文本':
