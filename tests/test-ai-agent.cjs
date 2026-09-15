@@ -679,7 +679,8 @@ async function main() {
     assert.ok(/const sessionReportedAt = new Map\(\)/.test(mcpServerSource) && /fromWrite/.test(changelogSource)
       && /writes: writes\.map/.test(mcpServerSource),
       'F7：收尾清单要合并"本轮写入记录"，首次调用也要给（否则它只能说"无变更"）')
-    assert.ok(/const picked = \(ctx\.sceneTarget/.test(probeSource) && /if \(picked\) line \+=/.test(probeSource), 'F8：环境摘要必须带上用户选中的资源（他鼠标选中的技能）')
+    assert.ok(/const picked = \(ctx\.sceneTarget/.test(probeSource) && /if \(picked && pickedName !== at\.label\) line \+=/.test(probeSource),
+      'F8：环境摘要必须带上用户选中的资源（他鼠标选中的技能）；停留点就是它时不再重复两遍')
     // G-12：屏上与上下文必须说同一件事 —— 面板继续用上次的 sessionId 说话（模型看得到全部历史），
     // 屏上却只有欢迎语，用户就会以为"新对话怎么记得上次的事"
     assert.ok(/function restoreLastSession\(/.test(agentSource) && /function messagesPristine\(/.test(agentSource),

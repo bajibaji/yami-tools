@@ -680,7 +680,9 @@ async function main() {
       !!innerLabelled && innerLabelled.label === 'speed:' && innerLabelled.value === '1.0', JSON.stringify(innerLabelled))
     boot.document.activeElement = null
 
-    // canvas 兜底：场景里的对象没有 DOM 节点，但至少要能说清"他在场景视图那一块"
+    // 区域级停留点是**弱信号**（只能说清"大概在哪一块"）。实测（用户会话日志里抓到的原话）：
+    // 他明明选中了「329.落雷.skill」，鼠标停在检视器空白处，顶栏却报"停在「检视器」"——
+    // 划过说不清是什么的地方，不许顶掉他高亮选中的东西。这一 boot 里 pickedItem 就是那个高亮选中项。
     boot.document.activeElement = null
     const sceneBox = new boot.El('box', 'scene-screen')
     const canvasInner = new boot.El('div')          // 无文字、无 tip、无 name
@@ -689,11 +691,38 @@ async function main() {
     boot.document.dispatchEvent({ type: 'pointerover', target: canvasInner })
     await new Promise(r => setTimeout(r, 700))
     const onCanvas = boot.probe.getPresence()
-    check('停在 canvas 上时退到区域级，而不是什么都不报',
-      !!onCanvas && onCanvas.label === '场景视图' && onCanvas.vague === true && onCanvas.kind === 'region',
-      JSON.stringify(onCanvas))
-    const canvasSummary = boot.sandbox.__YAMI_CTX_SUMMARY__()
-    check('区域级停留点照样是一行短句', /停在「场景视图」/.test(canvasSummary) && canvasSummary.length <= 60, canvasSummary)
+    check('划过说不出是什么的地方（canvas）时，他高亮选中的东西照样报到',
+      !!onCanvas && onCanvas.label === '火球术' && onCanvas.via === 'selected', JSON.stringify(onCanvas))
+
+    // 同一处境换成引擎真实标记里的检视器容器（<page-frame id="inspector-page-manager">），也就是用户踩到的那一下
+    const inspectorFrame = new boot.El('page-frame', 'inspector-page-manager')
+    const inspectorBlank = new boot.El('div')
+    inspectorFrame.appendChild(inspectorBlank)
+    boot.document.body.appendChild(inspectorFrame)
+    boot.document.dispatchEvent({ type: 'pointerover', target: inspectorBlank })
+    await new Promise(r => setTimeout(r, 700))
+    const onInspectorBlank = boot.probe.getPresence()
+    check('停在检视器空白处不许报成"停在检视器"（他高亮选中的是那个技能）',
+      !!onInspectorBlank && onInspectorBlank.via === 'selected' && onInspectorBlank.label === '火球术',
+      JSON.stringify(onInspectorBlank))
+    const blankSummary = boot.sandbox.__YAMI_CTX_SUMMARY__()
+    check('摘要里不再出现"停在「检视器」"', !/停在「检视器」/.test(blankSummary), blankSummary)
+
+    // 反过来：什么也没选中时，区域级停留点照样要报出来（不是什么都不说）—— 单开一个干净沙盒验
+    const regionOnly = await bootProbe({ engine: true })
+    regionOnly.document.activeElement = null
+    const rScene = new regionOnly.El('box', 'scene-screen')
+    const rInner = new regionOnly.El('div')
+    rScene.appendChild(rInner)
+    regionOnly.document.body.appendChild(rScene)
+    regionOnly.document.dispatchEvent({ type: 'pointerover', target: rInner })
+    await new Promise(r => setTimeout(r, 700))
+    const regionAt = regionOnly.probe.getPresence()
+    check('什么也没选中时，区域级停留点照样报出来（不是什么都不说）',
+      !!regionAt && regionAt.label === '场景视图' && regionAt.vague === true && regionAt.kind === 'region',
+      JSON.stringify(regionAt))
+    const regionSummary = regionOnly.sandbox.__YAMI_CTX_SUMMARY__()
+    check('区域级停留点照样是一行短句', /停在「场景视图」/.test(regionSummary) && regionSummary.length <= 60, regionSummary)
 
     // 没有标签的控件：退到"所在窗口的名字"（引擎把窗口名写在 <title-bar> 里）
     // 真实标记：<window-frame id="showText"><title-bar>Show Text<close></close></title-bar><content-frame>…

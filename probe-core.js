@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.10.0';
+  const PROBE_VERSION = '1.10.1';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -2201,7 +2201,7 @@
       });
       // 两组分开问，顺序有意义：
       //   ① "他现在在哪儿"（指针停留 / 焦点 / 右键）—— 先精确到控件，认不出再退到区域级；
-      //   ② "他选了什么"（.selected 是**持续状态**，不是"此刻在哪"）—— 只在①什么都问不出来时兜底。
+      //   ② "他选了什么"（.selected 是**持续状态**，不是"此刻在哪"）。
       // 早先的实现把选中态和悬停放在一起比时间戳，结果"鼠标已经挪到 canvas 上了"仍报上一次选中的列表项。
       const byPointer = candidates.filter(function (c) { return c.via !== 'selected'; });
       const bySelection = candidates.filter(function (c) { return c.via === 'selected'; });
@@ -2219,7 +2219,16 @@
         }
         return null;
       }
-      return resolveGroup(byPointer) || resolveGroup(bySelection);
+      // 唯一的让位规则：**区域级**的鼠标停留是弱信号 —— 鼠标扫过网格空白、停在检视器背景上
+      // 都会命中它，而它只能说出"大概在哪一块"。实测（用户会话日志里抓到的原话）：
+      // 他明明选中了「329.落雷.skill」，顶栏却报"停在「检视器」"——鼠标划过说不清是什么的地方，
+      // 凭什么顶掉他高亮选中的那个？所以这一种排到选中态后面。
+      // 其余照旧：能叫出名字的控件最优先，"点进去 / 右键指过"（哪怕只是区域级）也仍然优先。
+      const pointer = resolveGroup(byPointer);
+      const weakPointer = !!(pointer && pointer.vague && pointer.via === 'hover');
+      const selection = resolveGroup(bySelection);
+      if (weakPointer) return selection || pointer;
+      return pointer || selection;
     } catch (e) { return null; }
   }
 
@@ -2412,10 +2421,12 @@
       // 「我选中的是谁」永远要带上：用户说"这个技能/这个角色"时，指的就是资源树里选中的那个，
       // 只报"停在哪个控件"等于让他再解释一遍（实测踩过：他明明选了技能，模型还是反问"先测哪个"）。
       // 场景对象优先（他刚点的是场景里的东西），其次才是资源树选中项。
+      const pickedName = (ctx.sceneTarget && ctx.sceneTarget.name) || (ctx.selectedFile && ctx.selectedFile.name) || '';
       const picked = (ctx.sceneTarget && ctx.sceneTarget.name)
         ? '选中' + (ctx.sceneTarget.type && ctx.sceneTarget.type !== 'object' ? ctx.sceneTarget.type + ':' : '') + '「' + ctx.sceneTarget.name + '」'
         : ((ctx.selectedFile && ctx.selectedFile.name) ? '选中「' + ctx.selectedFile.name + '」' + selectedFileSuffix(ctx.selectedFile) : '');
-      if (picked) line += '·' + picked;
+      // 停留点就是那个选中项时别再重复一遍（区域级停留点让位给选中态之后，这种情形会经常出现）
+      if (picked && pickedName !== at.label) line += '·' + picked;
       const full = '【当前环境】' + (ctx.playtest ? '试玩中·' : '') + line;
       return full.length > 120 ? full.slice(0, 117) + '...' : full;
     }

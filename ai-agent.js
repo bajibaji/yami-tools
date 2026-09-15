@@ -2467,7 +2467,8 @@
         ? summary.replace(/^【当前环境】/, '')
         : '还没识别到停留点';
     }
-    if (badge) badge.textContent = at && at.label ? '停留中' : '在场感知';
+    // 停留点是从"他选中了什么"兜来的就说选中，别让用户以为 AI 在盯着他的鼠标
+    if (badge) badge.textContent = at && at.label ? (at.via === 'selected' ? '选中中' : '停留中') : '在场感知';
   }
 
   /**
