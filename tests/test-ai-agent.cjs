@@ -588,7 +588,10 @@ async function main() {
     const suffixExtract = probeSource.match(/function selectedFileSuffix\(file\) \{[\s\S]*?\n  \}/)
     assert.ok(fnExtract, '必须能提取 formatEditorContextSummary 函数实现')
     assert.ok(suffixExtract, '必须能提取 selectedFileSuffix（选中项要带上工程路径，否则模型只能靠名字猜文件）')
-    fnExtract[0] = suffixExtract[0] + '\n' + fnExtract[0]
+    // 多选个数后缀与选中项路径一样是独立小函数，同样是摘要出来的，得一起喂进沙盒
+    const countExtract = probeSource.match(/function selectedCountSuffix\(count\) \{[\s\S]*?\n  \}/)
+    assert.ok(countExtract, '必须能提取 selectedCountSuffix（多选要标出个数，否则模型以为他只选了一个）')
+    fnExtract[0] = suffixExtract[0] + '\n' + countExtract[0] + '\n' + fnExtract[0]
     const sandbox = {}
     vm.runInNewContext(fnExtract[0] + '; result = formatEditorContextSummary({ playtest: true, scene: "测试场景", selectedFile: { name: "木剑.item", type: "item" }, sceneTarget: { name: "主角", type: "actor" }, inspector: { metaName: "木剑.item" } });', sandbox)
     assert.strictEqual(sandbox.result, '【当前环境】试玩中·场景「测试场景」·选中actor:「主角」',
@@ -608,6 +611,12 @@ async function main() {
     assert.ok(String(pathSandbox.result).indexOf('Assets/技能/012-元素使技能/329.落雷.627cc278af411ab0.skill') !== -1,
       '选中的资源必须带上工程路径（模型据此决定改哪个文件），实际产出：' + pathSandbox.result)
     assert.ok(String(pathSandbox.result).length <= 120, '带上路径后仍不得超过 120 字上限，实际 ' + String(pathSandbox.result).length)
+
+    // 多选：只说"选中「A」"会让模型以为他只选了一个 —— 必须标出个数，且路径照旧带上
+    const multiSandbox = {}
+    vm.runInNewContext(fnExtract[0] + '; result = formatEditorContextSummary({ environment: "editor", selectedFile: { name: "落雷.skill", type: "skill", path: "Assets/技能/012-元素使技能/落雷.627cc278af411ab0.skill" }, selectedCount: 3, presence: { label: "攻击力", value: "25" } });', multiSandbox)
+    assert.ok(/等 3 个/.test(multiSandbox.result) && /Assets\/技能\//.test(multiSandbox.result),
+      '资源树多选要标出个数并照旧带上路径，实际：' + multiSandbox.result)
 
     const longSandbox = {}
     vm.runInNewContext(fnExtract[0] + '; result = formatEditorContextSummary({ environment: "editor", selectedFile: { name: "很长的资源名字".repeat(20), type: "item" }, presence: { label: "攻击力".repeat(20), value: "25" } });', longSandbox)

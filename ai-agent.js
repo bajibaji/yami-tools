@@ -3001,7 +3001,7 @@
           '<div class="yami-ai-tool-btn" id="yami-ai-settings-toggle" role="button" tabindex="0" title="设置：模型、API Key 与高级参数设置">' + AI_ICONS.settings + '<span>设置</span></div>' +
         '</div>' +
       '</div>' +
-      '<div class="yami-ai-scope" id="yami-ai-scope" role="region" title="点击纠偏或重新识别当前环境">' +
+      '<div class="yami-ai-scope" id="yami-ai-scope" role="region" title="点击立刻刷新环境感知（下一次提问就按这一条理解）">' +
         '<span class="yami-ai-scope-text">环境感知就绪</span>' +
         '<span class="yami-ai-scope-badge">在场感知</span>' +
       '</div>' +

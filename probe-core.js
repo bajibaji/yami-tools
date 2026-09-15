@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.10.1';
+  const PROBE_VERSION = '1.10.2';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -1882,6 +1882,16 @@
           return sFile.replace(/\.([0-9a-f]{16})\.scene$/, '').replace(/\.scene$/, '');
         }
       }
+      // 引擎真实字段是 Scene.meta（FileMeta，scene-window.ts:779 `this.meta = meta`；:935 保存也用它）。
+      // 实测本机引擎源码里 **根本没有 Scene.binding**（整个 scene/ 目录 0 命中）—— 上面那条分支只对老运行时管用，
+      // 编辑器里必须走 meta，否则环境摘要里的场景永远是空的（实测会话日志里就是 "scene":""）。
+      if (typeof Scene !== 'undefined' && Scene && Scene.meta) {
+        const alias = (Scene.meta.file && (Scene.meta.file.alias || Scene.meta.file.name)) || '';
+        // FileItem.alias = 去掉 GUID 的文件名（file-item.ts:31），正是编辑器标签页上那个名字
+        const named = String(alias || Scene.meta.path || '').split('/').pop() || '';
+        const clean = named.replace(/\.([0-9a-f]{16})(?=\.scene$)/i, '').replace(/\.scene$/i, '');
+        if (clean) return clean;
+      }
     } catch (e) {}
     return '';
   }
@@ -2358,6 +2368,18 @@
           };
         }
       }
+      // 多选：只报第一个会让模型以为"他就选了这一个"（引擎 file-body-pane.ts:29 `selections: any[]`）
+      if (fb && fb.body) {
+        try {
+          const picked = Array.isArray(fb.body.selections) ? fb.body.selections : [];
+          if (picked.length > 1) {
+            result.selectedCount = picked.length;
+            result.selectedFiles = picked.slice(0, 8).map(function (f) {
+              return { name: (f && (f.alias || f.name)) || '', path: (f && f.path) || '' };
+            });
+          }
+        } catch (e) {}
+      }
       if (!result.selectedFile) {
         const selNode = document.querySelector('file-body-pane item.selected, file-browser [selected="true"], file-browser .selected');
         if (selNode) {
@@ -2381,11 +2403,28 @@
       // 3. 场景内选中目标 (Scene.target 权威类别字段为 target.class: actor/region/light/tilemap...)
       if (typeof Scene !== 'undefined' && Scene && Scene.target) {
         const tgt = Scene.target;
-        result.sceneTarget = {
+        const item = {
           name: String(tgt.name || tgt.id || ''),
           type: String(tgt.class || tgt.type || 'object')
         };
+        // 它的源文件：引擎自己就是这么认的（scene-utility.ts:6 Scene.getObjectFile ——
+        // actor/animation 看 data.guid、particle 看 emitter.data.guid、parallax 看 image，
+        // 一律查 Data.manifest.guidMap[id].file）。右键菜单「在工程中定位」用的就是它，所以这不是猜的。
+        try {
+          const objFile = (typeof Scene.getObjectFile === 'function') ? Scene.getObjectFile(tgt) : null;
+          if (objFile) {
+            item.file = { name: objFile.alias || objFile.name || '', path: objFile.path || '', type: objFile.type || '' };
+          }
+        } catch (e) {}
+        result.sceneTarget = item;
       }
+      // 3b. 当前场景文件：选中对象在**这一份场景里**的实例数据（位置/缩放/朝向/图层）就写在这里
+      // （scene-window.ts:779 把 .scene 的 FileMeta 存进 Scene.meta；metadata.ts:30 它有 path）
+      try {
+        const sceneMeta = (typeof Scene !== 'undefined' && Scene && Scene.meta) || null;
+        const scenePath = (sceneMeta && (sceneMeta.path || (sceneMeta.file && sceneMeta.file.path))) || '';
+        if (scenePath) result.sceneFile = { name: String(scenePath).split('/').pop() || '', path: String(scenePath) };
+      } catch (e) {}
     } catch (e) {}
 
     return result;
@@ -2401,6 +2440,11 @@
     if (!full) return '';
     const text = full.length > 72 ? full.slice(full.lastIndexOf('/') + 1) : full;
     return text ? ' → ' + text : '';
+  }
+
+  /** 多选时标出个数：只说"选中「A」"会让模型以为他只选了这一个 */
+  function selectedCountSuffix(count) {
+    return (Number(count) > 1) ? '等 ' + Number(count) + ' 个' : '';
   }
 
   /**
@@ -2423,8 +2467,8 @@
       // 场景对象优先（他刚点的是场景里的东西），其次才是资源树选中项。
       const pickedName = (ctx.sceneTarget && ctx.sceneTarget.name) || (ctx.selectedFile && ctx.selectedFile.name) || '';
       const picked = (ctx.sceneTarget && ctx.sceneTarget.name)
-        ? '选中' + (ctx.sceneTarget.type && ctx.sceneTarget.type !== 'object' ? ctx.sceneTarget.type + ':' : '') + '「' + ctx.sceneTarget.name + '」'
-        : ((ctx.selectedFile && ctx.selectedFile.name) ? '选中「' + ctx.selectedFile.name + '」' + selectedFileSuffix(ctx.selectedFile) : '');
+        ? '选中' + (ctx.sceneTarget.type && ctx.sceneTarget.type !== 'object' ? ctx.sceneTarget.type + ':' : '') + '「' + ctx.sceneTarget.name + '」' + selectedFileSuffix(ctx.sceneTarget.file)
+        : ((ctx.selectedFile && ctx.selectedFile.name) ? '选中「' + ctx.selectedFile.name + '」' + selectedCountSuffix(ctx.selectedCount) + selectedFileSuffix(ctx.selectedFile) : '');
       // 停留点就是那个选中项时别再重复一遍（区域级停留点让位给选中态之后，这种情形会经常出现）
       if (picked && pickedName !== at.label) line += '·' + picked;
       const full = '【当前环境】' + (ctx.playtest ? '试玩中·' : '') + line;
@@ -2444,10 +2488,10 @@
       if (ctx.scene) bg.push('场景「' + ctx.scene + '」');
       if (ctx.sceneTarget && ctx.sceneTarget.name) {
         const classLabel = ctx.sceneTarget.type && ctx.sceneTarget.type !== 'object' ? ctx.sceneTarget.type + ':' : '';
-        bg.push('选中' + classLabel + '「' + ctx.sceneTarget.name + '」');
+        bg.push('选中' + classLabel + '「' + ctx.sceneTarget.name + '」' + selectedFileSuffix(ctx.sceneTarget.file));
       } else if (ctx.selectedFile && ctx.selectedFile.name) {
         const typeLabel = ctx.selectedFile.type ? ctx.selectedFile.type + '/' : '';
-        bg.push('选中「' + typeLabel + ctx.selectedFile.name + '」' + selectedFileSuffix(ctx.selectedFile));
+        bg.push('选中「' + typeLabel + ctx.selectedFile.name + '」' + selectedCountSuffix(ctx.selectedCount) + selectedFileSuffix(ctx.selectedFile));
       } else if (ctx.inspector && ctx.inspector.metaName) {
         bg.push('检视「' + ctx.inspector.metaName + '」');
       }

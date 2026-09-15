@@ -760,6 +760,50 @@ async function main() {
     check('换回具体控件时仍然精确识别（区域兜底不会顶掉它）',
       !!backToField && backToField.label === 'Icon' && !backToField.vague, JSON.stringify(backToField))
 
+    /* ---------------- A3b. 场景对象与资源树多选：模糊指代要落得到一个具体文件 ---------------- */
+    console.log('\n--- A3b. 场景里选中的对象 / 资源树多选（"改这个"到底改哪个文件）---')
+    const ctxBoot = await bootProbe({ engine: true })
+    const browser = new ctxBoot.El('file-browser', 'project-browser')
+    const pickedA = { alias: '落雷.skill', name: '落雷.627cc278af411ab0.skill', path: 'Assets/技能/012-元素使技能/落雷.627cc278af411ab0.skill', type: 'skill' }
+    const pickedB = { alias: '冲撞.skill', name: '冲撞.b12d240ac180e87d.skill', path: 'Assets/技能/010-勇者技能/冲撞.b12d240ac180e87d.skill', type: 'skill' }
+    browser.body = { activeFile: pickedA, selections: [pickedA, pickedB] }
+    ctxBoot.document.body.appendChild(browser)
+    // 场景对象按引擎真实形状造：class/name/data.guid，源文件由 Scene.getObjectFile 给（scene-utility.ts:6）
+    ctxBoot.sandbox.Scene = {
+      target: { class: 'actor', name: '主角', data: { guid: 'abc123def4567890' } },
+      getObjectFile: () => ({ alias: '主角.actor', name: '主角.9f8e7d6c5b4a3210.actor', path: 'Assets/角色/主角.9f8e7d6c5b4a3210.actor', type: 'actor' }),
+      meta: { guid: '1122334455667788', path: 'Assets/场景/新手村.1122334455667788.scene' }
+    }
+    const sceneCtx = ctxBoot.probe.getEditorContext()
+    check('场景里选中的对象要带上它的源文件（引擎 Scene.getObjectFile 的同一口径）',
+      !!(sceneCtx.sceneTarget && sceneCtx.sceneTarget.file && sceneCtx.sceneTarget.file.path === 'Assets/角色/主角.9f8e7d6c5b4a3210.actor'),
+      JSON.stringify(sceneCtx.sceneTarget))
+    check('当前场景文件也要给出来（对象的实例数据写在那里）',
+      !!(sceneCtx.sceneFile && sceneCtx.sceneFile.path === 'Assets/场景/新手村.1122334455667788.scene'), JSON.stringify(sceneCtx.sceneFile))
+    check('场景名从 Scene.meta 读得到（引擎里没有 Scene.binding，老路径永远是空的）',
+      sceneCtx.scene === '新手村', JSON.stringify(sceneCtx.scene))
+    check('资源树多选时报出全部选中项，而不是只报第一个',
+      sceneCtx.selectedCount === 2 && Array.isArray(sceneCtx.selectedFiles) && sceneCtx.selectedFiles.length === 2,
+      JSON.stringify(sceneCtx.selectedFiles))
+    const sceneCtxSummary = ctxBoot.sandbox.__YAMI_CTX_SUMMARY__()
+    check('摘要里场景对象带上源文件路径（模型据此直接改那个文件）',
+      /选中actor:「主角」 → Assets\/角色\//.test(sceneCtxSummary) && sceneCtxSummary.length <= 120, sceneCtxSummary)
+
+    // 多选的措辞：另开一个没有场景对象的沙盒（否则场景对象优先，占掉了那一格）
+    const multiBoot = await bootProbe({ engine: true })
+    const multiBrowser = new multiBoot.El('file-browser', 'project-browser')
+    multiBrowser.body = { activeFile: pickedA, selections: [pickedA, pickedB] }
+    multiBoot.document.body.appendChild(multiBrowser)
+    multiBoot.document.activeElement = null
+    const multiField = new multiBoot.El('number-box', 'multi-probe-field')
+    multiField.tip = '攻击力'
+    multiBoot.document.body.appendChild(multiField)
+    multiBoot.document.dispatchEvent({ type: 'pointerover', target: multiField })
+    await new Promise(r => setTimeout(r, 700))
+    const multiSummary = multiBoot.sandbox.__YAMI_CTX_SUMMARY__()
+    check('多选时摘要标出个数（不许当成"只选了那一个"）',
+      /等 2 个/.test(multiSummary) && /Assets\/技能\//.test(multiSummary), multiSummary)
+
     /* ---------------- A2. 引擎接口缺失时（官方预编译版）桥仍须可用 ---------------- */
     console.log('\n--- A2. 引擎接口缺失时（官方预编译版）桥仍须可用 ---')
     const bare = await bootProbe({ engine: false })
@@ -873,6 +917,17 @@ async function main() {
       check('系统提示词里定义了对齐卡协议', editorSystem.indexOf('alignment-card') >= 0)
       check('系统提示词要求开工前先对齐', editorSystem.indexOf('对齐卡') >= 0)
       check('提示词里带上了界面演示的失败语义（如实说清第几步卡住）', editorSystem.indexOf('第几步卡住') >= 0)
+
+      // C3b：模糊意图的落地规矩 —— 用户只说"这个/它/我选中的那个"时，模型必须指到环境里那个选中项。
+      // 真机验证过（会话 session-mtz9o2oe）：他选中 329.落雷.skill 说"给我选中的技能…"，模型直接落到那个路径。
+      // 这几条以前没有任何测试盯着 —— prompt 一改这条能力就会静默失效。
+      check('提示词规定"这个/它/我选中的那个"= 环境里那个选中项', editorSystem.indexOf('我选中的那个') >= 0)
+      check('提示词规定选中项就是这次要改的首要目标', editorSystem.indexOf('首要目标') >= 0)
+      check('提示词规定停留点上说得含糊就按它理解、别反问', editorSystem.indexOf('别反问') >= 0)
+      check('提示词规定区域级停留点信息不足该问就问', editorSystem.indexOf('信息不足') >= 0)
+      check('提示词规定场景对象给的是源文件、实例数据在场景文件里',
+        editorSystem.indexOf('源文件') >= 0 && editorSystem.indexOf('sceneFile') >= 0)
+      check('提示词规定资源树多选时不许默认只改一个', editorSystem.indexOf('selectedFiles') >= 0)
 
       // C4：内置模型**实际拿到**的工具表 —— 这才是"模型看不看得见"的唯一真源
       const lastReq = captured[captured.length - 1] || {}
