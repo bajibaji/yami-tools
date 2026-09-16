@@ -5727,7 +5727,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.10.4 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.10.5 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
@@ -6068,7 +6068,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.10.4 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.10.5 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -8774,7 +8774,16 @@
             const probe = this._getProbe();
             if (!probe) return;
             const count = probe.killAllMonsters ? probe.killAllMonsters() : 0;
-            showToast(`已秒杀清除全图敌对目标: ${count} 只`);
+            // 逐字报清楚：以前只报个数字，漏掉的那些人（没有生命值属性的角色）用户完全看不见，
+            // 只能看到"怎么没清干净"
+            const report = probe.getLastKillReport ? probe.getLastKillReport() : null;
+            const skipped = (report && report.skipped) ? report.skipped : [];
+            if (skipped.length) {
+              const names = skipped.slice(0, 3).map(s => s.name).join(' / ');
+              showToast(`已清掉 ${count} 个角色；其中 ${skipped.length} 个没有生命值属性（${names}${skipped.length > 3 ? ' 等' : ''}）`);
+            } else {
+              showToast(`已秒杀清除全图敌对目标: ${count} 只`);
+            }
           });
         }
 
@@ -9330,7 +9339,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.10.4';
+      const cur = (probe && probe.version) ? probe.version : '1.10.5';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -9396,7 +9405,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.10.4') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.10.5') + ')');
           refreshVersionBadge();
         }
       });

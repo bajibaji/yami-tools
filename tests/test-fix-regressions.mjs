@@ -80,6 +80,31 @@ check('怪物走 destroy() 真正移除', monsterDestroyed === true);
 check('怪物血量归零', monster.attributes.health === 0, 'health=' + monster.attributes.health);
 check('主角未被误伤', player.attributes.health === 37, 'health=' + player.attributes.health);
 
+console.log('=== 2b. 秒杀: destroy() 会摘列表时不许漏人; 没有生命值属性要如实报 ===');
+const list2 = [];
+const mk = (attrs) => {
+  const a = { attributes: attrs, destroy() { const i = list2.indexOf(a); if (i >= 0) list2.splice(i, 1); } };
+  list2.push(a);
+  return a;
+};
+const player2 = { passage: 3, navigator: {}, attributes: { health: 37 } };
+const monsterA = mk({ health: 10 });
+const monsterB = mk({ health: 10 });
+// 本机工程真实形状：属性键是 GUID（Data/attribute.json 的 keys 里没有 health/hp/生命值 字样）
+const monsterGuidHp = mk({ da4d32a4f1097059: '怪物', a5fd5e9f229abb2d: 700 });
+list2.unshift(player2);
+sandbox.Scene.actor.list = list2;
+sandbox.Party.player = player2;
+sandbox.Party.members = [player2];
+const killed2 = probe.killAllMonsters();
+check('destroy() 真的从列表里摘人时, 一个都不漏 (老实现按索引遍历会漏一半)', killed2 === 3, 'count=' + killed2);
+check('列表里只剩主角', sandbox.Scene.actor.list.length === 1, 'len=' + sandbox.Scene.actor.list.length);
+const killReport = probe.getLastKillReport();
+check('没有生命值字样的角色照样清掉, 并在报告里留着名字',
+  !!killReport && killReport.killed === 3 && killReport.skipped.length === 1,
+  JSON.stringify(killReport));
+check('主角不在击杀名单里', !!killReport && killReport.skipped.every(s => s.name !== 'player2'));
+
 console.log('=== 3. 全局事件总数: 取 EventManager.guidMap ===');
 const ev = probe.getActiveEvents();
 check('totalRegistered = guidMap 条目数 3', ev.totalRegistered === 3, 'total=' + ev.totalRegistered);

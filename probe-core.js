@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.10.4';
+  const PROBE_VERSION = '1.10.5';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -5513,37 +5513,56 @@
     },
     killAllMonsters: function () {
       let count = 0;
+      const skipped = [];
       try {
         if (typeof Scene !== 'undefined' && Scene.binding && Scene.actor && Scene.actor.list) {
           const list = Scene.actor.list;
           const player = (typeof Party !== 'undefined' && Party) ? Party.player : null;
           const members = (typeof Party !== 'undefined' && Party && Party.members) ? Party.members : [];
-          for (let i = 0; i < list.length; i++) {
-            const actor = list[i];
+          // 先把名单**快照**出来再动手：destroy() 会真的把这个角色从 list 里摘掉
+          // (引擎 actor.destroy → parent.remove)，一边按索引遍历一边删，紧跟在后面那个会被跳过 ——
+          // 这就是"秒杀全图怪会漏几个"的第一个成因。
+          const targets = [];
+          for (let i = 0; i < list.length; i++) targets.push(list[i]);
+          for (let i = 0; i < targets.length; i++) {
+            const actor = targets[i];
             if (!actor || actor === player || (members && members.indexOf(actor) >= 0)) continue;
-            if (actor.attributes) {
-              let killed = false;
-              for (const k of Object.keys(actor.attributes)) {
-                const lk = k.toLowerCase();
-                if (lk === 'health' || lk === 'hp' || k === '生命值') {
-                  actor.attributes[k] = 0;
-                  killed = true;
+            // 有生命值属性就顺手归零（界面上看得见"血空了"）
+            let hasHealth = false;
+            try {
+              const attrs = actor.attributes;
+              if (attrs) {
+                for (const k of Object.keys(attrs)) {
+                  const lk = k.toLowerCase();
+                  if (lk === 'health' || lk === 'hp' || k === '生命值') {
+                    attrs[k] = 0;
+                    hasHealth = true;
+                  }
                 }
               }
-              if (killed) {
-                count++;
-                // 真正移除必须走 destroy(): 它内部会 emit('destroy') + GlobalEntityManager.remove + parent.remove
-                // (引擎 actor.ts destroy())。只 emit('destroy') 角色仍留在 Scene.actor.list 里继续寻路/占碰撞
-                try {
-                  if (typeof actor.destroy === 'function') actor.destroy();
-                  else if (typeof actor.emit === 'function') actor.emit('destroy');
-                } catch (e) {}
-              }
+            } catch (e) {}
+            if (!hasHealth) {
+              // 找不到生命值属性**不是跳过的理由**：本机工程的角色属性键是 GUID
+              // （Data/attribute.json 的 keys 里根本没有 health/hp/生命值 字样），
+              // 老实现按名字找、找不到就 continue —— 于是"漏几个"，而且顶栏照样只报个数字，
+              // 用户根本不知道为什么漏。现在记下名字，如实报出来。
+              skipped.push({ name: resolveObjectName(actor, 'actor', i), keys: (actor && actor.attributes) ? Object.keys(actor.attributes).length : 0 });
             }
+            count++;
+            // 真正移除必须走 destroy(): 它内部会 emit('destroy') + GlobalEntityManager.remove + parent.remove
+            // (引擎 actor.ts destroy())。只 emit('destroy') 角色仍留在 Scene.actor.list 里继续寻路/占碰撞
+            try {
+              if (typeof actor.destroy === 'function') actor.destroy();
+              else if (typeof actor.emit === 'function') actor.emit('destroy');
+            } catch (e) {}
           }
         }
       } catch (e) {}
+      state.lastKillReport = { killed: count, skipped: skipped };
       return count;
+    },
+    getLastKillReport: function () {
+      return state.lastKillReport || null;
     },
     getVariableWarnings: function () {
       return Object.assign({}, state.variableWarnings);
