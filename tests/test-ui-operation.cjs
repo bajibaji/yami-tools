@@ -1020,6 +1020,14 @@ async function main() {
       check('提示词规定资源树多选时不许默认只改一个', editorSystem.indexOf('selectedFiles') >= 0)
       check('提示词分清"选中（他点选的）"与"文件（打开着的）"',
         editorSystem.indexOf('他点选的那个东西') >= 0 && editorSystem.indexOf('「文件」后面') >= 0)
+      // C3c：《02-Yami引擎机制》里几条最容易把 AI 带沟里的机制，必须进提示词
+      check('提示词写明起始场景由启动事件的 loadScene 决定（config.startPosition 只是默认值）',
+        editorSystem.indexOf('loadScene') >= 0 && editorSystem.indexOf('startPosition') >= 0)
+      check('提示词写明属性键是 GUID、原生 Actor 没有 hp 字段',
+        editorSystem.indexOf('属性键是 **GUID**') >= 0 && editorSystem.indexOf('没有 hp 字段') >= 0)
+      check('提示词警告注入参数已被求值、不要写 this.myActor()', editorSystem.indexOf('this.myActor()') >= 0)
+      check('提示词写明 UI 的 TextElement 要双冒号才会自动重绘', editorSystem.indexOf('<global::') >= 0)
+      check('提示词写明 Dist 是编译产物、不要手改', editorSystem.indexOf('Dist/ 是 tsc 的编译产物') >= 0)
 
       // C4：内置模型**实际拿到**的工具表 —— 这才是"模型看不看得见"的唯一真源
       const lastReq = captured[captured.length - 1] || {}

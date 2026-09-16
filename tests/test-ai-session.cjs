@@ -208,7 +208,7 @@ async function main() {
     // 窗口是**夹具**不是断言：它只要大到"固定开销（系统提示 + 模型可见工具 schema）+ 可压缩的历史"
     // 里后者占多数即可。工具集每次长一点，这份固定开销就跟着长 —— 12k 时余量已不到 100 token，
     // 工具说明加两行就翻过阈值（实测 9683 > 9600）。断言本身一个字没改，仍然要求压到阈值以下。
-    YAMI_AI_CONTEXT_WINDOW: '14000',
+    YAMI_AI_CONTEXT_WINDOW: '20000',
     YAMI_AI_CONTEXT_KEEP: '4',
     YAMI_AI_TOOL_LIMIT: '500'
   })
@@ -245,7 +245,7 @@ async function main() {
 
   console.log('\n########## 3. 宿主重启后恢复历史 ##########')
   await stopHost()
-  startHost({ YAMI_AI_CONTEXT_WINDOW: '14000', YAMI_AI_CONTEXT_KEEP: '4', YAMI_AI_TOOL_LIMIT: '500' })
+  startHost({ YAMI_AI_CONTEXT_WINDOW: '20000', YAMI_AI_CONTEXT_KEEP: '4', YAMI_AI_TOOL_LIMIT: '500' })
   await waitReady()
   const loaded = await json('/session/load', 'POST', { sessionId: 'stream-1' })
   check('/session/load 返回历史消息', loaded.data.ok === true && Array.isArray(loaded.data.messages))
@@ -256,7 +256,8 @@ async function main() {
 
   console.log('\n########## 4. 上下文压缩 ##########')
   // 造一段很长的历史：连续多轮用户消息，触发预算压缩
-  for (let i = 0; i < 12; i++) {
+  // 轮数跟着窗口走：20k 窗口的阈值是 16000，12 轮只推到 ~11.5k（实测），推不过去就不会触发压缩
+  for (let i = 0; i < 20; i++) {
     await json('/chat', 'POST', { sessionId: 'compress-1', message: '第 ' + i + ' 轮：' + '填充内容'.repeat(200) })
   }
   const status = await json('/status?sessionId=compress-1')
@@ -264,7 +265,7 @@ async function main() {
     status.data.context.tokens + ' < ' + status.data.context.thresholdTokens)
   check('压缩后标记了摘要', status.data.context.summary === true)
   // 断的是"刻度格式"这件事（占用/真实窗口 · 百分比），窗口数字跟着夹具走，不写死成某个常量
-  check('刻度按 token 与真实窗口显示', /^[\d.]+k\/14k · \d+%$/.test(String(status.data.context.label)), String(status.data.context.label))
+  check('刻度按 token 与真实窗口显示', /^[\d.]+k\/20k · \d+%$/.test(String(status.data.context.label)), String(status.data.context.label))
   const compressFile = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'compress-1.json'), 'utf8'))
   check('落盘历史第一条为 system', compressFile.messages[0].role === 'system')
   check('落盘历史包含结构化检查点', /<compacted-summary>/.test(JSON.stringify(compressFile.messages[1])))

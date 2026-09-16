@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.10.5';
+  const PROBE_VERSION = '1.10.6';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -559,6 +559,64 @@
     return true;
   }
 
+  /**
+   * 角色属性键是 **GUID**（Data/attribute.json 里每个属性的 id），不是 health/hp 这种名字：
+   * 本机工程实测 a5fd5e9f229abb2d = 生命值（key health）、a8451228fe0c120a = 最大生命值（key maxHealth），
+   * 角色文件里就是 {"key":"a5fd5e9f229abb2d","value":700} 这种形状（《02-Yami引擎机制》§8.3 也点明
+   * "原生 Actor 没有 actor.hp，战斗属性全靠 actor.attributes[key]"）。
+   * 老实现按"键名叫 health/hp/生命值"去找，于是「无限生命」在这个工程里**一次都没生效过**（静默无声）。
+   * 这里按属性表把 id 找出来：优先用运行时的 Data.attribute，取不到再读工程里的 Data/attribute.json。
+   */
+  // 用显式栈走，不写自调用：静态健康检查会拦「函数直接调自己」（怕手滑写成无限递归）
+  function flattenAttributeTable(root, out) {
+    const stack = [{ node: root, path: '' }];
+    while (stack.length) {
+      const cur = stack.pop();
+      const node = cur.node;
+      if (!node || typeof node !== 'object') continue;
+      if (Array.isArray(node)) {
+        for (let i = node.length - 1; i >= 0; i--) stack.push({ node: node[i], path: cur.path });
+        continue;
+      }
+      const id = typeof node.id === 'string' ? node.id : '';
+      const key = typeof node.key === 'string' ? node.key : '';
+      const name = typeof node.name === 'string' ? node.name : '';
+      if (id && (key || name)) out.push({ id: id, key: key, name: name, path: cur.path });
+      const nextPath = name ? cur.path + '/' + name : cur.path;
+      for (const k of Object.keys(node)) {
+        const value = node[k];
+        if (!value || typeof value !== 'object') continue;
+        stack.push({ node: value, path: k === 'children' ? nextPath : cur.path });
+      }
+    }
+    return out;
+  }
+
+  let attributeTableCache = null;   // { health: [id], max: [id] }
+  function healthAttributeIds() {
+    if (attributeTableCache) return attributeTableCache;
+    let entries = [];
+    try { if (typeof Data !== 'undefined' && Data && Data.attribute) entries = flattenAttributeTable(Data.attribute, []); } catch (e) {}
+    if (!entries.length) {
+      try {
+        if (typeof require === 'function') {
+          const fs = require('fs');
+          const nodePath = require('path');
+          const root = projectAudit.findRoot ? projectAudit.findRoot() : '';
+          if (root) {
+            const file = nodePath.join(root, 'Data', 'attribute.json');
+            if (fs.existsSync(file)) entries = flattenAttributeTable(JSON.parse(fs.readFileSync(file, 'utf8')), []);
+          }
+        }
+      } catch (e) {}
+    }
+    attributeTableCache = {
+      health: entries.filter(function (e) { return /^(health|hp)$/i.test(e.key) || e.name === '生命值' || e.name === 'HP'; }).map(function (e) { return e.id; }),
+      max: entries.filter(function (e) { return /^(maxhealth|maxhp|healthmax)$/i.test(e.key) || e.name === '最大生命值'; }).map(function (e) { return e.id; })
+    };
+    return attributeTableCache;
+  }
+
   function applyCheatsPerFrame() {
     if (!state.cheats) return;
     const c = state.cheats;
@@ -586,12 +644,37 @@
         // 3. 锁血 (无限生命)
         if (c.godMode && player.attributes) {
           const attrs = player.attributes;
-          for (const k of Object.keys(attrs)) {
-            const lk = k.toLowerCase();
-            if (lk === 'health' || lk === 'hp' || k === '生命值') {
-              const maxVal = attrs['maxHealth'] || attrs['maxHp'] || attrs['最大生命值'] || 999999;
-              attrs[k] = maxVal;
+          const table = healthAttributeIds();
+          // 生命值的键：先按属性表里的 id 找（工程真实形状），找不到才退回按名字找（老工程/自定义键）
+          let lockKeys = table.health.filter(function (id) { return id in attrs; });
+          if (!lockKeys.length) {
+            for (const k of Object.keys(attrs)) {
+              const lk = k.toLowerCase();
+              if (lk === 'health' || lk === 'hp' || k === '生命值') lockKeys.push(k);
             }
+          }
+          // 上限：属性表里有"最大生命值"就用它；没有就用"见过的最大的当前值"当基准，
+          // 这样升级/换装把血上限抬高时照旧生效，而不是被锁死在开启那一刻的数字上
+          let ceiling = NaN;
+          for (const id of table.max) {
+            const mv = Number(attrs[id]);
+            if (Number.isFinite(mv) && mv > 0) { ceiling = mv; break; }
+          }
+          // 属性表里没有"最大生命值"（老工程、自定义键名）→ 退回按名字找上限，与改前行为一致
+          if (!Number.isFinite(ceiling)) {
+            const rawMax = attrs['maxHealth'] !== undefined ? attrs['maxHealth']
+              : (attrs['maxHp'] !== undefined ? attrs['maxHp'] : attrs['最大生命值']);
+            const legacyMax = Number(rawMax);
+            if (Number.isFinite(legacyMax) && legacyMax > 0) ceiling = legacyMax;
+          }
+          if (!c.godBase) c.godBase = {};
+          for (const k of lockKeys) {
+            const cur = Number(attrs[k]);
+            if (!Number.isFinite(cur)) continue;
+            const base = c.godBase[k];
+            if (base === undefined || cur > base) c.godBase[k] = cur;
+            const target = Number.isFinite(ceiling) ? ceiling : c.godBase[k];
+            if (cur < target) attrs[k] = target;
           }
         }
       }
@@ -5499,6 +5582,7 @@
       c.speedBoost = false;
       c.godMode = false;
       c.__inSpeedLoop = false;
+      c.godBase = null;   // 满血基准也要清掉，否则下次开启会拿旧基准往上抬
       try {
         if (typeof Time !== 'undefined' && Time) {
           // 还原游戏自身 timeScale，而不是硬写 1 (否则游戏原本的慢动作/加速被永久覆盖)

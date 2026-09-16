@@ -73,6 +73,34 @@ check('0.5x 走 timeScale', sandbox.Time.timeScale === 0.5, 'timeScale=' + sandb
 probe.setCheat('speedMultiplier', 1);
 check('切回 1x 还回游戏原有 timeScale', sandbox.Time.timeScale === 0.3, 'timeScale=' + sandbox.Time.timeScale);
 
+console.log('=== 1b. 无限生命: 属性键是 GUID, 必须按属性表找 ===');
+// 属性表的真实形状（本机工程）：id 就是运行时的属性键，key/name 只是说明
+sandbox.Data = {
+  attribute: {
+    '4a9869f39acd85ed': {
+      class: 'folder', id: '4a9869f39acd85ed', name: '角色属性',
+      children: [
+        { id: 'a5fd5e9f229abb2d', key: 'health', type: 'number', name: '生命值' },
+        { id: 'a8451228fe0c120a', key: 'maxHealth', type: 'number', name: '最大生命值' }
+      ]
+    }
+  }
+};
+const hero = { passage: 3, navigator: {}, attributes: { a5fd5e9f229abb2d: 700, a8451228fe0c120a: 700 } };
+sandbox.Party = { player: hero, members: [hero] };
+probe.setCheat('godMode', true);
+hero.attributes.a5fd5e9f229abb2d = 12;      // 挨了一刀
+probe.setCheat('godMode', true);             // 下一帧重新落地
+check('GUID 键的生命值被抬回上限 (老实现按 health/hp 找 → 在这个工程里静默无效)',
+  hero.attributes['a5fd5e9f229abb2d'] === 700, 'hp=' + hero.attributes['a5fd5e9f229abb2d']);
+probe.setCheat('godMode', false);
+hero.attributes['a5fd5e9f229abb2d'] = 100;
+probe.setCheat('godMode', false);
+check('关掉无限生命后不再干预血量', hero.attributes['a5fd5e9f229abb2d'] === 100, 'hp=' + hero.attributes['a5fd5e9f229abb2d']);
+// 还原成 §2 用的主角，别影响后面的用例
+sandbox.Party = { player, members: [player] };
+sandbox.Scene.actor.list = [player, monster];
+
 console.log('=== 2. 秒杀全图怪: 必须真正销毁角色实例 ===');
 const killed = probe.killAllMonsters();
 check('返回击杀数 1 (不含主角)', killed === 1, 'count=' + killed);
