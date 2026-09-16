@@ -148,13 +148,10 @@ async function main() {
   fs.writeFileSync(path.join(sandbox, 'runtime', 'yami-mcp', 'server.js'), FAKE_MCP)
   fs.cpSync(path.join(ROOT, 'runtime', 'yami-mcp', 'modules'), path.join(sandbox, 'runtime', 'yami-mcp', 'modules'), { recursive: true })
 
-  // 宿主只接受有效的 Open Yami 工程目录（有 Assets + Data），随便指一个仓库目录会被拒
-  const project = process.env.YAMI_TEST_PROJECT || '/home/deck/yami-fixture'
-  if (!fs.existsSync(path.join(project, 'Assets'))) {
-    console.log('跳过：找不到可用的测试工程 ' + project + '（可用 YAMI_TEST_PROJECT 指定）')
-    model.close(); fs.rmSync(CONFIG_DIR, { recursive: true, force: true }); fs.rmSync(sandbox, { recursive: true, force: true })
-    process.exit(0)
-  }
+  // 宿主只接受有效的 Open Yami 工程目录（有 Assets + Data）。
+  // 这段流程只需要"是个工程"，所以自己造一个最小工程（几十字节、退出即删）——
+  // 以前默认写死 /home/deck/yami-fixture，在 Windows 上这一整段端到端**从来没跑过**。
+  const project = process.env.YAMI_TEST_PROJECT || require('./_fixture.cjs').minimalProject('yami-interrupt-proj-')
   const host = spawn(process.execPath, [path.join(sandbox, 'ai-host.js')], {
     cwd: sandbox,
     stdio: ['ignore', 'ignore', 'pipe'],

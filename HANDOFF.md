@@ -1526,6 +1526,16 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
     - **剩下的一条如实标 SKIP**：`找不到编译器时的降级路径` 需要"本机所有 tsc 候选都不存在"才构造得出来，而本机装了 Open Yami 编辑器（那是产品正常候选之一，`server.js:133`）→ 打印 `SKIP …不是通过，是没跑`，不算通过。
     - **验证**：全套 `tests/run-all.cjs` **34/34 套通过**；跑完 `%TEMP%` 里 yami/danjuan 残余 **10 个 / 0.04MB**（改前：单个 440MB、只增不减）；本次清理共回收 **22.79 GB**（C 盘可用 106.74 → 129.81 GB）。
 
+54. **测试套件在 Windows 上有一半在"优雅跳过"：4 条端到端 + 1 个只读段从没跑过（2026-09-15，第 53 项的续）**：
+    - **怎么发现的**：用户问"还有什么 bug"，于是把套件里所有 `/home/deck/...` 硬编码路径扫了一遍 —— 它们全都落在 `process.env.YAMI_TEST_PROJECT || '/home/deck/yami-fixture'` 这种默认值上，在 Windows 上等于"夹具不存在 → 静默跳过"，**绿色的 34/34 里有一部分是没跑的**。
+    - **改法（统一走 `tests/resolve-project.cjs`，不再有写死路径）**：
+      ① `test-interrupt` / `test-context-meter` / `test-message-pairs` 的端到端：只需要"宿主认的工程目录"，改用新增的 `_fixture.minimalProject()`（几十字节、退出即删），不再依赖 Linux 夹具；
+      ② `test-acceptance` 的只读段：真实工程改用 `resolveProject()`（= 本机 D:\new-game），引擎 tsc 交给产品自己找（env 留空即"不指定"）；
+      ③ `test-todos` / `test-playtest-smoke` 的夹具默认值同样是 Linux 路径 → 改用 `resolveProject()`（这两套以前整片没跑）。
+    - **顺手拆掉同一颗雷**：另外 **6 个**套件（`test-changelog` / `test-todos` / `test-playtest-smoke` / `test-mcp-ai-tools` / `test-ai-repair` / `test-mcp-approval-diff`）各自有一份 `copyFixture()` 整份拷贝真工程 —— 只要夹具解析一修好，它们就会跟第 53 项那两颗一样每个 440MB。全部改成 `_fixture.copyProject()`（跳过媒体 + 退出即删）。
+    - **跑起来之后真抓到一条假警报**：`test-context-meter` 的"压缩后占用回落到阈值以下"报 `2963 < 2400`。查过产品侧（`ai-host.js:624`"保留量永远不得大于触发门槛，保证压缩后腾出至少 75% 窗口"）后确认：**是测试的窗口选得太小** —— 3000 token 的窗口里，系统提示词 + 38 个工具 schema 本身就近 2000，摘要 + 保留尾巴再加进去，物理上不可能落到 2400 以下。端到端改用 12000 的窗口（阈值 9600，保留 1920）并把轮数从 10 提到 25（10 轮只到 68%，触发不了），承诺这才检查得动；刻度文案断言也跟着由窗口推导，不再写死 `/3k`。
+    - **验证**：`node tests/run-all.cjs` **34/34 套通过**；套件里现在只剩 **1 处 SKIP**（就是第 53 项那条"本机另有 tsc、构造不出没编译器的局面"），其余全部真跑；跑完 `%TEMP%` 残留 22 个 / **0.08MB**。
+
 ## 3.3 未完成 / 未验证 / 已知限制
 
 | 项目 | 状态 | 说明 |

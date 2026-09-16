@@ -185,15 +185,8 @@ async function main() {
   fs.writeFileSync(path.join(sandbox, 'runtime', 'yami-mcp', 'server.js'), FAKE_MCP)
   fs.cpSync(path.join(ROOT, 'runtime', 'yami-mcp', 'modules'), path.join(sandbox, 'runtime', 'yami-mcp', 'modules'), { recursive: true })
 
-  const project = process.env.YAMI_TEST_PROJECT || '/home/deck/yami-fixture'
-  if (!fs.existsSync(path.join(project, 'Assets'))) {
-    console.log('\n跳过端到端：找不到可用的测试工程 ' + project + '（可用 YAMI_TEST_PROJECT 指定）')
-    model.close()
-    fs.rmSync(CONFIG_DIR, { recursive: true, force: true })
-    fs.rmSync(sandbox, { recursive: true, force: true })
-    console.log(`\n########## 消息序列自愈: ${passed} PASS / ${failed} FAIL ##########`)
-    process.exit(failed > 0 ? 1 : 0)
-  }
+  // 同 test-context-meter：端到端用最小工程，别依赖某台机器的 Linux 路径
+  const project = process.env.YAMI_TEST_PROJECT || require('./_fixture.cjs').minimalProject('yami-pairs-proj-')
 
   // 事故现场：磁盘上已经躺着一条"带 tool_calls 却没有应答"的坏会话
   fs.mkdirSync(SESSION_DIR, { recursive: true })

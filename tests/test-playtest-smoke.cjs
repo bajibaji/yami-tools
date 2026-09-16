@@ -19,7 +19,8 @@ const { spawn } = require('child_process')
 
 const ROOT = path.resolve(__dirname, '..')
 const MCP = path.join(ROOT, 'runtime', 'yami-mcp', 'server.js')
-const FIXTURE = process.env.YAMI_TEST_PROJECT || '/home/deck/yami-fixture'
+// 夹具解析统一走 resolve-project.cjs —— 以前默认 /home/deck/yami-fixture，在 Windows 上这整套等于没跑
+const FIXTURE = require('./resolve-project.cjs').resolveProject()
 
 let passed = 0
 let failed = 0
@@ -28,17 +29,9 @@ function check(name, condition, detail = '') {
   else { failed++; console.error('  FAIL  ' + name + (detail ? '  [' + detail + ']' : '')) }
 }
 
+// 统一走 tests/_fixture.cjs：跳过媒体素材（单个夹具 440MB → 18MB）+ 退出时自动删
 function copyFixture() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yami-smoke-'))
-  for (const entry of ['Assets', 'Data', 'Script']) {
-    const from = path.join(FIXTURE, entry)
-    if (fs.existsSync(from)) fs.cpSync(from, path.join(dir, entry), { recursive: true })
-  }
-  for (const file of ['tsconfig.json', 'game.yamirpg']) {
-    const from = path.join(FIXTURE, file)
-    if (fs.existsSync(from)) fs.copyFileSync(from, path.join(dir, file))
-  }
-  return dir
+  return require('./_fixture.cjs').copyProject('yami-smoke-', ['Assets', 'Data', 'Script'], ['tsconfig.json', 'game.yamirpg'])
 }
 
 function startMcp(projectDir, extraEnv = {}) {

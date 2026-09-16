@@ -29,8 +29,13 @@ const AI_PORT = 18368 + Math.floor(Math.random() * 400)
 const MODEL_PORT = AI_PORT + 1000
 const CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'yami-ctx-'))
 const SESSION_DIR = path.join(CONFIG_DIR, 'sessions')
-// 小窗口便于在测试里触发压缩：阈值 = 3000 × 0.8 = 2400 token，保留 = 3000 × 0.16 = 480 token
+// 单元用的窗口规格：阈值 = 3000 × 0.8 = 2400 token，保留 = 3000 × 0.16 = 480 token
 const TEST_WINDOW = 3000
+// 端到端用的窗口。为什么不能沿用 3000：那条"压缩后占用回落到阈值以下"的承诺要求
+// 系统提示词 + 工具定义 + 摘要 + 保留尾巴**一起**小于阈值，而 38 个工具的 schema 本身就近 2000 token，
+// 3000 的窗口在物理上做不到（首次在 Windows 上真跑这条时就撞上了：压缩完 2963 > 2400）。
+// 12000 的窗口下阈值 9600、保留 1920，固定开销 + 摘要仍能落回阈值内 → 这条承诺才检查得动。
+const E2E_WINDOW = 12000
 
 let passed = 0
 let failed = 0
@@ -224,15 +229,8 @@ async function main() {
   fs.writeFileSync(path.join(sandbox, 'runtime', 'yami-mcp', 'server.js'), FAKE_MCP)
   fs.cpSync(path.join(ROOT, 'runtime', 'yami-mcp', 'modules'), path.join(sandbox, 'runtime', 'yami-mcp', 'modules'), { recursive: true })
 
-  const project = process.env.YAMI_TEST_PROJECT || '/home/deck/yami-fixture'
-  if (!fs.existsSync(path.join(project, 'Assets'))) {
-    console.log('\n跳过端到端：找不到可用的测试工程 ' + project + '（可用 YAMI_TEST_PROJECT 指定）')
-    model.close()
-    fs.rmSync(CONFIG_DIR, { recursive: true, force: true })
-    fs.rmSync(sandbox, { recursive: true, force: true })
-    console.log(`\n########## 上下文计量与压缩: ${passed} PASS / ${failed} FAIL ##########`)
-    process.exit(failed > 0 ? 1 : 0)
-  }
+  // 端到端只需要"宿主认的工程目录"：自己造最小的那个，不再依赖某台机器的 /home/deck/yami-fixture
+  const project = process.env.YAMI_TEST_PROJECT || require('./_fixture.cjs').minimalProject('yami-ctx-proj-')
 
   const host = spawn(process.execPath, [path.join(sandbox, 'ai-host.js')], {
     cwd: sandbox,
@@ -243,7 +241,7 @@ async function main() {
       YAMI_AI_TOKEN: TOKEN,
       YAMI_AI_CONFIG_DIR: CONFIG_DIR,
       YAMI_PROJECT_ROOT: project,
-      YAMI_AI_CONTEXT_WINDOW: String(TEST_WINDOW),
+      YAMI_AI_CONTEXT_WINDOW: String(E2E_WINDOW),
       YAMI_AI_CONTEXT_KEEP: '2'
     }
   })
@@ -263,13 +261,15 @@ async function main() {
     await request('/chat', 'POST', { sessionId: 'cold-1', message: '你好' })
     const cold = await request('/status?sessionId=cold-1')
     check('短对话不触发压缩', cold.context.summary === false)
-    check('刻度按 token 与真实窗口显示', /\/3k · \d+%$/.test(String(cold.context.label)), String(cold.context.label))
+    const windowLabel = new RegExp('\\/' + (E2E_WINDOW / 1000) + 'k · \\d+%$')
+  check('刻度按 token 与真实窗口显示', windowLabel.test(String(cold.context.label)), String(cold.context.label))
     check('刻度用了真实用量锚点', cold.context.calibrated === true)
 
     console.log('\n########## 9. 端到端：占用到 80% 自动压缩 ##########')
     const filler = '这是一段用来把上下文推到阈值以上的中文填充内容。'.repeat(40)   // 约 1200 token/轮
     let compressed = false
-    for (let round = 0; round < 10 && !compressed; round++) {
+    // 轮数要够把 12000 的窗口推到 80%：每轮约 1200 token，10 轮只能到 68%（实测），所以放到 25 轮
+  for (let round = 0; round < 25 && !compressed; round++) {
       await request('/chat', 'POST', { sessionId: 'hot-1', message: `第 ${round} 轮：` + filler })
       const state = await request('/status?sessionId=hot-1')
       compressed = state.context.summary === true
@@ -297,7 +297,7 @@ async function main() {
     check('压缩后历史序列仍然合法', pairs.findSequenceProblems(hotFile.messages).length === 0, pairs.findSequenceProblems(hotFile.messages).join('; ') || '合法')
     check('发给模型的每一次请求都合法', seen.every(item => item.problems.length === 0))
     check('刻度标记为已压缩', hotState.context.summary === true)
-    check('刻度文案仍带窗口与占比', /\/3k · \d+%$/.test(String(hotState.context.label)), String(hotState.context.label))
+    check('刻度文案仍带窗口与占比', windowLabel.test(String(hotState.context.label)), String(hotState.context.label))
 
     console.log('\n########## 10. 端到端：压缩后还能继续聊 ##########')
     const after = await request('/chat', 'POST', { sessionId: 'hot-1', message: '压缩之后还在吗' })

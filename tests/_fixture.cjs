@@ -57,4 +57,18 @@ function copyProject(prefix, entries, files) {
   return dir
 }
 
-module.exports = { copyProject, tempDir, FIXTURE, SKIP_EXT }
+/**
+ * 最小可用工程：只把"形状"造出来（game.yamirpg + Assets + Data），不拷任何真资源。
+ * 给那些只需要"宿主认这个目录是工程"的流程用（打断 / 上下文计量 / 消息自愈的端到端）。
+ */
+function minimalProject(prefix) {
+  const dir = tempDir(prefix || 'yami-mini-')
+  fs.writeFileSync(path.join(dir, 'game.yamirpg'), JSON.stringify({ title: '测试工程' }))
+  fs.mkdirSync(path.join(dir, 'Assets'), { recursive: true })
+  fs.mkdirSync(path.join(dir, 'Data'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'Data', 'config.json'), JSON.stringify({ title: '测试工程' }))
+  fs.writeFileSync(path.join(dir, 'Data', 'manifest.json'), JSON.stringify({ guidMap: {}, pathMap: {}, project: {} }))
+  return dir
+}
+
+module.exports = { copyProject, minimalProject, tempDir, FIXTURE, SKIP_EXT }

@@ -22,8 +22,9 @@ const { spawn } = require('child_process')
 const ROOT = path.resolve(__dirname, '..')
 const MCP = path.join(ROOT, 'runtime', 'yami-mcp', 'server.js')
 const FIXTURE = require('./resolve-project.cjs').resolveProject()
-const REAL_PROJECT = process.env.YAMI_REAL_PROJECT || '/home/deck/Desktop/ SHIT/GITHUB/new-game'
-const ENGINE_TSC = process.env.YAMI_TSC_JS || '/home/deck/Desktop/ SHIT/GITHUB/2/node_modules/typescript/lib/tsc.js'
+// 真实工程与引擎 tsc 都不许写死某台机器的路径：工程走统一解析，tsc 交给产品自己找（env 留空即"不指定"）
+const REAL_PROJECT = process.env.YAMI_REAL_PROJECT || FIXTURE
+const ENGINE_TSC = process.env.YAMI_TSC_JS || ''
 
 let passed = 0
 let failed = 0
@@ -32,17 +33,9 @@ function check(name, condition, detail = '') {
   else { failed++; console.error('  FAIL  ' + name + (detail ? '  [' + detail + ']' : '')) }
 }
 
-function copyProject(from) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yami-accept-'))
-  for (const entry of ['Assets', 'Data', 'Script']) {
-    const source = path.join(from, entry)
-    if (fs.existsSync(source)) fs.cpSync(source, path.join(dir, entry), { recursive: true })
-  }
-  for (const file of ['tsconfig.json', 'game.yamirpg', 'index.html']) {
-    const source = path.join(from, file)
-    if (fs.existsSync(source)) fs.copyFileSync(source, path.join(dir, file))
-  }
-  return dir
+// 统一走 tests/_fixture.cjs：跳过媒体素材 + 退出时自动删（以前整份拷贝 440MB 且不清理）
+function copyProject() {
+  return require('./_fixture.cjs').copyProject('yami-accept-', ['Assets', 'Data', 'Script'], ['tsconfig.json', 'game.yamirpg', 'index.html'])
 }
 
 function startMcp(projectDir) {
