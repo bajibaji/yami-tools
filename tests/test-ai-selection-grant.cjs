@@ -39,17 +39,10 @@ function check(name, condition, detail) {
   else { failed++; console.error('  FAIL  ' + name + extra) }
 }
 
+// 工程夹具统一走 tests/_fixture.cjs：大素材（音频/视频）不拷、退出时自动删 ——
+// 以前这里整份拷贝且从不清理，单次 440MB × 49 个残留 = 21GB（把用户 C 盘塞爆那次）
 function copyFixture() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yami-selection-'))
-  for (const entry of ['Assets', 'Data', 'Script']) {
-    const from = path.join(FIXTURE, entry)
-    if (fs.existsSync(from)) fs.cpSync(from, path.join(dir, entry), { recursive: true })
-  }
-  for (const file of ['tsconfig.json', 'game.yamirpg']) {
-    const from = path.join(FIXTURE, file)
-    if (fs.existsSync(from)) fs.copyFileSync(from, path.join(dir, file))
-  }
-  return dir
+  return require('./_fixture.cjs').copyProject('yami-selection-', ['Assets', 'Data', 'Script'], ['tsconfig.json', 'game.yamirpg'])
 }
 
 /* ============================== 假编辑器桥（5967 同款最小实现） ============================== */

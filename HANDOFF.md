@@ -1516,6 +1516,16 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
       ③ **"正在编辑的文件"没进上下文**：他点的是界面元素，要改的是它所在的 `.ui`，而资源树里亮着的可能只是个目录。新增 `editingFile`：界面页取 `UI.meta`、场景页取 `Scene.meta`（引擎真实字段：`ui-window.ts:534` / `scene-window.ts:779` 都存当前文件的 FileMeta；`metadata.ts:30` 有 path）。摘要里分工写清：`选中「删除存档数据」·文件「大地图.ui」 → Assets/UI/大地图.….ui`。
     - **验证**：`tests/test-ui-operation.cjs` 新增 A3d **整条链复现用户那一下**（界面树节点 + 列表焦点 + 资源树亮着文件夹 + `UI.meta`）四条断言，摘要实测 `【当前环境】选中「删除存档数据」·文件「大地图.ui」 → Assets/UI/大地图.aabbccdd11223344.ui`；另加"含糊区域级不许盖精确候选"与干净沙盒里的弱信号对照 → **104 PASS**；`test-ai-agent.cjs` 的 F8 契约与新增"点选树节点"摘要断言同步；全量 `tests/run-all.cjs` 34/34 套通过。
 
+53. **测试夹具把用户 C 盘塞爆了 21GB：拷贝真工程 + 从不清理（2026-09-15，用户报"C 盘拉屎"）**：
+    - **用户报的现象**：`C:\Users\dange\AppData\Local\Temp` 里堆了 20 多 GB 的 yami 东西。
+    - **实测**：`yami-selection-*` **49 个、21.08 GB**（单个 440.6MB），另有 `yami-compiler-*` 等；全目录 TEMP 23.18GB。单个夹具里 433MB 是 `Assets/音频/音乐` 的 wav/ogg。
+    - **根因**：`test-ai-selection-grant.cjs` 与 `test-compiler-lookup.cjs` 的 `copyFixture()` 把**真工程整份** `cpSync` 进 `%TEMP%`，而且**从不删**（没有 `process.on('exit')` 清理）。每跑一次总入口就多一个 440MB。
+    - **改法**：新增 `tests/_fixture.cjs`（唯一入口）：按**扩展名**跳过音频/图片/视频/字体/压缩包（440.6MB → **18.0MB**，4919 → 692 个文件），并在 `process.on('exit')` 里删掉自己建的目录；`tests/run-all.cjs` 起跑前扫一遍 `%TEMP%`，把**2 小时前**的 `yami-*`/`danjuan-*` 残留删掉并如实打印回收了多少（正在跑的这套不动）。
+    - **踩到的坑（差点冤枉产品代码）**：第一版按"体积 > 1MB 就跳过"过滤，结果把 `Script/electron/electron.d.ts`（1.01MB）与 `Data/manifest.json`（2.85MB）也跳过了 —— tsc 少一个类型声明直接报 1 个错，测试于是"证明"编译门禁有问题。**判据必须是"是不是媒体素材"，不能是"文件大不大"**。
+    - **顺带查出的两个测试基础设施 bug**：① `test-compiler-lookup.cjs` 里引擎根硬编码 `/home/deck/Desktop/ SHIT/GITHUB/2`（Windows 上等于没有引擎）—— 现在统一走 `resolve-project.cjs` 新增的 `resolveEngineRoot()`（按"存在 `Project/Script`"挑候选）；② 该套件以前**在 Windows 上永远静默跳过**（夹具路径写死 Linux），"看着是绿的，其实一次都没跑过" —— 现在真的跑起来了：**14 PASS / 0 FAIL**（含"平台原生 tsc 存在 / 自动找到并编译通过 errorCount=0 / 语法错误被拦下并回滚"）。
+    - **剩下的一条如实标 SKIP**：`找不到编译器时的降级路径` 需要"本机所有 tsc 候选都不存在"才构造得出来，而本机装了 Open Yami 编辑器（那是产品正常候选之一，`server.js:133`）→ 打印 `SKIP …不是通过，是没跑`，不算通过。
+    - **验证**：全套 `tests/run-all.cjs` **34/34 套通过**；跑完 `%TEMP%` 里 yami/danjuan 残余 **10 个 / 0.04MB**（改前：单个 440MB、只增不减）；本次清理共回收 **22.79 GB**（C 盘可用 106.74 → 129.81 GB）。
+
 ## 3.3 未完成 / 未验证 / 已知限制
 
 | 项目 | 状态 | 说明 |

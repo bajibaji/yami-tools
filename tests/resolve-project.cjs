@@ -49,4 +49,28 @@ function resolveProject() {
   return ''
 }
 
-module.exports = { resolveProject, isProjectRoot, projectCandidates }
+/**
+ * 引擎源码仓库的根（测试要用它自带的 tsc 验证编译门禁）。
+ * 同样不许写死某一台机器的路径 —— 之前 test-compiler-lookup 里硬编码的是
+ * '/home/deck/Desktop/ SHIT/GITHUB/2'，在 Windows 上等于永远找不到引擎。
+ * 判定口径：这个目录里有 Project/Script（引擎 TS 源码）。
+ */
+function engineRootCandidates() {
+  return [
+    process.env.YAMI_ENGINE_ROOT,
+    'D:\\Documents\\GitHub\\2',
+    path.resolve(ROOT, '..', '2'),
+    '/home/deck/Desktop/ SHIT/GITHUB/2'
+  ].filter(Boolean)
+}
+
+function resolveEngineRoot() {
+  for (const dir of engineRootCandidates()) {
+    try {
+      if (fs.existsSync(path.join(dir, 'Project', 'Script'))) return path.resolve(dir)
+    } catch (e) { /* 换下一个候选 */ }
+  }
+  return ''
+}
+
+module.exports = { resolveProject, isProjectRoot, projectCandidates, resolveEngineRoot, engineRootCandidates }

@@ -44,6 +44,52 @@ const SUITE = [
   ['test-autoupdate.mjs',   '热更新端到端 (需联网)'],
 ];
 
+/* 起跑前先扫一遍上一次留下的临时夹具。
+   这些套件都往 %TEMP% 里拷工程副本，一旦被 Ctrl+C / 崩溃打断就会留下几十上百 MB 的垃圾 ——
+   2026-09-15 用户报"C 盘拉屎"时本机攒了 49 个 yami-selection-*（21GB）。
+   只删 2 小时前的（正在跑的这套不动），删掉多少如实打出来。 */
+const fs = require('fs')
+const os = require('os')
+const TEMP_PREFIXES = ['yami-', 'danjuan-']
+const SWEEP_MIN_AGE_MS = 2 * 60 * 60 * 1000
+function sizeOf(target) {
+  let total = 0
+  const stack = [target]
+  while (stack.length) {
+    const cur = stack.pop()
+    let st
+    try { st = fs.lstatSync(cur) } catch { continue }
+    if (st.isDirectory()) {
+      let kids = []
+      try { kids = fs.readdirSync(cur) } catch { /* 读不到就跳过 */ }
+      for (const kid of kids) stack.push(path.join(cur, kid))
+    } else {
+      total += st.size
+    }
+  }
+  return total
+}
+function sweepTemp() {
+  let freed = 0
+  let count = 0
+  let entries = []
+  try { entries = fs.readdirSync(os.tmpdir()) } catch { return }
+  const now = Date.now()
+  for (const name of entries) {
+    if (!TEMP_PREFIXES.some(prefix => name.startsWith(prefix))) continue
+    const full = path.join(os.tmpdir(), name)
+    try {
+      if (now - fs.statSync(full).mtimeMs < SWEEP_MIN_AGE_MS) continue
+      freed += sizeOf(full)
+      fs.rmSync(full, { recursive: true, force: true })
+      count++
+    } catch { /* 删不掉就留着，不阻断测试 */ }
+  }
+  if (count) console.log("[清理] 删掉 " + count + " 个上次遗留的临时夹具，回收 " + (freed / 1048576).toFixed(1) + " MB")
+}
+
+sweepTemp()
+
 let failed = 0;
 for (const [file, label] of SUITE) {
   console.log(`\n########## ${file} — ${label} ##########`);

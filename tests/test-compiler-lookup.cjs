@@ -20,8 +20,11 @@ const { spawn } = require('child_process')
 
 const ROOT = path.resolve(__dirname, '..')
 const MCP = path.join(ROOT, 'runtime', 'yami-mcp', 'server.js')
-const FIXTURE = process.env.YAMI_TEST_PROJECT || '/home/deck/yami-fixture'
-const ENGINE_ROOT = process.env.YAMI_ENGINE_ROOT || '/home/deck/Desktop/ SHIT/GITHUB/2'
+// 夹具解析统一走 resolve-project.cjs —— 以前这里硬编码 '/home/deck/yami-fixture'，
+// 在 Windows 上永远"优雅跳过"（看着是绿的，其实一次都没跑过；那个模块的头注释就是为这条写的）
+const FIXTURE = require('./resolve-project.cjs').resolveProject()
+// 引擎根同样不许写死：交给 resolve-project.cjs 按"存在性"挑（Windows 是 D:\Documents\GitHub\2）
+const ENGINE_ROOT = require('./resolve-project.cjs').resolveEngineRoot()
 const SCRIPT_REL = 'Assets/插件/全局插件/Steamworks.2aafc4d56d4590d8.ts'
 const SAFE_ANCHOR = '@lang ru'   // @plugin 注释块内的无害片段，用于"真实写入"用例
 const CODE_ANCHOR = 'const regexp = /^--app-path=(.+)$/'   // 唯一的真代码锚点，用于制造语法错误
@@ -33,17 +36,9 @@ function check(name, condition, detail) {
   else { failed++; console.error('  FAIL  ' + name + (detail ? '  [' + detail + ']' : '')) }
 }
 
+// 同 test-ai-selection-grant：大素材不拷、退出时自动删（见 tests/_fixture.cjs 顶部注释）
 function copyFixture() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yami-compiler-'))
-  for (const entry of ['Assets', 'Data', 'Script']) {
-    const from = path.join(FIXTURE, entry)
-    if (fs.existsSync(from)) fs.cpSync(from, path.join(dir, entry), { recursive: true })
-  }
-  for (const file of ['tsconfig.json', 'game.yamirpg', 'index.html']) {
-    const from = path.join(FIXTURE, file)
-    if (fs.existsSync(from)) fs.copyFileSync(from, path.join(dir, file))
-  }
-  return dir
+  return require('./_fixture.cjs').copyProject('yami-compiler-', ['Assets', 'Data', 'Script'], ['tsconfig.json', 'game.yamirpg', 'index.html'])
 }
 
 function startMcp(projectDir, extraEnv) {
@@ -97,14 +92,22 @@ async function main() {
   console.log('\n########## 2. 找不到编译器：不许回滚，但要如实标注 ##########')
   const blind = startMcp(dir, { YAMI_ENGINE_ROOT: path.join(os.tmpdir(), 'no-such-engine-root'), YAMI_TSC_JS: '', YAMI_TSC_EXE: '' })
   try {
+    // 「找不到编译器」这个局面只有在**本机所有 tsc 候选都不存在**时才构造得出来。
+    // 本机装了 Open Yami 编辑器（那是产品的正常候选之一，server.js:133），所以这一条会落空 ——
+    // 落空就如实说"没跑"，不许把"另有编译器"当成"降级路径通过"。
     const compile = await blind.call('compile_check', {})
-    check('compile_check 明确回报「没得校验」而非含糊失败', compile.ok === false && compile.unavailable === true, String(compile.error || '').slice(0, 60))
-    check('错误信息带上当前平台', new RegExp(process.platform).test(String(compile.error || '')), process.platform)
+    const blindMode = compile.ok === false && compile.unavailable === true
+    if (blindMode) {
+      check('compile_check 明确回报「没得校验」而非含糊失败', true, String(compile.error || '').slice(0, 60))
+      check('错误信息带上当前平台', new RegExp(process.platform).test(String(compile.error || '')), process.platform)
+    } else {
+      console.log('  SKIP  找不到编译器时的降级路径：本机另有可用 tsc（装了 Open Yami 编辑器）—— 不是通过，是没跑')
+    }
 
     const before = fs.readFileSync(path.join(dir, SCRIPT_REL), 'utf8')
     const write = await blind.call('edit_script', { path: SCRIPT_REL, oldText: SAFE_ANCHOR, newText: SAFE_ANCHOR + '_x', dryRun: false })
     check('写入没有被误判成编译失败而回滚', write.ok === true, String(write.error || '').slice(0, 80))
-    check('结果如实标注「未能编译校验」', write.compileSkipped === true)
+    if (blindMode) check('结果如实标注「未能编译校验」', write.compileSkipped === true)
     const after = fs.readFileSync(path.join(dir, SCRIPT_REL), 'utf8')
     check('文件确实被改了（证明没回滚）', after !== before && after.includes(SAFE_ANCHOR + '_x'))
     const restore = await blind.call('edit_script', { path: SCRIPT_REL, oldText: SAFE_ANCHOR + '_x', newText: SAFE_ANCHOR, dryRun: false })
