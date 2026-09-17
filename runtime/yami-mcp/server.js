@@ -24,6 +24,7 @@ const EventBuilder = require('./modules/event-builder')
 const CdpClient = require('./modules/cdp-client')
 const RuntimeBridge = require('./modules/runtime-bridge')
 const EditorBridge = require('./modules/editor-bridge')
+const rle = require('./modules/rle')
 const { resolveInside, relativePath, sha256, writeAtomic, restoreBackup, listBackups } = require('./modules/file-ops')
 const { unifiedDiff } = require('./modules/diff')
 const { snapshotProject, diffSnapshot, buildChangelog } = require('./modules/changelog')
@@ -683,6 +684,168 @@ function readDataJson(name) {
 }
 
 /**
+ * 把引擎的"文件夹树"数据表摊平（属性表、变量表都是 `{class:'folder', children:[...]}` 这种形状）。
+ * 用显式栈，不写自调用。
+ */
+function collectTreeEntries(root, fields) {
+  const out = []
+  const stack = [{ node: root, key: '' }]
+  while (stack.length) {
+    const cur = stack.pop()
+    const node = cur.node
+    if (!node || typeof node !== 'object') continue
+    if (Array.isArray(node)) { for (let i = node.length - 1; i >= 0; i--) stack.push({ node: node[i], key: '' }); continue }
+    // id 有两种写法：条目自带 id（属性表/变量表），或者**以 GUID 为键**的字典（plugins.json）
+    const id = (typeof node.id === 'string' && node.id) ? node.id : (/^[0-9a-f]{16}$/.test(cur.key) ? cur.key : '')
+    if (id) {
+      const entry = { id: id }
+      for (const f of fields) entry[f] = node[f]
+      out.push(entry)
+    }
+    // 往下走**所有**对象字段：属性表条目在 keys 里、变量表在 children 里，
+    // 只认 children 的话属性表一条都读不出来（第一次就踩了：list_attributes 返回 0 条）
+    for (const key of Object.keys(node)) {
+      const value = node[key]
+      if (value && typeof value === 'object') stack.push({ node: value, key: key })
+    }
+  }
+  return out
+}
+
+/**
+ * 属性表（Data/attribute.json）。**属性键就是这里的 id**，不是 key/name ——
+ * 本机工程实测：a5fd5e9f229abb2d=生命值(key health)、a8451228fe0c120a=最大生命值。
+ * 角色文件里写的是 {"key":"a5fd5e9f229abb2d","value":700}，所以 AI 引用属性必须用 id。
+ */
+function attributeEntries() {
+  const data = readDataJson('attribute.json')
+  if (!data || data.__parseError) return []
+  return collectTreeEntries(data, ['key', 'name', 'type'])
+}
+
+/** 变量表（Data/variables.json）。同样是 id 键：变量引用写的是 id（实测 182 处全按 id） */
+function variableEntries() {
+  const data = readDataJson('variables.json')
+  if (!data || data.__parseError) return []
+  return collectTreeEntries(data, ['name', 'value', 'note']).map(entry => ({
+    id: entry.id,
+    name: entry.name || '',
+    note: entry.note || '',
+    // 引擎按 typeof 比类型（variable.ts:118），null 的 typeof 是 'object' —— 这里如实照抄
+    valueType: entry.value === null ? 'object' : typeof entry.value
+  }))
+}
+
+/** 写盘后给插件脚本做一次引擎级 lint（tsc 查不出这些，只有引擎运行时才知道） */
+function lintPluginScripts(files) {
+  const issues = []
+  const owners = new Map()
+  // 类名只对**全局插件**才是键（event.ts:539-549：以 constructor.name 注册进 PluginManager）；
+  // 自定义指令是按 GUID 注册的（Command.scriptMap[guid]），类名重名不影响 ——
+  // 第一版没区分，把指令脚本也算进来，真机上报出 6 条冲突，其中一部分是误报。
+  const pluginGuids = new Set()
+  const plugins = readDataJson('plugins.json')
+  if (plugins && !plugins.__parseError) {
+    for (const entry of collectTreeEntries(plugins, ['name', 'enabled'])) if (entry.id) pluginGuids.add(entry.id)
+  }
+  for (const f of files || []) {
+    if (f.type !== 'script' || !/^Assets\/插件\//.test(f.path)) continue
+    if (pluginGuids.size && !pluginGuids.has(parseGuidFromName(path.basename(f.path)) || '')) continue
+    let code = ''
+    try { code = fs.readFileSync(path.join(ROOT, f.path), 'utf8') } catch { continue }
+    // ① 全局插件以**类名**为键挂在 PluginManager 上（event.ts:539-549），重名会互相覆盖
+    const classMatch = code.match(/export\s+default\s+class\s+([A-Za-z_$][\w$]*)/)
+    if (classMatch) {
+      const name = classMatch[1]
+      const list = owners.get(name) || []
+      list.push(f.path)
+      owners.set(name, list)
+    }
+    // ② onBeforeSave 必须用引擎注入的 define(key, value)；直接改 data 不会进存档
+    const saveBody = extractMethodBody(code, 'onBeforeSave')
+    if (saveBody && /\bdata\s*\.\s*[\w$]+\s*=/.test(saveBody)) {
+      issues.push({ severity: 'warning', code: 'plugin-save-without-define', file: f.path, message: 'onBeforeSave 里直接给 data 赋值不会被保存：必须用引擎注入的 define(key, value)（event.ts:1135-1192）' })
+    }
+    // ③ data.plugins 是只读 Proxy，赋值会直接抛错
+    const loadBody = extractMethodBody(code, 'onBeforeLoad')
+    if ((loadBody && /data\s*\.\s*plugins\s*\[[^\]]*\]\s*=/.test(loadBody)) || (saveBody && /data\s*\.\s*plugins\s*\[[^\]]*\]\s*=/.test(saveBody))) {
+      issues.push({ severity: 'warning', code: 'plugin-plugins-readonly', file: f.path, message: 'data.plugins 是只读 Proxy（event.ts:1135 起）：对它赋值会抛错，请只读取 data.plugins[guid]' })
+    }
+  }
+  for (const [name, list] of owners) {
+    if (list.length > 1) {
+      issues.push({
+        severity: 'error', code: 'plugin-class-conflict', files: list.slice(0, 3),
+        message: '全局插件的类名重复：' + name + '（' + list.length + ' 个脚本）—— 引擎以类名为键注册（PluginManager[类名]），后加载的会覆盖前一个，两个插件的功能会互相顶掉'
+      })
+    }
+  }
+  return issues
+}
+
+/** 抠出某个方法体内的大括号内容（够用即可：插件脚本里的这几个方法都不长） */
+function extractMethodBody(code, method) {
+  const start = code.indexOf(method)
+  if (start < 0) return ''
+  const open = code.indexOf('{', start)
+  if (open < 0) return ''
+  let depth = 0
+  for (let i = open; i < code.length; i++) {
+    if (code[i] === '{') depth++
+    else if (code[i] === '}') {
+      depth--
+      if (depth === 0) return code.slice(open + 1, i)
+    }
+  }
+  return ''
+}
+
+/**
+ * 全局变量引用体检：引擎对类型不符的赋值**静默丢弃**（variable.ts:118），
+ * 对不存在的键同样静默丢弃 —— 写错了既不报错也没效果，是最难查的一类坏。
+ * 实测本机工程：182 处变量引用按 id 命中，另有 **81 处指向不存在的变量**。
+ */
+function checkVariableRefs(files) {
+  const issues = []
+  const variables = variableEntries()
+  if (!variables.length) return issues
+  const byId = new Map(variables.map(v => [v.id, v]))
+  const EXPECTED = { setBoolean: 'boolean', setNumber: 'number', setString: 'string', setObject: 'object', setList: 'object' }
+  const seen = new Set()
+  for (const f of files || []) {
+    if (!DATA_TYPES.includes(f.type)) continue
+    let data
+    try { data = JSON.parse(fs.readFileSync(path.join(ROOT, f.path), 'utf8')) } catch { continue }
+    const stack = [data]
+    while (stack.length) {
+      const node = stack.pop()
+      if (!node || typeof node !== 'object') continue
+      if (Array.isArray(node)) { for (const item of node) stack.push(item); continue }
+      const expected = EXPECTED[node.id]
+      const variable = node.params && node.params.variable
+      if (expected && variable && typeof variable === 'object' && variable.type === 'global' && typeof variable.key === 'string') {
+        const key = variable.key
+        const hit = byId.get(key)
+        const dedupe = f.path + '|' + node.id + '|' + key
+        if (!seen.has(dedupe)) {
+          seen.add(dedupe)
+          if (!hit) {
+            issues.push({ severity: 'warning', code: 'unknown-variable', variable: key, message: f.path + ' 的 ' + node.id + ' 引用不存在的全局变量 ' + key + '（引擎会静默丢弃这次赋值）' })
+          } else if (hit.valueType !== expected) {
+            issues.push({ severity: 'warning', code: 'variable-type-mismatch', variable: key, message: f.path + ' 的 ' + node.id + ' 写「' + (hit.name || key) + '」，但它的初始值是 ' + hit.valueType + '（引擎按 typeof 比对，不符就静默丢弃）' })
+          }
+        }
+      }
+      for (const k of Object.keys(node)) {
+        const value = node[k]
+        if (value && typeof value === 'object') stack.push(value)
+      }
+    }
+  }
+  return issues
+}
+
+/**
  * 收集磁盘上所有 GUID → 来源（跨 Assets 文件 + Data 表）。
  * 除了「文件名里的 GUID」，还必须收**数据表里注册的 id** —— 否则 eventId / easingId 这类引用
  * 会被判成悬空（实测：引擎自带的缓动曲线 id 全在 Data/easings.json 里，不是文件名）。
@@ -883,6 +1046,34 @@ function validateProject() {
       if (!manifestPaths.has(f.path)) issues.push({ severity: 'warning', code: 'not-in-manifest', message: `磁盘文件不在 manifest 中（编辑器会重建）: ${f.path}` })
     }
   }
+  // 5) 压缩字段（RLE）**真解码**校验：以前只比字符串长度，串本身坏掉是看不出来的
+  for (const f of files) {
+    if (f.type !== 'scene') continue
+    let data
+    try { data = JSON.parse(fs.readFileSync(path.join(ROOT, f.path), 'utf8')) } catch { continue }
+    const width = Number(data.width) || 0
+    const height = Number(data.height) || 0
+    if (width && height && typeof data.terrains === 'string' && data.terrains) {
+      const got = rle.verifyTerrains(data.terrains, width, height)
+      if (!got.ok) issues.push({ severity: 'error', code: 'rle-invalid', file: f.path, message: '场景 terrains 压缩串坏掉了：' + got.error })
+    }
+    const stack = [data.objects || []]
+    while (stack.length) {
+      const list = stack.pop()
+      for (const node of list || []) {
+        if (!node || typeof node !== 'object') continue
+        if (Array.isArray(node.children)) stack.push(node.children)
+        if (typeof node.code === 'string' && node.code && node.width && node.height) {
+          const got = rle.verifyTiles(node.code, node.width, node.height)
+          if (!got.ok) issues.push({ severity: 'error', code: 'rle-invalid', file: f.path, message: '瓦片地图「' + (node.name || node.id || '') + '」的 code 坏掉了：' + got.error })
+        }
+      }
+    }
+  }
+  // 6) 插件脚本 lint（类名冲突 / onBeforeSave 没用 define / 改只读的 data.plugins）
+  for (const item of lintPluginScripts(files)) issues.push(item)
+  // 7) 全局变量引用体检（不存在的变量、类型不符 —— 引擎两种都静默丢弃）
+  for (const item of checkVariableRefs(files)) issues.push(item)
   return { ok: issues.every(i => i.severity !== 'error'), issues, stats: { files: files.length, duplicateGuids: [...guidMap.values()].filter(a => a.length > 1).length } }
 }
 
@@ -1194,6 +1385,29 @@ const tools = [
     description: '获取 Open Yami 编辑器与游戏运行时的实时环境上下文（当前编辑/运行的场景中文名、资源树/文件列表中选中的文件、检视器属性面板打开的对象、试玩状态等）。在回答用户涉及具体场景、当前选中道具/技能/事件时优先调用此工具。',
     readOnlyHint: true,
     inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'list_attributes',
+    description: '列出工程的角色/技能/状态/装备属性表（Data/attribute.json，可带 query 过滤）。**属性的键是这里的 id**（不是 key/name）：实测 a5fd5e9f229abb2d=生命值、a8451228fe0c120a=最大生命值；角色文件里写的就是 {"key":"<属性id>","value":700}。要读写角色属性、写事件指令参数时，先用这个工具把 id 查出来，别猜名字（引擎里没有 actor.hp 这种东西）。',
+    readOnlyHint: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '可选：按 id / key / 中文名模糊过滤，例如「生命」或「maxHealth」' }
+      }
+    }
+  },
+  {
+    name: 'read_tilemap',
+    description: '把场景的压缩地图解开给人看/给模型改：返回 terrains 与每张瓦片地图的**原始数值数组**（引擎 RLE 解码后的结果，不是压缩串）。要改地图就先用它读出数组、改好，再用 write_resource 写回（写回时会自动做编解码校验）。',
+    readOnlyHint: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: '场景文件路径，例如 Assets/场景/新手村.xxxxxxxxxxxxxxxx.scene' }
+      },
+      required: ['path']
+    }
   },
   {
     name: 'todo_write',
@@ -1998,10 +2212,36 @@ async function callTool(name, args) {
           let oldData = null
           try { oldData = JSON.parse(oldRaw) } catch { oldData = null }
           if (oldData) {
-            const shrink = (where, from, to) => {
-              if (typeof from !== 'string' || typeof to !== 'string') return
-              if (to.length >= from.length) return
-              issues.push({ severity: 'error', code: 'rle-shrunk', message: `${where}的压缩字段被写短了（${from.length} → ${to.length} 字符）：这是引擎算出来的 RLE，手改会让地图直接读不出来；请原样保留，或改用 patch_resource 只改别的字段` })
+            // 有了真编解码，判据就从「不许写短」升级成「**必须解得开**」：
+            //   解得开 → 放行（写短也可能是合法的重新编码：把一片空地压得更紧），并如实报告改了哪些元素；
+            //   解不开 → 拦下（引擎加载时会抛 RangeError，地图直接坏掉）。
+            const checkRle = (where, from, to, decode, encode) => {
+              if (typeof to !== 'string' || !to) {
+                if (typeof from === 'string' && from) issues.push({ severity: 'error', code: 'rle-missing', message: `${where}的压缩字段没了：引擎算出来的串必须保留` })
+                return
+              }
+              if (to === from) return
+              let oldValues = null
+              let newValues = null
+              try { newValues = decode(to) } catch (e) {
+                issues.push({ severity: 'error', code: 'rle-invalid', message: `${where}的压缩串解不开（引擎加载时会直接抛错）：${e.message}` })
+                return
+              }
+              const again = encode(newValues)
+              if (decode(again).length !== newValues.length) {
+                issues.push({ severity: 'error', code: 'rle-invalid', message: `${where}的压缩串重编码后对不上，拒绝写入` })
+                return
+              }
+              try { if (typeof from === 'string' && from) oldValues = decode(from) } catch { oldValues = null }
+              if (oldValues && oldValues.length === newValues.length) {
+                let changed = 0
+                for (let i = 0; i < newValues.length; i++) if (oldValues[i] !== newValues[i]) changed++
+                if (changed === 0 && to.length < from.length) {
+                  issues.push({ severity: 'info', code: 'rle-recompressed', message: `${where}内容没变、压缩串变短了（${from.length} → ${to.length} 字符）—— 已按引擎编解码校验通过，放行` })
+                } else if (changed > 0) {
+                  issues.push({ severity: 'info', code: 'rle-changed', message: `${where}共改了 ${changed} 个元素（已校验可解码）` })
+                }
+              }
             }
             const collectRle = (root, map) => {
               const stack = Array.isArray(root) ? root.slice() : [root]
@@ -2013,11 +2253,30 @@ async function callTool(name, args) {
               }
             }
             if (type === 'scene') {
-              shrink('场景', oldData.terrains, args.content.terrains)
+              const width = Number(args.content.width) || Number(oldData.width) || 0
+              const height = Number(args.content.height) || Number(oldData.height) || 0
+              if (width && height) {
+                checkRle('场景 terrains', oldData.terrains, args.content.terrains,
+                  code => rle.decodeTerrains(code, width, height), values => rle.encodeTerrains(values))
+              }
               const oldNodes = [], newNodes = []
               collectRle(oldData.objects || [], oldNodes)
               collectRle(args.content.objects || [], newNodes)
-              for (let i = 0; i < Math.min(oldNodes.length, newNodes.length); i++) shrink('瓦片地图', oldNodes[i].code, newNodes[i].code)
+              for (let i = 0; i < Math.min(oldNodes.length, newNodes.length); i++) {
+                const nw = Number(newNodes[i].width) || 0
+                const nh = Number(newNodes[i].height) || 0
+                if (!nw || !nh) {
+                  // 尺寸缺失就没法解码校验 → 退回老判据：只拦"写短了"（写短基本就是把内容弄丢了）
+                  const from = oldNodes[i].code
+                  const to = newNodes[i].code
+                  if (typeof from === 'string' && typeof to === 'string' && to.length < from.length) {
+                    issues.push({ severity: 'error', code: 'rle-shrunk', message: '瓦片地图的压缩字段被写短了（' + from.length + ' → ' + to.length + ' 字符）：拿不到地图尺寸、无法解码校验，拒绝写入' })
+                  }
+                  continue
+                }
+                checkRle('瓦片地图', oldNodes[i].code, newNodes[i].code,
+                  code => rle.decodeTiles(code, nw, nh), values => rle.encodeTiles(values))
+              }
             }
           }
         }
@@ -2157,6 +2416,57 @@ async function callTool(name, args) {
       return await runtimeBridge.getDiagnosis()
     case 'get_editor_context':
       return await editorBridge.getContext()
+    case 'list_attributes': {
+      const entries = attributeEntries()
+      const query = typeof args.query === 'string' ? args.query.trim().toLowerCase() : ''
+      const matched = query
+        ? entries.filter(e => [e.id, e.key, e.name].some(v => String(v || '').toLowerCase().includes(query)))
+        : entries
+      return {
+        ok: true,
+        total: entries.length,
+        count: matched.length,
+        note: '属性键就是 id：事件/脚本里引用属性一律用 id；key/name 只是给人看的说明',
+        attributes: matched.slice(0, 300).map(e => ({ id: e.id, key: e.key || '', name: e.name || '', type: e.type || '' }))
+      }
+    }
+    case 'read_tilemap': {
+      const rel = normalizeRelPath(args.path)
+      const abs = path.join(ROOT, rel)
+      if (!fs.existsSync(abs)) return { ok: false, error: '文件不存在: ' + rel }
+      let data
+      try { data = JSON.parse(fs.readFileSync(abs, 'utf8')) } catch (e) { return { ok: false, error: 'JSON 解析失败: ' + e.message } }
+      const width = Number(data.width) || 0
+      const height = Number(data.height) || 0
+      const out = { ok: true, path: rel, width: width, height: height, terrains: null, tilemaps: [] }
+      if (width && height && typeof data.terrains === 'string' && data.terrains) {
+        out.terrains = { codeLength: data.terrains.length, values: rle.decodeTerrains(data.terrains, width, height) }
+      }
+      let index = 0
+      const stack = [data.objects || []]
+      while (stack.length) {
+        const list = stack.pop()
+        for (const node of list || []) {
+          if (!node || typeof node !== 'object') continue
+          if (Array.isArray(node.children)) stack.push(node.children)
+          if (typeof node.code === 'string' && node.code && node.width && node.height) {
+            out.tilemaps.push({
+              index: index,
+              id: node.id || '',
+              name: node.name || '',
+              width: node.width,
+              height: node.height,
+              tilesetMap: node.tilesetMap || {},
+              codeLength: node.code.length,
+              tiles: rle.decodeTiles(node.code, node.width, node.height)
+            })
+            index++
+          }
+        }
+      }
+      out.note = 'tiles/terrains 是解码后的数值数组；改完用 write_resource 整体写回（会自动校验可解码）'
+      return out
+    }
     case 'ui_steps': {
       const steps = Array.isArray(args.steps) ? args.steps : []
       if (!steps.length) return { ok: false, error: 'steps 不能为空：至少要写一步要在界面上演示的操作' }

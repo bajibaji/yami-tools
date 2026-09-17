@@ -312,11 +312,11 @@ async function main() {
   const cutRle = JSON.parse(JSON.stringify(sceneWithRle))
   cutRle.objects[0].code = 'RLE'
   const blockedRle = await call('write_resource', { path: sceneRel, content: cutRle, dryRun: true })
-  check('瓦片地图的 code 被写短时拒绝写盘', blockedRle.ok === false && JSON.stringify(blockedRle.issues || []).includes('rle-shrunk'), JSON.stringify((blockedRle.issues || []).map(i => i.code)))
+  check('瓦片地图的 code 被写短时拒绝写盘', blockedRle.ok === false && /rle-(shrunk|invalid)/.test(JSON.stringify(blockedRle.issues || [])), JSON.stringify((blockedRle.issues || []).map(i => i.code)))
   const cutTerrain = JSON.parse(JSON.stringify(sceneWithRle))
   cutTerrain.terrains = 'A'
   const blockedTerrain = await call('write_resource', { path: sceneRel, content: cutTerrain, dryRun: true })
-  check('场景 terrains 被写短时同样拒绝', blockedTerrain.ok === false && JSON.stringify(blockedTerrain.issues || []).includes('rle-shrunk'), JSON.stringify((blockedTerrain.issues || []).map(i => i.code)))
+  check('场景 terrains 被写短时同样拒绝', blockedTerrain.ok === false && /rle-(shrunk|invalid)/.test(JSON.stringify(blockedTerrain.issues || [])), JSON.stringify((blockedTerrain.issues || []).map(i => i.code)))
   console.log('')
   console.log('########## 元数据规则对齐: ' + passed + ' PASS / ' + failed + ' FAIL ##########')
   child.kill()

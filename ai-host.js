@@ -2015,7 +2015,8 @@ const TOOL_LABELS = {
   finish_stuck_event: '结束卡住的事件', suspend_runtime_kind: '暂停/恢复某类更新',
   search_project: '工程内检索', edit_script: '精确改脚本', diagnose_runtime: '读取运行诊断',
   project_changelog: '生成改动小结', todo_write: '更新待办清单',
-  ui_steps: '在界面上演示操作'
+  ui_steps: '在界面上演示操作',
+  list_attributes: '查属性表', read_tilemap: '解开地图压缩数据'
 }
 
 function toolLabel(name) {

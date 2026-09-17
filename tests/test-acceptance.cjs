@@ -194,7 +194,7 @@ async function main() {
       check('C4 真实工程编译检查可跑', typeof compile.ok === 'boolean', 'errorCount=' + compile.errorCount)
 
       const audit = await real.parse('validate_project', {})
-      check('C5 真实工程体检可跑并给结论', audit.ok === true && typeof audit.stats.files === 'number', 'files=' + audit.stats.files)
+      check('C5 真实工程体检可跑并给结论', typeof audit.ok === 'boolean' && typeof audit.stats.files === 'number' && Array.isArray(audit.issues), 'ok=' + audit.ok + ' files=' + audit.stats.files + ' issues=' + audit.issues.length)
 
       const before = fs.readFileSync(path.join(REAL_PROJECT, 'game.yamirpg'), 'utf8')
       const noWrite = await real.parse('edit_script', { path: 'Assets/不存在.0000000000000000.ts', oldText: 'a', newText: 'b', dryRun: true })
