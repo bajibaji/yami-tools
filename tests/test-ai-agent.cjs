@@ -81,7 +81,7 @@ const model = http.createServer(async (req, res) => {
   const body = await readBody(req)
   const messages = body.messages || []
   const latestUserIndex = messages.findLastIndex(message => message.role === 'user')
-  const latestUser = messages[latestUserIndex]
+  const latestUser = messages[latestUserIndex]
   const hasToolAfterUser = latestUserIndex >= 0 && messages.slice(latestUserIndex + 1).some(message => message.role === 'tool')
   let message
   // 多轮思考场景：第一轮只有思考 + 只读工具调用（没有正文），第二轮再思考并给正文。
@@ -106,6 +106,7 @@ const model = http.createServer(async (req, res) => {
   } else if (latestUser && latestUser.content.includes('搜一下') && hasToolAfterUser) {
     message = { role: 'assistant', content: '搜完了。' }
   } else if (latestUser && latestUser.content.includes('慢一点坏')) {
+    if (globalThis.__notifySlowFail) { globalThis.__notifySlowFail(); globalThis.__notifySlowFail = null }
     // 第一轮就炸：没有步骤边界，引导不可能被投递 → 必须原样退回（铁律㊷）
     await new Promise(resolve => setTimeout(resolve, 400))
     res.writeHead(500, { 'Content-Type': 'application/json' })
@@ -293,6 +294,11 @@ async function main() {
 
     // 引导在"这一轮抛错"时也必须退回（收下 ≠ 送到；拿不到回执就得如实退回）
     const failingTurn = request('/chat', 'POST', { sessionId: 'steerfail', message: '慢一点坏：先列脚本' })
+    // 等这一轮真把第一次模型请求发出去再推引导：宿主要先备齐 MCP 工具表与环境快照才发请求，
+    // 死等 200ms 常常不够，引导会被并进同一次请求（假模型看到的最新 user 变成引导 → 走默认成功分支 → 假红）
+    let slowFailSignal = null
+    globalThis.__notifySlowFail = () => { if (slowFailSignal) slowFailSignal() }
+    await new Promise(resolve => { slowFailSignal = resolve; setTimeout(resolve, 3000) })
     await new Promise(resolve => setTimeout(resolve, 200))
     const steerFail = await request('/steer', 'POST', { sessionId: 'steerfail', message: '这句必须被退回' })
     assert.equal(steerFail.data.busy, true, '繁忙时引导要被收下：' + JSON.stringify(steerFail.data))
