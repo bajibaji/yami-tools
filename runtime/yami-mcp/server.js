@@ -746,7 +746,10 @@ function lintPluginScripts(files) {
   const pluginGuids = new Set()
   const plugins = readDataJson('plugins.json')
   if (plugins && !plugins.__parseError) {
-    for (const entry of collectTreeEntries(plugins, ['name', 'enabled'])) if (entry.id) pluginGuids.add(entry.id)
+    // 只算**已启用**的：enabled:false 的条目在 ScriptManager.create 里就被过滤掉了，根本不会实例化，
+    // 它的类名也就不会去覆盖别人（实测：本机两个 DialogueSystem 里那个"远距离距离"就是停用状态 ——
+    // 不按 enabled 过滤会报一条"看着吓人、其实没事"的冲突）
+    for (const entry of collectTreeEntries(plugins, ['name', 'enabled'])) if (entry.id && entry.enabled !== false) pluginGuids.add(entry.id)
   }
   for (const f of files || []) {
     if (f.type !== 'script' || !/^Assets\/插件\//.test(f.path)) continue
