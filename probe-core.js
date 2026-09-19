@@ -2,10 +2,56 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.10.8';
+  const PROBE_VERSION = '1.10.9';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
+
+  /**
+   * 桥端口自适应：端口被别的程序占用就往后换（最多 20 个），并把**真实端口**写进插件数据目录，
+   * 让助手/MCP 那边读得到 —— 用户不需要设置任何东西，也不需要去关别的程序。
+   * 实测踩过：Steam 占着 5968 让 AI 助手起不来；同样的坑对 5966/5967 一样成立。
+   * 放在 IIFE 顶层：两个桥（5966/5967）分别在不同块里调用它，函数声明必须两边都看得见。
+   */
+  function announceBridgePort(kind, port) {
+    try {
+      if (typeof require !== 'function') return;
+      const nodeFs = require('fs');
+      const nodePath = require('path');
+      const nodeOs = require('os');
+      const dir = (typeof process !== 'undefined' && process.env && process.env.YAMI_AI_CONFIG_DIR)
+        || nodePath.join((process.env && process.env.APPDATA) || nodeOs.homedir(), 'DanJuanDevSuite');
+      nodeFs.mkdirSync(dir, { recursive: true });
+      nodeFs.writeFileSync(nodePath.join(dir, kind + '-port'), String(port));
+    } catch (e) { /* 写不进去不阻断桥本身：客户端会退回默认端口 */ }
+  }
+
+  function bindBridge(srv, kind, startPort, ready) {
+    const tryPort = function(port, tries) {
+      if (tries > 20) { console.warn('[Yami Perf Bridge] ' + kind + ' 桥连续 20 个端口都被占用，未启动'); return; }
+      const onError = function(err) {
+        if (typeof srv.removeListener === 'function') srv.removeListener('error', onError);
+        if (err && err.code === 'EADDRINUSE') {
+          if (typeof window !== 'undefined') {
+            if (kind === 'runtime') window.__YAMI_PERF_PORT_CONFLICT__ = true;
+            else window.__YAMI_PORT_CONFLICT__ = true;
+          }
+          console.warn('[Yami Perf Bridge] 端口 ' + port + ' 已被占用，改试 ' + (port + 1));
+          setTimeout(function() { tryPort(port + 1, tries + 1); }, 120);
+          return;
+        }
+        console.warn('调试端口错误:', err && err.message);
+      };
+      if (typeof srv.once === 'function') srv.once('error', onError);
+      else if (typeof srv.on === 'function') srv.on('error', onError);
+      srv.listen(port, '127.0.0.1', function() {
+        if (typeof srv.removeListener === 'function') srv.removeListener('error', onError);
+        announceBridgePort(kind, port);
+        if (ready) ready(port);
+      });
+    };
+    tryPort(startPort, 0);
+  }
   
   const state = {
     running: true,
@@ -4254,17 +4300,8 @@
         res.end();
       });
 
-      server.on('error', function(err) {
-        if (err.code === 'EADDRINUSE') {
-          if (typeof window !== 'undefined') window.__YAMI_PERF_PORT_CONFLICT__ = true;
-          console.warn('[Yami Perf Bridge] 端口 ' + BRIDGE_PORT + ' 已被占用，实时调试服务可能由另一个窗口或实例托管。');
-        } else {
-          console.warn('调试端口错误:', err.message);
-        }
-      });
-
-      server.listen(BRIDGE_PORT, '127.0.0.1', function() {
-        console.log('[Yami Perf Bridge] 本地实时调试服务已就绪: http://127.0.0.1:' + BRIDGE_PORT);
+      bindBridge(server, 'runtime', BRIDGE_PORT, function(port) {
+        console.log('[Yami Perf Bridge] 本地实时调试服务已就绪: http://127.0.0.1:' + port);
       });
       }
 
@@ -4648,19 +4685,11 @@
           }
           res.writeHead(404); res.end();
         });
-        editorServer.on('error', function(err) {
-          if (err.code === 'EADDRINUSE') {
-            if (typeof window !== 'undefined') window.__YAMI_PORT_CONFLICT__ = true;
-            console.warn('[Yami Perf Bridge] 端口 5967 已被占用，检测到双编辑器实例运行！当前实例未挂载动作桥。');
-          } else {
-            console.warn('编辑器桥端口错误:', err.message);
-          }
-        });
-        editorServer.listen(5967, '127.0.0.1', function() {
+        bindBridge(editorServer, 'editor', 5967, function(port) {
           if (engineAvailable()) {
-            console.log('[Yami Perf Bridge] 编辑器动作服务已就绪: http://127.0.0.1:5967');
+            console.log('[Yami Perf Bridge] 编辑器动作服务已就绪: http://127.0.0.1:' + port);
           } else {
-            console.warn('[Yami Perf Bridge] 编辑器动作桥已就绪（5967），但当前引擎没有暴露内部接口 window.YamiEngine：'
+            console.warn('[Yami Perf Bridge] 编辑器动作桥已就绪（' + port + '），但当前引擎没有暴露内部接口 window.YamiEngine：'
               + '界面演示 / 高亮 / 点击 / 界面结构读取 均不受影响，只有 保存、撤销、重做、刷新资源、启动试玩、文件预检 这几项不可用。'
               + '（官方预编译版即属此类；引擎源码构建需要打上 window.YamiEngine 补丁才会有。）');
           }

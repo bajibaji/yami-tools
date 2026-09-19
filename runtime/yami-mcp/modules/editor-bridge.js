@@ -3,8 +3,10 @@
 const http = require('http')
 
 class EditorBridge {
-  constructor(port = 5967) {
-    this.port = Number(process.env.YAMI_EDITOR_BRIDGE_PORT || port)
+  constructor(port = 0) {
+    // 端口来源见 modules/bridge-port.js：环境变量 > 插件数据目录里的 editor-port > 5967 ——
+    // 编辑器桥被别的程序占用时会自适应换端口，客户端必须读文件才知道真实端口
+    this.port = Number(process.env.YAMI_EDITOR_BRIDGE_PORT) || port || require('./bridge-port').editorPort()
   }
 
   request(method, route, body = null, timeoutMs = 1800, token = '') {

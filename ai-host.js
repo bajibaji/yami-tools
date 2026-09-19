@@ -1095,7 +1095,7 @@ function fetchEditorContextSummary() {
   return new Promise(resolve => {
     const req = http.request({
       hostname: '127.0.0.1',
-      port: 5967,
+      port: require('./runtime/yami-mcp/modules/bridge-port').editorPort(),
       path: '/context',
       method: 'GET',
       timeout: 350,

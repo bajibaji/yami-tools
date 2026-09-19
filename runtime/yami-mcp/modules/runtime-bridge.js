@@ -12,10 +12,17 @@ const http = require('http')
 const { normalizeSequence, diffDiagnosis, describeVerdict } = require('./playtest')
 
 class RuntimeBridge {
-  constructor(port = 5966, cdpClient = null) {
-    // 端口可被环境变量覆盖：真机默认 5966，测试可指向模拟桥以便验证整条链路
-    this.port = Number(process.env.YAMI_RUNTIME_BRIDGE_PORT) || port
+  constructor(port = 0, cdpClient = null) {
+    // 端口来源见 modules/bridge-port.js：环境变量 > 插件数据目录里的 runtime-port > 5966。
+    // 之所以要读文件：试玩桥被别的程序占用时会自适应换端口，换了不告诉客户端就会
+    // 变成"桥明明起来了，AI 却说游戏没在试玩"这种假报错（实测踩过：Steam 占 5968 那次）。
+    this.port = Number(process.env.YAMI_RUNTIME_BRIDGE_PORT) || port || 0
     this.cdp = cdpClient
+  }
+
+  /** 每次请求都重新解析（试玩可能在不同端口上起、桥也可能换了端口） */
+  currentPort() {
+    return this.port || require('./bridge-port').runtimePort()
   }
 
   /**
@@ -23,7 +30,7 @@ class RuntimeBridge {
    */
   requestJson(path, timeoutMs = 1500) {
     return new Promise((resolve) => {
-      const req = http.get(`http://127.0.0.1:${this.port}${path}`, { timeout: timeoutMs }, (res) => {
+      const req = http.get(`http://127.0.0.1:${this.currentPort()}${path}`, { timeout: timeoutMs }, (res) => {
         let raw = ''
         res.on('data', chunk => { raw += chunk })
         res.on('end', () => {

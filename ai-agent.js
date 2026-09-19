@@ -2794,7 +2794,12 @@ function refreshHostPort() {
       addMessage('system', '可用模型（' + data.models.length + '）：' + data.models.slice(0, 8).join('、') + (data.models.length > 8 ? ' 等' : ''));
       setStatus('就绪', 'ready');
     } catch (e) {
-      addMessage('error', '拉取模型列表失败：' + e.message + '（有些本地服务不提供 /models 接口，可直接手填模型名）');
+      // 小白友好：拉不到列表就先把默认模型名填上，用户不用自己去查该填什么
+      const modelEl = document.getElementById('yami-ai-model');
+      const filled = modelEl && !String(modelEl.value || '').trim() ? 'deepseek-chat' : '';
+      if (filled) modelEl.value = filled;
+      addMessage('error', '拉取模型列表失败：' + e.message
+        + (filled ? '（已先填上默认模型名 ' + filled + '，可以直接开聊）' : '（有些本地服务不提供 /models 接口，可直接手填模型名）'));
     } finally {
       if (btn) btn.classList.remove('busy');
     }
