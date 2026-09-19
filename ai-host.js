@@ -735,11 +735,11 @@ function readJson(req, limit = 2 * 1024 * 1024) {
 }
 
 /** 探测本机 5968 上是否已有可用 AI Host（用于多窗口竞态时的实例复用） */
-function probeStatus(callback) {
+function probeStatus(callback, port) {
   let settled = false
   const done = value => { if (!settled) { settled = true; callback(value) } }
   const req = http.request({
-    hostname: '127.0.0.1', port: PORT, path: '/status', method: 'GET',
+    hostname: '127.0.0.1', port: port || PORT, path: '/status', method: 'GET',
     headers: { 'x-yami-agent-token': TOKEN }, timeout: 1200
   }, res => {
     let raw = ''
@@ -2857,38 +2857,58 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
-server.on('error', error => {
-  // 【多实例竞态】编辑器窗口与试玩窗口同时首次唤起时，两边都会各自 spawn 一个 Host。
-  // 端口只有一个：后到者不能直接退出（会让先唤起它的那个窗口整轮操作失败），
-  // 而应确认端口上是不是"我们的"Host —— 是则本次进程认领失败并让调用方复用已有实例。
-  if (error && error.code === 'EADDRINUSE') {
-    process.stderr.write(`[danjuan-ai] 端口 ${PORT} 已被本机 AI Host 占用，本次实例不再重复启动\n`)
-    let tries = 0
-    const probe = setInterval(() => {
-      tries++
+/**
+ * 启动监听：端口被占**自动往后换**，用户不需要关心端口，也不需要去关别的程序。
+ *
+ * 两种"被占"要分开处理（实测踩过：Steam 会占着 5968，面板于是报"AI 助手启动超时"）：
+ *   ① 占端口的是**我们自己的** AI Host（编辑器窗口与试玩窗口同时唤起时的竞态）→ 认领失败，
+ *      退出让前端复用已有实例（老行为，保留）；
+ *   ② 占端口的是**别的程序** → 换下一个端口继续试（最多 20 个），成功后把真实端口写进
+ *      CONFIG_DIR/agent-port，面板读完就知道该连哪儿。
+ */
+const PORT_FILE = path.join(CONFIG_DIR, 'agent-port')
+const MAX_PORT_TRIES = 20
+function logOnly(error) {
+  process.stderr.write('[danjuan-ai] ' + ((error && error.message) || error) + '\n')
+}
+function tryListen(port, attempt) {
+  if (attempt >= MAX_PORT_TRIES) {
+    process.stderr.write('[danjuan-ai] 连续 ' + MAX_PORT_TRIES + ' 个端口都被占用，AI 助手启动失败\n')
+    process.exit(1)
+  }
+  const onError = error => {
+    server.removeListener('error', onError)
+    if (error && error.code === 'EADDRINUSE') {
       probeStatus(status => {
         if (status && status.ok) {
-          clearInterval(probe)
-          process.stderr.write('[danjuan-ai] 已确认端口上运行的是可用 AI Host，交由前端复用\n')
+          process.stderr.write('[danjuan-ai] 端口 ' + port + ' 上已有可用 AI Host，本次实例不再重复启动\n')
           process.exit(0)
         }
-        // 约 60 秒内没等到可用 Host（可能是别的程序占用该端口）→ 退出，避免变成永久孤儿进程
-        if (tries >= 200) { clearInterval(probe); process.exit(1) }
-      })
-    }, 300)
-    return
+        process.stderr.write('[danjuan-ai] 端口 ' + port + ' 被其它程序占用，改试 ' + (port + 1) + '\n')
+        setTimeout(() => tryListen(port + 1, attempt + 1), 150)
+      }, port)
+      return
+    }
+    logOnly(error)
+    process.exit(1)
   }
-  process.stderr.write('[danjuan-ai] ' + error.message + '\n')
-  process.exit(1)
-})
+  server.once('error', onError)
+  server.listen(port, '127.0.0.1', () => {
+    server.removeListener('error', onError)
+    server.on('error', logOnly)   // 运行期错误只记日志，不让进程炸掉
+    try {
+      fs.mkdirSync(CONFIG_DIR, { recursive: true })
+      fs.writeFileSync(PORT_FILE, String(port), { mode: 0o600 })
+    } catch (e) { /* 写不下去不阻断启动：面板会退回按默认端口找 */ }
+    const fingerprint = crypto.createHash('sha256').update(String(TOKEN)).digest('hex').slice(0, 8)
+    process.stderr.write('[danjuan-ai] ready http://127.0.0.1:' + port + ' (token:' + fingerprint + ' pid:' + process.pid + ')\n')
+  })
+}
 // 启动日志带端口与令牌指纹：出现"面板连不上 / 连到旧实例"这类问题时，
 // 一眼能看出当前跑的是哪个实例、令牌是不是面板手里那个（历史上踩过孤儿进程残留的坑）
 migrateStoredKey().catch(() => {})
 
-server.listen(PORT, '127.0.0.1', () => {
-  const fingerprint = crypto.createHash('sha256').update(String(TOKEN)).digest('hex').slice(0, 8)
-  process.stderr.write(`[danjuan-ai] ready http://127.0.0.1:${PORT} (token:${fingerprint} pid:${process.pid})\n`)
-})
+tryListen(PORT, 0)
 
 if (PARENT_PID > 0) {
   setInterval(() => {

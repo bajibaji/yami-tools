@@ -42,6 +42,7 @@ const SUITE = [
   ['test-mcp-command-name.cjs', '指令中文名解析(按编辑器显示名→GUID+未知名字如实拒绝)'],
   ['test-mcp-data-rules.cjs', 'MCP 数据规则(RLE真编解码+属性查询+插件lint+变量体检)'],
   ['test-update-recovery.cjs',  '更新失败自愈(bootstrap 把写坏的插件回退到旧版本)'],
+  ['test-ai-host-port.cjs',   'AI Host 端口自适应(5968 被占自动换端口)'],
   ['test-autoupdate.mjs',   '热更新端到端 (需联网)'],
 ];
 

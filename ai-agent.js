@@ -3,6 +3,24 @@
   if (window.__DANJUAN_AI_AGENT__) return;
 
   const PORT = 5968;
+/**
+ * 助手实际监听的端口由它自己决定（5968 被别的程序占用时会自动往后换，比如 Steam 就常占 5968），
+ * 它启动成功后会把自己用的端口写进 CONFIG_DIR/agent-port —— 这里读那个文件，用户什么都不用设置。
+ */
+let hostPort = PORT;
+function hostConfigDir() {
+  const os = require('os');
+  const path = require('path');
+  return process.env.YAMI_AI_CONFIG_DIR || path.join(process.env.APPDATA || os.homedir(), 'DanJuanDevSuite');
+}
+function hostPortFile() { return require('path').join(hostConfigDir(), 'agent-port'); }
+function refreshHostPort() {
+  try {
+    const n = Number(String(require('fs').readFileSync(hostPortFile(), 'utf8')).trim());
+    if (Number.isInteger(n) && n > 0 && n < 65536) hostPort = n;
+  } catch (e) { /* 还没写出来：沿用当前值 */ }
+  return hostPort;
+}
   function sharedToken() {
     try {
       const fs = require('fs');
@@ -286,7 +304,7 @@
     }
     let response;
     try {
-      response = await fetch('http://127.0.0.1:' + PORT + route, {
+      response = await fetch('http://127.0.0.1:' + hostPort + route, {
         method: body === undefined ? 'GET' : 'POST',
         headers: { 'Content-Type': 'application/json', 'x-yami-agent-token': state.token },
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -333,6 +351,7 @@
     const root = pluginRoot();
     if (!root) throw new Error('找不到插件运行目录（ai-host.js）：确认插件装在 <引擎根>/extension/yami-perf-extension 后重启编辑器');
     const { spawn } = require('child_process');
+    try { require('fs').rmSync(hostPortFile(), { force: true }) } catch (e) { /* 清不掉就靠下面的兜底 */ }
     state.child = spawn(process.execPath, [require('path').join(root, 'ai-host.js')], {
       cwd: root,
       windowsHide: true,
@@ -349,6 +368,7 @@
     state.child.stderr.on('data', data => console.log('[DanJuan AI]', data.toString().trim()));
     for (let i = 0; i < 30; i++) {
       await new Promise(resolve => setTimeout(resolve, 150));
+      refreshHostPort();   // 助手把真实端口写出来了就按它连（被占时会自动换端口）
       try {
         return await request('/status');
       } catch (e) {
@@ -1383,7 +1403,7 @@
     const toolCards = new Map();
     const cardKeyOf = event => String((event && event.key) || (event && event.name) || '');
     state.abort = new AbortController();
-    const response = await fetch('http://127.0.0.1:' + PORT + route, {
+    const response = await fetch('http://127.0.0.1:' + hostPort + route, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-yami-agent-token': state.token },
       body: JSON.stringify(body),
