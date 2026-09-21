@@ -1557,6 +1557,21 @@
         color: #ffffff !important;
       }
 
+      /* 模块 6: AI 助手 (红色进入；红色与图标同色，对比度 4.78:1 过 AA) */
+      .yami-home-module-icon-box.red {
+        color: #ff5252 !important;
+      }
+      .yami-home-module-badge.red {
+        background: #45151b !important;
+        border: 1px solid #8c2634 !important;
+        color: #ff5252 !important;
+        font-weight: 600 !important;
+      }
+      .yami-home-module-badge.red:hover {
+        background: #5c1c24 !important;
+        color: #ffffff !important;
+      }
+
       /* 规划中徽章 (灰色) */
       .yami-home-module-badge.plan,
       .yami-home-module-item.disabled .yami-home-module-badge {

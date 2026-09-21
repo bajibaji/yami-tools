@@ -406,6 +406,19 @@ function main() {
   assert.ok(/const files = listResourceFiles\(\)\r?\n  const guidMap = collectAllGuids\(files\)/.test(mcpSrc), 'validate_project 必须单次扫描复用（此前一次调用把 Assets 递归并逐文件 stat 扫了 4 遍）')
   console.log('心跳开销守卫: HUD 重入 / 双指纹 / 存档降频 / 抽样分位数 / 单次扫描 全部就位')
 
+  // 主页卡片配色：AI 助手用红色（用户明确要求「不能用绿色」）。
+  // 断言同时钉住「源文件」与「构建产物」：只改 src/style.css 不构建，编辑器里跑的还是旧样式。
+  const agentSrc = fs.readFileSync(path.join(ROOT, 'ai-agent.js'), 'utf8')
+  const styleSrc = fs.readFileSync(path.join(ROOT, 'src', 'style.css'), 'utf8')
+  assert.ok(/yami-home-module-icon-box red/.test(agentSrc) && /yami-home-module-badge red/.test(agentSrc),
+    '主页的 AI 助手卡片必须用红色图标与红色徽章')
+  assert.ok(!/yami-home-module-(icon-box|badge) green/.test(agentSrc), '主页的 AI 助手卡片不许再用绿色')
+  assert.ok(/\.yami-home-module-icon-box\.red\s*\{/.test(styleSrc) && /\.yami-home-module-badge\.red\s*\{/.test(styleSrc),
+    '红色规则必须写在 src/style.css（直接写在 hud-overlay.js 会被构建覆盖）')
+  assert.ok(/\.yami-home-module-icon-box\.red\s*\{/.test(hud) && /\.yami-home-module-badge\.red\s*\{/.test(hud),
+    '红色规则必须已注入 hud-overlay.js（只改 style.css 不构建 = 编辑器里没有）')
+  console.log('主页卡片配色: AI 助手 = 红 #ff5252，样式源与构建产物同时落地')
+
   // 文档一致性：README 里声明的数字必须与实际一致。
   // （铁律条数从 37 变成 39 时 README 没跟上、套件数也多次漂移——靠人记准迟早漏第二次，
   //   这里把两个最容易失配的数字钉住：铁律条数与测试套件数。）

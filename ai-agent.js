@@ -3003,7 +3003,7 @@ function refreshHostPort() {
     card.className = 'yami-home-module-item';
     card.setAttribute('role', 'button');
     card.setAttribute('tabindex', '0');
-    card.innerHTML = '<div class="yami-home-module-main"><div class="yami-home-module-icon-box green"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.03 2 11C2 13.84 3.46 16.37 5.74 18.02L5 22L9.29 19.85C10.16 20.06 11.07 20.17 12 20.17C17.52 20.17 22 16.14 22 11.17C22 6.2 17.52 2 12 2ZM7 10H17V12H7V10ZM9 6H15V8H9V6ZM9 14H15V16H9V14Z"></path></svg></div><div><div class="yami-home-module-title">AI 助手</div><div class="yami-home-module-desc">用白话改工程、写脚本与控制试玩</div></div></div><div class="yami-home-module-badge green">进入</div>';
+    card.innerHTML = '<div class="yami-home-module-main"><div class="yami-home-module-icon-box red"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.03 2 11C2 13.84 3.46 16.37 5.74 18.02L5 22L9.29 19.85C10.16 20.06 11.07 20.17 12 20.17C17.52 20.17 22 16.14 22 11.17C22 6.2 17.52 2 12 2ZM7 10H17V12H7V10ZM9 6H15V8H9V6ZM9 14H15V16H9V14Z"></path></svg></div><div><div class="yami-home-module-title">AI 助手</div><div class="yami-home-module-desc">用白话改工程、写脚本与控制试玩</div></div></div><div class="yami-home-module-badge red">进入</div>';
     home.appendChild(card);
 
     const page = document.createElement('div');
