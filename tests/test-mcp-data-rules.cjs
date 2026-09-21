@@ -80,6 +80,12 @@ async function main() {
   try { rle.decodeTiles(tilesCode.slice(0, 3), 8, 8) } catch (e) { threw = true }
   check('截断的压缩串必须抛错（引擎加载时就是这么炸的）', threw === true)
 
+  // verify* 是 validate_project 直接 return 的东西，抛异常会让整份体检只剩一句错误
+  const badVerify = rle.verifyTiles('\x23\x23', 8, 8)
+  check('verifyTiles 对坏串返回 {ok:false} 而不是抛出去', badVerify && badVerify.ok === false && !!badVerify.error, String(badVerify && badVerify.error).slice(0, 50))
+  const badVerifyTerrain = rle.verifyTerrains('\x23\x23', 10, 10)
+  check('verifyTerrains 同样返回 {ok:false}', badVerifyTerrain && badVerifyTerrain.ok === false && !!badVerifyTerrain.error, String(badVerifyTerrain && badVerifyTerrain.error).slice(0, 50))
+
   console.log('\n########## 2. 属性表 / 变量 / 插件 lint（合成工程真跑 MCP） ##########')
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'yami-data-rules-'))
   try {

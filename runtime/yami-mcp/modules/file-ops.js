@@ -68,9 +68,31 @@ function readBackupMeta(backupFile) {
   }
 }
 
+/**
+ * 写盘时沿用**原文件**的行尾与结尾换行。
+ * 引擎写工程文件是 CRLF + 结尾不带换行（实测 493 个资源里 492 个 CRLF、480 个无尾换行），
+ * 插件此前一律写 LF + 尾换行 → 每改一次文件，git 里就是整文件 diff。
+ * 没有原文件（新建）时保持调用方给的写法。
+ */
+function matchExistingStyle(absPath, text) {
+  let before = null
+  try { if (fs.existsSync(absPath)) before = fs.readFileSync(absPath, 'utf8') } catch { before = null }
+  if (before === null || before === '') return text
+  const crlf = before.indexOf('\r\n') !== -1
+  let out = text.replace(/\r\n/g, '\n')
+  if (crlf) out = out.replace(/\n/g, '\r\n')
+  const beforeEndsWithNewline = /\n$/.test(before)
+  if (beforeEndsWithNewline) {
+    if (!/\n$/.test(out)) out += crlf ? '\r\n' : '\n'
+  } else {
+    out = out.replace(/\r?\n$/, '')
+  }
+  return out
+}
+
 function writeAtomic(root, relPath, text, options = {}) {
   const absPath = resolveInside(root, relPath)
-  const content = String(text)
+  const content = matchExistingStyle(absPath, String(text))
   fs.mkdirSync(path.dirname(absPath), { recursive: true })
 
   let backup = null

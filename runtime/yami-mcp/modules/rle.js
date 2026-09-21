@@ -194,21 +194,31 @@ function decodeTerrains(code, width, height) {
 
 /** 体检用：解码 + 原样重编码必须一致（写成非规范串、或长度对不上，都会在这里露出来） */
 function verifyTiles(code, width, height) {
-  const tiles = decodeTiles(code, width, height)
-  const again = decodeTiles(encodeTiles(tiles), width, height)
-  for (let i = 0; i < tiles.length; i++) {
-    if (tiles[i] !== again[i]) return { ok: false, error: '重编码后第 ' + i + ' 个图块对不上' }
+  // 坏串必须**返回** {ok:false} 而不是抛出去：validate_project 是直接 return 这个结果的
+  // （server.js:1060/1070 也没有 try），一抛异常整份体检就只剩一句错误、其它检查结果全丢。
+  try {
+    const tiles = decodeTiles(code, width, height)
+    const again = decodeTiles(encodeTiles(tiles), width, height)
+    for (let i = 0; i < tiles.length; i++) {
+      if (tiles[i] !== again[i]) return { ok: false, error: '重编码后第 ' + i + ' 个图块对不上' }
+    }
+    return { ok: true, tiles }
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) }
   }
-  return { ok: true, tiles }
 }
 
 function verifyTerrains(code, width, height) {
-  const terrains = decodeTerrains(code, width, height)
-  const again = decodeTerrains(encodeTerrains(terrains), width, height)
-  for (let i = 0; i < terrains.length; i++) {
-    if (terrains[i] !== again[i]) return { ok: false, error: '重编码后第 ' + i + ' 个地形对不上' }
+  try {
+    const terrains = decodeTerrains(code, width, height)
+    const again = decodeTerrains(encodeTerrains(terrains), width, height)
+    for (let i = 0; i < terrains.length; i++) {
+      if (terrains[i] !== again[i]) return { ok: false, error: '重编码后第 ' + i + ' 个地形对不上' }
+    }
+    return { ok: true, terrains }
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) }
   }
-  return { ok: true, terrains }
 }
 
 module.exports = { encodeTiles, decodeTiles, encodeTerrains, decodeTerrains, verifyTiles, verifyTerrains, encodeClone, decodeClone }

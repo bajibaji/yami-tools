@@ -26,7 +26,10 @@ function parsePluginMeta(code) {
   const block = /\/\*[\s\S]*?@plugin[\s\S]*?\*\//.exec(String(code || ''))
   if (!block) return { ok: false, langMap: {} }
   const langMap = {}
-  const langRe = /@lang\s+([a-zA-Z-]+)(?:\s+extends\s+([a-zA-Z-]+))?([\s\S]*?)(?=\r?\n\s*\*\s*@lang|\r?\n\s*\*\/|$)/g
+  // 【坑】引擎脚本里的 @lang 行**不带星号**（不是 JSDoc 那种 "* @lang"），旧正则要求有星号，
+  // 于是第二个语言块起全被并进第一块 —— 34 个自定义指令里 9 个的「编辑器中文名」查不到。
+  // 星号改成可选，两种写法都认。
+  const langRe = /@lang\s+([a-zA-Z-]+)(?:\s+extends\s+([a-zA-Z-]+))?([\s\S]*?)(?=\r?\n\s*\*?\s*@lang|\r?\n\s*\*\/|$)/g
   let m
   while ((m = langRe.exec(block[0])) !== null) {
     const props = {}
@@ -40,6 +43,51 @@ function parsePluginMeta(code) {
   }
   return { ok: true, langMap }
 }
+/**
+ * 编辑器里显示的中文名 → 引擎指令 id。
+ * 【为什么必须钉死】引擎真名与「直觉中文名」撞车过两次，都**不报错、只改语义**：
+ *   · 条件分支 = switch（引擎里的 if 叫「如果」）—— 判成 if 会把条件清空，分支恒真；
+ *   · 设置文本 = setText（改界面文字元素）；写变量那条叫「设置字符串」= setString。
+ * 真名出处：Project/Locales/zh-CN.简体中文.json（switch:994 / if:915 / setText:1117 / setString:863 /
+ * setBoolean:724 / setObject:891 / setList:894 / loop:1002 / forEach:1006 / showChoices:714）。
+ */
+const ENGINE_COMMAND_NAMES = {
+  '注释': 'comment',
+  '脚本': 'script',
+  '等待': 'wait',
+  '显示文本': 'showText',
+  '显示选项': 'showChoices',
+  '弹出选项': 'showChoices',
+  '如果': 'if',
+  '条件分支': 'switch',
+  '调用事件': 'callEvent',
+  '设置数值': 'setNumber',
+  '设置布尔值': 'setBoolean',
+  '设置字符串': 'setString',
+  '设置文本': 'setText',
+  '设置对象': 'setObject',
+  '设置列表': 'setList',
+  '循环': 'loop',
+  '遍历': 'forEach'
+}
+
+/** 数值/字符串赋值的运算符：编辑器写法 ↔ 引擎 operation 取值（setNumber.ts:18-33 / setString.ts:12-15） */
+const OPERATION_NAMES = {
+  '=': 'set', '+=': 'add', '-=': 'sub', '*=': 'mul', '/=': 'div', '%=': 'mod',
+  set: 'set', add: 'add', sub: 'sub', mul: 'mul', div: 'div', mod: 'mod'
+}
+
+/** 变量访问器：模型可能给对象（引擎形状）也可能给 id 字符串，两种都要认 */
+function toVariableGetter(cmd) {
+  const v = cmd.variable
+  if (v && typeof v === 'object' && typeof v.type === 'string') {
+    return { type: v.type, key: String(v.key === undefined ? '' : v.key) }
+  }
+  const key = cmd.variableId !== undefined ? cmd.variableId
+    : (typeof v === 'string' ? v : (cmd.key !== undefined ? cmd.key : ''))
+  return { type: cmd.variableType || 'global', key: String(key === undefined ? '' : key) }
+}
+
 class EventBuilder {
   constructor(projectRoot) {
     this.root = projectRoot
@@ -91,7 +139,10 @@ class EventBuilder {
           try {
             const meta = parsePluginMeta(fs.readFileSync(path.join(cmdDir, f), 'utf8'))
             const langs = (meta && meta.langMap) || {}
-            const pack = langs.zh || langs[pickFirstLang(langs)]
+            // 引擎按编辑器当前语言取包（plugin.ts:1200-1213），这里优先中文包，取不到再退第一个
+            const zhKey = Object.keys(langs).find(k => k === 'zh' || k === 'zh-CN' || k === 'zh-Hans')
+              || Object.keys(langs).find(k => /^zh/i.test(k))
+            const pack = (zhKey && langs[zhKey]) || langs[pickFirstLang(langs)]
             const display = pack && pack.props && pack.props['#plugin']
             if (display) map.set(String(display).trim(), guid)
           } catch (e) { /* 单个脚本解析失败不影响其它指令 */ }
@@ -124,6 +175,9 @@ class EventBuilder {
     if (/^[0-9a-f]{16}$/.test(bare) || /^[a-z][a-zA-Z0-9]*$/.test(bare)) {
       return disabled ? '!' + bare : bare
     }
+    // 引擎真名（中文）先落到引擎 id：判错名字比报错更危险（见 ENGINE_COMMAND_NAMES 注释）
+    const engineName = ENGINE_COMMAND_NAMES[bare]
+    if (engineName) return disabled ? '!' + engineName : engineName
     const map = this.loadCustomCommands()
     if (map.has(bare)) {
       const resolved = map.get(bare)
@@ -181,10 +235,12 @@ class EventBuilder {
       }
     }
 
-    const type = cmd.type || cmd.name || cmd.command
-    if (!type) {
+    const rawType = cmd.type || cmd.name || cmd.command
+    if (!rawType) {
       throw new Error(`无法识别指令类型: ${JSON.stringify(cmd)}`)
     }
+    // 中文名先落成引擎 id，再进 switch —— 否则「条件分支/设置文本」这类撞车名会走到错的分支
+    const type = ENGINE_COMMAND_NAMES[rawType] || rawType
 
     switch (type) {
       case 'comment':
@@ -241,8 +297,7 @@ class EventBuilder {
         }
 
       case 'if':
-      case '条件分支':
-      case '如果': {
+      case '如果': {   // 引擎里「条件分支」是 switch，不是 if —— 别名表已把它引到 switch 分支
         const params = {
           branches: (cmd.branches || []).map(branch => ({
             mode: branch.mode || 'all',
@@ -255,48 +310,61 @@ class EventBuilder {
       }
 
       case 'callEvent':
-      case '调用事件':
-        return {
-          id: 'callEvent',
-          params: {
-            type: cmd.eventType || 'global',
-            eventId: String(cmd.eventId || cmd.guid || cmd.id || '')
-          }
+      case '调用事件': {
+        // 引擎契约：{ type, eventId, eventArgs?, eventResult? }（编辑器 callEvent.ts:526-543）。
+        // 参数与返回值过去被静默丢掉 → 带参全局事件拿到空参、返回值写不回变量。
+        const src = (cmd.params && typeof cmd.params === 'object') ? cmd.params : {}
+        const params = {
+          type: cmd.eventType || src.type || 'global',
+          eventId: String(cmd.eventId || src.eventId || cmd.guid || (typeof cmd.id === 'string' ? cmd.id : '') || '')
         }
+        const args = cmd.eventArgs !== undefined ? cmd.eventArgs : src.eventArgs
+        const result = cmd.eventResult !== undefined ? cmd.eventResult : src.eventResult
+        if (args !== undefined) params.eventArgs = args
+        if (result !== undefined) params.eventResult = result
+        return { id: 'callEvent', params: this.normalizeNestedParams(params) }
+      }
 
       case 'setNumber':
-      case '设置数值':
+      case '设置数值': {
+        // 引擎契约：{ variable, operation: set|add|sub|mul|div|mod, operands: [{operation,type,value}] }
+        // 出处：编辑器 module/command/setNumber.ts:72-107、运行时 command.ts:2641-2661。
+        // 旧实现写的是 operator/operand（单数），引擎一个都不认：编辑期编译直接抛错 → 整局起不来。
+        const raw = cmd.operand !== undefined ? cmd.operand : (cmd.value !== undefined ? cmd.value : 0)
+        const operands = Array.isArray(cmd.operands) && cmd.operands.length
+          ? cmd.operands
+          : [(raw && typeof raw === 'object')
+            ? raw
+            : { type: cmd.operandType || 'constant', value: Number(raw) }]
         return {
           id: 'setNumber',
           params: {
-            variable: {
-              type: cmd.variableType || 'global',
-              key: String(cmd.variableId || cmd.key || cmd.variable || '')
-            },
-            operator: cmd.operator || '=',
-            operand: {
-              type: cmd.operandType || 'constant',
-              value: Number(cmd.value !== undefined ? cmd.value : 0)
-            }
+            variable: toVariableGetter(cmd),
+            operation: OPERATION_NAMES[cmd.operator || cmd.operation || '='] || 'set',
+            // 首元素 operation 固定 'add'（编辑器 setNumber.ts:105 保存时就是这么纠正的）
+            operands: this.normalizeNestedParams(operands.map(function (op, i) {
+              if (!op || typeof op !== 'object') return { operation: 'add', type: 'constant', value: Number(op) || 0 }
+              return i === 0 && op.operation === undefined ? { ...op, operation: 'add' } : op
+            }))
           }
         }
+      }
 
       case 'setString':
-      case '设置文本':
+      case '设置字符串': {
+        // 引擎契约：{ variable, operation: set|add, operand: {type,value,...} }（运行时 command.ts:2935-2945）。
+        // 注意：「设置文本」不在这里 —— 那是 setText（改界面文字元素），由别名表引到默认透传分支。
+        const raw = cmd.operand !== undefined ? cmd.operand : cmd.value
+        const operand = (raw && typeof raw === 'object') ? raw : { type: cmd.operandType || 'constant', value: String(raw === undefined ? '' : raw) }
         return {
           id: 'setString',
           params: {
-            variable: {
-              type: cmd.variableType || 'global',
-              key: String(cmd.variableId || cmd.key || cmd.variable || '')
-            },
-            operator: cmd.operator || '=',
-            operand: {
-              type: cmd.operandType || 'constant',
-              value: String(cmd.value ?? '')
-            }
+            variable: toVariableGetter(cmd),
+            operation: (cmd.operator === '+=' || cmd.operation === 'add') ? 'add' : 'set',
+            operand: this.normalizeNestedParams(operand)
           }
         }
+      }
 
       default: {
         // 自定义指令或直接透传

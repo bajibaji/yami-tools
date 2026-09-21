@@ -5742,7 +5742,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.10.10 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.10.11 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
@@ -6083,7 +6083,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.10.10 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.10.11 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -7465,24 +7465,55 @@
         }
       },
 
+      /** 存档目录候选：引擎按 Data/config.json 的 save.location 决定（data.ts:1051-1062）：
+       *  location='local' → 工程根；其它 → 用户目录(appData/Documents/Desktop) 下的 subdir。
+       *  引擎走 ipcRenderer.invoke('get-dir-path')，插件不依赖那条内部 IPC：列候选目录，
+       *  谁里面真有 saveNN 就用谁，都没有才回退工程根。 */
+      saveDirCandidates() {
+        const fs = require('fs');
+        const path = require('path');
+        const root = this.getGameDir();
+        const list = [path.join(root, 'Save')];
+        try {
+          const cfg = JSON.parse(fs.readFileSync(path.join(root, 'Data', 'config.json'), 'utf8'));
+          const save = (cfg && cfg.save) || {};
+          if (save.location && save.location !== 'local') {
+            const sub = String(save.subdir || '').replace(/[\/:*?"<>|]/g, '');
+            const bases = [process.env.APPDATA, path.join(os.homedir(), 'Documents'), path.join(os.homedir(), 'Desktop')];
+            for (const base of bases) if (base) list.push(path.resolve(base, sub, 'Save'));
+          }
+        } catch (e) { /* 没配置就按工程根找 */ }
+        return list;
+      },
+      resolveSaveDir() {
+        const fs = require('fs');
+        const dirs = this.saveDirCandidates();
+        for (const dir of dirs) {
+          try {
+            if (fs.existsSync(dir) && fs.readdirSync(dir).some(f => /^save\d{2}\.(save|json)$/i.test(f))) return dir;
+          } catch (e) { /* 读不了就试下一个 */ }
+        }
+        return dirs[0];
+      },
       scanSaveFiles() {
         try {
           if (typeof require === 'undefined') return;
           const fs = require('fs');
           const path = require('path');
-          const saveDir = path.join(this.getGameDir(), 'Save');
+          const saveDir = this.resolveSaveDir();
+          this.saveDir = saveDir;
           if (!fs.existsSync(saveDir)) {
             this.saveFiles = [];
             return;
           }
           const files = fs.readdirSync(saveDir);
 
-          // 兼容 .save (Yami 原生真实存档) 与 .json 格式，排除临时与备份文件
+          // 【只认引擎口径】引擎存档名固定是 save%02d.save（.meta 是旁挂元数据，data.ts:733/752-753），
+          // 加载端也只匹配 ^save\d{2}\.meta$（data.ts:839）。旧实现收任意 .save/.json：
+          // 本机工程 Save\ 里的 save00.json/save01.json（内容只有 {"monster":{}}，19 字节）就被当成
+          // "存档 0/1"显示，还能被整份重写 —— 那不是存档，是别的工具留下的文件。
           this.saveFiles = files
-            .filter(f => {
-              if (f.startsWith('.') || f.endsWith('.bak') || f.endsWith('.tmp') || f.endsWith('.meta')) return false;
-              return f.endsWith('.save') || f.endsWith('.json');
-            })
+            .filter(f => /^save\d{2}\.(save|json)$/i.test(f))
             .map(name => {
               const fullPath = path.join(saveDir, name);
               const stat = fs.statSync(fullPath);
@@ -7518,7 +7549,7 @@
         try {
           const fs = require('fs');
           const path = require('path');
-          const saveDir = path.join(this.getGameDir(), 'Save');
+          const saveDir = this.saveDir || this.resolveSaveDir();
           const p = path.join(saveDir, this.currentSlot);
           if (fs.existsSync(p)) {
             this.currentData = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -8202,23 +8233,23 @@
           if (this.currentData.gold !== undefined) this.currentData.gold = gVal;
           if (this.currentData.money !== undefined) this.currentData.money = gVal;
         }
+        // 属性只写进 attributes（引擎的存档字段表 actor.ts:1293-1324 里没有 hp/mp/level 这三个顶层字段，
+        // 写了也是死数据，下次存盘即丢）。attributes 里的键用**运行时口径**的属性名：
+        // 引擎加载时 map[attr.key]（variable.ts:263/266），本机存档实测就是 level/health/mana。
         const lv = readNum('quick-input-level');
         if (lv !== null && lead) {
           if (!lead.attributes) lead.attributes = {};
           lead.attributes.level = lv;
-          lead.level = lv;
         }
         const hp = readNum('quick-input-hp');
         if (hp !== null && lead) {
           if (!lead.attributes) lead.attributes = {};
           lead.attributes.health = hp;
-          lead.hp = hp;
         }
         const mp = readNum('quick-input-mp');
         if (mp !== null && lead) {
           if (!lead.attributes) lead.attributes = {};
           lead.attributes.mana = mp;
-          lead.mp = mp;
         }
 
         try {
@@ -9354,7 +9385,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.10.10';
+      const cur = (probe && probe.version) ? probe.version : '1.10.11';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -9420,7 +9451,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.10.10') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.10.11') + ')');
           refreshVersionBadge();
         }
       });

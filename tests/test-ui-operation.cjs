@@ -1023,8 +1023,11 @@ async function main() {
       // C3c：《02-Yami引擎机制》里几条最容易把 AI 带沟里的机制，必须进提示词
       check('提示词写明起始场景由启动事件的 loadScene 决定（config.startPosition 只是默认值）',
         editorSystem.indexOf('loadScene') >= 0 && editorSystem.indexOf('startPosition') >= 0)
-      check('提示词写明属性键是 GUID、原生 Actor 没有 hp 字段',
-        editorSystem.indexOf('属性键是 **GUID**') >= 0 && editorSystem.indexOf('没有 hp 字段') >= 0)
+      // 属性键有两套口径（数据文件用 id、运行时 actor.attributes 用属性名）：提示词必须两套都讲清。
+      // 只讲 id 会让 AI 写出 actor.attributes['<16位编号>'] —— 拿到 undefined 且不报错。
+      check('提示词写明属性键的两套口径、原生 Actor 没有 hp 字段',
+        editorSystem.indexOf('数据文件里') >= 0 && editorSystem.indexOf('属性名') >= 0
+        && editorSystem.indexOf('没有 hp 字段') >= 0 && editorSystem.indexOf('a5fd5e9f229abb2d') >= 0)
       check('提示词警告注入参数已被求值、不要写 this.myActor()', editorSystem.indexOf('this.myActor()') >= 0)
       check('提示词写明 UI 的 TextElement 要双冒号才会自动重绘', editorSystem.indexOf('<global::') >= 0)
       check('提示词写明 Dist 是编译产物、不要手改', editorSystem.indexOf('Dist/ 是 tsc 的编译产物') >= 0)

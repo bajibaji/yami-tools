@@ -273,7 +273,10 @@ async function main() {
   // 八节完整性与摘要质量由 test-context-meter.cjs 的端到端负责
   check('检查点带引导语与闭合标签', String(compressFile.messages[1].content || '').includes('自动生成的检查点')
     && String(compressFile.messages[1].content || '').includes('</compacted-summary>'))
-  check('最近消息被原样保留', compressFile.messages.some(message => message.role === 'user' && /第 11 轮/.test(message.content || '')))
+  // 断"最后一轮原样保留"而不是某个中间轮号：中间轮还在不在，取决于这一轮触发过几次压缩
+  // （阈值按 token 走，提示词一长触发点就前移），断言具体轮号会把测试变成提示词长度的函数。
+  // 真正的契约是：最新消息绝不能被摘要掉。
+  check('最近消息被原样保留', compressFile.messages.some(message => message.role === 'user' && /第 19 轮/.test(message.content || '')))
 
   console.log('\n########## 5. 工具结果裁剪与工具事件 ##########')
   toolCallMode = 'list_scripts'

@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.10.10';
+  const PROBE_VERSION = '1.10.11';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -606,12 +606,15 @@
   }
 
   /**
-   * 角色属性键是 **GUID**（Data/attribute.json 里每个属性的 id），不是 health/hp 这种名字：
-   * 本机工程实测 a5fd5e9f229abb2d = 生命值（key health）、a8451228fe0c120a = 最大生命值（key maxHealth），
-   * 角色文件里就是 {"key":"a5fd5e9f229abb2d","value":700} 这种形状（《02-Yami引擎机制》§8.3 也点明
-   * "原生 Actor 没有 actor.hp，战斗属性全靠 actor.attributes[key]"）。
-   * 老实现按"键名叫 health/hp/生命值"去找，于是「无限生命」在这个工程里**一次都没生效过**（静默无声）。
-   * 这里按属性表把 id 找出来：优先用运行时的 Data.attribute，取不到再读工程里的 Data/attribute.json。
+   * 属性有两套键，别混：
+   *   · **数据文件**（attribute.json / .actor / .event / .ui）里引用属性用 **id**：本机实测
+   *     a5fd5e9f229abb2d = 生命值（key health）、a8451228fe0c120a = 最大生命值（key maxHealth），
+   *     角色文件里就是 {"key":"a5fd5e9f229abb2d","value":700}。
+   *   · **运行时** actor.attributes 用的是 **属性名**：引擎加载角色时走 Attribute.loadEntries
+   *     （actor.ts:610 → variable.ts:263/266 写 map[attr.key]，只有 key 为空才回落成 id）。
+   *     本机存档实测键名就是 health / maxHealth / level / STR。
+   * 所以这里两种键都收集：优先按名命中，命中不了再按 id（写法见 healthAttributeIds）。
+   * 取表优先用运行时的 Data.attribute，取不到再读工程里的 Data/attribute.json。
    */
   // 用显式栈走，不写自调用：静态健康检查会拦「函数直接调自己」（怕手滑写成无限递归）
   function flattenAttributeTable(root, out) {
@@ -656,9 +659,19 @@
         }
       } catch (e) {}
     }
+    // 【两种键都要给】数据文件里引用属性用 id，但**运行时 actor.attributes 是按属性名当键的**
+    // —— 引擎加载角色时走 Attribute.loadEntries（actor.ts:610 → variable.ts:263/266 写的是 map[attr.key]，
+    //    只有该属性 key 为空才回落成 id）。本机存档实测键名就是 health / maxHealth / level / STR。
+    const isHealth = function (e) { return /^(health|hp)$/i.test(e.key) || e.name === '生命值' || e.name === 'HP'; };
+    const isMax = function (e) { return /^(maxhealth|maxhp|healthmax)$/i.test(e.key) || e.name === '最大生命值'; };
+    const keysOf = function (list) { return list.map(function (e) { return e.key; }).filter(function (k) { return !!k; }); };
+    const healthList = entries.filter(isHealth);
+    const maxList = entries.filter(isMax);
     attributeTableCache = {
-      health: entries.filter(function (e) { return /^(health|hp)$/i.test(e.key) || e.name === '生命值' || e.name === 'HP'; }).map(function (e) { return e.id; }),
-      max: entries.filter(function (e) { return /^(maxhealth|maxhp|healthmax)$/i.test(e.key) || e.name === '最大生命值'; }).map(function (e) { return e.id; })
+      healthKeys: keysOf(healthList),   // 运行时真正能命中的那套
+      maxKeys: keysOf(maxList),
+      health: healthList.map(function (e) { return e.id; }),   // 数据文件口径，留作兜底
+      max: maxList.map(function (e) { return e.id; })
     };
     return attributeTableCache;
   }
@@ -691,8 +704,10 @@
         if (c.godMode && player.attributes) {
           const attrs = player.attributes;
           const table = healthAttributeIds();
-          // 生命值的键：先按属性表里的 id 找（工程真实形状），找不到才退回按名字找（老工程/自定义键）
-          let lockKeys = table.health.filter(function (id) { return id in attrs; });
+          // 生命值的键：**先按属性名找**（运行时口径：actor.attributes 以 attr.key 为键），
+          // 再按 id 找（老形状），最后才退回硬编码名字。三层缺一不可，但顺序不能反。
+          let lockKeys = table.healthKeys.filter(function (k) { return k in attrs; });
+          if (!lockKeys.length) lockKeys = table.health.filter(function (id) { return id in attrs; });
           if (!lockKeys.length) {
             for (const k of Object.keys(attrs)) {
               const lk = k.toLowerCase();
@@ -702,8 +717,8 @@
           // 上限：属性表里有"最大生命值"就用它；没有就用"见过的最大的当前值"当基准，
           // 这样升级/换装把血上限抬高时照旧生效，而不是被锁死在开启那一刻的数字上
           let ceiling = NaN;
-          for (const id of table.max) {
-            const mv = Number(attrs[id]);
+          for (const k of table.maxKeys.concat(table.max)) {
+            const mv = Number(attrs[k]);
             if (Number.isFinite(mv) && mv > 0) { ceiling = mv; break; }
           }
           // 属性表里没有"最大生命值"（老工程、自定义键名）→ 退回按名字找上限，与改前行为一致
@@ -5637,28 +5652,38 @@
           // 这就是"秒杀全图怪会漏几个"的第一个成因。
           const targets = [];
           for (let i = 0; i < list.length; i++) targets.push(list[i]);
+          const table = healthAttributeIds();
           for (let i = 0; i < targets.length; i++) {
             const actor = targets[i];
             if (!actor || actor === player || (members && members.indexOf(actor) >= 0)) continue;
-            // 有生命值属性就顺手归零（界面上看得见"血空了"）
+            // **只打敌人**：引擎判敌我用 Team.relationMap[a.teamIndex | (b.teamIndex << 8)]，
+            //   0 = 敌对（actor.ts:1373-1378）、1 = 友好（actor.ts:1381-1383）。
+            //   判不了（老工程没有 Team / teamIndex）就保持旧行为：宁可多杀，也不静默少杀 —— 但要报出来。
+            const teamKnown = typeof Team !== 'undefined' && Team && Team.relationMap &&
+              player && typeof player.teamIndex === 'number' && typeof actor.teamIndex === 'number';
+            if (teamKnown && Team.relationMap[actor.teamIndex | (player.teamIndex << 8)] !== 0) continue;
+            // 有生命值属性就顺手归零（界面上看得见"血空了"）：先按属性名找、再按 id 找、最后按硬编码名字
             let hasHealth = false;
             try {
               const attrs = actor.attributes;
               if (attrs) {
-                for (const k of Object.keys(attrs)) {
-                  const lk = k.toLowerCase();
-                  if (lk === 'health' || lk === 'hp' || k === '生命值') {
-                    attrs[k] = 0;
-                    hasHealth = true;
+                const zeroKeys = table.healthKeys.concat(table.health).filter(function (k) { return k in attrs; });
+                if (zeroKeys.length) {
+                  for (const k of zeroKeys) attrs[k] = 0;
+                  hasHealth = true;
+                } else {
+                  for (const k of Object.keys(attrs)) {
+                    const lk = k.toLowerCase();
+                    if (lk === 'health' || lk === 'hp' || k === '生命值') {
+                      attrs[k] = 0;
+                      hasHealth = true;
+                    }
                   }
                 }
               }
             } catch (e) {}
             if (!hasHealth) {
-              // 找不到生命值属性**不是跳过的理由**：本机工程的角色属性键是 GUID
-              // （Data/attribute.json 的 keys 里根本没有 health/hp/生命值 字样），
-              // 老实现按名字找、找不到就 continue —— 于是"漏几个"，而且顶栏照样只报个数字，
-              // 用户根本不知道为什么漏。现在记下名字，如实报出来。
+              // 找不到生命值属性**不是跳过的理由**（有些角色本来就没有血量属性），如实报出来即可
               skipped.push({ name: resolveObjectName(actor, 'actor', i), keys: (actor && actor.attributes) ? Object.keys(actor.attributes).length : 0 });
             }
             count++;

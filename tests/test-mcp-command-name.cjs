@@ -140,6 +140,31 @@ async function main() {
   })
   check('等待时长是变量对象时不被硬转成数字', waitObject.ok === true && JSON.stringify(waitObject.previewCommands || []).indexOf('"type":"variable"') !== -1, JSON.stringify(waitObject.previewCommands || []).slice(0, 110))
   console.log('')
+  console.log('########## 5. 中文名必须落到引擎真名与真形状（撞车名会静默改语义） ##########')
+  const asJson = r => JSON.stringify((r && r.previewCommands || [])[0] || {})
+  const setNum = await call('append_event_commands', { path: EVENT_REL, commands: [{ type: '设置数值', variableId: 'aaaa1111bbbb2222', value: 5 }], dryRun: true })
+  check('设置数值：键名是引擎的 operation/operands（旧实现写 operator/operand，编译期直接抛错）',
+    setNum.ok === true && asJson(setNum).includes('"operation":"set"') && asJson(setNum).includes('"operands"') && !asJson(setNum).includes('"operator"'), asJson(setNum).slice(0, 130))
+  const setStr = await call('append_event_commands', { path: EVENT_REL, commands: [{ type: '设置字符串', variableId: 'aaaa1111bbbb2222', value: 'hi' }], dryRun: true })
+  check('设置字符串：operation=set + operand（单数）',
+    setStr.ok === true && asJson(setStr).includes('"operation":"set"') && asJson(setStr).includes('"operand"') && !asJson(setStr).includes('"operator"'), asJson(setStr).slice(0, 130))
+  const branch = await call('append_event_commands', { path: EVENT_REL, commands: [{ type: '条件分支', params: { variable: { type: 'global', key: 'v' }, branches: [] } }], dryRun: true })
+  check('条件分支 → 引擎的 switch（引擎里 if 叫「如果」；判成 if 会把条件清空变恒真）',
+    branch.ok === true && asJson(branch).includes('"id":"switch"'), asJson(branch).slice(0, 90))
+  const setText = await call('append_event_commands', { path: EVENT_REL, commands: [{ type: '设置文本', params: { element: 'e', property: 'text-content', value: 'x' } }], dryRun: true })
+  check('设置文本 → 引擎的 setText（旧实现当 setString，写了个空 key 变量、静默无效）',
+    setText.ok === true && asJson(setText).includes('"id":"setText"'), asJson(setText).slice(0, 90))
+  const loopTurn = await call('append_event_commands', { path: EVENT_REL, commands: [{ type: '遍历', params: { list: { type: 'local', key: 'l' }, commands: [] } }], dryRun: true })
+  check('引擎真名「遍历」不再报未找到自定义指令',
+    loopTurn.ok === true && asJson(loopTurn).includes('"id":"forEach"'), asJson(loopTurn).slice(0, 90))
+  const callEv = await call('append_event_commands', { path: EVENT_REL, commands: [{ type: '调用事件', eventId: 'ffffffffffffffff', eventArgs: [{ key: 'p', type: 'number', value: 1 }] }], dryRun: true })
+  check('调用事件保留 eventArgs（过去被静默丢掉，带参事件拿到空参）',
+    callEv.ok === true && asJson(callEv).includes('"eventArgs"'), asJson(callEv).slice(0, 110))
+  const engineShaped = await call('append_event_commands', { path: EVENT_REL, commands: [{ type: '设置数值', variable: { type: 'global', key: 'k' }, operation: 'add', operands: [{ operation: 'add', type: 'constant', value: 7 }] }], dryRun: true })
+  check('照 get_event_command_examples 抄来的引擎形状原样透传（不再被 String() 揉成 [object Object]）',
+    engineShaped.ok === true && !asJson(engineShaped).includes('[object Object]') && asJson(engineShaped).includes('"operation":"add"'), asJson(engineShaped).slice(0, 130))
+
+  console.log('')
   console.log('########## 指令中文名解析: ' + passed + ' PASS / ' + failed + ' FAIL ##########')
   child.kill()
   process.exit(failed ? 1 : 0)

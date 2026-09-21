@@ -73,8 +73,11 @@ check('0.5x 走 timeScale', sandbox.Time.timeScale === 0.5, 'timeScale=' + sandb
 probe.setCheat('speedMultiplier', 1);
 check('切回 1x 还回游戏原有 timeScale', sandbox.Time.timeScale === 0.3, 'timeScale=' + sandbox.Time.timeScale);
 
-console.log('=== 1b. 无限生命: 属性键是 GUID, 必须按属性表找 ===');
-// 属性表的真实形状（本机工程）：id 就是运行时的属性键，key/name 只是说明
+console.log('=== 1b. 无限生命: 运行时键是「属性名」/ 数据文件键是「id」—— 两套都要认 ===');
+// 引擎加载角色时走 Attribute.loadEntries（actor.ts:610 → variable.ts:263/266 写 map[attr.key]，
+// 只有 key 为空才回落成 id），所以运行时 actor.attributes 的键是 health/maxHealth 这类属性名
+// （本机存档实测就是这些键）；数据文件里才是 {"key":"a5fd5e9f229abb2d","value":700} 这种 id 形状。
+// 属性表的真实形状（本机工程）：
 sandbox.Data = {
   attribute: {
     '4a9869f39acd85ed': {
@@ -86,17 +89,28 @@ sandbox.Data = {
     }
   }
 };
-const hero = { passage: 3, navigator: {}, attributes: { a5fd5e9f229abb2d: 700, a8451228fe0c120a: 700 } };
+// ① 运行时真实形状：属性名当键
+const hero = { passage: 3, navigator: {}, attributes: { health: 700, maxHealth: 700 } };
 sandbox.Party = { player: hero, members: [hero] };
 probe.setCheat('godMode', true);
-hero.attributes.a5fd5e9f229abb2d = 12;      // 挨了一刀
+hero.attributes.health = 12;                 // 挨了一刀
 probe.setCheat('godMode', true);             // 下一帧重新落地
-check('GUID 键的生命值被抬回上限 (老实现按 health/hp 找 → 在这个工程里静默无效)',
-  hero.attributes['a5fd5e9f229abb2d'] === 700, 'hp=' + hero.attributes['a5fd5e9f229abb2d']);
+check('属性名键的生命值被抬回上限（运行时真实形状）',
+  hero.attributes.health === 700, 'hp=' + hero.attributes.health);
 probe.setCheat('godMode', false);
-hero.attributes['a5fd5e9f229abb2d'] = 100;
+hero.attributes.health = 100;
 probe.setCheat('godMode', false);
-check('关掉无限生命后不再干预血量', hero.attributes['a5fd5e9f229abb2d'] === 100, 'hp=' + hero.attributes['a5fd5e9f229abb2d']);
+check('关掉无限生命后不再干预血量', hero.attributes.health === 100, 'hp=' + hero.attributes.health);
+
+// ② 数据文件口径：id 当键（老工程/自定义属性表）也必须认，别把上一版的修复改回去
+const heroById = { passage: 3, navigator: {}, attributes: { a5fd5e9f229abb2d: 700, a8451228fe0c120a: 700 } };
+sandbox.Party = { player: heroById, members: [heroById] };
+probe.setCheat('godMode', true);
+heroById.attributes.a5fd5e9f229abb2d = 12;
+probe.setCheat('godMode', true);
+check('id 键的生命值同样被抬回上限（数据文件口径兜底）',
+  heroById.attributes['a5fd5e9f229abb2d'] === 700, 'hp=' + heroById.attributes['a5fd5e9f229abb2d']);
+probe.setCheat('godMode', false);
 // 还原成 §2 用的主角，别影响后面的用例
 sandbox.Party = { player, members: [player] };
 sandbox.Scene.actor.list = [player, monster];
@@ -118,18 +132,21 @@ const mk = (attrs) => {
 const player2 = { passage: 3, navigator: {}, attributes: { health: 37 } };
 const monsterA = mk({ health: 10 });
 const monsterB = mk({ health: 10 });
-// 本机工程真实形状：属性键是 GUID（Data/attribute.json 的 keys 里没有 health/hp/生命值 字样）
-const monsterGuidHp = mk({ da4d32a4f1097059: '怪物', a5fd5e9f229abb2d: 700 });
+// 数据文件口径（id 当键）也要能归零：本机 .actor 里就是 {"key":"<属性id>","value":…}
+const monsterById = mk({ da4d32a4f1097059: '怪物', a5fd5e9f229abb2d: 700 });
+// 完全没有生命值属性的角色：照样要清掉，只是报告里留个名字（不是跳过理由）
+const monsterNoHp = mk({ da4d32a4f1097059: '无血怪' });
 list2.unshift(player2);
 sandbox.Scene.actor.list = list2;
 sandbox.Party.player = player2;
 sandbox.Party.members = [player2];
 const killed2 = probe.killAllMonsters();
-check('destroy() 真的从列表里摘人时, 一个都不漏 (老实现按索引遍历会漏一半)', killed2 === 3, 'count=' + killed2);
+check('destroy() 真的从列表里摘人时, 一个都不漏 (老实现按索引遍历会漏一半)', killed2 === 4, 'count=' + killed2);
 check('列表里只剩主角', sandbox.Scene.actor.list.length === 1, 'len=' + sandbox.Scene.actor.list.length);
+check('id 键的血量也被归零（数据文件口径）', monsterById.attributes['a5fd5e9f229abb2d'] === 0, 'hp=' + monsterById.attributes['a5fd5e9f229abb2d']);
 const killReport = probe.getLastKillReport();
-check('没有生命值字样的角色照样清掉, 并在报告里留着名字',
-  !!killReport && killReport.killed === 3 && killReport.skipped.length === 1,
+check('没有生命值属性的角色照样清掉, 并在报告里留着名字',
+  !!killReport && killReport.killed === 4 && killReport.skipped.length === 1,
   JSON.stringify(killReport));
 check('主角不在击杀名单里', !!killReport && killReport.skipped.every(s => s.name !== 'player2'));
 

@@ -697,7 +697,10 @@ function collectTreeEntries(root, fields) {
     if (Array.isArray(node)) { for (let i = node.length - 1; i >= 0; i--) stack.push({ node: node[i], key: '' }); continue }
     // id 有两种写法：条目自带 id（属性表/变量表），或者**以 GUID 为键**的字典（plugins.json）
     const id = (typeof node.id === 'string' && node.id) ? node.id : (/^[0-9a-f]{16}$/.test(cur.key) ? cur.key : '')
-    if (id) {
+    // 文件夹（class:'folder'）不是条目：本机属性表 266 条里有 18 条是文件夹，
+    // 当成属性报给模型，它就敢按文件夹名去写指令。仍然要往下走（条目在 children 里）。
+    const isFolder = node.class === 'folder'
+    if (id && !isFolder) {
       const entry = { id: id }
       for (const f of fields) entry[f] = node[f]
       out.push(entry)
@@ -713,9 +716,12 @@ function collectTreeEntries(root, fields) {
 }
 
 /**
- * 属性表（Data/attribute.json）。**属性键就是这里的 id**，不是 key/name ——
- * 本机工程实测：a5fd5e9f229abb2d=生命值(key health)、a8451228fe0c120a=最大生命值。
- * 角色文件里写的是 {"key":"a5fd5e9f229abb2d","value":700}，所以 AI 引用属性必须用 id。
+ * 属性表（Data/attribute.json）。两套键都要如实给出，别只给一套：
+ *   · **数据文件**里引用属性用 id：本机实测 a5fd5e9f229abb2d=生命值(key health)、
+ *     a8451228fe0c120a=最大生命值，角色文件里就是 {"key":"a5fd5e9f229abb2d","value":700}。
+ *   · **运行时** actor.attributes 的键是 **属性名**（引擎 actor.ts:610 调 Attribute.loadEntries，
+ *     variable.ts:263/266 写 map[attr.key]，key 为空才回落 id）。
+ * 所以每条都同时返回 id 与 key/name，让调用方自己按场合取。
  */
 function attributeEntries() {
   const data = readDataJson('attribute.json')
@@ -756,18 +762,27 @@ function lintPluginScripts(files) {
     if (pluginGuids.size && !pluginGuids.has(parseGuidFromName(path.basename(f.path)) || '')) continue
     let code = ''
     try { code = fs.readFileSync(path.join(ROOT, f.path), 'utf8') } catch { continue }
-    // ① 全局插件以**类名**为键挂在 PluginManager 上（event.ts:539-549），重名会互相覆盖
+    // ① 全局插件以**类名**为键挂在 PluginManager 上（event.ts:539-549），重名会互相覆盖。
+    // 类名有两种写法：export default class X，以及 export default X（X 在本文件里定义）。
+    // 本机实测 17 个已注册插件里有 3 个是后者，旧实现完全不计入 → 冲突漏报。
     const classMatch = code.match(/export\s+default\s+class\s+([A-Za-z_$][\w$]*)/)
-    if (classMatch) {
-      const name = classMatch[1]
-      const list = owners.get(name) || []
-      list.push(f.path)
-      owners.set(name, list)
+    let exportedName = classMatch ? classMatch[1] : ''
+    if (!exportedName) {
+      const aliasMatch = code.match(/export\s+default\s+([A-Za-z_$][\w$]*)\s*(?:;|\r?\n|$)/)
+      if (aliasMatch && new RegExp('class\\s+' + aliasMatch[1] + '\\b').test(code)) exportedName = aliasMatch[1]
     }
-    // ② onBeforeSave 必须用引擎注入的 define(key, value)；直接改 data 不会进存档
+    if (exportedName) {
+      const list = owners.get(exportedName) || []
+      list.push(f.path)
+      owners.set(exportedName, list)
+    }
+    // ② onBeforeSave 里直接改 data **是会进存档的**（引擎把同一个对象交给钩子、再原样落盘：
+    //    data.ts:734-748 新建 data 对象 → emit('beforesave', {argument: data}) → event.ts:1020-1071 返回该对象
+    //    → JSON.stringify 写盘）。旧文案说"不会被保存"是错的。真正的理由只是：绕过 define 会和
+    //    引擎字段/其它插件撞名，所以建议用 define(key, value) 放进 data.plugins[插件id] 命名空间。
     const saveBody = extractMethodBody(code, 'onBeforeSave')
     if (saveBody && /\bdata\s*\.\s*[\w$]+\s*=/.test(saveBody)) {
-      issues.push({ severity: 'warning', code: 'plugin-save-without-define', file: f.path, message: 'onBeforeSave 里直接给 data 赋值不会被保存：必须用引擎注入的 define(key, value)（event.ts:1135-1192）' })
+      issues.push({ severity: 'info', code: 'plugin-save-without-define', file: f.path, message: 'onBeforeSave 里直接给 data 赋值会进存档（引擎确实会落盘），但建议改用引擎注入的 define(key, value) 放进 data.plugins[插件id] 命名空间，避免与引擎字段或其它插件撞名（event.ts:1020-1071）' })
     }
     // ③ data.plugins 是只读 Proxy，赋值会直接抛错
     const loadBody = extractMethodBody(code, 'onBeforeLoad')
@@ -804,10 +819,55 @@ function extractMethodBody(code, method) {
 }
 
 /**
- * 全局变量引用体检：引擎对类型不符的赋值**静默丢弃**（variable.ts:118），
- * 对不存在的键同样静默丢弃 —— 写错了既不报错也没效果，是最难查的一类坏。
- * 实测本机工程：182 处变量引用按 id 命中，另有 **81 处指向不存在的变量**。
+ * 全局变量引用体检：两种坏法表现**不一样**，文案别写反（旧文案说"引擎会静默丢弃"，是错的）：
+ *   · 类型不符：运行时 switch(typeof value) 里没有匹配分支 → 这次赋值整个不发生（variable.ts:118）。
+ *   · 键不存在：switch 里有 case 'undefined' → **当场写进 Variable.map**，只是不在任何群组里，
+ *     saveData 不持久化（variable.ts:140-149）→ 表现是"改完当场有效、读档就没了"。
+ * 实测本机工程：207 处变量引用按 id 命中，另有 81 处指向不存在的变量。
  */
+/**
+ * 属性引用体检：引擎按 id 查属性表（Attribute.get → idMap），**查不到就静默 continue**
+ * （Templates/arpg-ts-chinese/Script/variable.ts:256-269）。
+ * 本机工程实测有 213 处属性 id 已不在属性表里（被删或改过名）——角色文件与事件里的那条属性还在，
+ * 但游戏里永远不生效、也不报错。这是密度最高的静默坏点，过去没人查。
+ */
+function checkAttributeRefs(files) {
+  const issues = []
+  const entries = attributeEntries()
+  if (!entries.length) return issues
+  const ids = new Set(entries.map(e => e.id))
+  const seen = new Set()
+  const isGuid = (v) => typeof v === 'string' && /^[0-9a-f]{16}$/.test(v)
+  const note = (file, where, id) => {
+    const dedupe = file + '|' + id
+    if (seen.has(dedupe)) return
+    seen.add(dedupe)
+    issues.push({ severity: 'warning', code: 'unknown-attribute', attribute: id, message: file + ' 的' + where + '引用了属性表里不存在的属性 ' + id + '（引擎加载时静默跳过：这条属性不生效，也不会报错）' })
+  }
+  for (const f of files || []) {
+    if (!DATA_TYPES.includes(f.type)) continue
+    let data
+    try { data = JSON.parse(fs.readFileSync(path.join(ROOT, f.path), 'utf8')) } catch { continue }
+    const stack = [data]
+    while (stack.length) {
+      const node = stack.pop()
+      if (!node || typeof node !== 'object') continue
+      if (Array.isArray(node)) { for (const item of node) stack.push(item); continue }
+      if (isGuid(node.attributeId) && !ids.has(node.attributeId)) note(f.path, '属性参数', node.attributeId)
+      if (Array.isArray(node.attributes)) {
+        for (const item of node.attributes) {
+          if (item && typeof item === 'object' && isGuid(item.key) && !ids.has(item.key)) note(f.path, '角色属性', item.key)
+        }
+      }
+      for (const k of Object.keys(node)) {
+        const v = node[k]
+        if (v && typeof v === 'object') stack.push(v)
+      }
+    }
+  }
+  return issues
+}
+
 function checkVariableRefs(files) {
   const issues = []
   const variables = variableEntries()
@@ -833,7 +893,7 @@ function checkVariableRefs(files) {
         if (!seen.has(dedupe)) {
           seen.add(dedupe)
           if (!hit) {
-            issues.push({ severity: 'warning', code: 'unknown-variable', variable: key, message: f.path + ' 的 ' + node.id + ' 引用不存在的全局变量 ' + key + '（引擎会静默丢弃这次赋值）' })
+            issues.push({ severity: 'warning', code: 'unknown-variable', variable: key, message: f.path + ' 的 ' + node.id + ' 引用不存在的全局变量 ' + key + '（当场能写进内存、但不在变量表里，读档即丢；请先在变量表里建它）' })
           } else if (hit.valueType !== expected) {
             issues.push({ severity: 'warning', code: 'variable-type-mismatch', variable: key, message: f.path + ' 的 ' + node.id + ' 写「' + (hit.name || key) + '」，但它的初始值是 ' + hit.valueType + '（引擎按 typeof 比对，不符就静默丢弃）' })
           }
@@ -1075,8 +1135,10 @@ function validateProject() {
   }
   // 6) 插件脚本 lint（类名冲突 / onBeforeSave 没用 define / 改只读的 data.plugins）
   for (const item of lintPluginScripts(files)) issues.push(item)
-  // 7) 全局变量引用体检（不存在的变量、类型不符 —— 引擎两种都静默丢弃）
+  // 7) 全局变量引用体检（不存在的变量：读档即丢；类型不符：这次赋值不发生）
   for (const item of checkVariableRefs(files)) issues.push(item)
+  // 8) 属性引用体检（属性 id 不在属性表里 → 引擎静默跳过）
+  for (const item of checkAttributeRefs(files)) issues.push(item)
   return { ok: issues.every(i => i.severity !== 'error'), issues, stats: { files: files.length, duplicateGuids: [...guidMap.values()].filter(a => a.length > 1).length } }
 }
 
@@ -1686,14 +1748,37 @@ async function callTool(name, args) {
   args = args || {}
   switch (name) {
     case 'list_scripts': {
-      const groups = { '全局插件': [], '自定义指令': [], '场景对象脚本': [], '界面元素脚本': [] }
+      // 【口径】引擎能不能实例化一个脚本，只看注册表（Data/plugins.json / Data/commands.json，
+      // 全局插件还要 enabled !== false；运行时 event.ts:1207-1209）。旧实现按"目录名里有没有
+      // 插件/全局插件"分组，于是没注册的（本机实测 2 个）被当成插件、停用的也照列出来。
       const all = listResourceFiles('script')
-      for (const f of all) {
-        const key = Object.keys(groups).find(k => f.path.includes('插件/' + k))
-        if (key) groups[key].push(f)
+      const readRegistry = (rel) => {
+        const map = new Map()
+        try {
+          const raw = JSON.parse(fs.readFileSync(path.join(ROOT, rel), 'utf8'))
+          const items = Array.isArray(raw) ? raw : Object.values(raw || {})
+          for (const it of items) if (it && typeof it === 'object' && it.id) map.set(it.id, it.enabled !== false)
+        } catch { /* 表不存在/坏了都按"没有注册"处理 */ }
+        return map
       }
-      const total = all.length
-      return { ok: true, total, groups }
+      const plugins = readRegistry('Data/plugins.json')
+      const commands = readRegistry('Data/commands.json')
+      const groups = {
+        '全局插件（已注册且启用）': [],
+        '全局插件（未注册或已停用）': [],
+        '自定义指令（已注册且启用）': [],
+        '自定义指令（未注册或已停用）': [],
+        '场景/界面等其它脚本': []
+      }
+      for (const f of all) {
+        const guid = parseGuidFromName(path.basename(f.path)) || ''
+        const isPluginDir = f.path.includes('插件/全局插件')
+        const isCommandDir = f.path.includes('插件/自定义指令')
+        if (isPluginDir || (!isCommandDir && plugins.has(guid))) groups[plugins.get(guid) ? '全局插件（已注册且启用）' : '全局插件（未注册或已停用）'].push(f)
+        else if (isCommandDir || commands.has(guid)) groups[commands.get(guid) ? '自定义指令（已注册且启用）' : '自定义指令（未注册或已停用）'].push(f)
+        else groups['场景/界面等其它脚本'].push(f)
+      }
+      return { ok: true, total: all.length, groups, registry: { plugins: plugins.size, commands: commands.size } }
     }
     case 'parse_plugin_meta': {
       const rel = normalizeRelPath(args.path)
@@ -1712,6 +1797,11 @@ async function callTool(name, args) {
     }
     case 'create_script': {
       const rel = normalizeRelPath(args.path)
+      // 引擎只扫 Assets 下的脚本（运行时 event.ts:1221-1228 找不到就报 "The script is missing"）。
+      // 旧实现不校验路径：干跑时连 Data/xxx.<guid>.ts 都收，还照样写进注册表 → 运行时永远加载不到。
+      if (!/^Assets\//.test(rel)) {
+        return { ok: false, error: '脚本必须建在 Assets/ 目录下：' + rel + ' 引擎扫不到（运行时会报 The script is missing）' }
+      }
       const base = path.basename(rel)
       const guid = parseGuidFromName(base)
       if (!SCRIPT_TEMPLATES[args.type]) return { ok: false, error: `未知类型: ${args.type}（应为 ${Object.keys(SCRIPT_TEMPLATES).join('/')}）` }
@@ -2024,10 +2114,25 @@ async function callTool(name, args) {
         for (const f of listResourceFiles()) {
           if (f.path === rel || !DATA_TYPES.includes(f.type)) continue
           const fAbs = path.join(ROOT, f.path)
-          try {
-            const fContent = fs.readFileSync(fAbs, 'utf8')
-            if (fContent.includes(guid)) referencingFiles.push(f.path)
-          } catch {}
+          // 精确判定：解析 JSON 后找"值正好等于这个 GUID"的字段。
+          // 旧的纯文本 includes 会把注释/脚本/压缩串里偶然出现的 16 位串也算成引用（误报保护），
+          // 与 validate_project 里刻意收紧的 REF_KEYS 口径相反。
+          let parsed = null
+          try { parsed = JSON.parse(fs.readFileSync(fAbs, 'utf8')) } catch { parsed = null }
+          if (!parsed) continue
+          const stack = [parsed]
+          let hit = false
+          while (stack.length && !hit) {
+            const node = stack.pop()
+            if (!node || typeof node !== 'object') continue
+            if (Array.isArray(node)) { for (const item of node) stack.push(item); continue }
+            for (const k of Object.keys(node)) {
+              const v = node[k]
+              if (v === guid) { hit = true; break }
+              if (v && typeof v === 'object') stack.push(v)
+            }
+          }
+          if (hit) referencingFiles.push(f.path)
           if (referencingFiles.length >= 5) break
         }
         if (referencingFiles.length > 0 && !args.force) {
@@ -2214,6 +2319,39 @@ async function callTool(name, args) {
         if (oldRaw) {
           let oldData = null
           try { oldData = JSON.parse(oldRaw) } catch { oldData = null }
+          // 【数值数组回写】read_tilemap 把解码后的 tiles/terrains 数组交给模型；模型改完数组直接写回时，
+          // code / terrains 两个字符串没变 → 下面 checkRle 的 to === from 会直接放行 → 引擎只认字符串，
+          // 地图"报成功但一点没改"，还把数组塞进 .scene。引擎自己就是从数组重算压缩串的
+          // （运行时 scene.ts:3675 code: Codec.encodeTiles(this.tiles)；编辑器 codec.ts:97-99 加载时再从 code 反解），
+          // 所以这里写盘前先把数组编码成引擎要的串，并把引擎不会落盘的 tiles 字段摘掉。
+          if (type === 'scene') {
+            const encW = Number(args.content.width) || Number(oldData && oldData.width) || 0
+            const encH = Number(args.content.height) || Number(oldData && oldData.height) || 0
+            if (Array.isArray(args.content.terrains) && encW && encH) {
+              try { args.content.terrains = rle.encodeTerrains(args.content.terrains) } catch (e) {
+                issues.push({ severity: 'error', code: 'rle-invalid', message: 'terrains 数值数组编不回去: ' + e.message })
+              }
+            }
+            const reencode = (root) => {
+              const stack = Array.isArray(root) ? root.slice() : [root]
+              while (stack.length) {
+                const node = stack.pop()
+                if (!node || typeof node !== 'object') continue
+                if (Array.isArray(node.children)) stack.push(...node.children)
+                if (!Array.isArray(node.tiles)) continue
+                const w = Number(node.width) || 0
+                const h = Number(node.height) || 0
+                if (!w || !h) continue
+                try {
+                  node.code = rle.encodeTiles(node.tiles)
+                  delete node.tiles
+                } catch (e) {
+                  issues.push({ severity: 'error', code: 'rle-invalid', message: '瓦片图「' + (node.name || node.id || '') + '」的 tiles 数组编不回去: ' + e.message })
+                }
+              }
+            }
+            reencode(args.content.objects || [])
+          }
           if (oldData) {
             // 有了真编解码，判据就从「不许写短」升级成「**必须解得开**」：
             //   解得开 → 放行（写短也可能是合法的重新编码：把一片空地压得更紧），并如实报告改了哪些元素；
@@ -2467,7 +2605,7 @@ async function callTool(name, args) {
           }
         }
       }
-      out.note = 'tiles/terrains 是解码后的数值数组；改完用 write_resource 整体写回（会自动校验可解码）'
+      out.note = 'tiles/terrains 是解码后的数值数组。改完数组后用 write_resource 整体写回：写盘前会把数组重新编码成引擎要的压缩串（引擎只读 code/terrains，不认数组），并校验解得开'
       return out
     }
     case 'ui_steps': {

@@ -94,9 +94,55 @@ function appendVariableChild(node, parentId, newVar) {
  * 传错一个键（比如 attribute 的 settings）就会把引擎结构覆盖成 {__probe:1} —— 实测 dryRun 都放行。
  */
 const TABLE_SHAPES = {
-  attribute: { kind: 'dict', containers: ['settings', 'keys'] },
-  enumeration: { kind: 'dict', containers: ['settings', 'strings'] },
+  // 属性表/枚举表是**树表**（条目嵌在 keys/strings 的 children 里，引擎只读这个容器：
+  // tree-data-context.ts:36）。旧实现把它们当"id 字典"，于是 upsert 会在顶层新增一个
+  // "da4d32a4f1097059" 垃圾键、原条目一个字都没改 —— 还返回 ok。
+  attribute: { kind: 'tree', containers: ['settings', 'keys'], roots: ['keys'] },
+  enumeration: { kind: 'tree', containers: ['settings', 'strings'], roots: ['strings'] },
   config: { kind: 'flat' }
+}
+
+/** 树表里按 id 递归找条目（找不到返回 null，绝不在顶层塞键） */
+function findTreeEntry(node, id) {
+  if (!node || typeof node !== 'object') return null
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const hit = findTreeEntry(item, id)
+      if (hit) return hit
+    }
+    return null
+  }
+  if (node.id === id) return node
+  for (const key of Object.keys(node)) {
+    const value = node[key]
+    // 字典形容器（{ <id>: 条目 }）：键本身就是 id，条目里未必再带 id 字段
+    if (key === id && value && typeof value === 'object' && !Array.isArray(value)) return value
+    if (value && typeof value === 'object') {
+      const hit = findTreeEntry(value, id)
+      if (hit) return hit
+    }
+  }
+  return null
+}
+
+/**
+ * 树表新增条目：容器有 children 就挂进去；是数组就 push；是字典（{ <id>: 条目 } / {0: 条目}）
+ * 就按 id 写键。三种形状都认 —— 真实工程是数组+children，测试夹具与老工程有字典形。
+ */
+function appendTreeEntry(container, entry, id) {
+  if (!container || typeof container !== 'object') return false
+  if (Array.isArray(container)) { container.push(entry); return true }
+  if (Array.isArray(container.children)) { container.children.push(entry); return true }
+  const keys = Object.keys(container)
+  if (keys.length && keys.every(k => container[k] && typeof container[k] === 'object' && !Array.isArray(container[k]))) {
+    container[id] = entry
+    return true
+  }
+  for (const key of keys) {
+    const value = container[key]
+    if (value && typeof value === 'object' && appendTreeEntry(value, entry, id)) return true
+  }
+  return false
 }
 
 class DatabaseManager {
@@ -180,6 +226,12 @@ class DatabaseManager {
           id: targetId,
           name: item.name || '新变量',
           value: item.value !== undefined ? item.value : 0,
+          // sort 必须有：运行时 Variable.unpack 是 groups[item.sort].push(item)（variable.ts:85），
+          // 缺了它 groups[undefined] 直接抛 TypeError，而 Variable.initialize 在启动流程里（main.ts:54）
+          // → 新建一个没有 sort 的变量 = 游戏起不来。编辑器自己建变量也是带 sort:0 + note:'' 的
+          // （Script/variable/list-methods.ts:53-60），两条通道必须同形状。
+          sort: item.sort !== undefined ? item.sort : 0,
+          note: item.note !== undefined ? item.note : '',
           ...item
         }
         const appended = parentId === undefined && Array.isArray(rawData)
@@ -216,16 +268,35 @@ class DatabaseManager {
         action = 'created'
       }
     } else if (typeof rawData === 'object') {
-      // 字典型对象表（如 enumeration, attribute 等）
-      if (!targetId) {
-        return { ok: false, error: `表 ${cleanTable} 为字典结构，必须指定 id 键名` }
-      }
-      if (rawData[targetId]) {
-        rawData[targetId] = mergePatch(rawData[targetId], item)
-        action = 'updated'
+      const shape = TABLE_SHAPES[cleanTable] || {}
+      if (shape.kind === 'tree') {
+        // 树表（属性表/枚举表）：按 id 在 keys/strings 树里找，找到就合并，找不到才新建
+        if (!targetId) targetId = this.generateGuid()
+        const found = findTreeEntry(rawData, targetId)
+        if (found) {
+          Object.assign(found, mergePatch(found, item))
+          action = 'updated'
+        } else {
+          const entry = { id: targetId, name: item.name || `新${cleanTable}`, ...item }
+          let appended = false
+          for (const rootKey of (shape.roots || [])) {
+            if (rawData[rootKey] && appendTreeEntry(rawData[rootKey], entry, targetId)) { appended = true; break }
+          }
+          if (!appended) return { ok: false, error: `表 ${cleanTable} 的 ${(shape.roots || []).join('/')} 结构不认识，未写入（请先用 read_resource 查看结构）` }
+          action = 'created'
+        }
       } else {
-        rawData[targetId] = item
-        action = 'created'
+        // 字典型对象表（目前没有这类表；保留兜底：必须显式给 id，绝不凭空造顶层键）
+        if (!targetId) {
+          return { ok: false, error: `表 ${cleanTable} 为字典结构，必须指定 id 键名` }
+        }
+        if (rawData[targetId]) {
+          rawData[targetId] = mergePatch(rawData[targetId], item)
+          action = 'updated'
+        } else {
+          rawData[targetId] = item
+          action = 'created'
+        }
       }
     }
 

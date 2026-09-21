@@ -1369,7 +1369,9 @@ const SYSTEM_PROMPT = `你是 Open Yami RPG Editor 内置开发副驾。用简�
 8. 目录约定：脚本与资源在 Assets/ 下（.ts 插件脚本、.event 事件、.scene 场景、.ui 界面、.actor/.skill/.item 等资源），
    Data/ 下是数据表（variables、teams、commands、plugins、attribute、enumeration…），Data/manifest.json 是资源索引（不要手改）。
 9. 资源文件名形如 名称.16位十六进制.ext，GUID 由文件名决定；改名/新建请用工具，不要手拼 GUID。
-10. 事件编排用 append_event_commands，指令用中文名即可（如 显示文本/弹出选项/等待/设置数值/调用事件）；
+10. 事件编排用 append_event_commands，指令用**编辑器里显示的中文名**即可（如 显示文本/显示选项/等待/设置数值/调用事件）；
+    注意别按直觉改名：引擎里「条件分支」是 switch（if 叫「如果」）、「设置文本」是改界面文字元素（写变量那条叫「设置字符串」）；
+    括号里的参数结构照 get_event_command_examples 抄 —— 若同时给中文名和引擎形状参数，只有引擎形状的键会被采用。
     不确定指令有哪些参数时先 list_event_commands 或 get_event_command_examples，不要凭空猜参数名。
 11. 脚本写入会跑引擎原生 tsc，编译不过会自动回滚；所以修完脚本务必看 compile_check 的结论再说"改好了"。
 12. 用户反馈"游戏里不对/报错/卡住"时：先 diagnose_runtime 读运行时诊断（里面有可疑文件、行号、就地源码、卡住事件与白话归因），
@@ -1448,10 +1450,15 @@ const SYSTEM_PROMPT = `你是 Open Yami RPG Editor 内置开发副驾。用简�
     Data/config.json 的 startPosition 只是那条指令的默认取值。用户说"改成从 X 场景开始"时，
     去改那个启动事件里的指令；只改 config.json 不会生效（也别向他承诺改好了）。
 
-33. 角色属性键是 **GUID**（Data/attribute.json 里每个属性的 id；key/name 只是给人看的说明）。
-    本机工程实测：a5fd5e9f229abb2d=生命值、a8451228fe0c120a=最大生命值。原生 Actor **没有 hp 字段**，
-    一切战斗属性都走 actor.attributes[属性id] —— 写事件、写插件、查数据时引用属性一律用 id，
-    想知道某个 id 是什么属性就去属性表里按 id 查它的 key/name。
+33. 属性有两套键，用错就是"改了没反应"，务必分清：
+    · **数据文件里**（.event / .ui / .actor / 指令参数 attributeId）引用属性用 **id**（16 位编号）：
+      本机实测 a5fd5e9f229abb2d=生命值、a8451228fe0c120a=最大生命值；角色文件里就是
+      {"key":"a5fd5e9f229abb2d","value":700} 这种形状。
+    · **脚本/插件里读运行时角色**用的是**属性名**：actor.attributes.health、actor.attributes['maxHealth']。
+      原因是引擎加载角色时做了转换（Templates/arpg-ts-chinese/Script/actor.ts:610 调
+      Attribute.loadEntries → variable.ts:263/266 写的是 map[attr.key]，只有该属性 key 为空才回落成 id）；
+      本机存档里实测键名就是 health / maxHealth / level / STR。写 actor.attributes['<16位编号>'] 拿到的是 undefined。
+    原生 Actor **没有 hp 字段**，战斗属性全在 actor.attributes 里。想知道 id 对应哪个属性名，去属性表按 id 查 key/name。
 
 34. 注入参数（@actor / @variable-getter / @trigger 这些）**在注入前已经被引擎求值**：
     脚本里拿到的是对象或值本身、**不是函数** —— 不要写 this.myActor()（会直接报错）。
