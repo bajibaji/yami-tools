@@ -3116,7 +3116,8 @@ function refreshHostPort() {
       '<div class="yami-ai-compose">' +
         '<div class="yami-ai-compose-main">' +
           '<div class="yami-ai-input-wrap">' +
-            '<textarea id="yami-ai-input" rows="3" placeholder="输入需求：编写技能逻辑、排查脚本报错、调整事件流程... (Enter 发送 / Shift+Enter 换行)"></textarea>' +
+            '<div class="yami-ai-mention" id="yami-ai-mention" role="listbox" aria-label="工程文件候选" hidden></div>' +
+            '<textarea id="yami-ai-input" rows="3" placeholder="输入需求：编写技能逻辑、排查脚本报错、调整事件流程... (Enter 发送 / Shift+Enter 换行 / @ 引用工程文件)"></textarea>' +
           '</div>' +
           '<div class="yami-ai-primary yami-ai-send-btn" id="yami-ai-send" role="button" tabindex="0" aria-disabled="false" title="发送（Enter）">发送</div>' +
         '</div>' +
@@ -3150,6 +3151,8 @@ function refreshHostPort() {
       api.switchView('ai');
       loadSettings();
       refreshContext();
+      // @ 引用的候选清单提前拉一次（宿主那边还缓存 60 秒）：等用户打完 @ 再拉要白等两秒
+      void loadMentionFiles();
       // 【G-12】进页面 = 开新对话：屏上和上下文必须说同一件事。
       // 以前进页面会静默沿用上次那个 sessionId（模型看得到全部历史），屏上却只有一句欢迎语 ——
       // 用户以为开了新对话，于是被上一轮的记忆吓一跳。旧对话没丢，都在【历史】里。
@@ -3268,15 +3271,173 @@ function refreshHostPort() {
     const inputArea = document.getElementById('yami-ai-input');
     inputArea.addEventListener('keydown', event => {
       if (event.isComposing || event.keyCode === 229) return;
+      // @ 候选浮层开着时先接管方向键与确认键：Enter 是"选这个文件"而不是"发送"
+      if (mention.open) {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (mention.items.length) {
+            const step = event.key === 'ArrowDown' ? 1 : -1;
+            mention.active = (mention.active + step + mention.items.length) % mention.items.length;
+            renderMention();
+            const activeEl = document.querySelector('#yami-ai-mention .yami-ai-mention-item.active');
+            if (activeEl && activeEl.scrollIntoView) activeEl.scrollIntoView({ block: 'nearest' });
+          }
+          return;
+        }
+        if ((event.key === 'Enter' || event.key === 'Tab') && mention.items.length) {
+          event.preventDefault();
+          applyMention(mention.items[mention.active]);
+          return;
+        }
+        if (event.key === 'Escape') {
+          // 只关浮层：全局那层 Esc 是"停止本轮"，不该被一次关菜单顺手触发
+          event.preventDefault();
+          event.stopPropagation();
+          closeMention();
+          return;
+        }
+      }
       if (event.key !== 'Enter' || event.shiftKey) return;
       event.preventDefault();
       // Enter = 发送（忙时的行为由设置决定：排队 / 打断）；Ctrl/Cmd+Enter = 保留的"引导"快捷键
       sendMessage(state.busy && (event.ctrlKey || event.metaKey) ? 'steer' : undefined);
     });
     inputArea.addEventListener('input', () => {
+      resizeInput();
+      refreshMention();
+    });
+    // 点别处就收起（用 mousedown 选中候选，所以这里给一点延迟让选中先落地）
+    inputArea.addEventListener('blur', () => setTimeout(closeMention, 150));
+    // 光标移动也可能离开 @ 片段（比如点回中间的普通文字）
+    inputArea.addEventListener('click', () => refreshMention());
+
+    /* ---------- @ 引用工程文件（G-3） ----------
+       打 @ 弹出工程文件候选，选中即把「@相对路径」插进输入框。
+       只插文本、不改协议：模型收到的还是一条普通用户消息，路径就是"我说的是这个文件"。
+       清单由宿主 /files 给出（脚本 + 数据资源，已排除图片音频），这里只做本地过滤与插入。 */
+    const mention = { open: false, files: null, loading: false, failed: false, items: [], active: 0, start: -1, total: 0 };
+    const MENTION_TYPES = {
+      script: '脚本', event: '事件', scene: '场景', ui: '界面', trigger: '触发区域', actor: '角色',
+      tileset: '图块', animation: '动画', particle: '粒子', skill: '技能', item: '道具',
+      equipment: '装备', state: '状态', file: '文件'
+    };
+
+    function resizeInput() {
       inputArea.style.height = 'auto';
       inputArea.style.height = Math.min(140, Math.max(52, inputArea.scrollHeight)) + 'px';
-    });
+    }
+
+    // 文件名形如 名称.16位十六进制.ext：中间那段哈希对人没有意义，去掉
+    function mentionName(rel) {
+      return String(rel).split('/').pop().replace(/\.[0-9a-f]{16}(?=\.)/i, '');
+    }
+    function mentionDir(rel) {
+      const parts = String(rel).split('/');
+      parts.pop();
+      return parts.join('/');
+    }
+
+    // 光标前那一段「@xxx」；不构成引用就返回 null（有选区、跨行、又一个 @、前面贴着字母都不算）
+    function mentionQuery() {
+      if (inputArea.selectionStart !== inputArea.selectionEnd) return null;
+      const text = inputArea.value.slice(0, inputArea.selectionStart);
+      const at = text.lastIndexOf('@');
+      if (at < 0) return null;
+      const query = text.slice(at + 1);
+      if (query.length > 60 || /[\n@]/.test(query)) return null;
+      if (at > 0 && !/\s/.test(text[at - 1])) return null;
+      return { start: at, query };
+    }
+
+    function mentionMatches(query) {
+      const files = mention.files || [];
+      const keyword = query.trim().toLowerCase();
+      if (!keyword) return files.slice(0, 40);
+      const hits = [];
+      for (const item of files) {
+        const full = String(item.path).toLowerCase();
+        const index = full.indexOf(keyword);
+        if (index < 0) continue;
+        // 文件名命中优先于目录命中；同样命中时路径短的在前（更可能是用户在说的那个）
+        const byName = mentionName(full).indexOf(keyword) >= 0 ? 0 : 1000;
+        hits.push({ item, score: byName + index + full.length / 1000 });
+      }
+      hits.sort((a, b) => a.score - b.score);
+      return hits.slice(0, 40).map(hit => hit.item);
+    }
+
+    function renderMention() {
+      const box = document.getElementById('yami-ai-mention');
+      if (!box) return;
+      if (!mention.open) { box.hidden = true; box.innerHTML = ''; return; }
+      box.hidden = false;
+      if (mention.loading) { box.innerHTML = '<div class="yami-ai-mention-hint">正在读取工程文件…</div>'; return; }
+      if (mention.failed) { box.innerHTML = '<div class="yami-ai-mention-hint">读不到工程文件清单（AI 宿主没起来？）</div>'; return; }
+      if (!mention.items.length) { box.innerHTML = '<div class="yami-ai-mention-hint">工程里没有匹配的文件</div>'; return; }
+      box.innerHTML = mention.items.map((item, index) =>
+        '<div class="yami-ai-mention-item' + (index === mention.active ? ' active' : '') + '" role="option" data-index="' + index + '" title="' + escapeHtml(item.path) + '">' +
+          '<span class="yami-ai-mention-name">' + escapeHtml(mentionName(item.path)) + '</span>' +
+          '<span class="yami-ai-mention-type">' + escapeHtml(MENTION_TYPES[item.type] || item.type) + '</span>' +
+          '<span class="yami-ai-mention-path">' + escapeHtml(mentionDir(item.path)) + '</span>' +
+        '</div>').join('') +
+        '<div class="yami-ai-mention-hint">↑↓ 选择 · Enter 插入 · Esc 关闭 · 候选来自工程 ' + mention.total + ' 个文件</div>';
+    }
+
+    function closeMention() {
+      if (!mention.open) return;
+      mention.open = false;
+      mention.items = [];
+      renderMention();
+    }
+
+    function refreshMention() {
+      const context = mentionQuery();
+      if (!context) { closeMention(); return; }
+      mention.open = true;
+      mention.start = context.start;
+      mention.items = mentionMatches(context.query);
+      mention.active = 0;
+      renderMention();
+      if (!mention.files && !mention.loading && !mention.failed) void loadMentionFiles();
+    }
+
+    // 清单只拉一次（宿主那边还缓存 60 秒）；拉不到就如实说读不到，不让打字变成弹报错
+    async function loadMentionFiles() {
+      mention.loading = true;
+      renderMention();
+      try {
+        const data = await request('/files', {}, 20000);
+        mention.files = Array.isArray(data.files) ? data.files : [];
+        mention.total = mention.files.length;
+      } catch (error) {
+        mention.failed = true;
+      }
+      mention.loading = false;
+      if (mention.open) refreshMention();
+    }
+
+    function applyMention(item) {
+      if (!item) return;
+      const caret = inputArea.selectionStart;
+      const insert = '@' + item.path + ' ';
+      inputArea.value = inputArea.value.slice(0, mention.start) + insert + inputArea.value.slice(caret);
+      const next = mention.start + insert.length;
+      inputArea.setSelectionRange(next, next);
+      closeMention();
+      inputArea.focus();
+      resizeInput();
+    }
+
+    const mentionBox = document.getElementById('yami-ai-mention');
+    if (mentionBox) {
+      // mousedown 而不是 click：click 之前输入框已经 blur，浮层早被收起了
+      mentionBox.addEventListener('mousedown', event => {
+        const hit = event.target && event.target.closest ? event.target.closest('.yami-ai-mention-item') : null;
+        if (!hit) return;
+        event.preventDefault();
+        applyMention(mention.items[Number(hit.dataset.index)]);
+      });
+    }
 
     const scopeBar = document.getElementById('yami-ai-scope');
     if (scopeBar) {

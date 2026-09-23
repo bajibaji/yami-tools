@@ -35,6 +35,10 @@ const sessions = new Map()
 const seen = new Set()   // 已被模型返回并在上下文中回填过的 tool_call id，避免流式重放时重复回填
 let projectRoot = process.env.YAMI_PROJECT_ROOT || ''
 let mcp = null
+// 【@ 引用】面板打 @ 时要一份「工程里能引用的文件」清单。缓存 60 秒：@ 是打字触发的，
+// 每次按键都问一遍 MCP 会把输入拖卡；工程改动用 60 秒自然过期兜着，不做额外的失效通知。
+const MENTION_SKIP_TYPES = new Set(['image', 'audio'])
+let mentionCache = { root: '', at: 0, files: [] }
 
 const FILE_MUTATIONS = new Set([
   'write_resource', 'create_script', 'write_script', 'edit_script', 'patch_resource',
@@ -1065,6 +1069,38 @@ async function ensureMcp() {
   return mcp
 }
 
+/**
+ * 面板 @ 引用的候选清单（脚本 + 数据资源，本机真工程约 570 条）。
+ * 刻意不收图片/音频：真工程 Assets 下 4849 个文件里 4267 个是图片音频（.png 就 3953 个），
+ * 放进选择列表只会把真正的目标淹掉；要指某张图时用户直接说名字，模型拿到路径也做不了更多事。
+ */
+async function mentionFiles(force) {
+  const fresh = mentionCache.root === projectRoot && Date.now() - mentionCache.at < 60000
+  if (fresh && !force) return { files: mentionCache.files, cached: true }
+  const client = await ensureMcp()
+  const seen = new Map()
+  const push = (rel, type) => { if (rel && !seen.has(rel)) seen.set(rel, { path: rel, type: type || 'file' }) }
+  const scripts = await client.call('list_scripts', {})
+  for (const group of Object.values((scripts && scripts.groups) || {})) {
+    for (const item of Array.isArray(group) ? group : []) push(item && item.path, 'script')
+  }
+  // list_resources 单次上限 500 条，循环取完（page 上限 20 页 = 1 万条，真工程到不了）
+  let offset = 0
+  for (let page = 0; page < 20; page++) {
+    const result = await client.call('list_resources', { offset, limit: 500 })
+    const items = (result && result.resources) || []
+    for (const item of items) {
+      if (!item || !item.path || MENTION_SKIP_TYPES.has(item.type)) continue
+      push(item.path, item.type)
+    }
+    if (!result || !result.hasMore || !items.length) break
+    offset += items.length
+  }
+  const files = [...seen.values()]
+  mentionCache = { root: projectRoot, at: Date.now(), files }
+  return { files, cached: false }
+}
+
 function modelTools(tools) {
   return tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema || { type: 'object', properties: {} } } }))
 }
@@ -1361,6 +1397,8 @@ const SYSTEM_PROMPT = `你是 Open Yami RPG Editor 内置开发副驾。用简�
 【工作方式：先搜、再看、再改，省上下文】
 6. 找东西先 search_project（内容检索）或 list_scripts / list_resources，不要一上来整份读大文件。
    只有命中之后才 read_script / read_resource 读那一个文件，read_resource 遇到大文件请用 key 参数读子节。
+   用户消息里的 @相对路径（如 @Assets/插件/全局插件/示例.abc.ts）是他在输入框里点选的文件，不是猜测：
+   直接按那个文件办事，不要再挑别的同名文件；他没点选时你不要自己造 @路径。
 7. 改脚本优先 edit_script 做**片段替换**，而不是 write_script 整份重写：
    oldText 要带足够上下文保证在文件里唯一（不唯一会被拒绝并给出行号）；
    先用 dryRun 预览，确认无误再正式写入。整份重写只在新建或大改结构时使用。
@@ -2404,6 +2442,11 @@ async function handle(pathname, body, events = {}) {
     } catch (error) {
       return { ok: false, baseUrl: config.endpoint, models: [], error: error.message }
     }
+  }
+  if (pathname === '/files') {
+    // @ 引用工程文件（G-3）：只给面板做候选列表，不进模型协议 —— 选中后插进输入框的就是一段普通文本
+    const index = await mentionFiles(body && body.refresh === true)
+    return { ok: true, count: index.files.length, cached: index.cached, files: index.files }
   }
   if (pathname === '/changelog-baseline') {
     // 开始新任务时把当前工程状态设为该会话的独立基线，之后的变更小结只报增量

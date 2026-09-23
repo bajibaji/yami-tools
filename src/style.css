@@ -4039,6 +4039,7 @@
         min-width: 0 !important;
       }
       .yami-ai-input-wrap {
+        position: relative !important;
         flex: 1 1 auto !important;
         min-width: 0 !important;
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
@@ -4052,6 +4053,77 @@
         border-color: rgba(59, 130, 246, 0.5) !important;
         background: #191b22 !important;
         box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25), 0 3px 12px rgba(0, 0, 0, 0.35) !important;
+      }
+
+      /* @ 引用工程文件的候选浮层（G-3）：浮在输入框上方，不挤动布局 */
+      .yami-ai-mention {
+        position: absolute !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: calc(100% + 6px) !important;
+        max-height: 264px !important;
+        overflow-y: auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 1px !important;
+        padding: 4px !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 6px !important;
+        background: #1b1d23 !important;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
+        z-index: 30 !important;
+      }
+      /* 必须显式关掉：上面的 display: flex !important 会盖掉 hidden 属性的默认 display:none */
+      .yami-ai-mention[hidden] {
+        display: none !important;
+      }
+      .yami-ai-mention-item {
+        display: flex !important;
+        align-items: baseline !important;
+        gap: 8px !important;
+        min-width: 0 !important;
+        padding: 5px 8px !important;
+        border-radius: 4px !important;
+        cursor: pointer !important;
+      }
+      .yami-ai-mention-item.active {
+        background: rgba(59, 130, 246, 0.22) !important;
+      }
+      .yami-ai-mention-name {
+        flex: 0 1 auto !important;
+        min-width: 0 !important;
+        color: #f3f4f6 !important;
+        font-size: 12px !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+      }
+      .yami-ai-mention-type {
+        flex: 0 0 auto !important;
+        padding: 0 5px !important;
+        border-radius: 3px !important;
+        background: rgba(255, 255, 255, 0.08) !important;
+        color: #9ca3af !important;
+        font-size: 10px !important;
+        line-height: 16px !important;
+      }
+      .yami-ai-mention-path {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        color: #6b7280 !important;
+        font-size: 10px !important;
+        text-align: right !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+      }
+      .yami-ai-mention-hint {
+        padding: 3px 8px !important;
+        color: #6b7280 !important;
+        font-size: 10px !important;
+      }
+      .yami-ai-mention::-webkit-scrollbar {
+        width: 4px !important;
       }
       .yami-ai-compose textarea,
       #yami-ai-input {
@@ -4740,6 +4812,7 @@
       .yami-ai-system-body::-webkit-scrollbar-track,
       .yami-ai-queue::-webkit-scrollbar-track,
       .yami-ai-context-summary::-webkit-scrollbar-track,
+      .yami-ai-mention::-webkit-scrollbar-track,
       #yami-ai-input::-webkit-scrollbar-track {
         background: #181818 !important;
       }
@@ -4764,6 +4837,7 @@
       .yami-ai-system-body::-webkit-scrollbar-thumb,
       .yami-ai-queue::-webkit-scrollbar-thumb,
       .yami-ai-context-summary::-webkit-scrollbar-thumb,
+      .yami-ai-mention::-webkit-scrollbar-thumb,
       #yami-ai-input::-webkit-scrollbar-thumb {
         background: #383838 !important;
         border-radius: 2px !important;
@@ -4787,6 +4861,7 @@
       .yami-ai-system-body::-webkit-scrollbar-thumb:hover,
       .yami-ai-queue::-webkit-scrollbar-thumb:hover,
       .yami-ai-context-summary::-webkit-scrollbar-thumb:hover,
+      .yami-ai-mention::-webkit-scrollbar-thumb:hover,
       #yami-ai-input::-webkit-scrollbar-thumb:hover {
         background: #4a4a4a !important;
       }

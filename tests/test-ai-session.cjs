@@ -412,6 +412,25 @@ async function main() {
     /列出资源/.test(String(budgetResult.message)) && /次/.test(String(budgetResult.message)),
     String(budgetResult.message).slice(0, 90))
   check('是宿主预算拦下的，不是撞到模型自己的第 16 次调用', modelCallCount - callsBefore <= 12, 'calls=' + (modelCallCount - callsBefore))
+  console.log('\n########## 13. @ 引用工程文件（/files 候选清单） ##########')
+  // 面板打 @ 要一份"工程里能引用的文件"清单，清单由宿主从 MCP 取，不让面板自己扫盘。
+  // 真工程 Assets 下 4849 个文件里 4267 个是图片音频，混进候选只会把真正的目标淹掉，必须排除。
+  const indexStarted = Date.now()
+  const fileIndex = (await json('/files', 'POST', {})).data || {}
+  const indexMs = Date.now() - indexStarted
+  const files = Array.isArray(fileIndex.files) ? fileIndex.files : []
+  check('/files 返回候选清单', fileIndex.ok === true && files.length > 0, 'count=' + fileIndex.count + ' 首次耗时 ' + indexMs + 'ms')
+  check('候选都是 Assets/ 下的工程相对路径', files.length > 0 && files.every(item => String(item.path).startsWith('Assets/')),
+    '样例 ' + JSON.stringify((files[0] || {}).path))
+  check('候选排除了图片与音频', files.length > 0 && files.every(item => item.type !== 'image' && item.type !== 'audio'),
+    '类型: ' + [...new Set(files.map(item => item.type))].sort().join(','))
+  check('候选里脚本和事件都在', files.some(item => item.type === 'script') && files.some(item => item.type === 'event'))
+  check('路径不重复（脚本表与资源表有重叠）', files.length > 0 && new Set(files.map(item => item.path)).size === files.length)
+  const cachedIndex = (await json('/files', 'POST', {})).data || {}
+  check('短时间再要一次走缓存（@ 是打字触发的，不能每次扫盘）', cachedIndex.cached === true && cachedIndex.count === fileIndex.count)
+  const refreshedIndex = (await json('/files', 'POST', { refresh: true })).data || {}
+  check('refresh 时重新扫盘', refreshedIndex.cached === false && refreshedIndex.count === fileIndex.count)
+
   console.log(`\n########## AI 会话/上下文测试: ${passed} PASS / ${failed} FAIL ##########`)
   await stopHost()
   model.close()

@@ -369,6 +369,114 @@ function checkPluginWiring() {
   return { files: shipped.length, bootstrap: 3, modules: moduleFiles.length }
 }
 
+/**
+ * @ 引用工程文件（G-3）的静态契约：面板浮层 → 宿主候选清单 → 系统提示词，一条链不能缺环。
+ * 光断言字符串存在不够 —— 触发规则与过滤排序是纯逻辑，这里把它们抽出来在 vm 里真跑一遍。
+ */
+function extractFunction(src, name) {
+  const start = src.indexOf('function ' + name + '(')
+  assert.ok(start >= 0, '找不到函数 ' + name + '（@ 引用的接线环断了）')
+  let depth = 0
+  for (let i = src.indexOf('{', start); i < src.length; i++) {
+    if (src[i] === '{') depth++
+    else if (src[i] === '}') { depth--; if (depth === 0) return src.slice(start, i + 1) }
+  }
+  throw new Error('函数 ' + name + ' 的花括号不闭合')
+}
+
+function checkMentionFiles() {
+  const vm = require('vm')
+  const agent = fs.readFileSync(path.join(ROOT, 'ai-agent.js'), 'utf8')
+  const host = fs.readFileSync(path.join(ROOT, 'ai-host.js'), 'utf8')
+  const styleCss = fs.readFileSync(path.join(ROOT, 'src', 'style.css'), 'utf8')
+  const hud = fs.readFileSync(path.join(ROOT, 'hud-overlay.js'), 'utf8')
+
+  // ① 面板接线
+  assert.ok(/id="yami-ai-mention"/.test(agent), '面板必须有 @ 候选浮层容器')
+  for (const fn of ['mentionQuery', 'mentionMatches', 'applyMention', 'refreshMention', 'loadMentionFiles']) {
+    assert.ok(new RegExp('function ' + fn + '\\(').test(agent), '面板缺少 ' + fn + '（@ 引用的接线环）')
+  }
+  assert.ok(/request\('\/files'/.test(agent), '候选清单必须来自宿主 /files（面板不许自己扫盘）')
+  assert.ok(/'@' \+ item\.path \+ ' '/.test(agent), '插入格式必须是「@相对路径 + 空格」：模型靠它认出用户点的是哪个文件')
+  assert.ok(/if \(mention\.open\)[\s\S]{0,900}applyMention\(mention\.items\[mention\.active\]\)/.test(agent), '浮层开着时 Enter 必须优先"选文件"而不是发送')
+
+  // ② 宿主端点：清单来源、排除项、缓存、提示词
+  assert.ok(/pathname === '\/files'/.test(host), '宿主必须有 /files 端点')
+  assert.ok(/MENTION_SKIP_TYPES = new Set\(\['image', 'audio'\]\)/.test(host), '候选必须排除图片与音频（真工程里它们占 88%，会把目标淹掉）')
+  assert.ok(/Date\.now\(\) - mentionCache\.at < 60000/.test(host), '/files 必须带缓存：@ 是打字触发的，每次按键扫盘会拖卡输入')
+  assert.ok(/用户消息里的 @相对路径/.test(host), '系统提示词必须说明 @路径 是用户点选的文件，否则模型只当它是普通文本')
+
+  // ③ 样式双落地（只改 src 不构建 = 编辑器里根本没有浮层样式）
+  assert.ok(/\.yami-ai-mention-item/.test(styleCss) && /\.yami-ai-mention-item/.test(hud), '@ 浮层样式必须同时落在 src/style.css 与构建产物 hud-overlay.js')
+  assert.ok(/\.yami-ai-mention\[hidden\][\s\S]{0,90}display: none/.test(styleCss), 'display:flex 会盖掉 hidden 属性，必须显式写 [hidden] 规则')
+  assert.ok(/position: relative !important/.test(styleCss), '浮层靠父容器定位，.yami-ai-input-wrap 必须是 relative')
+
+  // ④ 行为：纯逻辑抽出来真跑
+  const snippet = ['mentionName', 'mentionDir', 'mentionMatches', 'mentionQuery', 'closeMention', 'renderMention', 'resizeInput', 'applyMention']
+    .map(fn => extractFunction(agent, fn)).join('\n')
+  const sandbox = {
+    mention: {
+      open: false,
+      start: 0,
+      active: 0,
+      total: 4,
+      files: [
+        { path: 'Assets/! 事件/@1 启动游戏事件.896108c7557627ff.event', type: 'event' },
+        { path: 'Assets/插件/自定义指令/获取技能id.1111222233334444.ts', type: 'script' },
+        { path: 'Assets/技能/012-元素使技能/329.落雷.627cc278af411ab0.skill', type: 'skill' },
+        { path: 'Assets/技能/000-公共技能/跳跃.0db219ae914cc947.skill', type: 'skill' }
+      ]
+    },
+    // 只 stub 用到的那几个口子：浮层 DOM 拿不到就该安静返回（getElementById -> null）
+    document: { getElementById: () => null, querySelector: () => null },
+    escapeHtml: text => String(text),
+    inputArea: {
+      value: '', selectionStart: 0, selectionEnd: 0, style: {},
+      setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end },
+      focus() {}
+    }
+  }
+  const run = expr => vm.runInNewContext(snippet + '\n' + expr, sandbox)
+  assert.equal(run("mentionName('Assets/技能/012-元素使技能/329.落雷.627cc278af411ab0.skill')"), '329.落雷.skill',
+    '候选标题要去掉文件名里的 GUID 段')
+  const hit = run("mentionMatches('技能').map(item => item.path)")
+  assert.equal(hit.length, 3, '查询「技能」应当命中 3 条（一条在文件名里、两条在目录里），实际 ' + hit.length)
+  assert.ok(/获取技能id/.test(hit[0]), '文件名命中要排在"只在目录里命中"的前面，实际首位 ' + hit[0])
+  assert.equal(run("mentionMatches('启动').length"), 1, '查询「启动」应当只命中启动游戏事件')
+  assert.equal(run("mentionMatches('').length"), 4, '没输关键词时列出全部候选')
+  assert.equal(run("mentionMatches('不存在的关键词').length"), 0, '查不到就如实返回空')
+
+  const query = (value, caret, end) => {
+    sandbox.inputArea.value = value
+    sandbox.inputArea.selectionStart = caret
+    sandbox.inputArea.selectionEnd = end === undefined ? caret : end
+    return run('mentionQuery()')
+  }
+  assert.deepEqual(query('@启', 2), { start: 0, query: '启' }, '行首 @ 要能触发')
+  assert.deepEqual(query('帮我看看 @启', 8), { start: 5, query: '启' }, '词中间的 @ 要能触发')
+  assert.equal(query('test@example.com', 16), null, '邮箱这类贴着字母的 @ 不能触发')
+  assert.equal(query('@abc\ndef', 8), null, '跨行以后就不再是同一个引用')
+  assert.equal(query('@启', 0, 2), null, '有选区时不打扰（用户正在选字）')
+
+  // 插入本身：替换的必须正好是那段「@xxx」，@ 前面的字和光标后面的字都不能被吃掉
+  const apply = (value, caret, start, path) => {
+    sandbox.inputArea.value = value
+    sandbox.inputArea.selectionStart = caret
+    sandbox.inputArea.selectionEnd = caret
+    sandbox.mention.start = start
+    run('applyMention({ path: ' + JSON.stringify(path) + ' })')
+    return sandbox.inputArea.value
+  }
+  const eventPath = 'Assets/! 事件/@1 启动游戏事件.896108c7557627ff.event'
+  assert.equal(apply('帮我看看 @启', 8, 5, eventPath), '帮我看看 @' + eventPath + ' ',
+    '选中候选后要把「@查询词」整段换成「@完整路径 + 空格」')
+  assert.equal(apply('@启然后呢', 2, 0, eventPath), '@' + eventPath + ' 然后呢',
+    '光标后面的内容必须原样保留（用户是在句子中间插的引用）')
+  assert.equal(sandbox.inputArea.selectionStart, ('@' + eventPath + ' ').length,
+    '插入后光标要停在这段引用之后，接着打字不会掉进引用里')
+  return { files: sandbox.mention.files.length }
+}
+
 function main() {
   const scripts = ['ai-agent.js', 'ai-render-core.js', 'ai-host.js', 'hud-overlay.js', 'probe-core.js', 'runtime/yami-mcp/server.js']
   const checked = []
@@ -436,6 +544,9 @@ function main() {
   assert.ok(declaredSuites > 0 && declaredSuites === actualSuites,
     `README 声明 ${declaredSuites} 套测试，run-all 实际注册 ${actualSuites} 套——数字对不上`)
   console.log(`文档一致性: 铁律 ${actualRules} 条 / 测试 ${actualSuites} 套，README 声明与实际一致`)
+
+  const mention = checkMentionFiles()
+  console.log('@ 引用工程文件: 面板浮层 -> 宿主 /files（已排除图片音频）-> 提示词 全部咬合，过滤与触发在 vm 里实跑 ' + mention.files + ' 条候选')
 
   const wiring = checkPluginWiring()
   console.log(`插件装配检查: 主世界装载器 -> 3 个脚本 / manifest / 整包快照更新 / 部署清单 (${wiring.files} 个发布文件 + ${wiring.modules} 个运行时模块) 全部咬合`)
