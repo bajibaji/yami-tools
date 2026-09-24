@@ -241,6 +241,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 - 「静态健康」套件额外承担三类守卫断言：隐式全局 / CSS 结构 / 插件装配（含整包更新锚点与开发目录黑名单，且 `updateFiles` 一旦复活即判失败）；**心跳开销**（HUD 自重入、专业页与普通模式双指纹、存档台时间闸+目录指纹、抽样分位数、单次扫描）；**文档一致性**（README 声明的铁律条数与测试套件数必须与 HANDOFF / run-all.cjs 一致——这两个数字历史上漂移过多次）。
 - ⚠️ **跑全量前先关掉 Open Yami 编辑器**（2026-09-24 实测）：`test-ai-repair` / `test-compiler-lookup` / `test-acceptance` 等套件是拿**真工程**（`resolveProject()` → 本机 `D:\new-game`）当夹具的，编辑器若正开着同一个工程，引擎的输入保护会拒绝外部写入并回一句「编辑器中有未失焦的输入正在进行，请在编辑器中按回车或点击空白处失焦后再确认，以防修改被覆盖」，于是这些套件**整片假红**（表现为"写入被误判成编译失败而回滚""B6 写入并通过编译门禁 errorCount=undefined"这类，看着像灾难性回归）。实测对照：同一份代码、编辑器开着 `31/36 套通过`，关掉后 `36/36 套通过`。**看到这类失败先别改代码，先确认编辑器是不是开着。**
 - **失败留档**：任何套件失败时 `tests/run-all.cjs` 会当场重跑一次并把两次输出写进项目根 `_last-run.txt`（终端打印路径）—— 偶发失败（负载/时序敏感）靠它留现场，不必再重跑撞运气。
+- **真机（界面层）验证**：`.mcp.json` 已把 `chrome-devtools-mcp` 指向编辑器 CDP（9222）—— 编辑器带 `--remote-debugging-port=9222` 启动后，AI 可直接读可访问性树 / 点元素 / 发键盘 / 截图；改完插件代码**刷页面即可加载新代码**（`navigate_page` reload），不用重启编辑器。相机而行的边界：画布拖拽、点试玩、手感与视觉判断仍只能由用户来做。
 - 常用环境变量：`YAMI_TEST_PROJECT`、`YAMI_AI_PORT` / `YAMI_AI_TOKEN` / `YAMI_AI_CONFIG_DIR` / `YAMI_AI_SESSION_DIR` / `YAMI_AI_MAX_STEPS`、`YAMI_AI_CONTEXT_WINDOW`（默认 1000000，即 1M token）/ `YAMI_AI_COMPACT_THRESHOLD`（默认 0.8）/ `YAMI_AI_COMPACT_RETAIN`（默认 0.16）/ `YAMI_AI_CONTEXT_KEEP`（最少保留消息条数，默认 16）/ `YAMI_AI_TOOL_LIMIT`（工具结果入上下文的字符上限，默认 24000）/ `YAMI_AI_TOOL_TAIL`（其中尾部预留，默认 4000）/ `YAMI_AI_REPAIR_LIMIT`、`YAMI_AI_DEBUG`（=1 时打开宿主的取消链路追踪，默认关）、`YAMI_RUNTIME_BRIDGE_PORT`、`YAMI_MCP_GUARDED`。
 
 ## 1.8 引擎接口暴露契约（`window.YamiEngine`）
@@ -1608,6 +1609,12 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
     - **⑥ 顺带修的文档/提示**：`cdp-client.js` 的错误提示让人去跑 `start-yami-debug.cmd`，而那个脚本**仓库与安装目录都不存在**（两处 find 皆空）→ 换成能照着做的指引（含"工作目录必须是安装目录"）。
     - **探查后决定不做**：**插入短名（去 GUID）**。硬障碍两条：这工程的事件文件名**本身带空格**（`@1 启动游戏事件.896108c7557627ff.event`），短名无法可靠还原成路径（正则一断词就废）；更要命的是 **GUID 就是磁盘路径本身** —— 去掉后 `read_resource` / `edit_script` 会直接失败，同名文件共存时还会**改错文件**，而那正是 @ 功能当初要解决的问题。
     - **验证**：`test-static-health.cjs` 新增 8 条断言（汉字/标点后触发、高亮三态、逐段转义、回答按钮接线、重新生成必须复用 rewind 且先于 endTurn、assistant 悬停样式双落地、首屏类型轮转）；全量 36/36 套通过（编辑器关闭时）+ 构建 51 项锚点全绿 + `--deploy` MD5 逐项一致。
+
+65. **真机测试能力升级 + 真机抓到的两个 bug（v1.11.1 / v1.11.2，2026-09-24，用户提「Open Yami 就是 Electron，是 Chromium，你可以用浏览器 MCP 测」）**：
+    - **能力（`.mcp.json`）**：把 `chrome-devtools-mcp` 指向编辑器的 CDP 端口（`--browserUrl http://127.0.0.1:9222`）。编辑器须带 `--remote-debugging-port=9222` 启动，且**工作目录必须是安装目录**（见 1.2 那条坑）。从此界面层验证走正规工具：`take_snapshot`（可访问性树）、`click`（按元素）、`fill`、`press_key`、`take_screenshot`、`evaluate_script`。**加载新插件代码用 `navigate_page`(reload) 刷页面即可，不必重启编辑器**。
+    - **v1.11.1 · 点主页「进入」卡片没反应**：`switchView` 只切页面内容、**不管 dock 开合**，而 `window.__DANJUAN_HUD_API__` 里本来就暴露了 `toggleDock` —— 卡片回调漏调它。**第一版诊断走偏过**：现象看着像"面板被推到屏幕外"（实测 `rect.x=2574` 而视口只有 2560），查下来 462px = 面板宽 440 × 105%，是**面板收起时正常的隐藏位移**，与定位无关；真正的问题是"点了卡片面板压根没打开"。改法：回调补 `api.toggleDock(true)`。
+    - **v1.11.2 · 悬浮模式刷新后静默不恢复**：`applyFloatingState()` 开头读 `isDockOpen`，而它用 `let` 声明在 1000 行开外 —— 启动时那次恢复调用撞上 **TDZ**；`typeof isDockOpen` 对 TDZ 内的 `let` **照样抛 ReferenceError**（`typeof` 只对"完全未声明"的变量安全），错误又被外层 `try{}catch{}` 吞掉 → **设置没了、控制台还干干净净**。改法：声明上移到悬浮状态变量旁。
+    - **共性**：两个都是**静态断言与自动化测试照不到**的类型，只有真机跑一遍才露。静态健康各补一条断言（均用变异测试证明非空转）。
 
 ## 3.3 未完成 / 未验证 / 已知限制
 
