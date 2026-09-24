@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.11.5';
+  const PROBE_VERSION = '1.11.6';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -2324,11 +2324,19 @@
         // 「停在「Assets! 事件插件场景技能角色粒子物品音频装备状态Du」=ngeon AssetsUI」，
         // 把整棵树 13 个文件夹的名字当成了"控件名"（40 字，正好从下面的 60 字上限底下溜过去）。
         // 真正的控件（按钮 / 标签页 / 列表项）最多只有一两个可见的文字子元素。
-        const visibleTextKids = [...el.children].filter(k => {
-          const r = k.getBoundingClientRect();
-          return r.width > 0 && r.height > 0 && String(k.textContent || '').trim();
-        }).length;
-        if (visibleTextKids > 2) return null;
+        // 判据必须数**整棵子树**的可见文字叶子，不能只数直接子元素 ——
+        // 实测（2026-09-24）文件列表容器的直接子元素只有一个 wrapper，于是 4 个文件名
+        // 从旧判据底下溜了过去，顶栏报出「场景对象脚本界面元素脚本全局插件自定义指令」。
+        // 数到第 3 个文字叶子就停：大容器不会白扫几百个后代，真控件本来也没几个后代。
+        let textLeaves = 0;
+        const descendants = el.querySelectorAll('*');
+        for (let i = 0; i < descendants.length; i++) {
+          const kid = descendants[i];
+          if (kid.children.length) continue;
+          const r = kid.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0 && String(kid.textContent || '').trim() && ++textLeaves > 2) break;
+        }
+        if (textLeaves > 2) return null;
         // 图标字形先剥掉：名字里混进私有区码点就是方块乱码，不如不要
         const text = String(el.textContent || '').replace(ICON_GLYPHS, '').replace(/\s+/g, ' ').trim();
         if (!text || text.length > 60) return null;
@@ -4079,9 +4087,14 @@
     });
 
     // 3) 性能离群点：谁最耗时（updater / renderer / 事件），只报前几名
-    const top = function(list, count) {
-      return (list || []).slice(0, count || 5).map(function(entry) {
-        return { name: String(entry.name || '').slice(0, 60), ms: round3(entry.ms || 0) };
+    // 【真机踩过 2026-09-24】updaterTotal / rendererTotal / eventTotal 都是 Map（见 state 定义），
+    // 旧写法 (list || []).slice 落在 Map 上直接 TypeError —— /diagnose 整条端点 500，
+    // 而它只有真机调这个端点时才走到（playtest_smoke 取前后诊断 / AI 读完整诊断），静态检查与测试都照不到，
+    // 后果是 AI 只能拿到精简报告，同时这次崩被记进运行日志，用户看到"N 处异常"还以为是游戏报错。
+    // 改用 formatList（本来就是给这三个 Map 用的，按总耗时降序），输出形状保持 {name, ms} 不变。
+    const top = function(map, count) {
+      return formatList(map).slice(0, count || 5).map(function(entry) {
+        return { name: String(entry.name || '').slice(0, 60), ms: round3(entry.total || 0) };
       });
     };
 

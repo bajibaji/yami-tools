@@ -497,11 +497,14 @@ function checkMentionFiles() {
     'runCompiler 必须带 --pretty false —— 否则 tsc 上色会让错误正则失效，编译门禁静默放行坏代码')
 
   // 在场感知的兜底取名必须排除「容器」：树/列表的父节点会把所有子项的名字拼成一大串 ——
-  // 2026-09-24 真机抓到：鼠标停在资源树空白处，顶栏报出「停在「Assets! 事件插件场景技能…」」
-  // 整棵树 13 个文件夹的名字。判据是"可见的文字子元素超过 2 个就当容器"。
+  // 2026-09-24 真机两次抓到：先在资源树空白处报出「停在「Assets! 事件插件场景技能…」」（13 个文件夹名），
+  // 改成"可见文字子元素 > 2 就当容器"之后，又在文件列表区报出「场景对象脚本界面元素脚本全局插件自定义指令」——
+  // 那个容器的**直接子元素**只有一个 wrapper，4 个文件名藏在孙辈，从只数直接子元素的判据底下溜了过去。
+  // 判据因此升级为：数**整棵子树**的可见文字叶子，超过 2 个就当容器。
   const probeSrc = fs.readFileSync(path.join(ROOT, 'probe-core.js'), 'utf8')
-  assert.ok(/if \(visibleTextKids > 2\) return null/.test(probeSrc),
-    '感知条的兜底取名要排除容器（多子元素的父节点），否则鼠标划过树/列表空白就报出一长串名字')
+  assert.ok(/let textLeaves = 0/.test(probeSrc) && /if \(textLeaves > 2\) return null/.test(probeSrc),
+    '感知条的兜底取名要排除容器（整棵子树的可见文字叶子超过 2 个），否则鼠标划过树/列表空白就报出一长串名字')
+  assert.ok(!/visibleTextKids/.test(probeSrc), '只数直接子元素的旧判据不许回来：容器套一层 wrapper 就漏了')
 
   // 「重发 / 重新生成」的轮次号必须在挂按钮**之前**跟宿主对齐：
   // 面板重开时屏幕是空白的、本地计数从 0 起，而会话里可能已经攒了 N 条用户消息 ——
@@ -543,6 +546,25 @@ function checkMentionFiles() {
   assert.equal(sandbox.inputArea.selectionStart, ('@' + eventPath + ' ').length,
     '插入后光标要停在这段引用之后，接着打字不会掉进引用里')
   return { files: sandbox.mention.files.length }
+}
+
+/**
+ * 2026-09-24 真机走查抓到、自动化照不到的三个缺陷（都改完了，这里钉住不许回来）：
+ *  ① /diagnose 在 Map 上调 .slice → 整条端点 500，崩还被记进运行日志，用户看到"N 处异常"以为游戏报错；
+ *  ② 刷新页面后进 AI 面板：屏上只有欢迎语，上下文里躺着上一轮那段（屏上与上下文不说同一件事）；
+ *  ③ 顶栏「停在」把文件列表容器当控件名，报出「场景对象脚本界面元素脚本全局插件自定义指令」。
+ */
+function checkRealMachineFixes() {
+  const probe = fs.readFileSync(path.join(ROOT, 'probe-core.js'), 'utf8')
+  const agent = fs.readFileSync(path.join(ROOT, 'ai-agent.js'), 'utf8')
+  assert.ok(/const top = function\(map, count\)/.test(probe) && /return formatList\(map\)\.slice\(0, count \|\| 5\)/.test(probe),
+    '/diagnose 的 top() 必须走 formatList（updaterTotal / rendererTotal / eventTotal 都是 Map）')
+  assert.ok(!/\(list \|\| \[\]\)\.slice\(0, count/.test(probe), '不许再对 Map 直接 .slice（那正是 /diagnose 500 的原因）')
+  assert.ok(/let textLeaves = 0/.test(probe) && /if \(textLeaves > 2\) return null/.test(probe),
+    '顶栏「停在」必须数整棵子树的文字叶子（只数直接子元素会漏掉文件列表这类容器）')
+  assert.ok(/state\.sessionEntered = true/.test(agent) && /else if \(!state\.sessionEntered\)/.test(agent),
+    '冷启动第一次进 AI 面板必须开新会话（否则屏上空白、上下文还是上一轮那段）')
+  return 3
 }
 
 function main() {
@@ -622,6 +644,9 @@ function main() {
   assert.ok(handoffVers.every((v) => v === manifestVer),
     `HANDOFF 版本号 ${handoffVers.join(' / ')} 与 manifest.json (${manifestVer}) 不一致——跑 node build.cjs 会自动级联同步`)
   console.log(`文档一致性: 铁律 ${actualRules} 条 / 测试 ${actualSuites} 套 / HANDOFF 版本号 ${handoffVers.length} 处 = v${manifestVer}，README 声明与实际一致`)
+
+  const fixedCount = checkRealMachineFixes()
+  console.log('真机缺陷守卫: ' + fixedCount + ' 项（/diagnose Map 崩溃 / 冷启动会话对齐 / 顶栏容器名）已钉住')
 
   const mention = checkMentionFiles()
   console.log('@ 引用工程文件: 面板浮层 -> 宿主 /files（已排除图片音频）-> 提示词 全部咬合，过滤与触发在 vm 里实跑 ' + mention.files + ' 条候选')

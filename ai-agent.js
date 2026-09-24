@@ -67,6 +67,8 @@ function refreshHostPort() {
     token: '',
     child: null,
     sessionId: localStorage.getItem(SESSION_KEY) || ('session-' + Date.now().toString(36)),
+    // 本次页面加载里是否已经进过 AI 页面：冷启动第一次进要开新会话（见 activate 里的 G-12 分支）
+    sessionEntered: false,
     busy: false,
     pending: null,
     deciding: false,   // 审批卡正在提交（防连点）。与 busy 分开是因为语义不同：busy = 本轮在跑，
@@ -3234,7 +3236,14 @@ function refreshHostPort() {
         if (messagesPristine()) restoreLastSession();
       } else if (!messagesPristine()) {
         startNewSession();
+      } else if (!state.sessionEntered) {
+        // 【冷启动】页面刚加载（刷新页面 / 重启编辑器）后第一次进面板：屏上还没聊过，
+        // 但 localStorage 里记着的是上一轮那段会话 —— 直接开新会话，屏上和上下文才是同一件事。
+        // 真机踩过（2026-09-24）：重启编辑器后进面板，屏上只有欢迎语，上下文里却躺着上一轮 48 条消息。
+        // 旧对话没丢，都在【历史】里（用户拍板：进去就是新的）。
+        startNewSession();
       }
+      state.sessionEntered = true;
     });
     activate(document.getElementById('yami-ai-send'), () => { state.busy ? stopStream() : sendMessage(); });
     activate(document.getElementById('yami-ai-context'), () => {
