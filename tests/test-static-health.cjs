@@ -478,6 +478,16 @@ function checkMentionFiles() {
   assert.ok(/api\.switchView\('ai'\)[\s\S]{0,400}api\.toggleDock\(true\)/.test(agent),
     '点主页「AI 助手 进入」卡片必须展开 dock（switchView 只切页面内容，开关面板是 toggleDock 的事）')
 
+  // 悬浮模式刷新后静默不恢复：applyFloatingState() 开头会读 isDockOpen，而它曾经用 let 声明在
+  // 一千行开外 —— "启动时恢复悬浮模式"那次调用撞上 TDZ，`typeof isDockOpen` 对 TDZ 内的 let
+  // 照样抛 ReferenceError（typeof 只对完全未声明的变量安全），错误又被外层 try/catch 吞掉，
+  // 表现就是"设置好的悬浮模式刷新后没了、控制台还干干净净"。
+  // 钉住：声明必须出现在那次恢复调用之前（顺序错了就红，不用等人肉复现）。
+  const dockOpenDeclAt = hud.indexOf('let isDockOpen')
+  const floatRestoreAt = hud.indexOf('applyFloatingState(true, false)')
+  assert.ok(dockOpenDeclAt >= 0 && floatRestoreAt >= 0 && dockOpenDeclAt < floatRestoreAt,
+    'let isDockOpen 必须声明在「启动恢复悬浮模式」那次调用之前，否则 TDZ 抛错被 try/catch 吞掉、悬浮模式静默不恢复')
+
   // 回答上的「复制 / 重新生成」：接线、复用既有重发链路、样式双落地
   assert.ok(/function msgActionButton\(/.test(agent) && /function attachAnswerActions\(/.test(agent),
     '回答上必须有「复制」（按钮工厂抽出来给用户/回答两侧共用，别再各写一份）')

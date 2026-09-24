@@ -5825,7 +5825,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.11.1 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.11.2 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
@@ -5971,6 +5971,12 @@
     const resizer = document.getElementById('yami-dock-resizer');
     let isFloating = false;
     let isSwitchingMode = false;
+    // isDockOpen 必须在这里（和悬浮状态一起）声明，不能留在下面 toggleDock 那边：
+    // applyFloatingState() 开头会读它，而**启动时恢复悬浮模式**的那次调用发生在本行之后不远处 ——
+    // 若声明在 1000 行开外，此刻它还在 TDZ，`typeof isDockOpen` 会抛 ReferenceError
+    // （typeof 只对"完全没声明"的变量安全，对 TDZ 内的 let/const 照样抛），
+    // 而那个调用外面裹着 try/catch，于是错误被静默吞掉 —— 表现就是"悬浮模式刷新后不恢复"。
+    let isDockOpen = false;
     const DOCK_FLOATING_KEY = 'yami-perf-dock-floating';
     const DOCK_POS_KEY = 'yami-perf-dock-pos';
     const DOCK_SIZE_KEY = 'yami-perf-dock-size';
@@ -6166,7 +6172,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.11.1 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.11.2 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -9123,8 +9129,7 @@
     const msText = document.getElementById('yami-ms');
     const dcText = document.getElementById('yami-dc');
 
-    let isDockOpen = false;
-    let activeTab = 'overview';
+    let activeTab = 'overview';   // isDockOpen 已上移到悬浮状态声明处（TDZ 问题，见那里的注释）
 
     function toggleDock(force) {
       isDockOpen = typeof force === 'boolean' ? force : !isDockOpen;
@@ -9468,7 +9473,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.11.1';
+      const cur = (probe && probe.version) ? probe.version : '1.11.2';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -9534,7 +9539,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.11.1') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.11.2') + ')');
           refreshVersionBadge();
         }
       });
