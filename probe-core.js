@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.11.3';
+  const PROBE_VERSION = '1.11.4';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -2319,6 +2319,16 @@
       }
       if (!label) {
         // 兜底：可见文字（按钮、列表项、命令、标签页都属于这一类）
+        // **但容器不算控件**：树/列表的父节点会把所有子项的名字拼成一大串 ——
+        // 实测（2026-09-24）鼠标停在资源树空白处，顶栏报出
+        // 「停在「Assets! 事件插件场景技能角色粒子物品音频装备状态Du」=ngeon AssetsUI」，
+        // 把整棵树 13 个文件夹的名字当成了"控件名"（40 字，正好从下面的 60 字上限底下溜过去）。
+        // 真正的控件（按钮 / 标签页 / 列表项）最多只有一两个可见的文字子元素。
+        const visibleTextKids = [...el.children].filter(k => {
+          const r = k.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 && String(k.textContent || '').trim();
+        }).length;
+        if (visibleTextKids > 2) return null;
         // 图标字形先剥掉：名字里混进私有区码点就是方块乱码，不如不要
         const text = String(el.textContent || '').replace(ICON_GLYPHS, '').replace(/\s+/g, ' ').trim();
         if (!text || text.length > 60) return null;

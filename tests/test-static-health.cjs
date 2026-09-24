@@ -488,6 +488,13 @@ function checkMentionFiles() {
   assert.ok(dockOpenDeclAt >= 0 && floatRestoreAt >= 0 && dockOpenDeclAt < floatRestoreAt,
     'let isDockOpen 必须声明在「启动恢复悬浮模式」那次调用之前，否则 TDZ 抛错被 try/catch 吞掉、悬浮模式静默不恢复')
 
+  // 在场感知的兜底取名必须排除「容器」：树/列表的父节点会把所有子项的名字拼成一大串 ——
+  // 2026-09-24 真机抓到：鼠标停在资源树空白处，顶栏报出「停在「Assets! 事件插件场景技能…」」
+  // 整棵树 13 个文件夹的名字。判据是"可见的文字子元素超过 2 个就当容器"。
+  const probeSrc = fs.readFileSync(path.join(ROOT, 'probe-core.js'), 'utf8')
+  assert.ok(/if \(visibleTextKids > 2\) return null/.test(probeSrc),
+    '感知条的兜底取名要排除容器（多子元素的父节点），否则鼠标划过树/列表空白就报出一长串名字')
+
   // 「重发 / 重新生成」的轮次号必须在挂按钮**之前**跟宿主对齐：
   // 面板重开时屏幕是空白的、本地计数从 0 起，而会话里可能已经攒了 N 条用户消息 ——
   // 不对齐就整体错一位，一点「重发」就把对话截断到别处（2026-09-24 真机抓到，会丢对话）。
