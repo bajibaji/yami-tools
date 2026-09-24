@@ -3194,6 +3194,10 @@ function refreshHostPort() {
     buildRail();
     activate(card, async () => {
       api.switchView('ai');
+      // 点主页卡片上的「进入」= 用户要打开这个面板，所以必须把 dock 真的展开。
+      // switchView 只切页面内容、不管 dock 开合 —— 少了这一句，用户点「进入」屏幕上什么都没发生
+      // （面板还收在屏幕外，正是"点了没反应"，2026-09-24 真机抓到的）。
+      if (typeof api.toggleDock === 'function') api.toggleDock(true);
       loadSettings();
       refreshContext();
       // @ 引用的候选清单提前拉一次（宿主那边还缓存 60 秒）：等用户打完 @ 再拉要白等两秒

@@ -473,6 +473,11 @@ function checkMentionFiles() {
   assert.ok(/yami-ai-mention-hit/.test(styleCss) && /yami-ai-mention-hit/.test(hud),
     '高亮样式要同时落在 src/style.css 与构建产物 hud-overlay.js（只改 src 不构建 = 编辑器里没有效果）')
 
+  // 主页卡片上的「进入」必须真的把面板打开：switchView 只管页面内容，不管 dock 开合 ——
+  // 少了 toggleDock，用户点「进入」屏幕上什么都没发生（2026-09-24 真机抓到）
+  assert.ok(/api\.switchView\('ai'\)[\s\S]{0,400}api\.toggleDock\(true\)/.test(agent),
+    '点主页「AI 助手 进入」卡片必须展开 dock（switchView 只切页面内容，开关面板是 toggleDock 的事）')
+
   // 回答上的「复制 / 重新生成」：接线、复用既有重发链路、样式双落地
   assert.ok(/function msgActionButton\(/.test(agent) && /function attachAnswerActions\(/.test(agent),
     '回答上必须有「复制」（按钮工厂抽出来给用户/回答两侧共用，别再各写一份）')
