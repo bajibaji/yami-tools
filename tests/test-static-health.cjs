@@ -488,6 +488,14 @@ function checkMentionFiles() {
   assert.ok(dockOpenDeclAt >= 0 && floatRestoreAt >= 0 && dockOpenDeclAt < floatRestoreAt,
     'let isDockOpen 必须声明在「启动恢复悬浮模式」那次调用之前，否则 TDZ 抛错被 try/catch 吞掉、悬浮模式静默不恢复')
 
+  // 编译调用的输出必须关掉 ANSI 颜色：tsc 7.x 默认给输出上色，实际字节是
+  // 「- \x1b[91merror\x1b[0m\x1b[90m TS1109」，"error" 与 "TS1109" 被转义码隔开 ——
+  // 那条 /error TS\d+/ 就一个都匹配不到，errorCount 恒为 0，**坏代码会被静默放行**
+  // （2026-09-24 实测：TS 5.x 默认不上色所以一直没事，换 TS 7 才炸；一次修好三套测试）。
+  const mcpServerSrc = fs.readFileSync(path.join(ROOT, 'runtime/yami-mcp', 'server.js'), 'utf8')
+  assert.ok(/'--pretty', 'false'/.test(mcpServerSrc),
+    'runCompiler 必须带 --pretty false —— 否则 tsc 上色会让错误正则失效，编译门禁静默放行坏代码')
+
   // 在场感知的兜底取名必须排除「容器」：树/列表的父节点会把所有子项的名字拼成一大串 ——
   // 2026-09-24 真机抓到：鼠标停在资源树空白处，顶栏报出「停在「Assets! 事件插件场景技能…」」
   // 整棵树 13 个文件夹的名字。判据是"可见的文字子元素超过 2 个就当容器"。

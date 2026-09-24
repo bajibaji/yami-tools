@@ -2830,7 +2830,11 @@ function runCompiler(extraArgs = []) {
   if (!compiler) return null
   return new Promise((resolve) => {
     const { spawn } = require('child_process')
-    const args = [...compiler.args, '--noEmit', ...extraArgs, '-p', path.join(ROOT, 'tsconfig.json')]
+    // --pretty false 是必须的：tsc 7.x 默认给输出上色，实际字节是
+    // 「- \x1b[91merror\x1b[0m\x1b[90m TS1109」—— "error" 与 "TS1109" 被 ANSI 转义码隔开，
+    // 下面那条 /error TS\d+/ 就一个都匹配不到，errorCount 恒为 0，**坏代码会被静默放行**
+    // （2026-09-24 实测：TS 5.x 默认不上色，所以这条链一直是对的，换了 TS 7 才炸）。
+    const args = [...compiler.args, '--noEmit', '--pretty', 'false', ...extraArgs, '-p', path.join(ROOT, 'tsconfig.json')]
     const child = spawn(compiler.command, args, { cwd: ROOT, windowsHide: true })
     let output = ''
     child.stdout.on('data', d => output += d)
