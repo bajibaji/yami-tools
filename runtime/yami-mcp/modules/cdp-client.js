@@ -50,7 +50,10 @@ class CdpClient {
         })
       })
       req.on('error', (err) => {
-        reject(new Error(`未检测到 Open Yami 远程调试端口 (${this.port})。如需开启界面审查与无视觉模拟点击，请通过带 --remote-debugging-port=${this.port} 参数启动编辑器（可运行 start-yami-debug.cmd）: ${err.message}`))
+        // 话术原先让人「运行 start-yami-debug.cmd」，可那个脚本仓库与安装目录里都不存在（2026-09-24 查证，两处 find 皆空）——
+        // 换成能照着做的指引，并补上工作目录这一条：cwd 不是安装目录时，引擎的 path.join('./extension') 会解析到别处、
+        // 建出一个空 extension 目录、一个插件都不加载（现象就是"插件凭空消失"，实测见 HANDOFF 1.2）。
+        reject(new Error(`未检测到 Open Yami 远程调试端口 (${this.port})。如需开启界面审查与无视觉模拟点击，请在**编辑器安装目录**下启动并带上调试参数：在安装目录执行 "Open Yami RPG Editor.exe" --remote-debugging-port=${this.port}（工作目录必须是安装目录，否则引擎找不到 extension/ 下的插件）: ${err.message}`))
       })
       req.on('timeout', () => {
         req.destroy()

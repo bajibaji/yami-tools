@@ -80,7 +80,9 @@ function refreshHostPort() {
     busySend: null,
     // 繁忙时用户打的话：queue = 排队（本轮结束后依次发出），queueSeq 只用来给每项一个稳定 id
     queue: [],
-    queueSeq: 0
+    queueSeq: 0,
+    // 「重新生成」只该出现在最后一条回答上，这里存着它，新回答落地时先摘掉旧的
+    regenBar: null
   };
   state.token = sharedToken();
   localStorage.setItem(SESSION_KEY, state.sessionId);
@@ -426,6 +428,7 @@ function refreshHostPort() {
     endThinkingRounds();
     refreshProcessMeta();
     applyTurnFold();
+    attachRegenerate();   // 必须在 endTurn() 之前：它要靠 currentTurn 找到这一轮的正文槽
     endTurn();
   }
 
@@ -530,8 +533,60 @@ function refreshHostPort() {
     const host = kind === 'assistant' && currentTurn ? (messageSlot() || list) : list;
     host.appendChild(item);
     if (kind === 'user') attachUserActions(item, meta);
+    else if (kind === 'assistant') attachAnswerActions(item);
     autoScroll();
     return item;
+  }
+
+  /** 消息上的小按钮：用户气泡的「重发/编辑」与回答的「复制/重新生成」共用同一套外观与键盘可达性 */
+  function msgActionButton(label, title, handler) {
+    const btn = document.createElement('div');
+    btn.className = 'yami-ai-msg-action';
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('tabindex', '0');
+    btn.textContent = label;
+    btn.title = title;
+    activate(btn, event => { event.stopPropagation(); handler(); });
+    return btn;
+  }
+
+  /**
+   * 回答上的「复制」。挂在气泡**外面** —— 这条是 2026-09-24 真机抓出来的：
+   * 流式正文是增量写的，首帧 `flushContent()` 会走 `bubble.textContent = ''` 重建文本节点，
+   * 挂在气泡里的按钮会被那一句一起端掉（静态断言看不出这种"挂错地方"，只有真机跑一轮才露）。
+   */
+  function attachAnswerActions(item) {
+    const bar = document.createElement('div');
+    bar.className = 'yami-ai-msg-actions';
+    bar.appendChild(msgActionButton('复制', '复制这条回答的正文', async () => {
+      const text = String(item.textContent || '').trim();
+      if (!text) { hudToast('这条回答没有正文可复制'); return; }
+      try {
+        await navigator.clipboard.writeText(text);
+        hudToast('已复制这条回答（' + text.length + ' 字）');
+      } catch (e) {
+        hudToast('复制失败：' + ((e && e.message) || '剪贴板不可用'));
+      }
+    }));
+    (item.parentNode || item).appendChild(bar);
+  }
+
+  /**
+   * 「重新生成」只挂在最后一条回答上：每条都挂会分不清点哪颗，而且旧的那颗一点就把后面的对话全截掉了。
+   * 新回答一落地先摘掉旧的；没有正文的轮次（纯工具调用）不挂 —— 没有"生成"可重来。
+   */
+  function attachRegenerate() {
+    if (state.regenBar && state.regenBar.parentNode) state.regenBar.parentNode.removeChild(state.regenBar);
+    state.regenBar = null;
+    const answer = currentTurn && messageSlot();
+    if (!answer || !String(answer.textContent || '').trim()) return;
+    const index = (state.userTurnSeq || 0) - 1;   // 这一轮对应的用户消息轮次号
+    if (index < 0) return;
+    const bar = document.createElement('div');
+    bar.className = 'yami-ai-msg-actions';
+    bar.appendChild(msgActionButton('重新生成', '把这一轮的需求原样再发一次（对话时间轴截断到这条之前；文件的改动不回退，要退用【撤销】）', () => rewindTo(index, { resend: true })));
+    answer.appendChild(bar);
+    state.regenBar = bar;
   }
 
   /**
@@ -545,18 +600,8 @@ function refreshHostPort() {
     state.userTurnSeq = Math.max(state.userTurnSeq || 0, index + 1);
     const bar = document.createElement('div');
     bar.className = 'yami-ai-msg-actions';
-    const make = (label, title, handler) => {
-      const btn = document.createElement('div');
-      btn.className = 'yami-ai-msg-action';
-      btn.setAttribute('role', 'button');
-      btn.setAttribute('tabindex', '0');
-      btn.textContent = label;
-      btn.title = title;
-      activate(btn, event => { event.stopPropagation(); handler(); });
-      return btn;
-    };
-    bar.appendChild(make('重发', '从这一轮重来：截断这条之后的对话，然后原样再发一次', () => rewindTo(index, { resend: true })));
-    bar.appendChild(make('编辑', '改一个字再发：把这条需求填回输入框，改完自己按发送', () => rewindTo(index, { edit: true })));
+    bar.appendChild(msgActionButton('重发', '从这一轮重来：截断这条之后的对话，然后原样再发一次', () => rewindTo(index, { resend: true })));
+    bar.appendChild(msgActionButton('编辑', '改一个字再发：把这条需求填回输入框，改完自己按发送', () => rewindTo(index, { edit: true })));
     item.appendChild(bar);
   }
 
@@ -3315,7 +3360,7 @@ function refreshHostPort() {
        打 @ 弹出工程文件候选，选中即把「@相对路径」插进输入框。
        只插文本、不改协议：模型收到的还是一条普通用户消息，路径就是"我说的是这个文件"。
        清单由宿主 /files 给出（脚本 + 数据资源，已排除图片音频），这里只做本地过滤与插入。 */
-    const mention = { open: false, files: null, loading: false, failed: false, items: [], active: 0, start: -1, total: 0 };
+    const mention = { open: false, files: null, loading: false, failed: false, failedAt: 0, items: [], active: 0, start: -1, query: '', total: 0 };
     const MENTION_TYPES = {
       script: '脚本', event: '事件', scene: '场景', ui: '界面', trigger: '触发区域', actor: '角色',
       tileset: '图块', animation: '动画', particle: '粒子', skill: '技能', item: '道具',
@@ -3337,6 +3382,19 @@ function refreshHostPort() {
       return parts.join('/');
     }
 
+    // 命中的那截字要高亮：库里 561 条筛出 40 条时，用户得一眼看出「为什么这条在这儿」，
+    // 否则只能一条条读完标题再猜（2026-09-24 用户反馈"看不出为什么匹配"）。
+    // 逐段转义、不在转义后的串上找下标（`&` 之类会变长，下标就错位了）；HTML 标签只由本函数产生。
+    function highlightPlain(text, keyword) {
+      const raw = String(text);
+      const key = String(keyword || '');
+      const at = key ? raw.toLowerCase().indexOf(key) : -1;
+      if (at < 0) return escapeHtml(raw);
+      return escapeHtml(raw.slice(0, at)) +
+        '<em class="yami-ai-mention-hit">' + escapeHtml(raw.slice(at, at + key.length)) + '</em>' +
+        escapeHtml(raw.slice(at + key.length));
+    }
+
     // 光标前那一段「@xxx」；不构成引用就返回 null（有选区、跨行、又一个 @、前面贴着字母都不算）
     function mentionQuery() {
       if (inputArea.selectionStart !== inputArea.selectionEnd) return null;
@@ -3345,14 +3403,40 @@ function refreshHostPort() {
       if (at < 0) return null;
       const query = text.slice(at + 1);
       if (query.length > 60 || /[\n@]/.test(query)) return null;
-      if (at > 0 && !/\s/.test(text[at - 1])) return null;
+      // @ 前面贴着字母或数字才算「邮箱/路径片段」这类误触发（a@b、user@host）；
+      // 汉字、标点、空白一律允许。老判据要求前一字符必须是空白 —— 那是英文写作的习惯，
+      // 中文不会先敲一个空格再打 @，于是「帮我把@启动游戏事件 改成…」根本不弹（2026-09-24 用户反馈"不够好用"）。
+      if (at > 0 && /[A-Za-z0-9]/.test(text[at - 1])) return null;
       return { start: at, query };
     }
 
     function mentionMatches(query) {
       const files = mention.files || [];
       const keyword = query.trim().toLowerCase();
-      if (!keyword) return files.slice(0, 40);
+      if (!keyword) {
+        // 刚打 @ 还没输关键词：按类型轮流取（事件一条、场景一条、技能一条…），不是按单一类型排满。
+        // 两个坑都是实测出来的：直接 slice(0,40) 拿到的是宿主拼串顺序（脚本在前，首屏 40 条全是 .ts）；
+        // 只按类型排序又会反过来被某一类占满（真工程的事件就有 40+ 条，首屏照样看不到别的类）。
+        // 顺序表写在函数里（不放模块级 const）：这段会被测试抽进 vm 沙箱实跑，外部常量进不去。
+        const order = ['event', 'scene', 'ui', 'actor', 'skill', 'item', 'equipment', 'state', 'tileset', 'animation', 'particle', 'trigger', 'script', 'file'];
+        const rank = type => { const i = order.indexOf(type); return i < 0 ? order.length : i; };
+        const groups = new Map();
+        for (const item of files) {
+          const key = rank(item.type);
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(item);
+        }
+        const rows = [...groups.entries()].sort((a, b) => a[0] - b[0]).map(entry => entry[1]);
+        const out = [];
+        for (let i = 0; out.length < 40; i++) {
+          let took = false;
+          for (const row of rows) {
+            if (i < row.length) { out.push(row[i]); took = true; if (out.length >= 40) break; }
+          }
+          if (!took) break;   // 所有类型都取完了
+        }
+        return out;
+      }
       const hits = [];
       for (const item of files) {
         const full = String(item.path).toLowerCase();
@@ -3374,11 +3458,12 @@ function refreshHostPort() {
       if (mention.loading) { box.innerHTML = '<div class="yami-ai-mention-hint">正在读取工程文件…</div>'; return; }
       if (mention.failed) { box.innerHTML = '<div class="yami-ai-mention-hint">读不到工程文件清单（AI 宿主没起来？）</div>'; return; }
       if (!mention.items.length) { box.innerHTML = '<div class="yami-ai-mention-hint">工程里没有匹配的文件</div>'; return; }
+      const keyword = String(mention.query || '').trim().toLowerCase();
       box.innerHTML = mention.items.map((item, index) =>
         '<div class="yami-ai-mention-item' + (index === mention.active ? ' active' : '') + '" role="option" data-index="' + index + '" title="' + escapeHtml(item.path) + '">' +
-          '<span class="yami-ai-mention-name">' + escapeHtml(mentionName(item.path)) + '</span>' +
+          '<span class="yami-ai-mention-name">' + highlightPlain(mentionName(item.path), keyword) + '</span>' +
           '<span class="yami-ai-mention-type">' + escapeHtml(MENTION_TYPES[item.type] || item.type) + '</span>' +
-          '<span class="yami-ai-mention-path">' + escapeHtml(mentionDir(item.path)) + '</span>' +
+          '<span class="yami-ai-mention-path">' + highlightPlain(mentionDir(item.path), keyword) + '</span>' +
         '</div>').join('') +
         '<div class="yami-ai-mention-hint">↑↓ 选择 · Enter 插入 · Esc 关闭 · 候选来自工程 ' + mention.total + ' 个文件</div>';
     }
@@ -3395,10 +3480,15 @@ function refreshHostPort() {
       if (!context) { closeMention(); return; }
       mention.open = true;
       mention.start = context.start;
+      mention.query = context.query;
       mention.items = mentionMatches(context.query);
       mention.active = 0;
       renderMention();
-      if (!mention.files && !mention.loading && !mention.failed) void loadMentionFiles();
+      // 失败过也要能重试：宿主（node 进程）是用户进这一页时才拉起的，而预热那一枪常常打在它起来之前。
+      // 原先 failed 一旦为真就永久锁死 —— 打 @ 只会一直显示「读不到工程文件清单（AI 宿主没起来？）」，
+      // 而宿主其实早就起来了，用户只能刷新页面才能恢复（2026-09-24 真机抓到）。
+      // 3 秒节流：宿主真的不在时，不至于每敲一个字就打一次请求。
+      if (!mention.files && !mention.loading && Date.now() - (mention.failedAt || 0) > 3000) void loadMentionFiles();
     }
 
     // 清单只拉一次（宿主那边还缓存 60 秒）；拉不到就如实说读不到，不让打字变成弹报错
@@ -3406,11 +3496,16 @@ function refreshHostPort() {
       mention.loading = true;
       renderMention();
       try {
+        // 先确保宿主在（ensureHost 幂等：活着就直接返回，没起来才拉进程）。
+        // 预热这一枪跑在「用户刚点进 AI 助手页」那一刻，此时宿主往往还没就绪 —— 不先拉起它，这一发必定失败。
+        await ensureHost();
         const data = await request('/files', {}, 20000);
         mention.files = Array.isArray(data.files) ? data.files : [];
         mention.total = mention.files.length;
+        mention.failed = false;
       } catch (error) {
         mention.failed = true;
+        mention.failedAt = Date.now();
       }
       mention.loading = false;
       if (mention.open) refreshMention();

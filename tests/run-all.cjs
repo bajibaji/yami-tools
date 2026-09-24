@@ -92,6 +92,31 @@ function sweepTemp() {
 
 sweepTemp()
 
+/* 失败时留现场。套件里有几个是负载/时序敏感的（2026-09-15 起记在 HANDOFF 3.3：
+   全量跑 6 次有 1 次退出码非 0，单跑就绿，一直没抓到是哪条断言）——
+   原因是 stdio: 'inherit' 把子进程输出直接送终端、一个字节都不留，事后无从可查。
+   失败就当场重跑一次并留全文（重跑常常就过了，那不代表"修好了"，只代表这次没抓到；
+   但两次输出摆在一起，才看得出是不是时序）。 */
+const LOG_PATH = path.join(__dirname, '..', '_last-run.txt');
+const LOG_TAIL_CHARS = 20000;
+function rerunAndLog(file, label, firstStatus) {
+  const again = spawnSync(process.execPath, [path.join(__dirname, file)], { encoding: 'utf8' });
+  const body = [
+    `===== ${new Date().toISOString()} · ${file} — ${label} =====`,
+    `首跑退出码 ${firstStatus}；以下是失败后立刻重跑的完整输出（重跑退出码 ${again.status}）`,
+    '',
+    (again.stdout || '').slice(-LOG_TAIL_CHARS),
+    (again.stderr || '').slice(-LOG_TAIL_CHARS),
+    '',
+  ].join('\n');
+  try {
+    fs.appendFileSync(LOG_PATH, body);
+    return LOG_PATH;
+  } catch {
+    return null; // 留档失败不阻断测试本身
+  }
+}
+
 let failed = 0;
 for (const [file, label] of SUITE) {
   console.log(`\n########## ${file} — ${label} ##########`);
@@ -99,6 +124,8 @@ for (const [file, label] of SUITE) {
   if (r.status !== 0) {
     failed++;
     console.error(`✗ ${file} 未通过 (退出码 ${r.status})`);
+    const logged = rerunAndLog(file, label, r.status);
+    if (logged) console.error(`  失败现场已留档（含重跑输出）: ${logged}`);
   }
 }
 

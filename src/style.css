@@ -3530,7 +3530,8 @@
         font-size: 11px !important;
       }
 
-      /* 用户消息上的「重发 / 编辑」（G-1）：平时隐身，悬停或键盘聚焦时才出现，别让对话记录变吵 */
+      /* 消息上的小按钮（用户：「重发 / 编辑」；回答：「复制 / 重新生成」）：
+         平时隐身，悬停或键盘聚焦时才出现，别让对话记录变吵 */
       .yami-ai-msg-actions {
         display: flex !important;
         gap: 6px !important;
@@ -3539,6 +3540,7 @@
         transition: opacity 0.16s !important;
       }
       .yami-ai-message.user:hover .yami-ai-msg-actions,
+      .yami-ai-message.assistant:hover .yami-ai-msg-actions,
       .yami-ai-msg-actions:focus-within { opacity: 1 !important; }
       .yami-ai-msg-action {
         padding: 0 8px !important;
@@ -4121,6 +4123,12 @@
         padding: 3px 8px !important;
         color: #6b7280 !important;
         font-size: 10px !important;
+      }
+      /* 命中的那截字：561 条里筛出 40 条，光看标题猜不出"为什么这条在这儿" */
+      .yami-ai-mention-hit {
+        color: #60a5fa !important;
+        font-weight: 600 !important;
+        font-style: normal !important;
       }
       .yami-ai-mention::-webkit-scrollbar {
         width: 4px !important;

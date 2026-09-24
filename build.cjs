@@ -157,8 +157,10 @@ const handoffPath = path.join(ROOT_DIR, 'HANDOFF.md');
 if (fs.existsSync(handoffPath)) {
   let handoffRaw = fs.readFileSync(handoffPath, 'utf8');
   // 注意 \*{0,2}：HANDOFF 里同时存在 `**当前版本**：` 与 `当前版本：` 两种写法，
-  // 老正则只认后者，于是文件头那行版本号长期漏改（SSOT 形同虚设），这里一次覆盖全部出现处。
-  const handoffVerRe = /(当前版本\*{0,2}：`v)\d+\.\d+\.\d+(`)/g;
+  // 老正则只认「当前版本：」，而 1.1 表格那行写的是 `| 当前版本 | `v1.5.3`（…）|`（分隔符是 |），
+  // 于是它从 v1.5.3 起长期漏改、与同文件头部的版本号自相矛盾（第一层本该是最准的一层）。
+  // 现在把分隔符从「只认 ：」放宽到「：或 |」，两种写法一起覆盖。
+  const handoffVerRe = /(当前版本\*{0,2}\s*(?:：|\|)\s*`?v)\d+\.\d+\.\d+(`)/g;
   const handoffHits = handoffRaw.match(handoffVerRe) || [];
   if (handoffHits.length > 0 && handoffHits.some((hit) => !hit.includes(`v${manifestVer}`))) {
     handoffRaw = handoffRaw.replace(handoffVerRe, `$1${manifestVer}$2`);

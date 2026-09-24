@@ -412,7 +412,7 @@ function checkMentionFiles() {
   assert.ok(/position: relative !important/.test(styleCss), '浮层靠父容器定位，.yami-ai-input-wrap 必须是 relative')
 
   // ④ 行为：纯逻辑抽出来真跑
-  const snippet = ['mentionName', 'mentionDir', 'mentionMatches', 'mentionQuery', 'closeMention', 'renderMention', 'resizeInput', 'applyMention']
+  const snippet = ['mentionName', 'mentionDir', 'highlightPlain', 'mentionMatches', 'mentionQuery', 'closeMention', 'renderMention', 'resizeInput', 'applyMention']
     .map(fn => extractFunction(agent, fn)).join('\n')
   const sandbox = {
     mention: {
@@ -444,6 +444,8 @@ function checkMentionFiles() {
   assert.ok(/获取技能id/.test(hit[0]), '文件名命中要排在"只在目录里命中"的前面，实际首位 ' + hit[0])
   assert.equal(run("mentionMatches('启动').length"), 1, '查询「启动」应当只命中启动游戏事件')
   assert.equal(run("mentionMatches('').length"), 4, '没输关键词时列出全部候选')
+  assert.equal(run("mentionMatches('')[0].type"), 'event',
+    '没输关键词时，常被指代的类型（事件/场景/技能…）要排在脚本前面 —— 否则首屏 40 条全是 .ts，想找事件还得先打字')
   assert.equal(run("mentionMatches('不存在的关键词').length"), 0, '查不到就如实返回空')
 
   const query = (value, caret, end) => {
@@ -455,8 +457,35 @@ function checkMentionFiles() {
   assert.deepEqual(query('@启', 2), { start: 0, query: '启' }, '行首 @ 要能触发')
   assert.deepEqual(query('帮我看看 @启', 8), { start: 5, query: '启' }, '词中间的 @ 要能触发')
   assert.equal(query('test@example.com', 16), null, '邮箱这类贴着字母的 @ 不能触发')
+  assert.deepEqual(query('帮我把@启', 5), { start: 3, query: '启' }, '汉字后面紧跟的 @ 也要触发（中文不会先敲空格，别拿英文习惯当判据）')
+  assert.deepEqual(query('先看一下，@启', 7), { start: 5, query: '启' }, '标点后面紧跟的 @ 也要触发')
   assert.equal(query('@abc\ndef', 8), null, '跨行以后就不再是同一个引用')
   assert.equal(query('@启', 0, 2), null, '有选区时不打扰（用户正在选字）')
+
+  // 命中的那截字必须高亮：库里 561 条筛出 40 条时，用户看不出"为什么这条在这儿"就只能逐条猜
+  assert.equal(run("highlightPlain('启动游戏事件.event', '启动')"),
+    '<em class="yami-ai-mention-hit">启动</em>游戏事件.event', '文件名里命中的字要高亮')
+  assert.equal(run("highlightPlain('Assets/技能/落雷.skill', '技能')"),
+    'Assets/<em class="yami-ai-mention-hit">技能</em>/落雷.skill', '只在目录里命中时也要高亮（右侧那列路径）')
+  assert.equal(run("highlightPlain('没有命中的名字', 'zzz')"), '没有命中的名字', '没命中就原样返回，不许掺标签')
+  assert.ok(/function highlightPlain[\s\S]{0,700}escapeHtml\(raw\.slice\(0, at\)\)/.test(agent),
+    '高亮必须逐段 escapeHtml 拼装（直接拼原文的话，文件名里的尖括号会破坏浮层 DOM）')
+  assert.ok(/yami-ai-mention-hit/.test(styleCss) && /yami-ai-mention-hit/.test(hud),
+    '高亮样式要同时落在 src/style.css 与构建产物 hud-overlay.js（只改 src 不构建 = 编辑器里没有效果）')
+
+  // 回答上的「复制 / 重新生成」：接线、复用既有重发链路、样式双落地
+  assert.ok(/function msgActionButton\(/.test(agent) && /function attachAnswerActions\(/.test(agent),
+    '回答上必须有「复制」（按钮工厂抽出来给用户/回答两侧共用，别再各写一份）')
+  assert.ok(/function attachAnswerActions[\s\S]{0,900}item\.parentNode[\s\S]{0,60}appendChild\(bar\)/.test(agent),
+    '「复制」必须挂在回答气泡**外面**：流式正文首帧会 `bubble.textContent = \'\'` 重建文本节点，挂在气泡里的按钮会被一起端掉（2026-09-24 真机抓到的）')
+  assert.ok(/function attachRegenerate\(/.test(agent), '必须有「重新生成」')
+  assert.ok(/attachRegenerate\(\);[\s\S]{0,80}endTurn\(\)/.test(agent),
+    '「重新生成」要在轮末挂到最后一条回答上，且必须在 endTurn() 之前（它靠 currentTurn 找正文槽）')
+  assert.ok(/function attachRegenerate[\s\S]{0,900}rewindTo\(index, \{ resend: true \}\)/.test(agent),
+    '「重新生成」必须复用 /session/rewind 的重发链路 —— 自己另造一条截断路径会跟对话时间轴跑偏')
+  assert.ok(/\.yami-ai-message\.assistant:hover \.yami-ai-msg-actions/.test(styleCss) &&
+    /\.yami-ai-message\.assistant:hover \.yami-ai-msg-actions/.test(hud),
+    '回答上的按钮要能悬停现身（只写 .user:hover 的话回答里永远隐身），且样式源与构建产物同时落地')
 
   // 插入本身：替换的必须正好是那段「@xxx」，@ 前面的字和光标后面的字都不能被吃掉
   const apply = (value, caret, start, path) => {
@@ -543,7 +572,17 @@ function main() {
   const actualSuites = (runAllSrc.match(/^\s*\['(?:test|verify)-/gm) || []).length
   assert.ok(declaredSuites > 0 && declaredSuites === actualSuites,
     `README 声明 ${declaredSuites} 套测试，run-all 实际注册 ${actualSuites} 套——数字对不上`)
-  console.log(`文档一致性: 铁律 ${actualRules} 条 / 测试 ${actualSuites} 套，README 声明与实际一致`)
+  // HANDOFF 的版本号有 3 处写法：文件头 `**当前版本**：`、1.1 表格 `| 当前版本 | `、第三层 `当前版本：`。
+  // build.cjs 靠一条正则级联同步它们，而那条正则原先只认「当前版本：」——1.1 表格那行（分隔符是 |）
+  // 于是从 v1.5.3 起漏改了几十个版本，第一层「客观事实」自己跟自己矛盾也没人发现。
+  // 这里把「值一致」钉住：哪处写法再漂移，本断言当场红（比等下次人工读文档可靠）。
+  const manifestVer = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8')).version
+  const handoffVers = [...handoffSrc.matchAll(/当前版本\*{0,2}\s*(?:：|\|)\s*`?v(\d+\.\d+\.\d+)`/g)].map((m) => m[1])
+  assert.ok(handoffVers.length >= 3,
+    `HANDOFF 里带「当前版本」的版本号应有 3 处（文件头 / 1.1 表格 / 第三层），实际匹配到 ${handoffVers.length} 处——写法变了要同步 build.cjs 的级联正则`)
+  assert.ok(handoffVers.every((v) => v === manifestVer),
+    `HANDOFF 版本号 ${handoffVers.join(' / ')} 与 manifest.json (${manifestVer}) 不一致——跑 node build.cjs 会自动级联同步`)
+  console.log(`文档一致性: 铁律 ${actualRules} 条 / 测试 ${actualSuites} 套 / HANDOFF 版本号 ${handoffVers.length} 处 = v${manifestVer}，README 声明与实际一致`)
 
   const mention = checkMentionFiles()
   console.log('@ 引用工程文件: 面板浮层 -> 宿主 /files（已排除图片音频）-> 提示词 全部咬合，过滤与触发在 vm 里实跑 ' + mention.files + ' 条候选')
