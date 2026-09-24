@@ -724,6 +724,12 @@ function refreshHostPort() {
     try {
       const data = await request('/status?sessionId=' + encodeURIComponent(state.sessionId));
       renderContext(data.context);
+      // 把轮次号跟宿主对齐（只增不减）。重开面板时屏幕是空白的、不回放历史，
+      // 本地计数从 0 起，而宿主那边可能已有 N 条用户消息 —— 不对齐的话，
+      // 「重发 / 重新生成」传过去的号会整体错一位、截断到错误的轮次（2026-09-24 真机抓到）。
+      if (Number.isInteger(data.userTurns)) {
+        state.userTurnSeq = Math.max(state.userTurnSeq || 0, data.userTurns);
+      }
     } catch (e) { /* 宿主没起来时不打扰用户 */ }
   }
 
@@ -2681,8 +2687,26 @@ function refreshHostPort() {
     await runMessage(text);
   }
 
+  /**
+   * 把轮次号跟宿主对齐（只增不减）。
+   * **必须在挂「重发 / 重新生成」按钮之前调** —— attachUserActions 与 attachRegenerate 会把号
+   * 写进按钮的闭包，事后（比如 runMessage 末尾的 refreshContext）再对齐就晚了，那颗按钮
+   * 仍然指着错的轮次，一点就把对话截断到别处（2026-09-24 真机抓到，会丢对话）。
+   * 对齐失败不阻断发送：拿不到就按本地计数走，和以前一样。
+   */
+  async function alignTurnSeq() {
+    try {
+      await ensureHost();
+      const status = await request('/status?sessionId=' + encodeURIComponent(state.sessionId));
+      if (Number.isInteger(status.userTurns)) {
+        state.userTurnSeq = Math.max(state.userTurnSeq || 0, status.userTurns);
+      }
+    } catch (e) { /* 宿主没起来 / 请求失败：按本地计数走 */ }
+  }
+
   /** 真正发一条需求（输入框那条与排队接力那条都走这里；排队接力不许碰输入框里正在敲的草稿） */
   async function runMessage(text) {
+    await alignTurnSeq();   // 先对齐，再落用户气泡（挂按钮）—— 见上面那段注释
     addMessage('user', text);
     autoScroll(true);   // 用户刚发消息：无论刚才在看哪，都回到最新（这是他自己触发的）
     prepareTurn();

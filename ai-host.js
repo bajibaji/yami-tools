@@ -2857,6 +2857,13 @@ const server = http.createServer(async (req, res) => {
         config: publicConfig(),
         context: contextStatus(session),
         grants: session && Array.isArray(session.grants) ? session.grants : [],
+        // 这个会话里"用户真说过的话"有几条（压缩检查点不计，与回放/rewind 的口径一致）。
+        // 面板靠它把自己的轮次号跟宿主对齐：重开面板时屏幕是空白的、不回放历史，
+        // 面板计数从 0 起，而宿主这边可能已经攒了 N 条 —— 不对齐，「重发 / 重新生成」
+        // 传过去的号就整体错一位，会截断到错误的轮次（2026-09-24 真机抓到，会丢对话）。
+        userTurns: session && Array.isArray(session.messages)
+          ? session.messages.filter(m => m && m.role === 'user' && !isCheckpoint(m)).length
+          : 0,
         usage: session ? (session.usage || null) : null,
         usageText: session ? pricing.describeUsage(session.usage) : '',
         thinking: { mode: publicConfig().thinkingMode, effort: publicConfig().thinkingEffort }

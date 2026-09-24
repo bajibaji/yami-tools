@@ -488,6 +488,15 @@ function checkMentionFiles() {
   assert.ok(dockOpenDeclAt >= 0 && floatRestoreAt >= 0 && dockOpenDeclAt < floatRestoreAt,
     'let isDockOpen 必须声明在「启动恢复悬浮模式」那次调用之前，否则 TDZ 抛错被 try/catch 吞掉、悬浮模式静默不恢复')
 
+  // 「重发 / 重新生成」的轮次号必须在挂按钮**之前**跟宿主对齐：
+  // 面板重开时屏幕是空白的、本地计数从 0 起，而会话里可能已经攒了 N 条用户消息 ——
+  // 不对齐就整体错一位，一点「重发」就把对话截断到别处（2026-09-24 真机抓到，会丢对话）。
+  // 晚一步对齐也没用：按钮的闭包在挂上那一刻就把号钉死了。
+  assert.ok(/async function alignTurnSeq\(\)/.test(agent), '面板要有 alignTurnSeq（与宿主对齐轮次号）')
+  assert.ok(/async function runMessage\(text\)\s*\{[\s\S]{0,400}await alignTurnSeq\(\)[\s\S]{0,400}addMessage\('user'/.test(agent),
+    'runMessage 必须在挂用户气泡之前先 alignTurnSeq —— 挂完再对齐，按钮上的轮次号已经钉死了')
+  assert.ok(/userTurns:/.test(host), '宿主 /status 必须返回 userTurns（与回放、rewind 同一口径：压缩检查点不计）')
+
   // 回答上的「复制 / 重新生成」：接线、复用既有重发链路、样式双落地
   assert.ok(/function msgActionButton\(/.test(agent) && /function attachAnswerActions\(/.test(agent),
     '回答上必须有「复制」（按钮工厂抽出来给用户/回答两侧共用，别再各写一份）')
