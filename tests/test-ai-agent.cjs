@@ -198,7 +198,7 @@ async function main() {
       YAMI_AI_TOOL_LIMIT: '400',
       YAMI_PROJECT_ROOT: PROJECT,
       // 隔离本机正在运行的编辑器：单测不应受开发者桌面上的编辑器输入框焦点状态影响
-      YAMI_EDITOR_BRIDGE_PORT: '0'
+      YAMI_EDITOR_BRIDGE_PORT: '65533'
     }
   })
   let stderr = ''

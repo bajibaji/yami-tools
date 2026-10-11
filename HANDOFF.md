@@ -7,7 +7,7 @@
 > - **第二层 · 记忆与经验**：项目经历了什么、踩过哪些坑、为什么这样设计——读它能少走弯路。
 > - **第三层 · 当前进度**：推进到哪里了、什么已完成、什么没做完、下一步做什么。
 >
-> **当前版本**：`v1.11.6`　**最近更新**：2026-09-24
+> **当前版本**：`v1.12.0`　**最近更新**：2026-10-12（快捷操作与区域工具版本发布）
 
 ---
 
@@ -19,7 +19,7 @@
 | :--- | :--- |
 | 名称 | DanJuan妙妙插件（DanJuan DevSuite） |
 | 形态 | Open Yami RPG Editor 的 Chrome MV3 扩展（非侵入式，不改游戏逻辑） |
-| 当前版本 | `v1.11.6`（单一事实源：`manifest.json` 的 `version`） |
+| 当前版本 | `v1.12.0`（单一事实源：`manifest.json` 的 `version`） |
 | 母仓库 | `yami-tools`，分支 `extension` |
 | 许可与分发 | 母仓库 + GitHub 远端（热更新源），插件目录单向镜像 |
 | 支持平台 | Windows（打包版引擎）与 Linux（源码构建版，本机为 Steam Deck / X11） |
@@ -1132,7 +1132,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 
 # 第三层 · 当前进度（Where We Are）
 
-> 更新日期：2026-09-24 · 当前版本：`v1.11.6`
+> 更新日期：2026-09-24 · 当前版本：`v1.12.0`
 
 ## 3.1 能力清单与完成度
 
@@ -1676,3 +1676,23 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 - 引擎侧改动（Linux 移植补丁 + `YamiEngine`）已提交到引擎 fork 分支（`lildanger/2` · `main` · `f233f54a`），上游 `bajibaji` 未动；`dist` 整份备份在 `/tmp/yami-dist-backup-*`，`Project/index.html` 另有备份；引擎重建走 `pnpm run build:vite`。
 - 插件运行镜像出问题：重新执行 `node build.cjs --deploy` 用母仓库覆盖即可（镜像永远是母仓库的单向拷贝）。
 - AI 会话记录：`~/DanJuanDevSuite/sessions/*.json`，删除某段对话用面板「历史」里的删除按钮，或直接删文件。
+
+## 3.6 2026-10-11：离线快捷操作与选中区域增强
+
+- 新增 `editor-tools.js`，经 bootstrap 在主世界装载，独立注册 Views 页 `editor-tools`，不修改 Open Yami 源码。不依赖 AI、9222 或新增引擎暴露补丁。
+- 菜单来源是原生 `menu-list.dataItems`，递归保留原生点击回调与 enabled 状态；顶栏菜单执行前重新生成，原生事件搜索来自 `command-suggestions.data`，插入使用 `command-list.insert`。右键菜单操作随用户选择变化作废。
+- 默认 `Ctrl+Shift+P` 搜索、`Ctrl+Shift+R` 区域工具；配置跨工程位于 `DanJuanDevSuite/editor-tools.json`。捕获阶段统一分发；输入法、repeat、输入框、原生保留键与菜单加速键冲突有保护。不是 OS 全局热键。
+- 选中区域优先从 `#scene-list.read()` + `#title-tabBar.read().meta` 获取，场景接口仅作兼容 fallback。真机移除 `window.YamiEngine` 与 `window.Scene` 后仍成功识别临时工程真实区域「刷怪区域」。原生顶栏读取 45 项菜单操作。
+- 固定监视用工程根 + 场景 ID + presetId，不按名称猜。试玩直接复用 `SceneRegion.actors`，原生 emit 包裹只记录 actorenter/actorleave/playerenter/playerleave，不额外轮询推断进入/离开事件。列表环形上限 50；编辑器通过运行时 `/region-monitor` 获取相同视野，端口沿用现有 runtime-port。
+- 发布指令包在 `runtime/region-commands/`：固定 GUID `d4a9f612bc3e7805`，四种查询操作合用一个原生自定义指令，支持原生 actor-getter 和 variable-setter；参数注入后 actor 已是实体，不再次调用。查询使用场景分区的当前坐标，边界与引擎一致。不存在时明确信息不可用/空列表/0/false。
+- 安装器确认后原子写脚本和指令注册，注册表备份、SHA 并发保护、GUID 查重、用户修改保护、symlink/junction 拒绝、真实 MCP 编译检查及失败回滚。用户正式工程未自动安装，必须在 UI 确认。
+- bootstrap、manifest、构建门禁、部署清单、整包快照入口全部加入 `editor-tools.js`；旧版本恢复依据备份 manifest 声明，而非强求旧备份包含新入口。更新/恢复测试夹具同步。
+- 验收：`test-editor-tools.cjs`、`test-region-command.cjs`（真实引擎类型检查 + 发布脚本 call + 成功安装与编译失败撤回）；浏览器 UI 测试桌面/640/320px、菜单回调、搜索、快捷键冲突和重绑、区域进入记录/切场景/取消、键盘焦点、零页面异常；原生 Electron 临时工程测试 45 项菜单与无 YamiEngine 的真实区域识别。
+- 顺手修复旧测试隔离：`YAMI_EDITOR_BRIDGE_PORT='0'` 实际回退到真实桥，开着编辑器时 AI 修复套件被串工程门禁拒绝；改测试为显式未监听的 65533，生产门禁未放松。全量第二次回归 `38/38` 通过；真实远端整包验收跳过，因为远端尚无本次新增入口文件（未 Git 发布）。
+
+## 3.7 2026-10-12：v1.12.0 发布
+
+- 用户明确授权升级版本、Git 提交推送与本机部署。新增编辑器命令搜索、可配置快捷键、选中区域监视和可安装的区域发布指令，按 Minor 从 1.11.6 升级为 1.12.0；版本由 `node build.cjs --bump minor` 从 manifest 向源码和文档级联。
+- 插件分发入口是 `origin/extension` 分支快照，运行镜像通过 `node build.cjs --deploy` 单向部署到 Open Yami 扩展目录。区域指令安装包一起发布，但不自动写入用户游戏工程。
+- 发布前验收：构建 51 项核心锚点及整包更新门禁通过，全量回归 `38/38` 套通过；浏览器 UI 的搜索、快捷键重绑/冲突、右键菜单选择有效期、区域监视与 320px 布局通过；独立 Open Yami 临时工程读取 45 项真实菜单，在无 YamiEngine 暴露时识别真实区域，原生指令窗口预填区域 ID 与操作成功。
+- npm/GitHub Pages 是另一个产品入口：`main` 分支的 `.github/workflows/deploy.yml` 在推送 main 时运行 `npm ci`、`npm run build` 并上传 dist 到 Pages。本次不修改 main、不触发网页部署，也不执行 npm 包发布；main 与内置 yami-mcp 的 package 均声明 private。

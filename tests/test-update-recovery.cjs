@@ -14,7 +14,7 @@ function check(name, ok, detail) {
 
 /* 造一个「更新写坏了」的插件目录 */
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'yami-recover-'))
-const ENTRIES = ['manifest.json', 'probe-core.js', 'ai-render-core.js', 'hud-overlay.js', 'ai-agent.js']
+const ENTRIES = ['manifest.json', 'probe-core.js', 'editor-tools.js', 'ai-render-core.js', 'hud-overlay.js', 'ai-agent.js']
 // 旧版本备份（内容 = OLD）
 for (const rel of ENTRIES) {
   const bak = path.join(DIR, '_backup', 'previous', rel)
@@ -74,6 +74,15 @@ const restoredAll = ENTRIES.every(rel => fs.readFileSync(path.join(DIR, rel), 'u
 check('五个入口文件全部回退成旧版本', restoredAll, ENTRIES.map(rel => fs.readFileSync(path.join(DIR, rel), 'utf8').slice(0, 12)).join(' | '))
 check('回退后删掉「进行中」标记，不会反复回退', !fs.existsSync(path.join(DIR, '.yami-update-in-progress.json')))
 check('第二次调用不再回退（标记已清）', (await api.recoverFromInterruptedUpdate()) === '')
+
+// 旧 manifest 不声明本次新增入口：旧备份不应被强求含 editor-tools.js。
+const oldManifest = { content_scripts: [{ js: ['bootstrap.js'] }], web_accessible_resources: [{ resources: ['probe-core.js', 'hud-overlay.js', 'ai-agent.js', 'ai-render-core.js'] }] }
+fs.writeFileSync(path.join(DIR, '_backup/previous/manifest.json'), JSON.stringify(oldManifest))
+fs.writeFileSync(path.join(DIR, '_backup/previous/bootstrap.js'), '// old bootstrap')
+fs.unlinkSync(path.join(DIR, '_backup/previous/editor-tools.js'))
+fs.writeFileSync(path.join(DIR, '.yami-update-in-progress.json'), JSON.stringify({ previousVersion: '1.11.6' }))
+const oldNotice = await api.recoverFromInterruptedUpdate()
+check('旧备份无需新增入口也能回退（按旧 manifest 声明恢复）', !!oldNotice && !fs.existsSync(path.join(DIR, '.yami-update-in-progress.json')))
 
 /* 备份不全时必须什么都不动 */
 const DIR2 = fs.mkdtempSync(path.join(os.tmpdir(), 'yami-recover2-'))

@@ -24,7 +24,7 @@
   if (window.top !== window) return; // 只装主文档，避免子 iframe 里重复挂一套界面
 
   // 第一个文件当探针（必须两个基址都有），其余按依赖顺序：渲染核心要在 ai-agent 之前
-  const FILES = ['probe-core.js', 'ai-render-core.js', 'hud-overlay.js', 'ai-agent.js'];
+  const FILES = ['probe-core.js', 'editor-tools.js', 'ai-render-core.js', 'hud-overlay.js', 'ai-agent.js'];
   const LOAD_TIMEOUT = 4000;
 
   function candidateBases() {
@@ -120,19 +120,28 @@
     try { markerRaw = fs.readFileSync(path.join(dir, UPDATE_MARKER), 'utf8'); } catch (e) { return ''; }
     const info = (function () { try { return JSON.parse(markerRaw) } catch (e) { return {} } })();
     const backupRoot = path.join(dir, BACKUP_DIR);
+    let recoveryEntry = RECOVERY_ENTRY.slice();
+    try {
+      const previous = JSON.parse(fs.readFileSync(path.join(backupRoot, 'manifest.json'), 'utf8'));
+      const declared = ['manifest.json'];
+      (previous.content_scripts || []).forEach(entry => (entry.js || []).forEach(file => declared.push(file)));
+      (previous.web_accessible_resources || []).forEach(entry => (entry.resources || []).forEach(file => declared.push(file)));
+      const safe = declared.filter(file => typeof file === 'string' && !file.includes('..') && !path.isAbsolute(file) && !file.includes('*'));
+      if (safe.length > 1) recoveryEntry = [...new Set(safe)];
+    } catch (e) {}
     const notice = 'DanJuan妙妙插件：检测到上次更新没有正常完成，已把插件回退到更新前的版本（v'
       + String(info && info.previousVersion || '?') + '）。重开一次窗口即可正常使用；想再试更新请先看控制台日志。';
     try {
       let restored = 0;
-      for (let i = 0; i < RECOVERY_ENTRY.length; i++) {
-        const rel = RECOVERY_ENTRY[i];
+      for (let i = 0; i < recoveryEntry.length; i++) {
+        const rel = recoveryEntry[i];
         const from = path.join(backupRoot, rel.split('/').join(path.sep));
         if (!fs.existsSync(from)) continue;
         fs.writeFileSync(path.join(dir, rel.split('/').join(path.sep)), fs.readFileSync(from));
         restored++;
       }
       // 入口文件必须都回来了才算恢复成功；回不来就留着标记，等下一次（或用户手动换插件目录）
-      if (restored < RECOVERY_ENTRY.length) return '';
+      if (restored < recoveryEntry.length) return '';
       try { fs.rmSync(path.join(dir, UPDATE_MARKER), { force: true }); } catch (e) {}
       showRecoveryNotice(notice);
       return notice;

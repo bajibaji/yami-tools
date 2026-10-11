@@ -76,6 +76,40 @@
 /* ============================================================
        * 全局样式污染彻底隔离层 (免疫 Yami 编辑器 components.css 污染)
        * ============================================================ */
+      /* 编辑器快捷操作：复用侧栏，不接管宿主页面布局。 */
+      .dj-tools { gap: 12px !important; min-width: 0 !important; }
+      .dj-tools [hidden] { display: none !important; }
+      .dj-tools-tabs, .dj-tools-actions { display: flex !important; gap: 8px !important; flex-wrap: wrap !important; }
+      .dj-tool-button {
+        position: static !important; display: inline-flex !important; align-items: center !important;
+        justify-content: center !important; box-sizing: border-box !important;
+        min-height: 30px !important; padding: 5px 9px !important; border: 1px solid #4a4a4a !important;
+        border-radius: 3px !important; background: #303030 !important; color: #e8e8e8 !important;
+        font: 400 12px/1.5 "Microsoft YaHei UI", sans-serif !important;
+        cursor: pointer !important; overflow-wrap: anywhere !important; user-select: none !important;
+      }
+      .dj-tool-button:hover { background: #414141 !important; }
+      .dj-tool-button.active { border-color: #60a5fa !important; background: #25364a !important; }
+      .dj-tool-button.disabled { color: #aaa !important; cursor: default !important; }
+      .dj-tool-button:focus-visible, .dj-tools input:focus-visible {
+        outline: 2px solid #60a5fa !important; outline-offset: 2px !important;
+      }
+      .dj-tools label { display: block !important; color: #ddd !important; font-size: 12px !important; margin-bottom: 6px !important; }
+      .dj-tools input {
+        width: 100% !important; box-sizing: border-box !important; min-width: 0 !important;
+        background: #18191a !important; border: 1px solid #555 !important; border-radius: 3px !important;
+        color: #eee !important; padding: 8px !important; font: 400 13px/1.5 "Microsoft YaHei UI", sans-serif !important;
+      }
+      .dj-tools-row { display: flex !important; gap: 8px !important; align-items: center !important; padding-block: 5px !important; flex-wrap: wrap !important; }
+      .dj-tools-row > span, .dj-tools-command { flex: 1 1 160px !important; min-width: 0 !important; }
+      .dj-tools-command { justify-content: flex-start !important; text-align: start !important; }
+      #dj-tools-status, #dj-tools-count { color: #bbb !important; font-size: 12px !important; line-height: 1.5 !important; overflow-wrap: anywhere !important; }
+      #dj-tools-status.error { color: #ffaaaa !important; }
+      .dj-tools h3 { color: #eee !important; font-size: 14px !important; margin: 16px 0 8px !important; }
+      .dj-tools-details { display: grid !important; grid-template-columns: minmax(72px, auto) minmax(0, 1fr) !important; gap: 6px 10px !important; margin: 8px 0 16px !important; font-size: 12px !important; line-height: 1.5 !important; }
+      .dj-tools-details dt { color: #bbb !important; }
+      .dj-tools-details dd { margin: 0 !important; color: #eee !important; overflow-wrap: anywhere !important; user-select: text !important; }
+      .dj-tools-log { margin-top: 16px !important; white-space: pre-wrap !important; color: #bbb !important; font: 400 12px/1.6 Consolas, monospace !important; overflow-wrap: anywhere !important; }
       #yami-perf-mini-hud, #yami-perf-dock {
         box-sizing: border-box !important;
         font-family: Inter, "Microsoft YaHei UI", sans-serif !important;
@@ -5825,7 +5859,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.11.6 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.12.0 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
@@ -6172,7 +6206,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.11.6 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.12.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -9473,7 +9507,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.11.6';
+      const cur = (probe && probe.version) ? probe.version : '1.12.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -9539,7 +9573,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.11.6') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.12.0') + ')');
           refreshVersionBadge();
         }
       });

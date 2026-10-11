@@ -1,6 +1,6 @@
 # DanJuan妙妙插件 (Open Yami 开发者非侵入式辅助套件)
 
-> **版本**：`v1.11.6`  
+> **版本**：`v1.12.0`
 > **分支**：`extension`（母仓库单一真实源 SSOT）  
 > **定位**：面向 Open Yami RPG Editor 编辑器的原生非侵入式辅助套件，包含**性能排查大盘（Profiler）**、**运行日志工作台（报错 / 事件流水 / 幽灵事件侦探）**、**发布前工程体检（Project Audit）**、**存档管理台（Save Lab）**、**场景实体检查台（Scene Inspector）**、**作弊与调试控制台（Cheats）**、**变量监视挂件（Pin）**以及微内核页面契约架构。
 
@@ -88,6 +88,22 @@
 
 ---
 
+## 快捷操作与选中区域
+
+主页【快捷操作】提供三个视图，全部离线使用，不调用大模型：
+
+- **命令搜索**：搜索顶栏菜单和事件指令，显示完整菜单路径；固定常用项、最近使用优先；执行前重新检查菜单可用状态。右键菜单只在当前选择上下文有效。
+- **快捷键**：跨工程保存自定义组合键，冲突提示、清除与恢复默认；输入法组合输入、按键重复、文本编辑与宿主弹窗有保护。
+- **区域工具**：读取地图当前选中的区域，固定后以工程目录、场景 ID 与区域预设 ID 绑定试玩；显示角色名单、玩家是否在区内，以及最近 50 条原生进入/离开记录。未加载、切场景和销毁如实显示，不继续使用旧值。
+
+默认 `Ctrl+Shift+P` 打开命令搜索，`Ctrl+Shift+R` 打开区域工具。macOS 的 Cmd 对应 Ctrl。配置位于插件数据目录的 `editor-tools.json`，不是系统级后台热键。
+
+区域检视器的【区域工具】入口可直接打开当前区域。需要游戏发布后也能执行查询时，点【安装区域指令】：确认后只添加 `Assets/插件/DanJuan/区域工具.d4a9f612bc3e7805.ts` 与 `Data/commands.json` 注册条目，原注册表自动备份，安装后执行编译检查；检查失败撤回安装。已有用户改动的指令不会自动覆盖。
+
+指令的操作有获取区域信息、获取区内角色列表、获取数量、判断角色是否在区域内。区域工具页的对应按钮会预填区域 ID；结果变量仍由开发者在原生指令窗口选择。信息不存在时返回 `{ available: false }`，列表为空、数量为 0、判断为 false。范围遵循引擎“左上包含、右下不包含”，仅查询当前场景内存活且激活的角色。
+
+测试入口：`node tests/test-editor-tools.cjs`、`node tests/test-region-command.cjs`；浏览器与原生编辑器验收分别为 `node tests/test-editor-tools-ui.cjs` 和 `node tests/test-editor-tools-electron.cjs`（需 Playwright/Electron）。
+
 ## [文件目录结构]
 
 ```text
@@ -95,6 +111,7 @@
 ├── manifest.json       # Chrome MV3 扩展清单 (声明 world: "MAIN" 与 document_start)
 ├── probe-core.js       # 探针内核 (WebGL DrawCall / 原型链 / 报错捕获 / 5966+5967 双桥)
 ├── hud-overlay.js      # 核心视图层 (微内核 Views 契约 / 胶囊与侧栏 / 穿透控制 / 路由调度)
+├── editor-tools.js     # 离线命令搜索、可配置快捷键、选中区域与试玩监视
 ├── ai-agent.js         # AI 助手前端视图 (对话、模型设置、写入确认与审批流)
 ├── ai-host.js          # 本机 AI Agent Host (模型调度 / 工具循环 / DPAPI 密钥安全管理)
 ├── runtime/            # 内置无依赖运行时
@@ -102,7 +119,7 @@
 ├── src/
 │   └── style.css       # 纯 CSS 样式源文件 (支持 IDE 语法高亮与 Emmet 补全)
 ├── build.cjs           # 原生零依赖自检构建脚本 (样式注入 / 51 项断言自检 / --deploy 镜像同步)
-├── tests/              # 零依赖回归套件 (总入口 run-all.cjs: 36 套, 含 AI Agent / 选中文件默认放行 / MCP元数据对齐引擎 / 指令中文名解析 / 更新失败自愈 / 界面操作 / 子视图悬浮窗 / 打断 / 消息序列自愈 / 上下文压缩 / 编译器查找 / 渲染性能 / 工具一致性 / 热更新; 夹具工程走 resolve-project.cjs 跨平台解析)
+├── tests/              # 回归套件 (总入口 run-all.cjs: 38 套; 浏览器 UI 验收另跑 test-editor-tools-ui.cjs)
 ├── HANDOFF.md          # 交接文档·三层结构 (客观事实 / 记忆与经验 / 当前进度, SSOT)
 └── README.md           # 本说明文件
 ```
@@ -127,11 +144,13 @@
 - **本地修改与自检**：
   ```bash
   node build.cjs          # 执行语法校验、样式注入与 51 项核心锚点严苛自检
-  node tests/run-all.cjs  # 执行回归套件 (36 套: 探针/报错/场景/作弊/体检/黑匣子/断点/AI Agent/选中文件默认放行/MCP元数据对齐引擎/指令中文名解析/更新失败自愈/界面操作/子视图悬浮窗/消息序列/上下文压缩/编译器查找/自动更新等)
+  node tests/run-all.cjs  # 执行回归套件 (38 套: 含快捷操作、区域发布指令及原有模块)
   node build.cjs --deploy # 自检 + 自动单向安全镜像至编辑器目录 + 输出 MD5 对齐报告
   node build.cjs --watch  # 推荐日常: 先部署一次, 之后源文件一保存就自动重建+部署
   ```
 - **唯一发布铁律**：平时严禁擅自 Git 提交，仅在明确下达发布指令时触发智能版本号自增并推送到 GitHub `extension` 分支。
+- **插件发布**：授权后运行 `node build.cjs --bump minor`，验收通过后 `node build.cjs --deploy` 并提交、推送 `extension`。插件的一键更新下载该分支整包，不依赖 npm。
+- **网页发布是独立流程**：`main` 分支推送后由 GitHub Actions 执行 `npm ci`、`npm run build` 并部署到 GitHub Pages；这不是 `npm publish`，也不是本分支的 Open Yami 插件部署。
 
 ---
 

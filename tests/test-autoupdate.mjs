@@ -115,6 +115,7 @@ function fakeSnapshotFiles(version) {
     ['bootstrap.js', 'window.__FAKE_BOOTSTRAP__ = true;\n'],
     ['ai-render-core.js', 'window.__FAKE_RENDER__ = 1;\n'],
     ['probe-core.js', "const PROBE_VERSION = '" + version + "';\n"],
+    ['editor-tools.js', 'window.__FAKE_TOOLS__ = true;\n'],
     ['hud-overlay.js', 'window.__FAKE_HUD__ = 1;\n'],
     ['ai-agent.js', 'window.__FAKE_AGENT__ = 1;\n'],
     ['ai-host.js', 'module.exports = {};\n'],

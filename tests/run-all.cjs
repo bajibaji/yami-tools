@@ -8,6 +8,8 @@ const { spawnSync } = require('child_process');
 const path = require('path');
 
 const SUITE = [
+  ['test-editor-tools.cjs', '编辑器快捷操作与区域安装(快捷键+菜单+跨场景+事务)'],
+  ['test-region-command.cjs', '区域发布指令(真实类型检查+边界+状态+实际执行)'],
   ['verify-perf-probe.mjs', '探针原型挂起语义 + 接线契约'],
   ['test-errflow.mjs',      '错误黑匣子指纹聚合与广播节流'],
   ['test-scene-lab.mjs',    '场景实体快照与渲染集成'],

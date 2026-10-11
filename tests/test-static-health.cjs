@@ -309,13 +309,13 @@ function checkCssStructure(file) {
  * 插件却直接把三个脚本挂进 content_scripts，结果 AI 宿主起不来、5966/5967 桥永不监听。
  */
 function checkPluginWiring() {
-  const shipped = ['bootstrap.js', 'ai-render-core.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js', 'ai-host.js']
+  const shipped = ['bootstrap.js', 'editor-tools.js', 'ai-render-core.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js', 'ai-host.js']
   const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'))
   const bootstrap = fs.readFileSync(path.join(ROOT, 'bootstrap.js'), 'utf8')
 
   const scripts = (manifest.content_scripts || []).flatMap(entry => entry.js || [])
   assert.ok(scripts.includes('bootstrap.js'), 'manifest 必须挂载主世界装载器 bootstrap.js')
-  for (const file of ['ai-render-core.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js']) {
+  for (const file of ['ai-render-core.js', 'editor-tools.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js']) {
     assert.ok(!scripts.includes(file), `${file} 不能直接挂进 content_scripts（隔离世界没有 Node），必须由 bootstrap.js 注入主世界`)
     assert.ok(bootstrap.includes(`'${file}'`), `bootstrap.js 必须注入 ${file}`)
   }
@@ -323,7 +323,7 @@ function checkPluginWiring() {
   assert.ok(!('world' in firstScript), 'manifest 不要声明 world 字段：Chrome 111+ 才有，Electron 20 会忽略（写了等于假装生效）')
 
   const war = (manifest.web_accessible_resources || []).flatMap(entry => entry.resources || [])
-  for (const file of ['ai-render-core.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js']) {
+  for (const file of ['ai-render-core.js', 'editor-tools.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js']) {
     assert.ok(war.includes(file), `web_accessible_resources 必须放行 ${file}（主世界按扩展基址取脚本）`)
   }
 

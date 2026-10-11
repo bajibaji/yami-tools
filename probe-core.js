@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.11.6';
+  const PROBE_VERSION = '1.12.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -4313,6 +4313,14 @@
           return;
         }
 
+        if (req.method === 'GET' && req.url === '/region-monitor') {
+          const tools = window.__DANJUAN_EDITOR_TOOLS__;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(tools && typeof tools.monitor === 'function'
+            ? tools.monitor() : { ok: false, error: '区域工具尚未就绪' }));
+          return;
+        }
+
         if (req.url === '/report') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(buildReport()));
@@ -4995,7 +5003,7 @@
   };
 
   // 入口脚本按依赖顺序先落盘, manifest.json 永远最后落盘 (版本门闩: 中途失败旧门牌还在)
-  const SNAPSHOT_ENTRY_ORDER = ['bootstrap.js', 'ai-render-core.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js', 'ai-host.js'];
+  const SNAPSHOT_ENTRY_ORDER = ['bootstrap.js', 'ai-render-core.js', 'probe-core.js', 'editor-tools.js', 'hud-overlay.js', 'ai-agent.js', 'ai-host.js'];
 
   // 语义化版本比对: v1 > v2 返回 1, v1 < v2 返回 -1, 相等返回 0
   function compareVersion(v1, v2) {

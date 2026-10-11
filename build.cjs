@@ -31,6 +31,7 @@ const AI_AGENT_PATH = path.join(ROOT_DIR, 'ai-agent.js');
 const AI_HOST_PATH = path.join(ROOT_DIR, 'ai-host.js');
 const BOOTSTRAP_PATH = path.join(ROOT_DIR, 'bootstrap.js');
 const RENDER_CORE_PATH = path.join(ROOT_DIR, 'ai-render-core.js');
+const EDITOR_TOOLS_PATH = path.join(ROOT_DIR, 'editor-tools.js');
 // 部署镜像目录：YAMI_DEPLOY_DIR 优先（跨平台/自定义安装位置），Windows 默认值兜底
 const DEPLOY_DIR = process.env.YAMI_DEPLOY_DIR ||
   path.join('D:\\Program Files\\Open Yami RPG Editor', 'extension', 'yami-perf-extension');
@@ -193,6 +194,8 @@ try {
   execSync(`node --check "${PROBE_JS_PATH}"`, { stdio: 'pipe' });
   execSync(`node --check "${AI_AGENT_PATH}"`, { stdio: 'pipe' });
   execSync(`node --check "${AI_HOST_PATH}"`, { stdio: 'pipe' });
+  execSync(`node --check "${EDITOR_TOOLS_PATH}"`, { stdio: 'pipe' });
+  execSync(`node --check "${path.join(ROOT_DIR, 'runtime/region-commands/install.cjs')}"`, { stdio: 'pipe' });
   console.log('  [语法编译] hud-overlay.js 与 probe-core.js 语法校验 100% 通过');
 } catch (err) {
   console.error('❌ [语法编译失败] 请检查 JS 代码语法！\n', err.message);
@@ -282,7 +285,7 @@ if (!/"web_accessible_resources"/.test(manifestContent)) {
   console.error('❌ [断言失败] manifest.json 缺少 web_accessible_resources（主世界无法按扩展基址取脚本）');
   failedCount++;
 }
-for (const f of ['ai-render-core.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js']) {
+for (const f of ['ai-render-core.js', 'probe-core.js', 'editor-tools.js', 'hud-overlay.js', 'ai-agent.js']) {
   if (!manifestContent.includes('"' + f + '"') || !bootstrapSource.includes("'" + f + "'")) {
     console.error(`❌ [断言失败] 主世界装载器与 manifest 对 ${f} 的声明不一致`);
     failedCount++;
@@ -304,6 +307,7 @@ const artifactFiles = [
   ['ai-host.js', aiHostContent],
   ['bootstrap.js', bootstrapContent],
   ['ai-render-core.js', renderCoreContent],
+  ['editor-tools.js', fs.readFileSync(EDITOR_TOOLS_PATH, 'utf8')],
   ['src/style.css', styleCssContent]
 ];
 for (const [fname, fcontent] of artifactFiles) {
@@ -321,7 +325,7 @@ for (const [fname, fcontent] of artifactFiles) {
 }
 
 // 铁律②: 严禁原生 <button> 标签 (编辑器全局 button{position:absolute;width:88px;height:20px} 会打歪)
-const nativeBtnHits = (hudContent + '\n' + aiAgentContent).match(/<button[\s>]/g) || [];
+const nativeBtnHits = (hudContent + '\n' + aiAgentContent + '\n' + fs.readFileSync(EDITOR_TOOLS_PATH, 'utf8')).match(/<button[\s>]/g) || [];
 if (nativeBtnHits.length > 0) {
   console.error(`❌ [断言失败] 检测到 ${nativeBtnHits.length} 处原生 <button> 标签，违反铁律②，请改用 <div role="button">！`);
   failedCount++;
@@ -472,7 +476,7 @@ if (isDeploy) {
     process.exit(1);
   }
 
-  const syncFiles = ['manifest.json', 'bootstrap.js', 'ai-render-core.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js', 'ai-host.js', 'HANDOFF.md', 'README.md', '.gitignore'];
+  const syncFiles = ['manifest.json', 'bootstrap.js', 'editor-tools.js', 'ai-render-core.js', 'probe-core.js', 'hud-overlay.js', 'ai-agent.js', 'ai-host.js', 'HANDOFF.md', 'README.md', '.gitignore'];
   console.log('----------------------------------------------------------------------');
   console.log('文件名              源文件 MD5 (SSOT)                目标文件 MD5 (生产)       状态');
   console.log('----------------------------------------------------------------------');
@@ -504,7 +508,7 @@ if (isDeploy) {
 
 // 6. --watch: 源文件保存即自动重建并部署, 免手动敲 --deploy
 if (isWatch) {
-  const WATCH_FILES = [SRC_CSS_PATH, PROBE_JS_PATH, HUD_JS_PATH, path.join(ROOT_DIR, 'manifest.json')];
+  const WATCH_FILES = [SRC_CSS_PATH, PROBE_JS_PATH, HUD_JS_PATH, EDITOR_TOOLS_PATH, path.join(ROOT_DIR, 'manifest.json')];
   let lastBuildAt = Date.now();
   let timer = null;
   console.log('👀 [--watch] 已开始监听源文件，保存即自动构建并部署到编辑器目录（Ctrl+C 退出）');
