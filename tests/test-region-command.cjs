@@ -51,6 +51,9 @@ try {
   command.result = { set(value) { result = value } }
   command.regionId = 'r1'; command.operation = 'actors'; command.call()
   assert.equal(result.length, 1); assert.equal(result[0], a)
+  // 模拟角色存在循环引用（如 parent 引用或自身双向引用），验证存档序列化不崩溃
+  a.circularRef = a
+  assert.doesNotThrow(() => JSON.stringify({ variables: { list: result } }), '返回的角色必须支持安全存档序列化')
   command.operation = 'count'; command.call(); assert.equal(result, 1)
   command.operation = 'contains'; command.actor = a; command.call(); assert.equal(result, true)
   command.actor = b; command.call(); assert.equal(result, false)

@@ -7,7 +7,7 @@
 > - **第二层 · 记忆与经验**：项目经历了什么、踩过哪些坑、为什么这样设计——读它能少走弯路。
 > - **第三层 · 当前进度**：推进到哪里了、什么已完成、什么没做完、下一步做什么。
 >
-> **当前版本**：`v1.12.0`　**最近更新**：2026-10-12（快捷操作与区域工具版本发布）
+> **当前版本**：`v1.13.0`　**最近更新**：2026-10-12（快捷操作与区域工具版本发布）
 
 ---
 
@@ -19,7 +19,7 @@
 | :--- | :--- |
 | 名称 | DanJuan妙妙插件（DanJuan DevSuite） |
 | 形态 | Open Yami RPG Editor 的 Chrome MV3 扩展（非侵入式，不改游戏逻辑） |
-| 当前版本 | `v1.12.0`（单一事实源：`manifest.json` 的 `version`） |
+| 当前版本 | `v1.13.0`（单一事实源：`manifest.json` 的 `version`） |
 | 母仓库 | `yami-tools`，分支 `extension` |
 | 许可与分发 | 母仓库 + GitHub 远端（热更新源），插件目录单向镜像 |
 | 支持平台 | Windows（打包版引擎）与 Linux（源码构建版，本机为 Steam Deck / X11） |
@@ -1132,7 +1132,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 
 # 第三层 · 当前进度（Where We Are）
 
-> 更新日期：2026-09-24 · 当前版本：`v1.12.0`
+> 更新日期：2026-09-24 · 当前版本：`v1.13.0`
 
 ## 3.1 能力清单与完成度
 
@@ -1696,3 +1696,58 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 - 插件分发入口是 `origin/extension` 分支快照，运行镜像通过 `node build.cjs --deploy` 单向部署到 Open Yami 扩展目录。区域指令安装包一起发布，但不自动写入用户游戏工程。
 - 发布前验收：构建 51 项核心锚点及整包更新门禁通过，全量回归 `38/38` 套通过；浏览器 UI 的搜索、快捷键重绑/冲突、右键菜单选择有效期、区域监视与 320px 布局通过；独立 Open Yami 临时工程读取 45 项真实菜单，在无 YamiEngine 暴露时识别真实区域，原生指令窗口预填区域 ID 与操作成功。
 - npm/GitHub Pages 是另一个产品入口：`main` 分支的 `.github/workflows/deploy.yml` 在推送 main 时运行 `npm ci`、`npm run build` 并上传 dist 到 Pages。本次不修改 main、不触发网页部署，也不执行 npm 包发布；main 与内置 yami-mcp 的 package 均声明 private。
+
+## 3.8 2026-10-12：v1.12.0 快捷操作与区域工具全量排查与自愈修复
+
+- **区域指令循环引用与坏档根治**：`RegionTools.d4a9f612bc3e7805.ts` 操作 `actors` 原直接返回原生 `Actor[]` 实例，游戏在切场景或手动存档执行 `JSON.stringify(saveData)` 时会因双向循环引用（`parent`、`scene`、`sprite`）抛出 `TypeError: Converting circular structure to JSON` 导致坏档。已为返回的各角色绑定安全的不可枚举 `toJSON` 纯数据摘要（`entityId, presetId, name, x, y`），既保留脚本直接调用 `actor` 方法的原生能力，又实现存档 100% 安全序列化。测试 `test-region-command.cjs` 已补全循环引用序列化断言。
+- **顶栏菜单高频闪烁与焦点打断消除**：`editor-tools.js` 的 `collectMenus()` 增加 6 秒时间戳缓存与焦点自愈；按快捷键执行已绑定命令时直接分发 `runAction(id)`，不再重复调用全局扫描；派发指针事件前后严格保存并恢复原焦点 `activeElement`，根除输入打断与界面抽搐。
+- **代码编辑器快捷键抢占修复**：`editor-tools.js` 键盘捕获放行了 `.monaco-editor`、`input`、`textarea` 与 `[contenteditable="true"]`，包括 `tools.commands` 在内的所有按键在此类控件聚焦时无条件放行，彻底消除与 Monaco 代码编辑器自带 `Ctrl+Shift+P` 命令面板的冲突。
+- **扩展环境安装包多通道鲁棒探测**：`editor-tools.js` 统一接入 `resolvePluginDir` 标准解析机制，支持 `chrome.runtime.getURL`、`file:` 协议及多级备用目录自愈降级，解决在 Chrome MV3 扩展真实环境下因非 `file:` 协议导致误报“找不到区域指令安装包”的缺陷。
+- **参数面板异步时序修复**：`insertRegionCommand` 在调用 `insertCommand` 后引入最多 300ms 异步微等待 `#scriptCommand-parameter-pane` 挂载，解决组件异步渲染导致的同步判空误报。
+- **主页卡片对齐 Remix Icon 与 Bento 规范**：主页入口 `dj-tools-entry` 由简陋的灰块按钮重构为与其它模块完全统一的 `.yami-home-module-item` 大卡片，内嵌官方开源 Remix Icon `ri-command-line` 矢量 Path、模块标题与副标题，彻底杜绝视觉割裂。
+- **全量回归与镜像覆盖**：构建门禁 51 项核心锚点全绿，`tests/run-all.cjs` 全量 38/38 套测试 100% 通过，`tests/test-editor-tools-ui.cjs` 浏览器 UI 测试通过；执行 `node build.cjs --deploy` 完成生产目录单向镜像部署（MD5 全部对齐）。
+- **快捷操作指令名称歧义彻底根治**：
+  - **根因分析**：`editor-tools.js` 的 `scan()` 在遍历 `command-suggestions.data` 时，到达叶子指令节点仅将指令自身名称存入了 `item.label`，而生成 `item.path` 时误写为 `'事件指令 > ' + path.join(' > ')`，完全丢弃了叶子节点自身名称；导致所有事件指令整屏显示为重复无差别的 `事件指令 > 变量控制`、`事件指令 > 流程控制`；内置工具 `tools.region` 与 `tools.pin` 也共用了相同的 `'DanJuan > 区域工具'`。
+  - **架构修正**：提取纯函数 `scanCommandTree(nodes, path)` 统一步长，将末级指令名称 `name` 规范追加至末端（如 `事件指令 > 变量控制 > 设置数值`、`DanJuan > 区域工具 > 固定监视选中区域`），使系统内所有动作拥有唯一且完整的全路径标识。
+  - **快捷键面板体验与呈现升级**：
+    1. 每一行标签采用层级解构展示：次级路径（`.dj-tools-category`）显示为弱化淡灰色小字，核心动作名（`.dj-tools-leaf`）高亮突出显示，兼具全路径上下文与极高辨识度；
+    2. 新增实时搜索过滤框（支持指令名、分类路径与按键名拼写匹配）与「仅看已绑定」快速开关，彻底消除在 150+ 项指令长列表中盲目翻找的痛点；
+    3. 已配置快捷键项（`.bound`）青色高亮区分，严格遵循纯正工业文字标签规范，0 Emoji 0 外部依赖；
+  - **回归验证**：`test-editor-tools.cjs` 补全 `scanCommandTree` 路径唯一性与非重复断言，`test-editor-tools-ui.cjs` 端到端全通，`run-all.cjs` 全量 38/38 套套件 100% PASS，`build.cjs --deploy` 镜像覆盖完成。
+
+## 3.9 2026-10-12：v1.12.1 模块重命名为「痛点解决」与主页排版调整
+
+- **版本自增**：从 `v1.12.0` 自增升级为 `v1.12.1`（patch），通过单一事实源构建脚本 `node build.cjs --bump patch` 级联同步全仓。
+- **模块定名「痛点解决」**：
+  - 主页卡片、顶栏 Views 标题、状态提示与内置指令全线统一命名为 **「痛点解决」**；
+  - 面向开发者直击命令搜索、键盘快捷键与区域监视四大痛点。
+- **主页排版物理级层级提升与时序加固**：
+  - 在主页 `.yami-home-modules` 中，「痛点解决」卡片优先锚定于「AI 助手」紧邻正上方（`home.insertBefore(entry, aiCard)`）；
+  - 当 AI 助手尚未挂载时，优先紧随第 5 模块「作弊插件」之后（`cheats.after(entry)`），避免初始落入列表末端；
+  - 引入 `MutationObserver` 与保底微定时器，全周期监听 `.yami-home-modules` 子节点变动，确保任何异步挂载时序下「痛点解决」永远占据「AI 助手」正上方位置。
+- **视觉主题定制（暗黑活力粉）**：
+  - 图标与「进入」徽章专属定制粉色主题（`.pink`：图标 `#f472b6`、徽章深粉底 `#431427`、高亮粉字 `#f472b6`）；
+  - 严格不污染标题与副标题文字原本的纯白与浅灰层级，符合 WCAG AA 对比度标准。
+- **交付与部署**：构建自检 51 项全绿，UI 测试通过粉色类名断言，全量 38/38 套回归测试 100% PASS，已执行 `node build.cjs --deploy` 对齐生产目录镜像。严格遵照用户口令驱动规范，未执行 git commit/push。
+
+## 3.10 2026-10-12：v1.13.0 痛点解决全面重构为「区域工作台」与摄像机边界锁定
+
+- **方向调整与架构精简**：
+  - 用户明确指示下线冗余的全局快捷键与命令搜索，聚焦场景区域核心痛点；
+  - 彻底裁剪 `editor-tools.js` 中所有快捷键捕获监听、冲突校验与菜单遍历逻辑，移除命令搜索界面与按键配置 Tab；
+  - 面板单页面重构为纯粹、高密度的 **「区域工作台（Region Workbench）」**，主页保持「痛点解决」粉色卡片，点击直达。
+- **摄像机边界锁定（clampCamera 联动）**：
+  - 选中区域时自动计算绝对边界：`Left = round(x - w/2), Top = round(y - h/2), Right = round(x + w/2), Bottom = round(y + h/2)`；
+  - 界面提供专属边界高亮卡片（等宽字体展示 L/T/R/B 数值）；
+  - 提供【设为摄像机边界】快捷动作：向事件列表插入原生 `clampCamera` 指令并自动填入 L/T/R/B 数值，免除手动心算；
+  - 提供【解除摄像机边界】（插入 `unclampCamera`）与【复制边界数值】快捷辅助。
+- **区域全能扩展指令升级 (`RegionTools.d4a9f612bc3e7805.ts` v1.1)**：
+  - 扩充至 11 类操作：`info`、`actors`、`count`、`contains`、`setPosition`（动态位置）、`setSize`（动态尺寸）、`setEnabled`（启用开关）、`follow`（角色跟随）、`unfollow`（取消跟随）、`clampCamera`（运行时直接锁镜头）、`unclampCamera`（运行时解锁）；
+  - 跟随机制：挂载轻量 `UpdaterModule` 到 `region.updaters`，每帧随目标角色同步坐标并支持偏移量；
+  - 启用开关：挂载防御性 `update` 守卫，禁用时阻断判定并清空区内角色缓存；
+  - 存档安全保障：保留各角色非枚举 `toJSON` 防循环引用机制。
+- **滚动条与构建规范闭环**：
+  - 进出流水日志 `.dj-tools-log` 规范纳入 `src/style.css` 滚动条单一事实源选择器组；
+  - 构建自检 51 项核心锚点全部 PASS；
+  - 版本自增至 `v1.13.0`，`node build.cjs --deploy` 生产镜像单向覆盖，MD5 100% 对齐。
+

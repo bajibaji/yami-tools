@@ -47,7 +47,7 @@ function install(root, expectedSha256) {
   try {
     if (created) writeAtomic(plan.root, SCRIPT, plan.source, { tool: 'install-region-commands' })
     if (!plan.commands.some(item => item && item.id === GUID)) {
-      plan.commands.push({ id: GUID, enabled: true, alias: '区域工具', keywords: 'region area 区域 获取 判断' })
+      plan.commands.push({ id: GUID, enabled: true, alias: '区域工具箱', keywords: 'region area 区域 摄像机 边界 跟随 获取 判断' })
       registration = writeAtomic(plan.root, 'Data/commands.json', JSON.stringify(plan.commands, null, 2), { tool: 'install-region-commands' })
     }
     return { ok: true, files: plan.files, backup: registration && registration.backup }
