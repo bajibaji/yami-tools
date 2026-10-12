@@ -1,20 +1,99 @@
 /* ============================================================
        * 全局样式污染彻底隔离层 (免疫 Yami 编辑器 components.css 污染)
        * ============================================================ */
-      /* 编辑器区域工作台：专注场景区域与摄像机边界，不接管宿主页面布局。 */
-      .dj-tools { gap: 12px !important; min-width: 0 !important; }
-      .dj-tools [hidden] { display: none !important; }
-      .dj-tools-actions { display: flex !important; gap: 8px !important; flex-wrap: wrap !important; }
-      .dj-tool-button {
-        position: static !important; display: inline-flex !important; align-items: center !important;
-        justify-content: center !important; box-sizing: border-box !important;
-        min-height: 30px !important; padding: 5px 10px !important; border: 1px solid #4a4a4a !important;
-        border-radius: 4px !important; background: #262626 !important; color: #e8e8e8 !important;
-        font: 400 12px/1.5 "Microsoft YaHei UI", sans-serif !important;
-        cursor: pointer !important; overflow-wrap: anywhere !important; user-select: none !important;
-        transition: background-color 0.15s, border-color 0.15s;
+      /* 编辑器区域工作台：专注场景区域与摄像机边界，契合大盘卡片设计体系。 */
+      .dj-tools {
+        min-width: 0 !important;
+        box-sizing: border-box !important;
       }
-      .dj-tool-button:hover { background: #383838 !important; border-color: #666 !important; }
+      .dj-tools-container {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 14px !important;
+        min-width: 0 !important;
+        box-sizing: border-box !important;
+      }
+      .dj-card {
+        background: #242424 !important;
+        border: 1px solid #333333 !important;
+        border-radius: 4px !important;
+        padding: 12px 14px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 10px !important;
+        box-sizing: border-box !important;
+      }
+      .dj-card-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+        border-bottom: 1px solid #2a2a2a !important;
+        padding-bottom: 8px !important;
+      }
+      .dj-card-title {
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        color: #f0f0f0 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+      }
+      .dj-card-badge {
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        padding: 2px 6px !important;
+        border-radius: 2px !important;
+        line-height: 1.2 !important;
+      }
+      .dj-card-badge.green {
+        background: rgba(34, 197, 94, 0.15) !important;
+        border: 1px solid rgba(34, 197, 94, 0.3) !important;
+        color: #4ade80 !important;
+      }
+      .dj-card-badge.gray {
+        background: rgba(148, 163, 184, 0.12) !important;
+        border: 1px solid rgba(148, 163, 184, 0.25) !important;
+        color: #94a3b8 !important;
+      }
+      .dj-card-desc {
+        font-size: 11px !important;
+        color: #888888 !important;
+        line-height: 1.5 !important;
+      }
+      .dj-card-body {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+      }
+      .dj-tools-actions {
+        display: flex !important;
+        gap: 8px !important;
+        flex-wrap: wrap !important;
+      }
+      .dj-tool-button {
+        position: static !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        box-sizing: border-box !important;
+        min-height: 28px !important;
+        padding: 4px 10px !important;
+        border: 1px solid #383838 !important;
+        border-radius: 3px !important;
+        background: #1c1c1c !important;
+        color: #cccccc !important;
+        font: 400 11px/1.5 "Microsoft YaHei UI", sans-serif !important;
+        cursor: pointer !important;
+        overflow-wrap: anywhere !important;
+        user-select: none !important;
+        transition: background-color 0.15s, border-color 0.15s, color 0.15s !important;
+      }
+      .dj-tool-button:hover {
+        background: #2a2a2a !important;
+        color: #ffffff !important;
+        border-color: #555555 !important;
+      }
       .dj-tool-button.primary {
         background: rgba(244, 114, 182, 0.12) !important;
         border-color: rgba(244, 114, 182, 0.4) !important;
@@ -26,40 +105,72 @@
         border-color: #f472b6 !important;
         color: #ffffff !important;
       }
-      .dj-tool-button.active { border-color: #60a5fa !important; background: #25364a !important; }
-      .dj-tool-button.disabled { color: #888 !important; cursor: default !important; opacity: 0.6 !important; }
-      .dj-tool-button:focus-visible {
-        outline: 2px solid #f472b6 !important; outline-offset: 2px !important;
+      .dj-tool-button.active {
+        border-color: #60a5fa !important;
+        background: #25364a !important;
       }
-      #dj-tools-status { color: #94a3b8 !important; font-size: 12px !important; line-height: 1.5 !important; overflow-wrap: anywhere !important; margin: 4px 0 8px !important; }
-      #dj-tools-status.error { color: #f87171 !important; }
-      .dj-tools h3 { color: #e2e8f0 !important; font-size: 13px !important; font-weight: 600 !important; margin: 16px 0 8px !important; border-bottom: 1px solid #2d2d2d !important; padding-bottom: 4px !important; }
-      .dj-tools-details { display: grid !important; grid-template-columns: minmax(72px, auto) minmax(0, 1fr) !important; gap: 6px 12px !important; margin: 8px 0 12px !important; font-size: 12px !important; line-height: 1.5 !important; }
-      .dj-tools-details dt { color: #888888 !important; }
-      .dj-tools-details dd { margin: 0 !important; color: #e2e8f0 !important; overflow-wrap: anywhere !important; user-select: text !important; font-family: Consolas, monospace !important; }
+      .dj-tool-button.disabled {
+        color: #666666 !important;
+        cursor: default !important;
+        opacity: 0.6 !important;
+      }
+      .dj-tool-button:focus-visible {
+        outline: 2px solid #f472b6 !important;
+        outline-offset: 1px !important;
+      }
+      #dj-tools-status {
+        color: #94a3b8 !important;
+        font-size: 11px !important;
+        line-height: 1.4 !important;
+        overflow-wrap: anywhere !important;
+        padding: 4px 8px !important;
+        background: rgba(0, 0, 0, 0.2) !important;
+        border-radius: 3px !important;
+      }
+      #dj-tools-status.error {
+        color: #f87171 !important;
+        background: rgba(239, 68, 68, 0.1) !important;
+      }
+      .dj-tools-details {
+        display: grid !important;
+        grid-template-columns: minmax(70px, auto) minmax(0, 1fr) !important;
+        gap: 6px 12px !important;
+        margin: 4px 0 !important;
+        font-size: 11px !important;
+        line-height: 1.5 !important;
+      }
+      .dj-tools-details dt {
+        color: #888888 !important;
+      }
+      .dj-tools-details dd {
+        margin: 0 !important;
+        color: #e2e8f0 !important;
+        overflow-wrap: anywhere !important;
+        user-select: text !important;
+        font-family: Consolas, monospace !important;
+      }
       
-      /* 摄像机视野边界卡片 */
+      /* 摄像机视野边界高亮区块 */
       .dj-tools-bounds-card {
-        background: #1e1e1e !important;
-        border: 1px solid #333333 !important;
-        border-radius: 6px !important;
-        padding: 10px !important;
-        margin: 10px 0 12px !important;
+        background: #181818 !important;
+        border: 1px solid #2e2e2e !important;
+        border-radius: 4px !important;
+        padding: 8px 10px !important;
         box-sizing: border-box !important;
       }
       .dj-tools-bounds-title {
-        font-size: 11px !important;
+        font-size: 10px !important;
         font-weight: 600 !important;
-        color: #94a3b8 !important;
-        margin-bottom: 8px !important;
+        color: #888888 !important;
+        margin-bottom: 6px !important;
       }
       .dj-tools-bounds-grid {
         display: grid !important;
         grid-template-columns: repeat(2, 1fr) !important;
-        gap: 6px 12px !important;
+        gap: 4px 12px !important;
       }
       .dj-bounds-item {
-        font-size: 12px !important;
+        font-size: 11px !important;
         font-family: Consolas, monospace !important;
         color: #cbd5e1 !important;
       }

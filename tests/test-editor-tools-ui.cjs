@@ -51,22 +51,24 @@ async function main() {
     page.on('pageerror', error => errors.push(error.message));
     await page.goto('http://127.0.0.1:' + server.address().port);
 
-    // 1. 验证卡片名称与粉色视觉
-    assert.equal(await page.locator('#dj-tools-entry .yami-home-module-title').textContent(), '痛点解决');
-    assert.equal(await page.locator('#dj-tools-entry .yami-home-module-icon-box').evaluate(el => el.classList.contains('pink')), true, '图标盒必须使用 pink 粉色类名');
-    assert.equal(await page.locator('#dj-tools-entry .yami-home-module-badge').evaluate(el => el.classList.contains('pink')), true, '进入徽章必须使用 pink 粉色类名');
+    // 1. 验证卡片名称与粉色视觉及规范类名
+    const entry = page.locator('#dj-tools-entry');
+    assert.equal(await entry.evaluate(el => el.classList.contains('yami-home-module-item')), true, '必须使用 yami-home-module-item 标准卡片类名');
+    assert.equal(await entry.locator('.yami-home-module-main').count(), 1, '必须包含 yami-home-module-main 容器');
+    assert.equal(await entry.locator('.yami-home-module-title').textContent(), '痛点解决');
+    assert.equal(await entry.locator('.yami-home-module-icon-box').evaluate(el => el.classList.contains('pink')), true, '图标盒必须使用 pink 粉色类名');
+    assert.equal(await entry.locator('.yami-home-module-badge').evaluate(el => el.classList.contains('pink')), true, '进入徽章必须使用 pink 粉色类名');
 
     // 2. 验证卡片物理位置位于 AI 助手正上方
     const isAboveAI = await page.evaluate(() => {
-      const entry = document.getElementById('dj-tools-entry');
+      const el = document.getElementById('dj-tools-entry');
       const ai = document.getElementById('yami-home-card-ai');
-      return entry && ai && entry.nextElementSibling === ai;
+      return el && ai && el.nextElementSibling === ai;
     });
     assert.equal(isAboveAI, true, '痛点解决必须严格插入在 AI 助手正上方');
 
     // 3. 点击进入区域工作台
     await page.locator('#dj-tools-entry').click();
-    await page.getByText('区域工作台', { exact: true }).waitFor();
     await page.getByText('选中场景区域', { exact: true }).waitFor();
     await page.getByText('测试区域', { exact: true }).waitFor();
 

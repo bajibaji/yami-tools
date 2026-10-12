@@ -380,13 +380,22 @@
       state.signature = signature;
       root.textContent = '';
 
-      // 1. 选中区域与边界计算卡片
-      const heading = doc.createElement('h3');
-      heading.textContent = '选中场景区域';
-      root.appendChild(heading);
+      // 卡片 1: 选中场景区域与视野边界
+      const cardRegion = doc.createElement('div');
+      cardRegion.className = 'dj-card';
+      cardRegion.innerHTML = `
+        <div class="dj-card-header">
+          <div class="dj-card-title">选中场景区域</div>
+          <span class="dj-card-badge ${selected ? 'green' : 'gray'}">${selected ? '[已选中]' : '[未选中]'}</span>
+        </div>
+        <div class="dj-card-desc">实时获取场景树与地图中选中的 Region 实体，计算绝对坐标与摄像机视野</div>
+        <div class="dj-card-body" id="dj-card-body-region"></div>
+      `;
+      root.appendChild(cardRegion);
 
+      const bodyRegion = cardRegion.querySelector('#dj-card-body-region');
       if (selected) {
-        details(root, [
+        details(bodyRegion, [
           ['名称', selected.name],
           ['场景', selected.path.split('/').pop()],
           ['状态', selected.enabled ? '已启用' : '未启用'],
@@ -395,29 +404,23 @@
           ['事件/脚本', `${selected.events.length} 个事件 / ${selected.scripts.length} 个脚本`]
         ]);
 
-        // 摄像机边界范围高亮卡片
+        // 摄像机边界范围卡片
         const boundsCard = doc.createElement('div');
         boundsCard.className = 'dj-tools-bounds-card';
-        const boundsTitle = doc.createElement('div');
-        boundsTitle.className = 'dj-tools-bounds-title';
-        boundsTitle.textContent = '摄像机视野边界 (clampCamera 绝对数值)';
-        boundsCard.appendChild(boundsTitle);
-
-        const boundsGrid = doc.createElement('div');
-        boundsGrid.className = 'dj-tools-bounds-grid';
-        boundsGrid.innerHTML = `
-          <div class="dj-bounds-item"><span class="dj-bounds-k">Left:</span> <span class="dj-bounds-v">${selected.left}</span></div>
-          <div class="dj-bounds-item"><span class="dj-bounds-k">Top:</span> <span class="dj-bounds-v">${selected.top}</span></div>
-          <div class="dj-bounds-item"><span class="dj-bounds-k">Right:</span> <span class="dj-bounds-v">${selected.right}</span></div>
-          <div class="dj-bounds-item"><span class="dj-bounds-k">Bottom:</span> <span class="dj-bounds-v">${selected.bottom}</span></div>
+        boundsCard.innerHTML = `
+          <div class="dj-tools-bounds-title">摄像机视野边界 (clampCamera 绝对数值)</div>
+          <div class="dj-tools-bounds-grid">
+            <div class="dj-bounds-item"><span class="dj-bounds-k">Left:</span> <span class="dj-bounds-v">${selected.left}</span></div>
+            <div class="dj-bounds-item"><span class="dj-bounds-k">Top:</span> <span class="dj-bounds-v">${selected.top}</span></div>
+            <div class="dj-bounds-item"><span class="dj-bounds-k">Right:</span> <span class="dj-bounds-v">${selected.right}</span></div>
+            <div class="dj-bounds-item"><span class="dj-bounds-k">Bottom:</span> <span class="dj-bounds-v">${selected.bottom}</span></div>
+          </div>
         `;
-        boundsCard.appendChild(boundsGrid);
-        root.appendChild(boundsCard);
+        bodyRegion.appendChild(boundsCard);
 
-        // 摄像机与区域快捷操作
         const cameraActions = doc.createElement('div');
         cameraActions.className = 'dj-tools-actions';
-        root.appendChild(cameraActions);
+        bodyRegion.appendChild(cameraActions);
 
         addButton(cameraActions, '设为摄像机边界', () => insertClampCameraCommand(selected), '向当前事件插入 clampCamera 并自动填入边界数值', true);
         addButton(cameraActions, '解除摄像机边界', insertUnclampCameraCommand, '向当前事件插入 unclampCamera 指令');
@@ -436,41 +439,59 @@
           el.focus();
           el.scrollIntoView({ block: 'nearest' });
         });
-
-        // 扩展事件指令一键生成
-        const cmdHeading = doc.createElement('h3');
-        cmdHeading.textContent = '扩展事件指令生成';
-        root.appendChild(cmdHeading);
-
-        const commands = doc.createElement('div');
-        commands.className = 'dj-tools-actions';
-        root.appendChild(commands);
-
-        const ops = [
-          ['info', '获取区域信息'],
-          ['actors', '获取区内角色'],
-          ['count', '获取角色数量'],
-          ['contains', '判断角色在区内'],
-          ['setPosition', '设置区域位置'],
-          ['setSize', '设置区域尺寸'],
-          ['setEnabled', '切换启用状态'],
-          ['follow', '绑定角色跟随'],
-          ['unfollow', '解除角色跟随'],
-          ['clampCamera', '指令锁定镜头']
-        ];
-        for (const [operation, label] of ops) {
-          addButton(commands, label, () => insertRegionCommand(operation, selected));
-        }
       } else {
-        details(root, [['选择状态', '请在场景树或地图中选择一个区域']]);
+        details(bodyRegion, [['当前状态', '请在场景树或地图中点击选中一个区域']]);
       }
 
-      // 2. 试玩监视与黑匣子记录
-      const watch = doc.createElement('h3');
-      watch.textContent = '试玩运行监视';
-      root.appendChild(watch);
+      // 卡片 2: 扩展事件指令
+      const cardCommands = doc.createElement('div');
+      cardCommands.className = 'dj-card';
+      cardCommands.innerHTML = `
+        <div class="dj-card-header">
+          <div class="dj-card-title">扩展事件指令</div>
+          <span class="dj-card-badge gray">[预设 GUID: d4a9f612bc3e7805]</span>
+        </div>
+        <div class="dj-card-desc">向当前打开的事件指令列表中一键插入区域增强指令（自动填入区域 ID）</div>
+        <div class="dj-card-body" id="dj-card-body-commands"></div>
+      `;
+      root.appendChild(cardCommands);
 
-      details(root, [
+      const bodyCommands = cardCommands.querySelector('#dj-card-body-commands');
+      const commands = doc.createElement('div');
+      commands.className = 'dj-tools-actions';
+      bodyCommands.appendChild(commands);
+
+      const ops = [
+        ['info', '获取区域信息'],
+        ['actors', '获取区内角色'],
+        ['count', '获取角色数量'],
+        ['contains', '判断角色在区内'],
+        ['setPosition', '设置区域位置'],
+        ['setSize', '设置区域尺寸'],
+        ['setEnabled', '切换启用状态'],
+        ['follow', '绑定角色跟随'],
+        ['unfollow', '解除角色跟随'],
+        ['clampCamera', '指令锁定镜头']
+      ];
+      for (const [operation, label] of ops) {
+        addButton(commands, label, () => insertRegionCommand(operation, selected));
+      }
+
+      // 卡片 3: 试玩实时运行监视
+      const cardWatch = doc.createElement('div');
+      cardWatch.className = 'dj-card';
+      cardWatch.innerHTML = `
+        <div class="dj-card-header">
+          <div class="dj-card-title">试玩实时监视</div>
+          <span class="dj-card-badge ${state.pin ? 'green' : 'gray'}">${state.pin ? '[正在监视]' : '[未监视]'}</span>
+        </div>
+        <div class="dj-card-desc">在试玩进行时实时捕获角色与玩家进出区域事件并记录流水黑匣子</div>
+        <div class="dj-card-body" id="dj-card-body-watch"></div>
+      `;
+      root.appendChild(cardWatch);
+
+      const bodyWatch = cardWatch.querySelector('#dj-card-body-watch');
+      details(bodyWatch, [
         ['监视区域', state.pin && state.pin.name || '未设置'],
         ['运行状态', runtime.text],
         ['区内角色数', r ? r.actors.length + ' 个' : '--'],
@@ -480,7 +501,7 @@
 
       const watchActions = doc.createElement('div');
       watchActions.className = 'dj-tools-actions';
-      root.appendChild(watchActions);
+      bodyWatch.appendChild(watchActions);
 
       addButton(watchActions, '取消监视', () => {
         state.pin = null;
@@ -495,12 +516,12 @@
       const logHeading = doc.createElement('div');
       logHeading.className = 'dj-tools-log-title';
       logHeading.textContent = '实时进出流水日志';
-      root.appendChild(logHeading);
+      bodyWatch.appendChild(logHeading);
 
       const log = doc.createElement('div');
       log.className = 'dj-tools-log';
       log.textContent = runtime.logs.join('\n') || '暂无进入 / 离开记录（在试玩中进出监视区域将在此实时记录）';
-      root.appendChild(log);
+      bodyWatch.appendChild(log);
     }
 
     function resolvePluginDir() {
@@ -581,7 +602,9 @@
       const hud = win.__DANJUAN_HUD_API__;
       if (hud && typeof hud.switchView === 'function') {
         hud.switchView('editor-tools');
-        if (hud.ctx && hud.ctx.dockState === 'collapsed' && typeof hud.toggleDock === 'function') hud.toggleDock();
+        if (hud.ctx && hud.ctx.dockState === 'collapsed' && typeof hud.toggleDock === 'function') {
+          hud.toggleDock();
+        }
       }
       refresh();
     }
@@ -593,20 +616,27 @@
 
       const card = doc.createElement('div');
       card.id = 'dj-tools-entry';
-      card.className = 'yami-home-module-card';
+      card.className = 'yami-home-module-item';
+      card.setAttribute('data-target', 'editor-tools');
+      card.setAttribute('role', 'button');
       card.innerHTML = `
-        <div class="yami-home-module-icon-box pink">
-          <svg viewBox="0 0 24 24" class="yami-home-module-icon">
-            <path d="M12 2c5.523 0 10 4.477 10 10s-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16zm0 5a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm0 2a1 1 0 1 0 0 2 1 1 0 0 0 0-2z" fill="currentColor"></path>
-          </svg>
-        </div>
-        <div class="yami-home-module-info">
-          <div class="yami-home-module-title">痛点解决</div>
-          <div class="yami-home-module-desc">区域工作台与摄像机边界</div>
+        <div class="yami-home-module-main">
+          <div class="yami-home-module-icon-box pink" title="RemixIcon: ri-focus-3-line">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M12 2c5.523 0 10 4.477 10 10s-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16zm0 5a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm0 2a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"></path>
+            </svg>
+          </div>
+          <div>
+            <div class="yami-home-module-title">痛点解决</div>
+            <div class="yami-home-module-desc">区域工作台与摄像机边界</div>
+          </div>
         </div>
         <div class="yami-home-module-badge pink">进入</div>
       `;
-      card.addEventListener('click', () => open());
+      card.addEventListener('click', e => {
+        e.stopPropagation();
+        open();
+      });
 
       const aiCard = Array.from(modules.children).find(child => {
         const title = child.querySelector && child.querySelector('.yami-home-module-title');
@@ -631,48 +661,25 @@
       if (!body) return;
       const page = doc.createElement('div');
       page.id = 'page-editor-tools';
-      page.className = 'yami-perf-page yami-perf-fade dj-tools';
-      page.style.display = 'none';
+      page.className = 'yami-suite-page dj-tools';
+      page.style.setProperty('display', 'none', 'important');
       page.innerHTML = `
-        <div class="yami-perf-page-header">
-          <div class="yami-perf-page-title-group">
-            <div class="yami-perf-page-title">区域工作台</div>
-            <div class="yami-perf-page-subtitle">场景区域增强与边界工具</div>
-          </div>
-          <div class="yami-perf-page-header-actions">
-            <div class="yami-perf-btn-icon" id="dj-tools-refresh-btn" title="刷新区域与监视状态">
-              <svg viewBox="0 0 24 24" width="14" height="14">
-                <path d="M5.463 4.433A9.961 9.961 0 0 1 12 2c5.523 0 10 4.477 10 10 0 2.136-.67 4.116-1.81 5.74L17 12h3A8 8 0 1 0 6.46 6.46l-1-1.027z" fill="currentColor"></path>
-              </svg>
-            </div>
-            <div class="yami-perf-btn-icon" id="dj-tools-back-btn" title="返回主页">
-              <svg viewBox="0 0 24 24" width="14" height="14">
-                <path d="M12 10.586l4.95-4.95 1.414 1.414-4.95 4.95 4.95 4.95-1.414 1.414-4.95-4.95-4.95 4.95-1.414-1.414 4.95-4.95-4.95-4.95L7.05 5.636z" fill="currentColor"></path>
-              </svg>
-            </div>
-          </div>
-        </div>
         <div id="dj-tools-status" role="status">请在地图或场景树中选中区域后执行操作</div>
-        <div id="dj-tools-region"></div>
+        <div class="dj-tools-container" id="dj-tools-region"></div>
       `;
       body.appendChild(page);
-
-      const refreshBtn = page.querySelector('#dj-tools-refresh-btn');
-      if (refreshBtn) refreshBtn.addEventListener('click', () => refresh());
-
-      const backBtn = page.querySelector('#dj-tools-back-btn');
-      if (backBtn) {
-        backBtn.addEventListener('click', () => {
-          const hud = win.__DANJUAN_HUD_API__;
-          if (hud && typeof hud.switchView === 'function') hud.switchView('home');
-        });
-      }
 
       const hud = win.__DANJUAN_HUD_API__;
       if (hud && typeof hud.registerPage === 'function') {
         hud.registerPage('editor-tools', page, {
-          title: '区域工作台',
-          refresh
+          title: '痛点解决',
+          showBack: true,
+          showModeSwitch: false,
+          showClearErrors: false,
+          showTabs: false,
+          showExportBtns: false,
+          refresh,
+          destroy() {}
         });
       }
     }

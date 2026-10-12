@@ -7,7 +7,7 @@
 > - **第二层 · 记忆与经验**：项目经历了什么、踩过哪些坑、为什么这样设计——读它能少走弯路。
 > - **第三层 · 当前进度**：推进到哪里了、什么已完成、什么没做完、下一步做什么。
 >
-> **当前版本**：`v1.13.0`　**最近更新**：2026-10-12（快捷操作与区域工具版本发布）
+> **当前版本**：`v1.13.1`　**最近更新**：2026-10-12（快捷操作与区域工具版本发布）
 
 ---
 
@@ -19,7 +19,7 @@
 | :--- | :--- |
 | 名称 | DanJuan妙妙插件（DanJuan DevSuite） |
 | 形态 | Open Yami RPG Editor 的 Chrome MV3 扩展（非侵入式，不改游戏逻辑） |
-| 当前版本 | `v1.13.0`（单一事实源：`manifest.json` 的 `version`） |
+| 当前版本 | `v1.13.1`（单一事实源：`manifest.json` 的 `version`） |
 | 母仓库 | `yami-tools`，分支 `extension` |
 | 许可与分发 | 母仓库 + GitHub 远端（热更新源），插件目录单向镜像 |
 | 支持平台 | Windows（打包版引擎）与 Linux（源码构建版，本机为 Steam Deck / X11） |
@@ -1132,7 +1132,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 
 # 第三层 · 当前进度（Where We Are）
 
-> 更新日期：2026-09-24 · 当前版本：`v1.13.0`
+> 更新日期：2026-09-24 · 当前版本：`v1.13.1`
 
 ## 3.1 能力清单与完成度
 
@@ -1750,4 +1750,22 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
   - 进出流水日志 `.dj-tools-log` 规范纳入 `src/style.css` 滚动条单一事实源选择器组；
   - 构建自检 51 项核心锚点全部 PASS；
   - 版本自增至 `v1.13.0`，`node build.cjs --deploy` 生产镜像单向覆盖，MD5 100% 对齐。
+
+## 3.11 2026-10-12：v1.13.1 痛点解决卡片 DOM 规范与大盘内页系统对齐修复
+
+- **主页卡片 DOM 规范深度对齐**：
+  - 彻底消除误用的 `.yami-home-module-card` 与 `.yami-home-module-info`；
+  - 100% 对齐大盘主页模块标准规范：`.yami-home-module-item` + `.yami-home-module-main` + `.yami-home-module-icon-box.pink` + `.yami-home-module-badge.pink`；
+  - 恢复 Flex 布局两端对齐、图标盒子与标题副标题标准排版及 Hover/Active 质感反馈。
+- **内页容器与大盘视图契约打通**：
+  - 容器统一接入 `.yami-suite-page.dj-tools`，恢复垂直流式弹性排布（`flex-direction: column`），杜绝横向挤压变形；
+  - 页面注册契约显式配置 `showBack: true`，进入内页时大盘统一顶栏自动亮起 `← 返回` 按钮，原生支持一键返回主页大厅；
+  - 剔除内页重复绘制的私生顶栏，彻底根除双顶栏打架与界面叠画。
+- **内页卡片设计体系升级 (`.dj-card`)**：
+  - 选中场景区域、扩展事件指令、试玩实时运行监视三个区块全面升级为暗黑圆角 `.dj-card` 标准卡片；
+  - 按钮尺寸与色系对齐大盘标准规范，工业文字微标签高亮区分状态。
+- **测试与镜像部署**：
+  - 适配 [tests/test-editor-tools-electron.cjs](file:///d:/Documents/GitHub/yami-tools/tests/test-editor-tools-electron.cjs) 真实 Electron 临时工程测试用例；
+  - UI 端到端测试全绿；版本自增为 `v1.13.1`，执行 `node build.cjs --deploy` 生产目录 MD5 100% 对齐。
+
 

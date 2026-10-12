@@ -34,11 +34,9 @@ async function main() {
     await page.waitForTimeout(1500)
     await page.addScriptTag({ path: path.resolve(__dirname, '../editor-tools.js') })
     await page.waitForFunction(() => window.__DANJUAN_EDITOR_TOOLS__?.state.mounted, null, { timeout: 15000 })
-    await page.evaluate(() => window.__DANJUAN_EDITOR_TOOLS__.open('commands'))
-    const menuCount = await page.evaluate(() => window.__DANJUAN_EDITOR_TOOLS__.state.menuActions.length)
-    assert.ok(menuCount > 20, '真实引擎菜单至少应读到 20 项，实际 ' + menuCount)
-    const labels = await page.evaluate(() => window.__DANJUAN_EDITOR_TOOLS__.state.actions.map(action => action.path))
-    assert.ok(labels.some(label => /变量|Variable/i.test(label)))
+    await page.evaluate(() => window.__DANJUAN_EDITOR_TOOLS__.open())
+    const isMounted = await page.evaluate(() => window.__DANJUAN_EDITOR_TOOLS__.state.mounted)
+    assert.equal(isMounted, true, '区域工作台必须成功挂载')
     await app.evaluate(({ dialog }, projectFile) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [projectFile] }); }, path.join(project, 'game.yamirpg'))
     await page.evaluate(() => window.YamiEngine.Title.openProject())
     await page.waitForFunction(() => !!window.YamiEngine.Data.manifest && window.YamiEngine.Data.manifest.scenes.length > 0, null, { timeout: 15000 })
@@ -82,9 +80,8 @@ async function main() {
       const list = Array.from(document.querySelectorAll('command-list')).find(el => el.getBoundingClientRect().width > 0);
       list.select(0);
       list.focus();
-      window.__DANJUAN_EDITOR_TOOLS__.open('region');
+      window.__DANJUAN_EDITOR_TOOLS__.open();
     })
-    await page.locator('[data-dj-tab="region"]').click()
     await page.locator('#dj-tools-region').waitFor({ state: 'visible' })
     await page.getByRole('button', { name: '获取区域信息', exact: true }).click()
     const params = await page.evaluate(() => {
@@ -96,7 +93,7 @@ async function main() {
     assert.equal(params.operation, 'info')
     const artifact = path.resolve(__dirname, '../.e2e-tmp/editor-tools-real.png')
     await page.screenshot({ path: artifact })
-    console.log('Open Yami 真机：原生菜单 ' + menuCount + ' 项可搜索，无 YamiEngine 识别真实区域 ' + selected.name + '，原生指令窗口自动预填区域 ID/操作；临时工程与用户配置隔离')
+    console.log('Open Yami 真机：识别真实区域 ' + selected.name + '，原生指令窗口自动预填区域 ID/操作；临时工程与用户配置隔离')
   } finally { if (app) { await app.evaluate(({ app }) => app.exit(0)).catch(() => {}); await app.close().catch(() => {}) } }
 }
 main().catch(error => { console.error(error); process.exitCode = 1 })
