@@ -1768,4 +1768,78 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
   - 适配 [tests/test-editor-tools-electron.cjs](file:///d:/Documents/GitHub/yami-tools/tests/test-editor-tools-electron.cjs) 真实 Electron 临时工程测试用例；
   - UI 端到端测试全绿；版本自增为 `v1.13.1`，执行 `node build.cjs --deploy` 生产目录 MD5 100% 对齐。
 
+## 3.12 2026-10-13：痛点解决扩展「音效触发雷达与动作画面对接卡」工业化闭环
+
+- **痛点背景与产品定位**：
+  - 针对游戏开发中做音效接入时“经常找不到动作/命中触发点与对应事件”以及“缺少画面视频特征与重音接触点时间轴，导致音效师无法开工”的核心流程断裂痛点；
+  - 在 DanJuan 妙妙插件「痛点解决」工作台中新增「音效触发雷达」，实现试玩在场实时嗅探、因果三主体插槽分解、画面连拍特征采样与标准化音效对接卡导出。
+- **因果三主体拆解算法 (Audio Radar Engine)**：
+  - 在 [probe-core.js](file:///d:/Documents/GitHub/yami-tools/probe-core.js) 中拦截 `AudioManager.se.play` 与 `EventHandler.call`；
+  - 动作因果三主体插槽精准分解：
+    - `【出招主体】` (`caster`): 区分玩家主角与敌方单位；
+    - `【媒介/技能】` (`medium`): 关联技能、判定框或触发器；
+    - `【受击主体】` (`target`): 命中角色、目标范围或死亡实体；
+  - 多槽位动作归因：覆盖 `skillcast`（施放技能）、`hitactor`（碰撞命中）、`hittrigger`（受击）、`death`（死亡结算）；
+  - 静态分析事件指令树（`analyzeCommandsAudio`），智能嗅探事件中的 `playAudio`、`AudioManager.se.play` 以及公共音效子事件（`callEvent` 包含 se/audio/音效），精准标注 `[已配音效]` 或 `[未接入]`；
+  - 焦点过滤机制：支持“玩家主角（避免混战干扰）”与“全场实体”双模式切换；
+  - 画面特征采样与时间轴：起手、接触重音点（`hitPointMs`）、收招画面连拍特征，建议时长与工业标准化命名（如 `se_hero_slash_impact.ogg`）；
+  - HTTP 微服务（5966 端口）提供 `GET /audio-radar` 接口，支持编辑器跨进程轮询。
+- **痛点解决工作台内页 Sub-tabs 升级**：
+  - 在 [editor-tools.js](file:///d:/Documents/GitHub/yami-tools/editor-tools.js) 内页顶栏引入 `[ 区域工作台 | 音效触发雷达 ]` 标签栏，默认激活 `region` 保证既有回归测试 100% 兼容；
+  - 雷达面板渲染高信息密度卡片：三主体插槽网格、关键帧连拍画面胶片条、时间轴重音点进度条、挂载槽位、状态标签；
+  - 提供 **【一键生成对接卡】** 功能：一键导出 Markdown 格式标准化音效对接卡，包含出招主体、媒介技能、受击主体、时间轴参数、建议音效时长、建议命名与工程挂载槽位，直接交付音效制作人员。
+- **DevSuite 铁律闭环与全量回归**：
+  - 严格遵守 DanJuan DevSuite 铁律：100% 零 Emoji（纯正工业标签如 `[施放技能]`、`[已配音效]`、`[未接入]`），0 原生 `<button>`，Remix Icon 官方 SVG 路径离线内嵌；
+  - 编写专项回归测试 [tests/test-audio-radar.mjs](file:///d:/Documents/GitHub/yami-tools/tests/test-audio-radar.mjs)（覆盖三主体拆解算法、音效静态分析、队列容量、对接卡生成及铁律断言，34 项全部通过）；
+  - 回归测试套件总入口扩充至 39 套，`node tests/run-all.cjs` 39/39 100% 全绿；
+  - Playwright UI 端到端测试 `node tests/test-editor-tools-ui.cjs` 保持 100% 通过；
+  - 构建门禁自检 `node build.cjs` 全部 51 项核心锚点全绿。
+
+## 3.13 2026-10-13：真实需求烤打对齐——「试玩 F8 极简闪电联动与一键插指令闭环」彻底落地
+
+- **难用根因深度复盘**：
+  - 用户反馈：“还是很难用啊，要不kaoda一下我确认一下真实需求吧”。
+  - 经由 4 维度精准拷问对齐真实业务痛点：
+    1. **死穴**：链路太长太割裂——在试玩里打怪触发 -> 切回编辑器 -> 翻找侧栏插件 -> 逐个查看卡片，操作繁琐窒息；
+    2. **时机**：边试玩体验边补——试玩时发现哪里没有打击感或缺声音，顺手记下或立刻修正；
+    3. **规范**：事件指令流——在 `.event` 或 `.skill` 的事件步骤里插入 `playAudio` 指令；
+    4. **终极操作流**：**【极简试玩联动】——试玩中按一个快捷键（如 F8），编辑器直接跳到前台并自动打开对应的事件编辑器，光标停在关键行**！
+- **极简试玩 F8 闪电联动架构实现**：
+  1. **试玩端 (Player 侧)**：
+     - 在 [probe-core.js](file:///d:/Documents/GitHub/yami-tools/probe-core.js) 中追踪 `latestTrigger` 与 `latestMissingTrigger`（优先锁定最新未配音效动作）；
+     - 在 [hud-overlay.js](file:///d:/Documents/GitHub/yami-tools/hud-overlay.js) 迷你 HUD 中挂载 `#yami-radar-quick-pill` 极简胶囊，动作发生时显示 `[F8 定位] 技能名 (未配音效)` 并带有 Amber 呼吸动效，3.5 秒后半透明静音，支持点击直达；
+     - 在全局按键监听 `onGlobalKeyDown` 中捕获 `F8`（覆盖 `key === 'F8'`、`code === 'F8'`、`keyCode === 119`），放行文本输入框打字，按下即触发 `handleF8AudioLocate()`；
+     - 触发后向 5967 编辑器桥发送 `action: 'locateAudioTrigger'`，并弹出 Toast 提示 `[DanJuan] 已呼叫编辑器定位: Assets/...`。
+  2. **编辑器端 (Editor 侧)**：
+     - 在 5967 编辑器动作桥中扩充 `locateAudioTrigger` 动作与白名单；
+     - 自动激活并置顶编辑器窗口（`win.restore()` + `win.focus()` + `window.focus()`）；
+     - 自动打开对应资产文件（`Editor.open(assetPath)` / `File.open(assetPath)`）；
+     - 在 [editor-tools.js](file:///d:/Documents/GitHub/yami-tools/editor-tools.js) 中监听跨窗口通知与 5967 事件，自动聚焦到对应动作卡片并展示 `[DanJuan 闪电定位]` 状态提示；
+     - 提供 `insertPlayAudioCommand` 一键向事件指令列表插入 `playAudio` 播放指令。
+- **全量测试与镜像部署**：
+  - [tests/test-audio-radar.mjs](file:///d:/Documents/GitHub/yami-tools/tests/test-audio-radar.mjs) 扩充至 **69 PASS / 0 FAIL**（覆盖 F8 监听、胶囊结构、5967 桥动作、优先未配音效、零 Emoji）；
+  - 全量回归测试 `node tests/run-all.cjs` 39/39 套测试 100% PASS；
+  - Playwright UI 测试 `node tests/test-editor-tools-ui.cjs` 100% PASS；
+  - 执行 `node build.cjs --deploy`，单向同步部署至 `D:\Program Files\Open Yami RPG Editor\extension\yami-perf-extension\`，所有文件 MD5 100% 对齐。
+
+### 3.14 深度核验：对照 docs/00-04 机制审查与 4 项隐蔽断裂点加固 (v1.13.1)
+- **触发背景**：用户要求阅读 `docs/` 深入排查潜在冲突、遗漏边界或隐蔽断裂点。
+- **全景审查与加固落地**：
+  1. **`playAudio` 原生指令参数致命缺失 `type: "se"` (K204 & K216 反查)**：
+     - 反查 `Script/command.ts:6643`：原生 `playAudio` 执行的是 `AudioManager[type].play`，若参数缺 `type` 会执行 `AudioManager[undefined].play` 导致游戏崩溃；
+     - 在 `editor-tools.js` 中将指令生成结构补齐为 `{ id: 'playAudio', params: { type: 'se', audio: audioRelPath, volume: 1 } }`。
+  2. **`.skill` / `.trigger` 磁盘 JSON 结构多态支持 (K307 铁律)**：
+     - 独立 `.event` 顶层包含 `commands: []`，但技能 `.skill` 和触发器 `.trigger` 的事件挂在 `events: [{ type, enabled, commands }]`；
+     - 自动化插入指令升级支持多态解析，自动寻址至对应 `skillcast` 或 `hitactor` 槽位 `commands` 写入。
+  3. **技能与触发器子目录路径丢失导致定位与写盘 404 (K102 & K202)**：
+     - 技能和触发器并非全部平铺在 `Assets/技能/`，而是位于二级子目录（如 `001 - 战士技能`）；
+     - `probe-core.js` 新增 `resolveAssetPathByGuid`，优先从 `Data.manifest.guidMap[guid].path` 解析真实相对路径。
+  4. **非有限数 (Infinity) 变量告警与全员恢复 GUID 属性键兼容 (K207 规范)**：
+     - `probe-core.js` 的 `Variable.set` 拦截器将 NaN 检测提升为 `!Number.isFinite(value)`，同时拦截 `Infinity` 并报警；
+     - `hud-overlay.js` 的 `heal-all` 全员恢复兼容数据文件口径的 `a5fd5e9f229abb2d`（生命值）与 `a8451228fe0c120a`（最大生命值）属性 GUID 键。
+- **验证凭证**：
+  - 音效雷达专项测试 69/69 PASS；
+  - 全量 39 套回归测试 39/39 PASS；
+  - 单向构建部署 MD5 100% 对齐。
+
 

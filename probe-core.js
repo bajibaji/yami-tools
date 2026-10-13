@@ -757,7 +757,7 @@
             let isRejected = false;
             let isNaNVal = false;
 
-            if (incomingType === 'number' && Number.isNaN(value)) {
+            if (incomingType === 'number' && !Number.isFinite(value)) {
               isNaNVal = true;
             }
 
@@ -773,7 +773,7 @@
             }
 
             if (isRejected || isNaNVal) {
-              const reason = isNaNVal ? '计算结果为NaN' : (keyMissing ? '变量不存在(写入被引擎丢弃)' : '类型冲突丢弃');
+              const reason = isNaNVal ? (Number.isNaN(value) ? '计算结果为NaN' : '数值溢出(Infinity)') : (keyMissing ? '变量不存在(写入被引擎丢弃)' : '类型冲突丢弃');
               // 关键: 只报「写不进去」对小白毫无用处, 必须同时告诉他「是谁写的」——
               // 复用事件执行栈 + 编译期指令映射, 直接落到「哪条事件第几步·什么指令·哪个场景」
               const loc = currentEventLocation();
@@ -948,6 +948,7 @@
         if (origPlay) {
           se.play = function () {
             if (state.suspend.audio === true) return undefined;
+            try { if (typeof recordAudioPlay === 'function') recordAudioPlay(arguments[0], arguments[1]); } catch (e) {}
             return origPlay.apply(this, arguments);
           };
         }
@@ -955,6 +956,7 @@
         if (origPlayDist) {
           se.playWithDistance = function () {
             if (state.suspend.audio === true) return undefined;
+            try { if (typeof recordAudioPlay === 'function') recordAudioPlay(arguments[0], arguments[2]); } catch (e) {}
             return origPlayDist.apply(this, arguments);
           };
         }
@@ -3158,6 +3160,7 @@
       EventHandler.call = function (event) {
         const result = origCall.apply(this, arguments);
         try { registerLiveEvent(event); } catch (e) {}
+        try { if (typeof hookAudioRadarEvent === 'function') hookAudioRadarEvent(event); } catch (e) {}
         return result;
       };
       eventTimeline.callHooked = true;
@@ -3632,6 +3635,440 @@
     } catch (e) {
       return false;
     }
+  }
+
+  // ============================================================
+  // 音效触发雷达 (Audio Trigger Radar): 动作嗅探 + 因果主体拆解 + 画面特征采样
+  // ============================================================
+  const AUDIO_RADAR_MAX = 50;
+  const audioRadarState = {
+    enabled: true,
+    focusMode: 'player', // 'player' (仅玩家主角相关) | 'all' (全场实体)
+    targetFilter: '',
+    seq: 0,
+    entries: [],
+    lastEntryTime: 0,
+    lastEntryKey: '',
+    playedHistory: []
+  };
+
+  const KNOWN_AUDIO_EVENT_GUIDS = {
+    'ae18447779cd5aac': '播放武器轻攻击音效',
+    '144088a2819f6488': '播放武器重攻击音效',
+    '72a36c94f48af009': '播放通用打击音效',
+    'ba6b4ddc82cea0d5': '播放箭矢打击音效'
+  };
+
+  function resolveAssetPathByGuid(guid, fallbackSubdir, fallbackName, ext) {
+    if (!guid || typeof guid !== 'string') return '';
+    try {
+      if (typeof Data !== 'undefined' && Data && Data.manifest && Data.manifest.guidMap && Data.manifest.guidMap[guid]) {
+        const p = Data.manifest.guidMap[guid].path;
+        if (p) return p;
+      }
+    } catch (e) {}
+    if (fallbackName && ext) {
+      return (fallbackSubdir || 'Assets/技能/') + fallbackName + '.' + guid + '.' + ext;
+    }
+    return '';
+  }
+
+  function resolveEventNameByGuid(guid) {
+    if (!guid || typeof guid !== 'string') return '';
+    if (KNOWN_AUDIO_EVENT_GUIDS[guid]) return KNOWN_AUDIO_EVENT_GUIDS[guid];
+    try {
+      if (typeof Data !== 'undefined' && Data) {
+        if (Data.events && Data.events[guid]) return Data.events[guid].name || '';
+        if (Data.manifest) {
+          if (Data.manifest.guidMap && Data.manifest.guidMap[guid]) {
+            const p = Data.manifest.guidMap[guid].path || '';
+            const m = p.match(/\/([^/]+)\.[0-9a-f]{16}\.[^.]+$/i);
+            if (m && m[1]) return m[1];
+          }
+          if (Array.isArray(Data.manifest.events)) {
+            const item = Data.manifest.events.find(function (e) { return e && (e.id === guid || e.guid === guid || (e.path && e.path.includes(guid))); });
+            if (item) {
+              if (item.name) return item.name;
+              if (item.path) {
+                const m = item.path.match(/\/([^/]+)\.[0-9a-f]{16}\.[^.]+$/i);
+                if (m && m[1]) return m[1];
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  function analyzeCommandsAudio(commands) {
+    if (!Array.isArray(commands)) return { configured: false, code: 'missing', label: '[未接入] 音效', detected: [] };
+    const detected = [];
+    for (let i = 0; i < commands.length; i++) {
+      const cmd = commands[i];
+      if (!cmd || typeof cmd !== 'object') continue;
+      if (cmd.id === 'playAudio' || cmd.type === 'playAudio') {
+        const audio = (cmd.params && (cmd.params.audio || cmd.params.audioId)) || cmd.audio;
+        const aid = typeof audio === 'string' ? audio : '';
+        if (aid) detected.push(aid);
+        return { configured: true, code: 'configured', label: '[已配音效] 播放音效' + (aid ? (': ' + aid) : ''), audioId: aid, detected: detected };
+      }
+      if (cmd.id === 'callEvent' || cmd.type === 'callEvent') {
+        const evId = (cmd.params && cmd.params.eventId) || cmd.eventId;
+        const name = resolveEventNameByGuid(evId) || (cmd.name || '');
+        if (name && (name.includes('音效') || name.toLowerCase().includes('se') || name.toLowerCase().includes('audio') || name.toLowerCase().includes('sound'))) {
+          detected.push(name);
+          return { configured: true, code: 'configured', label: '[已配音效] ' + name, eventId: evId, detected: detected };
+        }
+      }
+    }
+    return { configured: false, code: 'missing', label: '[未接入] 音效', detected: [] };
+  }
+
+  function captureCanvasKeyframeBurst(entry) {
+    try {
+      if (typeof document === 'undefined') return;
+      const canvas = document.querySelector('canvas');
+      if (!canvas || typeof canvas.toDataURL !== 'function') return;
+      try {
+        const f1 = canvas.toDataURL('image/jpeg', 0.5);
+        if (f1 && f1.length > 50) entry.keyframes.push({ time: 0, label: '起手', data: f1 });
+      } catch (e) {}
+
+      setTimeout(function () {
+        try {
+          if (!canvas || typeof canvas.toDataURL !== 'function') return;
+          const f2 = canvas.toDataURL('image/jpeg', 0.5);
+          if (f2 && f2.length > 50) entry.keyframes.push({ time: entry.timing.hitPointMs || 240, label: '接触', data: f2 });
+        } catch (e) {}
+      }, 180);
+
+      setTimeout(function () {
+        try {
+          if (!canvas || typeof canvas.toDataURL !== 'function') return;
+          const f3 = canvas.toDataURL('image/jpeg', 0.5);
+          if (f3 && f3.length > 50) entry.keyframes.push({ time: entry.timing.durationMs || 500, label: '收招', data: f3 });
+        } catch (e) {}
+      }, 360);
+    } catch (e) {}
+  }
+
+  function pushAudioRadarEntry(item) {
+    if (!audioRadarState.enabled || !item) return;
+    if (item.hasAudio === undefined && item.audioStatus) {
+      item.hasAudio = !!item.audioStatus.configured;
+    }
+    const now = Date.now();
+    const key = (item.kind || '') + '::' + (item.medium ? item.medium.id : '') + '::' + (item.target ? item.target.name : '');
+    if (key === audioRadarState.lastEntryKey && (now - audioRadarState.lastEntryTime) < 120) return;
+    audioRadarState.lastEntryKey = key;
+    audioRadarState.lastEntryTime = now;
+
+    item.id = ++audioRadarState.seq;
+    item.timestamp = now;
+    item.timeStr = new Date(now).toTimeString().split(' ')[0] + '.' + String(now % 1000).padStart(3, '0');
+    item.keyframes = [];
+
+    captureCanvasKeyframeBurst(item);
+
+    audioRadarState.entries.unshift(item);
+    if (audioRadarState.entries.length > AUDIO_RADAR_MAX) {
+      audioRadarState.entries.length = AUDIO_RADAR_MAX;
+    }
+
+    audioRadarState.latestTrigger = item;
+    if (!item.hasAudio) {
+      audioRadarState.latestMissingTrigger = item;
+    }
+
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('yami-audio-radar-trigger', { detail: item }));
+      }
+    } catch (e) {}
+  }
+
+  function getLatestAudioTrigger(preferMissing) {
+    if (preferMissing !== false && audioRadarState.latestMissingTrigger) {
+      return audioRadarState.latestMissingTrigger;
+    }
+    return audioRadarState.latestTrigger || (audioRadarState.entries.length ? audioRadarState.entries[0] : null);
+  }
+
+  async function triggerAudioLocate(customTrigger) {
+    const trigger = customTrigger || getLatestAudioTrigger(true);
+    if (!trigger) {
+      return { ok: false, message: '当前暂无捕获的动作触发点，请先在游戏中释放技能或攻击' };
+    }
+    const assetPath = (trigger.medium && trigger.medium.assetPath) || '';
+    const mediumName = (trigger.medium && trigger.medium.name) || '';
+    const casterName = (trigger.caster && trigger.caster.name) || '';
+
+    let directOpened = false;
+    try {
+      if (typeof window !== 'undefined') {
+        if (window.Editor && typeof window.Editor.open === 'function' && assetPath) {
+          window.Editor.open(assetPath);
+          directOpened = true;
+        } else if (window.File && typeof window.File.open === 'function' && assetPath) {
+          window.File.open(assetPath);
+          directOpened = true;
+        }
+        if (directOpened && window.focus) window.focus();
+      }
+    } catch (e) {}
+
+    let bridgeNotified = false;
+    if (!directOpened) {
+      try {
+        if (typeof require === 'function') {
+          const http = require('http');
+          const payload = JSON.stringify({
+            action: 'locateAudioTrigger',
+            assetPath: assetPath,
+            mediumName: mediumName,
+            casterName: casterName,
+            hasAudio: trigger.hasAudio,
+            suggestedAudio: trigger.suggestedName || ''
+          });
+          const req = http.request({
+            hostname: '127.0.0.1',
+            port: 5967,
+            path: '/action',
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(payload)
+            },
+            timeout: 1000
+          });
+          req.on('error', function () {});
+          req.write(payload);
+          req.end();
+          bridgeNotified = true;
+        }
+      } catch (e) {}
+    }
+
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        const bc = new BroadcastChannel('yami-perf-lab-channel');
+        bc.postMessage({
+          type: 'AUDIO_RADAR_LOCATE',
+          trigger: trigger
+        });
+        bc.close();
+      }
+    } catch (e) {}
+
+    return {
+      ok: true,
+      trigger: trigger,
+      assetPath: assetPath,
+      mediumName: mediumName,
+      directOpened: directOpened,
+      bridgeNotified: bridgeNotified
+    };
+  }
+
+  function hookAudioRadarEvent() {
+    if (!audioRadarState.enabled) return;
+    let ev = null;
+    let caller = null;
+    let extra = null;
+
+    for (let i = 0; i < arguments.length; i++) {
+      const arg = arguments[i];
+      if (!arg || typeof arg !== 'object') continue;
+      if (!ev && (arg.commands || arg.initial || arg.type)) {
+        ev = arg;
+      } else if (!caller && (arg.isPlayer !== undefined || arg.attributes || arg.teamIndex !== undefined || (arg.name && !arg.target && !arg.skill))) {
+        caller = arg;
+      } else if (!extra && (arg.target || arg.skill || arg.trigger)) {
+        extra = arg;
+      }
+    }
+    if (!ev && arguments[0] && typeof arguments[0] === 'object') ev = arguments[0];
+    if (!ev) return;
+
+    if (caller && !ev.casterActor) ev.casterActor = caller;
+    if (extra) {
+      if (extra.target && !ev.targetActor) ev.targetActor = extra.target;
+      if (extra.skill && !ev.triggerSkill) ev.triggerSkill = extra.skill;
+      if (extra.trigger && !ev.triggerObject) ev.triggerObject = extra.trigger;
+    }
+
+    try {
+      const type = eventTypeOf(ev);
+      const host = ev.parent;
+      const hostKind = eventHostKind(host);
+      const isPlayerCaster = !!(
+        (ev.casterActor && typeof Party !== 'undefined' && Party && (ev.casterActor === Party.player || ev.casterActor.isPlayer)) ||
+        (caller && (caller.isPlayer || (typeof Party !== 'undefined' && Party && caller === Party.player))) ||
+        (host && typeof Party !== 'undefined' && Party && (host === Party.player || host.isPlayer)) ||
+        (host && host.actor && typeof Party !== 'undefined' && Party && (host.actor === Party.player || host.actor.isPlayer))
+      );
+
+      const targetActor = ev.targetActor || ev.triggerActor || (host && host.isPlayer ? host : null);
+      const isPlayerTarget = !!(
+        (targetActor && (targetActor.isPlayer || (typeof Party !== 'undefined' && Party && targetActor === Party.player))) ||
+        (host && typeof Party !== 'undefined' && Party && (host === Party.player || host.isPlayer))
+      );
+
+      const isPlayerRelated = isPlayerCaster || isPlayerTarget;
+
+      if (type === 'skillcast' || hostKind === '技能') {
+        const skill = ev.triggerSkill || host;
+        const caster = ev.casterActor || caller || (skill && skill.caster) || (typeof Party !== 'undefined' && Party ? Party.player : null);
+        const casterName = (caster && (caster.name || (caster.data && caster.data.name))) || (isPlayerCaster ? '主角' : '角色');
+        const skillName = (skill && (skill.name || (skill.data && (skill.data.name || (skill.data.attributes && skill.data.attributes[0] && skill.data.attributes[0].value))))) || '技能';
+        const skillId = (skill && (skill.id || (skill.data && skill.data.id))) || '';
+        const commands = ev.commands || (ev.initial && ev.initial.commands) || [];
+        const audioAnalysis = analyzeCommandsAudio(commands);
+
+        pushAudioRadarEntry({
+          kind: 'skillcast',
+          kindLabel: '施放技能',
+          slot: 'skillcast',
+          isPlayerRelated: isPlayerRelated,
+          caster: { name: casterName, id: caster && caster.id || '', isPlayer: isPlayerCaster },
+          medium: { name: skillName, id: skillId, type: 'skill', assetPath: resolveAssetPathByGuid(skillId, 'Assets/技能/', skillName, 'skill') },
+          target: { name: '目标范围/未指定', id: '', type: 'actor', isPlayer: false },
+          audioStatus: audioAnalysis,
+          hasAudio: audioAnalysis.configured,
+          timing: { durationMs: (skill && skill.duration) || 500, hitPointMs: 240 },
+          suggestedName: 'se_' + (isPlayerCaster ? 'player' : 'actor') + '_' + (skillName || 'cast') + '_cast.ogg'
+        });
+        return;
+      }
+
+      if (type === 'hitactor' || hostKind === '触发器') {
+        const trigger = ev.triggerObject || host;
+        const skill = ev.triggerSkill || (trigger && trigger.skill) || (extra && extra.skill);
+        const caster = ev.casterActor || caller || (trigger && trigger.caster);
+        const target = ev.targetActor || ev.triggerActor || (extra && extra.target);
+        const casterName = (caster && (caster.name || (caster.data && caster.data.name))) || (isPlayerCaster ? '主角' : '攻击者');
+        const triggerName = (trigger && (trigger.name || (trigger.data && trigger.data.name))) || '';
+        const triggerId = (trigger && (trigger.id || trigger.presetId || (trigger.data && trigger.data.id))) || '';
+        const skillName = (skill && (skill.name || (skill.data && skill.data.name))) || (triggerName || '关联技能');
+        const targetName = (target && (target.name || (target.data && target.data.name))) || '被击中角色';
+        const targetId = (target && target.id) || '';
+        const targetIsPlayer = !!(target && (target.isPlayer || (typeof Party !== 'undefined' && Party && target === Party.player)));
+        const commands = ev.commands || (ev.initial && ev.initial.commands) || [];
+        const audioAnalysis = analyzeCommandsAudio(commands);
+
+        pushAudioRadarEntry({
+          kind: 'hitactor',
+          kindLabel: '触发命中',
+          slot: 'hitactor',
+          isPlayerRelated: isPlayerRelated || targetIsPlayer,
+          caster: { name: casterName, id: caster && caster.id || '', isPlayer: isPlayerCaster },
+          medium: { name: skillName, id: triggerId || (skill && skill.id) || '', type: trigger ? 'trigger' : 'skill', skillName: skillName, assetPath: triggerId ? resolveAssetPathByGuid(triggerId, 'Assets/技能/', triggerName, 'trigger') : resolveAssetPathByGuid(skill && skill.id, 'Assets/技能/', skillName, 'skill') },
+          target: { name: targetName, id: targetId, type: 'actor', isPlayer: targetIsPlayer },
+          audioStatus: audioAnalysis,
+          hasAudio: audioAnalysis.configured,
+          timing: { durationMs: (trigger && trigger.duration) || 400, hitPointMs: (trigger && trigger.initialDelay) || 200 },
+          suggestedName: 'se_' + (isPlayerCaster ? 'player' : 'actor') + '_' + (skillName || 'hit') + '_impact.ogg'
+        });
+        return;
+      }
+
+      if (type === 'hittrigger') {
+        const actor = host || ev.triggerActor || targetActor;
+        const actorName = (actor && (actor.name || (actor.data && actor.data.name))) || '角色';
+        const actorIsPlayer = !!(actor && (actor.isPlayer || (typeof Party !== 'undefined' && Party && actor === Party.player)));
+        const commands = ev.commands || (ev.initial && ev.initial.commands) || [];
+        const audioAnalysis = analyzeCommandsAudio(commands);
+        pushAudioRadarEntry({
+          kind: 'hittrigger',
+          kindLabel: '角色受击',
+          slot: 'hittrigger',
+          isPlayerRelated: actorIsPlayer,
+          caster: { name: '外部攻击', id: '', isPlayer: false },
+          medium: { name: '受击判定', id: '', type: 'state' },
+          target: { name: actorName, id: actor && actor.id || '', type: 'actor', isPlayer: actorIsPlayer },
+          audioStatus: audioAnalysis,
+          hasAudio: audioAnalysis.configured,
+          timing: { durationMs: 300, hitPointMs: 50 },
+          suggestedName: 'se_' + (actorIsPlayer ? 'player' : 'actor') + '_hurt.ogg'
+        });
+        return;
+      }
+
+      if (type === 'death' || type === 'fdede5db37a4ee44') {
+        const actor = host || ev.triggerActor || targetActor;
+        const actorName = (actor && (actor.name || (actor.data && actor.data.name))) || '角色';
+        const actorIsPlayer = !!(actor && (actor.isPlayer || (typeof Party !== 'undefined' && Party && actor === Party.player)));
+        const commands = ev.commands || (ev.initial && ev.initial.commands) || [];
+        const audioAnalysis = analyzeCommandsAudio(commands);
+        pushAudioRadarEntry({
+          kind: 'death',
+          kindLabel: '角色死亡',
+          slot: 'death',
+          isPlayerRelated: actorIsPlayer,
+          caster: { name: '击杀者', id: '', isPlayer: false },
+          medium: { name: '死亡结算', id: 'fdede5db37a4ee44', type: 'event' },
+          target: { name: actorName, id: actor && actor.id || '', type: 'actor', isPlayer: actorIsPlayer },
+          audioStatus: audioAnalysis,
+          hasAudio: audioAnalysis.configured,
+          timing: { durationMs: 800, hitPointMs: 100 },
+          suggestedName: 'se_' + (actorIsPlayer ? 'player' : 'actor') + '_die.ogg'
+        });
+      }
+    } catch (e) {}
+  }
+
+  function recordAudioPlay(audio, volume) {
+    if (!audioRadarState.enabled) return;
+    try {
+      const now = Date.now();
+      const audioId = typeof audio === 'string' ? audio : (audio && audio.id ? audio.id : '未知音效');
+      const vol = typeof volume === 'number' ? Math.round(volume * 100) : 100;
+      audioRadarState.playedHistory.unshift({
+        time: now,
+        audioId: audioId,
+        volume: vol
+      });
+      if (audioRadarState.playedHistory.length > 30) {
+        audioRadarState.playedHistory.length = 30;
+      }
+      for (let i = 0; i < audioRadarState.entries.length; i++) {
+        const e = audioRadarState.entries[i];
+        if (Math.abs(now - e.timestamp) <= 250 && !e.actualPlayed) {
+          e.actualPlayed = { audioId: audioId, volume: vol };
+          break;
+        }
+      }
+    } catch (e) {}
+  }
+
+  function getAudioRadarSnapshot() {
+    let entries = audioRadarState.entries;
+    if (audioRadarState.focusMode === 'player') {
+      entries = entries.filter(function (e) { return e.isPlayerRelated; });
+    }
+    return {
+      ok: true,
+      enabled: audioRadarState.enabled,
+      focusMode: audioRadarState.focusMode,
+      entries: entries.slice(0, AUDIO_RADAR_MAX),
+      totalCount: audioRadarState.seq,
+      recentPlayed: audioRadarState.playedHistory.slice(0, 10)
+    };
+  }
+
+  function clearAudioRadar() {
+    audioRadarState.entries = [];
+    audioRadarState.playedHistory = [];
+    return true;
+  }
+
+  function setAudioRadarFocus(mode) {
+    if (mode === 'player' || mode === 'all') {
+      audioRadarState.focusMode = mode;
+      return true;
+    }
+    return false;
   }
 
   // ============================================================
@@ -4321,6 +4758,12 @@
           return;
         }
 
+        if (req.method === 'GET' && req.url.startsWith('/audio-radar')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(getAudioRadarSnapshot()));
+          return;
+        }
+
         if (req.url === '/report') {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(buildReport()));
@@ -4719,7 +5162,39 @@
                 }
                 return { ok: true, action: name, steps: steps.length, done: results };
               }
-              return { ok: false, error: '未知编辑器动作，仅允许 save、undo、redo、refresh、playtest、dumpUi、click、interact、context、uiSteps、cancel' };
+              if (name === 'locateAudioTrigger') {
+                const assetPath = action.assetPath || '';
+                let opened = false;
+                try {
+                  const electron = typeof require === 'function' ? require('electron') : null;
+                  if (electron) {
+                    const win = electron.remote ? electron.remote.getCurrentWindow() : null;
+                    if (win) {
+                      if (win.isMinimized()) win.restore();
+                      win.focus();
+                    }
+                  }
+                } catch (e) {}
+                try { if (typeof window !== 'undefined' && window.focus) window.focus(); } catch (e) {}
+
+                if (assetPath && typeof window !== 'undefined') {
+                  if (window.Editor && typeof window.Editor.open === 'function') {
+                    try { window.Editor.open(assetPath); opened = true; } catch (e) {}
+                  }
+                  if (!opened && window.File && typeof window.File.open === 'function') {
+                    try { window.File.open(assetPath); opened = true; } catch (e) {}
+                  }
+                }
+
+                try {
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('yami-audio-locate-requested', { detail: action }));
+                  }
+                } catch (e) {}
+
+                return { ok: true, action: name, assetPath: assetPath, opened: opened };
+              }
+              return { ok: false, error: '未知编辑器动作，仅允许 save、undo、redo、refresh、playtest、dumpUi、click、interact、context、uiSteps、cancel、locateAudioTrigger' };
             }).then(function(result) {
               res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify(result));
@@ -5580,6 +6055,12 @@
     // 事件黑匣子: 指令级时间线 + 幽灵事件侦探 (读一次即扫描一次)
     getEventBlackbox: getEventBlackbox,
     finishEvent: finishEventById,
+    // 音效触发雷达: 因果主体拆解 + 关键帧特征采样
+    getAudioRadar: getAudioRadarSnapshot,
+    clearAudioRadar: clearAudioRadar,
+    setAudioRadarFocus: setAudioRadarFocus,
+    pushAudioRadarEntry: pushAudioRadarEntry,
+    recordAudioPlay: recordAudioPlay,
     runProjectAudit: function () { return projectAudit.run(); },
     getAuditResult: function () { return projectAudit.lastResult; },
     setProjectRoot: function (dir) { projectAudit.setProjectRoot(dir); },
@@ -5772,6 +6253,26 @@
       } catch (e) {}
       console.log('[Yami Perf-Lab] 数据已广播至分析台！');
       return report;
+    },
+    getLatestAudioTrigger: getLatestAudioTrigger,
+    triggerAudioLocate: triggerAudioLocate
+  };
+
+  window.__DANJUAN_AUDIO_RADAR__ = {
+    getSnapshot: getAudioRadarSnapshot,
+    clear: clearAudioRadar,
+    setFocus: setAudioRadarFocus,
+    pushEntry: pushAudioRadarEntry,
+    recordAudioPlay: recordAudioPlay,
+    hookAudioRadarEvent: hookAudioRadarEvent,
+    getLatestTrigger: getLatestAudioTrigger,
+    triggerLocate: triggerAudioLocate,
+    getRecentRecords: function (filter) {
+      const entries = audioRadarState.entries;
+      if (!filter || filter === 'all') return entries.slice(0, AUDIO_RADAR_MAX);
+      if (filter === 'player') return entries.filter(function (e) { return e.isPlayerRelated; }).slice(0, AUDIO_RADAR_MAX);
+      if (filter === 'missing') return entries.filter(function (e) { return !e.hasAudio; }).slice(0, AUDIO_RADAR_MAX);
+      return entries.slice(0, AUDIO_RADAR_MAX);
     }
   };
 })();
