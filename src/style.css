@@ -884,7 +884,7 @@
         outline: none !important;
       }
 
-      /* 迷你 HUD 胶囊 */
+      /* 迷你 HUD 胶囊 (支持与主页大盘展开/收起联动平滑淡入淡出) */
       #yami-perf-mini-hud {
         position: fixed !important;
         top: 40px !important;
@@ -892,6 +892,15 @@
         z-index: 999998 !important;
         font-size: 12px !important;
         user-select: none !important;
+        opacity: 1 !important;
+        transform: scale(1) !important;
+        transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
+      }
+      #yami-perf-mini-hud.fade-out {
+        opacity: 0 !important;
+        transform: scale(0.92) !important;
+        pointer-events: none !important;
+        transition: opacity 0.14s ease-out, transform 0.14s ease-out !important;
       }
       .yami-perf-capsule {
         display: flex !important;
@@ -905,6 +914,14 @@
         cursor: pointer !important;
         color: #d8d8d8 !important;
         transition: background 0.12s, border-color 0.12s !important;
+      }
+      /* 悬浮窗缩小至仅显示 FPS 模式 */
+      .yami-perf-capsule.fps-only {
+        padding: 3px 8px !important;
+        gap: 5px !important;
+      }
+      .yami-perf-capsule.fps-only .yami-capsule-extra {
+        display: none !important;
       }
       .yami-perf-capsule:hover {
         background: #303030 !important;
@@ -922,7 +939,7 @@
       .yami-perf-badge.bad { background: #ff4040 !important; box-shadow: 0 0 6px rgba(255, 64, 64, 0.8) !important; animation: yami-pulse 0.8s infinite !important; }
       @keyframes yami-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-      /* 非阻塞式右侧停靠大盘 */
+      /* 非阻塞式右侧停靠大盘 (展开从右侧淡入左滑，收起淡出右滑) */
       .yami-perf-dock {
         position: fixed !important;
         top: 38px !important;
@@ -940,10 +957,10 @@
         flex-direction: column !important;
         overflow: hidden !important;
         opacity: 0 !important;
-        transform: translateX(105%) !important;
+        transform: translateX(100%) !important;
         pointer-events: none !important;
-        /* 出场(移除 .show 时走这条): 比进场更短更柔 */
-        transition: transform 0.16s cubic-bezier(0.2, 0, 0, 1), opacity 0.12s ease !important;
+        /* 出场(移除 .show 时走这条): 淡出右滑退出主页窗口 */
+        transition: transform 0.18s cubic-bezier(0.4, 0, 1, 1), opacity 0.15s ease-in !important;
       }
             /* 穿透模式：最高优先级物理穿透到游戏 Canvas，顶栏保留操作 */
       .yami-perf-dock.show.through {
@@ -1016,7 +1033,7 @@
         transition: opacity 0.12s cubic-bezier(0.4, 0, 1, 1), transform 0.12s cubic-bezier(0.4, 0, 1, 1) !important;
       }
 
-      /* 真正的自由悬浮窗模式 (可自由拖拽位置与调节窗口尺寸，自带丝滑淡入淡出与缩放动效) */
+      /* 真正的自由悬浮窗模式 (原地纯淡入淡出，彻底杜绝任何滑动位移) */
       .yami-perf-dock.floating {
         position: fixed !important;
         bottom: auto !important;
@@ -1031,17 +1048,17 @@
         opacity: 0 !important;
         visibility: hidden !important;
         pointer-events: none !important;
-        transform: scale(0.96) translateY(8px) !important;
-        /* 出场收起动画：比进场更短更柔，结束后 visibility 变为 hidden */
-        transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0, 0, 1), visibility 0.16s !important;
+        transform: none !important;
+        /* 出场收起动画：原地纯淡出，无任何位移滑动 */
+        transition: opacity 0.14s ease, visibility 0.14s !important;
       }
       .yami-perf-dock.floating.show {
         opacity: 1 !important;
         visibility: visible !important;
-        transform: scale(1) translateY(0) !important;
+        transform: none !important;
         pointer-events: auto !important;
-        /* 进场展开动画：优雅平滑弹升与淡入 */
-        transition: opacity 0.18s cubic-bezier(0.1, 0.9, 0.2, 1), transform 0.2s cubic-bezier(0.1, 0.9, 0.2, 1) !important;
+        /* 进场展开动画：原地纯淡入，无任何位移滑动 */
+        transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
       }
       /* 悬浮窗穿透模式双重物理级保障 */
       .yami-perf-dock.floating.show.through {
@@ -1304,8 +1321,8 @@
         opacity: 1 !important;
         transform: translateX(0) !important;
         pointer-events: auto !important;
-        /* 进场(加上 .show 时走这条) */
-        transition: transform 0.2s cubic-bezier(0.1, 0.9, 0.2, 1), opacity 0.15s ease !important;
+        /* 进场(加上 .show 时走这条): 从右侧淡入左滑进来 */
+        transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease-out !important;
       }
 
       .yami-perf-dock-header {
@@ -6054,79 +6071,170 @@
       }
 
       /* ============================================================
-       * 音效雷达 试玩 HUD 极简闪电联动胶囊 (#yami-radar-quick-pill)
+       * 底栏偏好设置按钮 (与版本号/检查更新同排右侧)
        * ============================================================ */
-      .yami-radar-quick-pill {
+      .yami-home-settings-btn {
         display: inline-flex !important;
         align-items: center !important;
-        gap: 6px !important;
-        margin-top: 5px !important;
+        gap: 4px !important;
         padding: 3px 8px !important;
-        background: rgba(24, 24, 27, 0.88) !important;
-        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-        border-radius: 12px !important;
+        background: #202020 !important;
+        border: 1px solid #383838 !important;
+        border-radius: 3px !important;
         color: #94a3b8 !important;
         font-size: 11px !important;
-        line-height: 1.2 !important;
+        line-height: 16px !important;
         cursor: pointer !important;
         user-select: none !important;
-        backdrop-filter: blur(8px) !important;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35) !important;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
-        opacity: 0.82 !important;
-        max-width: 260px !important;
+        transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease !important;
       }
-      .yami-radar-quick-pill:hover {
-        opacity: 1 !important;
-        transform: translateY(-1px) !important;
-        background: rgba(30, 32, 40, 0.96) !important;
-        border-color: rgba(56, 189, 248, 0.4) !important;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+      .yami-home-settings-btn:hover {
+        background: #2a2a2a !important;
+        border-color: #0080c0 !important;
+        color: #ffffff !important;
       }
-      .yami-radar-quick-pill:active {
+      .yami-home-settings-btn:active {
         transform: translateY(0.5px) !important;
       }
-      .yami-radar-pill-key {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
-        font-weight: 700 !important;
-        color: #38bdf8 !important;
-        background: rgba(56, 189, 248, 0.14) !important;
-        padding: 1px 4px !important;
-        border-radius: 3px !important;
-        font-size: 10px !important;
-        flex-shrink: 0 !important;
+
+      /* ============================================================
+       * 主页偏好设置对话框浮层
+       * ============================================================ */
+      .yami-settings-modal {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        z-index: 1000000 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
       }
-      .yami-radar-pill-text {
-        white-space: nowrap !important;
+      .yami-settings-modal-backdrop {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        background: rgba(0, 0, 0, 0.65) !important;
+        backdrop-filter: blur(2px) !important;
+      }
+      .yami-settings-modal-card {
+        position: relative !important;
+        width: calc(100% - 32px) !important;
+        max-width: 380px !important;
+        background: #1c1c1c !important;
+        border: 1px solid #333333 !important;
+        border-radius: 4px !important;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.85) !important;
+        z-index: 1 !important;
+        display: flex !important;
+        flex-direction: column !important;
         overflow: hidden !important;
-        text-overflow: ellipsis !important;
+      }
+      .yami-settings-modal-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding: 10px 14px !important;
+        background: #222222 !important;
+        border-bottom: 1px solid #2d2d2d !important;
+      }
+      .yami-settings-modal-title {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        color: #f1f5f9 !important;
+      }
+      .yami-settings-close-btn {
+        font-size: 16px !important;
+        line-height: 1 !important;
+        color: #94a3b8 !important;
+        cursor: pointer !important;
+        padding: 2px 6px !important;
+        border-radius: 3px !important;
+        user-select: none !important;
+        transition: background-color 0.15s ease, color 0.15s ease !important;
+      }
+      .yami-settings-close-btn:hover {
+        color: #ffffff !important;
+        background: #333333 !important;
+      }
+      .yami-settings-modal-body {
+        padding: 14px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 12px !important;
+        max-height: 420px !important;
+        overflow-y: auto !important;
+      }
+      .yami-settings-modal-body::-webkit-scrollbar {
+        width: 5px !important;
+      }
+      .yami-settings-modal-body::-webkit-scrollbar-thumb {
+        background: #333333 !important;
+        border-radius: 3px !important;
+      }
+      .yami-settings-modal-body::-webkit-scrollbar-thumb:hover {
+        background: #444444 !important;
+      }
+      .yami-settings-action-btn {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 4px 10px !important;
+        background: #2a2a2a !important;
+        border: 1px solid #404040 !important;
+        border-radius: 3px !important;
+        color: #e2e8f0 !important;
+        font-size: 11px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        white-space: nowrap !important;
+        flex-shrink: 0 !important;
+        transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease !important;
+      }
+      .yami-settings-action-btn:hover {
+        background: #383838 !important;
+        border-color: #0080c0 !important;
+        color: #ffffff !important;
+      }
+      .yami-settings-action-btn:active {
+        transform: translateY(0.5px) !important;
+      }
+      .yami-settings-section-title {
+        font-size: 11px !important;
+        color: #94a3b8 !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
+      }
+      .yami-settings-item {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 12px !important;
+        background: #232323 !important;
+        border: 1px solid #2d2d2d !important;
+        border-radius: 3px !important;
+        padding: 10px 12px !important;
+      }
+      .yami-settings-item-info {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 3px !important;
         flex: 1 1 auto !important;
       }
-      /* 缺音效动作高亮闪烁态 (Amber/Orange) */
-      .yami-radar-quick-pill.missing {
-        opacity: 1 !important;
-        border-color: rgba(245, 158, 11, 0.6) !important;
-        background: rgba(36, 26, 14, 0.94) !important;
-        color: #fbbf24 !important;
-        box-shadow: 0 0 12px rgba(245, 158, 11, 0.35) !important;
-        animation: yami-radar-pill-glow 1.8s infinite !important;
+      .yami-settings-item-title {
+        font-size: 12px !important;
+        font-weight: 600 !important;
+        color: #e2e8f0 !important;
       }
-      .yami-radar-quick-pill.missing .yami-radar-pill-key {
-        color: #fbbf24 !important;
-        background: rgba(245, 158, 11, 0.2) !important;
+      .yami-settings-item-desc {
+        font-size: 11px !important;
+        color: #94a3b8 !important;
+        line-height: 1.4 !important;
       }
-      /* 已配音效态 (Green) */
-      .yami-radar-quick-pill.configured {
-        opacity: 0.95 !important;
-        border-color: rgba(16, 185, 129, 0.4) !important;
-        background: rgba(16, 32, 24, 0.92) !important;
-        color: #34d399 !important;
-      }
-      .yami-radar-quick-pill.configured .yami-radar-pill-key {
-        color: #34d399 !important;
-        background: rgba(16, 185, 129, 0.16) !important;
-      }
-      @keyframes yami-radar-pill-glow {
-        0%, 100% { border-color: rgba(245, 158, 11, 0.5); box-shadow: 0 0 6px rgba(245, 158, 11, 0.25); }
-        50% { border-color: rgba(245, 158, 11, 0.9); box-shadow: 0 0 14px rgba(245, 158, 11, 0.5); }
-      }
+

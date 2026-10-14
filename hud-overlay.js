@@ -959,7 +959,7 @@
         outline: none !important;
       }
 
-      /* 迷你 HUD 胶囊 */
+      /* 迷你 HUD 胶囊 (支持与主页大盘展开/收起联动平滑淡入淡出) */
       #yami-perf-mini-hud {
         position: fixed !important;
         top: 40px !important;
@@ -967,6 +967,15 @@
         z-index: 999998 !important;
         font-size: 12px !important;
         user-select: none !important;
+        opacity: 1 !important;
+        transform: scale(1) !important;
+        transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
+      }
+      #yami-perf-mini-hud.fade-out {
+        opacity: 0 !important;
+        transform: scale(0.92) !important;
+        pointer-events: none !important;
+        transition: opacity 0.14s ease-out, transform 0.14s ease-out !important;
       }
       .yami-perf-capsule {
         display: flex !important;
@@ -980,6 +989,14 @@
         cursor: pointer !important;
         color: #d8d8d8 !important;
         transition: background 0.12s, border-color 0.12s !important;
+      }
+      /* 悬浮窗缩小至仅显示 FPS 模式 */
+      .yami-perf-capsule.fps-only {
+        padding: 3px 8px !important;
+        gap: 5px !important;
+      }
+      .yami-perf-capsule.fps-only .yami-capsule-extra {
+        display: none !important;
       }
       .yami-perf-capsule:hover {
         background: #303030 !important;
@@ -997,7 +1014,7 @@
       .yami-perf-badge.bad { background: #ff4040 !important; box-shadow: 0 0 6px rgba(255, 64, 64, 0.8) !important; animation: yami-pulse 0.8s infinite !important; }
       @keyframes yami-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-      /* 非阻塞式右侧停靠大盘 */
+      /* 非阻塞式右侧停靠大盘 (展开从右侧淡入左滑，收起淡出右滑) */
       .yami-perf-dock {
         position: fixed !important;
         top: 38px !important;
@@ -1015,10 +1032,10 @@
         flex-direction: column !important;
         overflow: hidden !important;
         opacity: 0 !important;
-        transform: translateX(105%) !important;
+        transform: translateX(100%) !important;
         pointer-events: none !important;
-        /* 出场(移除 .show 时走这条): 比进场更短更柔 */
-        transition: transform 0.16s cubic-bezier(0.2, 0, 0, 1), opacity 0.12s ease !important;
+        /* 出场(移除 .show 时走这条): 淡出右滑退出主页窗口 */
+        transition: transform 0.18s cubic-bezier(0.4, 0, 1, 1), opacity 0.15s ease-in !important;
       }
             /* 穿透模式：最高优先级物理穿透到游戏 Canvas，顶栏保留操作 */
       .yami-perf-dock.show.through {
@@ -1091,7 +1108,7 @@
         transition: opacity 0.12s cubic-bezier(0.4, 0, 1, 1), transform 0.12s cubic-bezier(0.4, 0, 1, 1) !important;
       }
 
-      /* 真正的自由悬浮窗模式 (可自由拖拽位置与调节窗口尺寸，自带丝滑淡入淡出与缩放动效) */
+      /* 真正的自由悬浮窗模式 (原地纯淡入淡出，彻底杜绝任何滑动位移) */
       .yami-perf-dock.floating {
         position: fixed !important;
         bottom: auto !important;
@@ -1106,17 +1123,17 @@
         opacity: 0 !important;
         visibility: hidden !important;
         pointer-events: none !important;
-        transform: scale(0.96) translateY(8px) !important;
-        /* 出场收起动画：比进场更短更柔，结束后 visibility 变为 hidden */
-        transition: opacity 0.14s ease, transform 0.16s cubic-bezier(0.2, 0, 0, 1), visibility 0.16s !important;
+        transform: none !important;
+        /* 出场收起动画：原地纯淡出，无任何位移滑动 */
+        transition: opacity 0.14s ease, visibility 0.14s !important;
       }
       .yami-perf-dock.floating.show {
         opacity: 1 !important;
         visibility: visible !important;
-        transform: scale(1) translateY(0) !important;
+        transform: none !important;
         pointer-events: auto !important;
-        /* 进场展开动画：优雅平滑弹升与淡入 */
-        transition: opacity 0.18s cubic-bezier(0.1, 0.9, 0.2, 1), transform 0.2s cubic-bezier(0.1, 0.9, 0.2, 1) !important;
+        /* 进场展开动画：原地纯淡入，无任何位移滑动 */
+        transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
       }
       /* 悬浮窗穿透模式双重物理级保障 */
       .yami-perf-dock.floating.show.through {
@@ -1379,8 +1396,8 @@
         opacity: 1 !important;
         transform: translateX(0) !important;
         pointer-events: auto !important;
-        /* 进场(加上 .show 时走这条) */
-        transition: transform 0.2s cubic-bezier(0.1, 0.9, 0.2, 1), opacity 0.15s ease !important;
+        /* 进场(加上 .show 时走这条): 从右侧淡入左滑进来 */
+        transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease-out !important;
       }
 
       .yami-perf-dock-header {
@@ -6129,81 +6146,171 @@
       }
 
       /* ============================================================
-       * 音效雷达 试玩 HUD 极简闪电联动胶囊 (#yami-radar-quick-pill)
+       * 底栏偏好设置按钮 (与版本号/检查更新同排右侧)
        * ============================================================ */
-      .yami-radar-quick-pill {
+      .yami-home-settings-btn {
         display: inline-flex !important;
         align-items: center !important;
-        gap: 6px !important;
-        margin-top: 5px !important;
+        gap: 4px !important;
         padding: 3px 8px !important;
-        background: rgba(24, 24, 27, 0.88) !important;
-        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-        border-radius: 12px !important;
+        background: #202020 !important;
+        border: 1px solid #383838 !important;
+        border-radius: 3px !important;
         color: #94a3b8 !important;
         font-size: 11px !important;
-        line-height: 1.2 !important;
+        line-height: 16px !important;
         cursor: pointer !important;
         user-select: none !important;
-        backdrop-filter: blur(8px) !important;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35) !important;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
-        opacity: 0.82 !important;
-        max-width: 260px !important;
+        transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease !important;
       }
-      .yami-radar-quick-pill:hover {
-        opacity: 1 !important;
-        transform: translateY(-1px) !important;
-        background: rgba(30, 32, 40, 0.96) !important;
-        border-color: rgba(56, 189, 248, 0.4) !important;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+      .yami-home-settings-btn:hover {
+        background: #2a2a2a !important;
+        border-color: #0080c0 !important;
+        color: #ffffff !important;
       }
-      .yami-radar-quick-pill:active {
+      .yami-home-settings-btn:active {
         transform: translateY(0.5px) !important;
       }
-      .yami-radar-pill-key {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
-        font-weight: 700 !important;
-        color: #38bdf8 !important;
-        background: rgba(56, 189, 248, 0.14) !important;
-        padding: 1px 4px !important;
-        border-radius: 3px !important;
-        font-size: 10px !important;
-        flex-shrink: 0 !important;
+
+      /* ============================================================
+       * 主页偏好设置对话框浮层
+       * ============================================================ */
+      .yami-settings-modal {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        z-index: 1000000 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
       }
-      .yami-radar-pill-text {
-        white-space: nowrap !important;
+      .yami-settings-modal-backdrop {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        background: rgba(0, 0, 0, 0.65) !important;
+        backdrop-filter: blur(2px) !important;
+      }
+      .yami-settings-modal-card {
+        position: relative !important;
+        width: calc(100% - 32px) !important;
+        max-width: 380px !important;
+        background: #1c1c1c !important;
+        border: 1px solid #333333 !important;
+        border-radius: 4px !important;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.85) !important;
+        z-index: 1 !important;
+        display: flex !important;
+        flex-direction: column !important;
         overflow: hidden !important;
-        text-overflow: ellipsis !important;
+      }
+      .yami-settings-modal-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding: 10px 14px !important;
+        background: #222222 !important;
+        border-bottom: 1px solid #2d2d2d !important;
+      }
+      .yami-settings-modal-title {
+        display: flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        color: #f1f5f9 !important;
+      }
+      .yami-settings-close-btn {
+        font-size: 16px !important;
+        line-height: 1 !important;
+        color: #94a3b8 !important;
+        cursor: pointer !important;
+        padding: 2px 6px !important;
+        border-radius: 3px !important;
+        user-select: none !important;
+        transition: background-color 0.15s ease, color 0.15s ease !important;
+      }
+      .yami-settings-close-btn:hover {
+        color: #ffffff !important;
+        background: #333333 !important;
+      }
+      .yami-settings-modal-body {
+        padding: 14px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 12px !important;
+        max-height: 420px !important;
+        overflow-y: auto !important;
+      }
+      .yami-settings-modal-body::-webkit-scrollbar {
+        width: 5px !important;
+      }
+      .yami-settings-modal-body::-webkit-scrollbar-thumb {
+        background: #333333 !important;
+        border-radius: 3px !important;
+      }
+      .yami-settings-modal-body::-webkit-scrollbar-thumb:hover {
+        background: #444444 !important;
+      }
+      .yami-settings-action-btn {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 4px 10px !important;
+        background: #2a2a2a !important;
+        border: 1px solid #404040 !important;
+        border-radius: 3px !important;
+        color: #e2e8f0 !important;
+        font-size: 11px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        white-space: nowrap !important;
+        flex-shrink: 0 !important;
+        transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease !important;
+      }
+      .yami-settings-action-btn:hover {
+        background: #383838 !important;
+        border-color: #0080c0 !important;
+        color: #ffffff !important;
+      }
+      .yami-settings-action-btn:active {
+        transform: translateY(0.5px) !important;
+      }
+      .yami-settings-section-title {
+        font-size: 11px !important;
+        color: #94a3b8 !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
+      }
+      .yami-settings-item {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 12px !important;
+        background: #232323 !important;
+        border: 1px solid #2d2d2d !important;
+        border-radius: 3px !important;
+        padding: 10px 12px !important;
+      }
+      .yami-settings-item-info {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 3px !important;
         flex: 1 1 auto !important;
       }
-      /* 缺音效动作高亮闪烁态 (Amber/Orange) */
-      .yami-radar-quick-pill.missing {
-        opacity: 1 !important;
-        border-color: rgba(245, 158, 11, 0.6) !important;
-        background: rgba(36, 26, 14, 0.94) !important;
-        color: #fbbf24 !important;
-        box-shadow: 0 0 12px rgba(245, 158, 11, 0.35) !important;
-        animation: yami-radar-pill-glow 1.8s infinite !important;
+      .yami-settings-item-title {
+        font-size: 12px !important;
+        font-weight: 600 !important;
+        color: #e2e8f0 !important;
       }
-      .yami-radar-quick-pill.missing .yami-radar-pill-key {
-        color: #fbbf24 !important;
-        background: rgba(245, 158, 11, 0.2) !important;
-      }
-      /* 已配音效态 (Green) */
-      .yami-radar-quick-pill.configured {
-        opacity: 0.95 !important;
-        border-color: rgba(16, 185, 129, 0.4) !important;
-        background: rgba(16, 32, 24, 0.92) !important;
-        color: #34d399 !important;
-      }
-      .yami-radar-quick-pill.configured .yami-radar-pill-key {
-        color: #34d399 !important;
-        background: rgba(16, 185, 129, 0.16) !important;
-      }
-      @keyframes yami-radar-pill-glow {
-        0%, 100% { border-color: rgba(245, 158, 11, 0.5); box-shadow: 0 0 6px rgba(245, 158, 11, 0.25); }
-        50% { border-color: rgba(245, 158, 11, 0.9); box-shadow: 0 0 14px rgba(245, 158, 11, 0.5); }
+      .yami-settings-item-desc {
+        font-size: 11px !important;
+        color: #94a3b8 !important;
+        line-height: 1.4 !important;
       }
     `;
     document.head.appendChild(style);
@@ -6216,10 +6323,10 @@
       <div class="yami-perf-capsule" id="yami-capsule" title="点击展开/收起性能大盘 (快捷键: Home)">
         <div class="yami-perf-badge" id="yami-badge"></div>
         <span id="yami-fps" style="font-weight: 600; color: #ffffff;">60 FPS</span>
-        <span style="color: #606060;">|</span>
-        <span id="yami-ms" style="color: #a0a0a0; font-family: Consolas, monospace;">16.7ms</span>
-        <span style="color: #606060;">|</span>
-        <span id="yami-dc" style="color: #0080c0; font-family: Consolas, monospace;">0 DC</span>
+        <span class="yami-capsule-extra" style="color: #606060;">|</span>
+        <span class="yami-capsule-extra" id="yami-ms" style="color: #a0a0a0; font-family: Consolas, monospace;">16.7ms</span>
+        <span class="yami-capsule-extra" style="color: #606060;">|</span>
+        <span class="yami-capsule-extra" id="yami-dc" style="color: #0080c0; font-family: Consolas, monospace;">0 DC</span>
       </div>
       <div id="yami-error-bubble" class="yami-error-bubble" title="点击打开控制台报错黑匣子查看详情">
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px;">
@@ -6229,10 +6336,6 @@
         <div id="yami-error-bubble-text" style="color: #f0f0f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">捕获到未处理错误</div>
       </div>
       <div id="yami-pinned-box" style="display: none;"></div>
-      <div id="yami-radar-quick-pill" class="yami-radar-quick-pill" title="音效雷达：按 F8 或点击此处，直接在编辑器中定位最新动作事件" role="button">
-        <span class="yami-radar-pill-key">[F8]</span>
-        <span id="yami-radar-pill-text" class="yami-radar-pill-text">音效雷达就绪</span>
-      </div>
     `;
     document.body.appendChild(hud);
 
@@ -6246,6 +6349,14 @@
           hud.style.top = Math.max(4, Math.min(window.innerHeight - 40, pos.top)) + 'px';
           hud.style.right = 'auto';
         }
+      }
+    } catch (e) {}
+
+    // 恢复悬浮窗仅显示 FPS 偏好设置
+    try {
+      if (localStorage.getItem('yami-perf-capsule-fps-only') === '1') {
+        const c = hud.querySelector('#yami-capsule');
+        if (c) c.classList.add('fps-only');
       }
     } catch (e) {}
 
@@ -6776,15 +6887,81 @@
 
       </div><!-- end yami-perf-dock-body -->
 
+      <!-- 主页偏好设置对话框浮层 -->
+      <div class="yami-settings-modal" id="yami-home-settings-dialog" style="display: none;">
+        <div class="yami-settings-modal-backdrop" id="yami-settings-modal-backdrop"></div>
+        <div class="yami-settings-modal-card">
+          <div class="yami-settings-modal-header">
+            <div class="yami-settings-modal-title">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+                <path d="M12 1L21.5 6.5V17.5L12 23L2.5 17.5V6.5L12 1ZM12 3.311L4.5 7.65311V16.3469L12 20.689L19.5 16.3469V7.65311L12 3.311ZM12 16C9.79086 16 8 14.2091 8 12C8 9.79086 9.79086 8 12 8C14.2091 8 16 9.79086 16 12C16 14.2091 14.2091 16 12 16ZM12 14C13.1046 14 14 13.1046 14 12C14 10.8954 13.1046 10 10 10C10.8954 10 10 10.8954 10 12C10 13.1046 10.8954 14 12 14Z"></path>
+              </svg>
+              <span>偏好设置</span>
+            </div>
+            <div class="yami-settings-close-btn" id="btn-close-home-settings" role="button" title="关闭 (ESC)">×</div>
+          </div>
+          <div class="yami-settings-modal-body">
+            <div class="yami-settings-section-title">视觉提醒与免打扰</div>
+            <div class="yami-settings-item">
+              <div class="yami-settings-item-info">
+                <div class="yami-settings-item-title">迷你悬浮窗缩小到只显示 FPS</div>
+                <div class="yami-settings-item-desc">隐藏毫秒耗时与 DrawCall，大幅缩减右上角悬浮窗占用空间</div>
+              </div>
+              <label class="yami-save-toggle">
+                <input type="checkbox" id="chk-capsule-fps-only" />
+                <span class="yami-save-toggle-slider"></span>
+              </label>
+            </div>
+            <div class="yami-settings-item">
+              <div class="yami-settings-item-info">
+                <div class="yami-settings-item-title">控制台报错浮层弹窗</div>
+                <div class="yami-settings-item-desc">关闭后改为静默收集至运行日志，不在游戏画面弹出红色异常气泡</div>
+              </div>
+              <label class="yami-save-toggle">
+                <input type="checkbox" id="chk-error-bubble-alert" />
+                <span class="yami-save-toggle-slider"></span>
+              </label>
+            </div>
+            <div class="yami-settings-item">
+              <div class="yami-settings-item-info">
+                <div class="yami-settings-item-title">掉帧告警提示与震颤</div>
+                <div class="yami-settings-item-desc">关闭后严重掉帧时不弹提示条，仅在后台静默记录性能真凶</div>
+              </div>
+              <label class="yami-save-toggle">
+                <input type="checkbox" id="chk-jank-toast-alert" />
+                <span class="yami-save-toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="yami-settings-section-title" style="margin-top: 4px;">窗口管理与复位</div>
+            <div class="yami-settings-item">
+              <div class="yami-settings-item-info">
+                <div class="yami-settings-item-title">重置悬浮窗与大盘位置</div>
+                <div class="yami-settings-item-desc">清除拖拽坐标与尺寸记忆，防止跨屏分辨率错位或窗口丢失</div>
+              </div>
+              <div class="yami-settings-action-btn" id="btn-reset-dock-layout" role="button" title="重置位置与尺寸">一键复位</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.13.1 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.14.0 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
-        <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
-          <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
-          <div class="yami-perf-btn" id="dock-btn-dl" role="button">保存报告</div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div class="yami-home-settings-btn" id="btn-home-settings" role="button" title="偏好设置">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+              <path d="M12 1L21.5 6.5V17.5L12 23L2.5 17.5V6.5L12 1ZM12 3.311L4.5 7.65311V16.3469L12 20.689L19.5 16.3469V7.65311L12 3.311ZM12 16C9.79086 16 8 14.2091 8 12C8 9.79086 9.79086 8 12 8C14.2091 8 16 9.79086 16 12C16 14.2091 14.2091 16 12 16ZM12 14C13.1046 14 14 13.1046 14 12C14 10.8954 13.1046 10 10 10C10.8954 10 10 10.8954 10 12C10 13.1046 10.8954 14 12 14Z"></path>
+            </svg>
+            <span>设置</span>
+          </div>
+          <div id="yami-dock-export-group" style="display: none !important; gap: 6px;">
+            <div class="yami-perf-btn" id="dock-btn-copy" role="button">复制 JSON</div>
+            <div class="yami-perf-btn" id="dock-btn-dl" role="button">保存报告</div>
+          </div>
         </div>
       <div class="yami-dock-resizer" id="yami-dock-resizer" title="按住拖拽调节窗口大小"></div>
       </div>
@@ -6835,6 +7012,7 @@
     let currentView = localStorage.getItem('yami-suite-active-view') || 'home';
 
     function switchView(target) {
+      if (typeof closeHomeSettingsDialog === 'function') closeHomeSettingsDialog();
       const nextView = Views.get(target) ? target : 'home';
       if (Views.current && Views.current.id !== nextView) {
         const prev = Views.get(Views.current.id);
@@ -6868,6 +7046,12 @@
       const aiCostEl = document.getElementById('yami-ai-footer-cost');
       if (aiCostEl) {
         aiCostEl.style.setProperty('display', nextView === 'ai' ? 'inline-flex' : 'none', 'important');
+      }
+
+      // 底栏设置按钮显隐调度：主页大厅呈现，切入其他子页面时让位收起
+      const homeSettingsBtn = document.getElementById('btn-home-settings');
+      if (homeSettingsBtn) {
+        homeSettingsBtn.style.setProperty('display', nextView === 'home' ? 'inline-flex' : 'none', 'important');
       }
 
       // 调度页面容器显隐
@@ -7125,7 +7309,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.13.1 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.14.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -8077,8 +8261,9 @@
       const freshType = !(detail && seenErrorKeys.has(errKeyOf(detail)));
       if (detail) seenErrorKeys.add(errKeyOf(detail));
 
-      // 如果大盘未展开，触发右上角浮窗抖动 + 在浮窗下方弹窗显示
-      if (!isDockOpen && freshType) {
+      // 如果大盘未展开，触发右上角浮窗抖动 + 在浮窗下方弹窗显示 (遵循免打扰设置)
+      const isBubbleAlertEnabled = localStorage.getItem('yami-perf-error-bubble-enabled') !== '0';
+      if (!isDockOpen && freshType && isBubbleAlertEnabled) {
         if (capsuleEl) {
           capsuleEl.classList.remove('shake');
           void capsuleEl.offsetWidth; // 触发 reflow 重置动画
@@ -10087,12 +10272,25 @@
 
     let activeTab = 'overview';   // isDockOpen 已上移到悬浮状态声明处（TDZ 问题，见那里的注释）
 
+    let hudHideTimer = null;
+    let hudFadeTimer = null;
+
     function toggleDock(force) {
       isDockOpen = typeof force === 'boolean' ? force : !isDockOpen;
       dock.classList.toggle('show', isDockOpen);
       if (isDockOpen) {
-        // 大盘展开时，彻底隐藏右上角迷你帧数浮窗，防止穿透或半透明时穿帮透出
-        if (hud) hud.style.setProperty('display', 'none', 'important');
+        // 大盘展开：右上角悬浮窗淡出消失，主页从右侧淡入左滑进来（悬浮模式下原地淡入）
+        if (hud) {
+          hud.classList.add('fade-out');
+          if (hudHideTimer) clearTimeout(hudHideTimer);
+          if (hudFadeTimer) clearTimeout(hudFadeTimer);
+          // 淡出结束后设置 display: none，杜绝半透明穿帮与点击干扰，且满足门禁校验
+          hudHideTimer = setTimeout(() => {
+            if (isDockOpen && hud) {
+              hud.style.setProperty('display', 'none', 'important');
+            }
+          }, 150);
+        }
         if (errorBubbleEl) errorBubbleEl.classList.remove('show');
         // 自由悬浮窗模式下自愈检查，防止窗口坐标脱离可视区域导致展开后看不见
         if (typeof isFloating !== 'undefined' && isFloating) {
@@ -10114,8 +10312,18 @@
         markSeenExistingErrors();
         refreshDockData();
       } else {
-        // 大盘收起时，恢复右上角迷你帧数浮窗
-        if (hud) hud.style.removeProperty('display');
+        // 大盘收起：反向动画，主页淡出右滑出去（悬浮模式下原地淡出），悬浮窗淡入进来
+        if (hudHideTimer) { clearTimeout(hudHideTimer); hudHideTimer = null; }
+        if (hudFadeTimer) { clearTimeout(hudFadeTimer); hudFadeTimer = null; }
+        if (hud) {
+          hud.style.removeProperty('display');
+          hud.classList.add('fade-out');
+          hudFadeTimer = setTimeout(() => {
+            if (!isDockOpen && hud) {
+              hud.classList.remove('fade-out');
+            }
+          }, 60);
+        }
         // 收起时防御性清理错误气泡与其计时器, 杜绝任何红框残留
         if (errorBubbleEl) errorBubbleEl.classList.remove('show');
         if (errorBubbleTimer) { clearTimeout(errorBubbleTimer); errorBubbleTimer = null; }
@@ -10429,7 +10637,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.13.1';
+      const cur = (probe && probe.version) ? probe.version : '1.14.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -10495,7 +10703,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.13.1') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.14.0') + ')');
           refreshVersionBadge();
         }
       });
@@ -10878,19 +11086,7 @@
     updateModeUI();
 
     function updateRadarQuickPill(trigger) {
-      const pill = document.getElementById('yami-radar-quick-pill');
-      const text = document.getElementById('yami-radar-pill-text');
-      if (!pill || !text) return;
-      if (!trigger) {
-        pill.className = 'yami-radar-quick-pill';
-        text.textContent = '音效雷达就绪';
-        return;
-      }
-      const isMissing = !trigger.hasAudio;
-      pill.className = 'yami-radar-quick-pill ' + (isMissing ? 'missing' : 'configured');
-      const name = (trigger.medium && trigger.medium.name) || (trigger.target && trigger.target.name) || '动作';
-      const statusLabel = isMissing ? '(未配音效)' : '[已配音效]';
-      text.textContent = '最新: ' + name + ' ' + statusLabel;
+      // 音效雷达悬浮窗已按用户需求彻底移除，无需常驻DOM，纯快捷键F8体验
     }
 
     function handleF8AudioLocate() {
@@ -10955,6 +11151,11 @@
         e.__yami_home_handled = true;
         e.preventDefault();
         e.stopPropagation();
+        const settingsDialog = document.getElementById('yami-home-settings-dialog');
+        if (settingsDialog && settingsDialog.style.display !== 'none') {
+          if (typeof closeHomeSettingsDialog === 'function') closeHomeSettingsDialog();
+          return;
+        }
         toggleDock(false);
       }
     }
@@ -10963,27 +11164,158 @@
     window.addEventListener('keydown', onGlobalKeyDown, true);
     document.addEventListener('keydown', onGlobalKeyDown, true);
 
-        const radarPillEl = document.getElementById('yami-radar-quick-pill');
-    if (radarPillEl) {
-      radarPillEl.addEventListener('click', (e) => {
-        e.stopPropagation();
-        handleF8AudioLocate();
+    // ============================================================
+    // 主页偏好设置弹窗 (悬浮窗精简 / 报错弹窗 / 掉帧提醒 / 布局复位)
+    // ============================================================
+    const btnHomeSettings = document.getElementById('btn-home-settings');
+    const settingsDialog = document.getElementById('yami-home-settings-dialog');
+    const btnCloseSettings = document.getElementById('btn-close-home-settings');
+    const settingsBackdrop = document.getElementById('yami-settings-modal-backdrop');
+    const chkFpsOnly = document.getElementById('chk-capsule-fps-only');
+    const chkErrorBubble = document.getElementById('chk-error-bubble-alert');
+    const chkJankToast = document.getElementById('chk-jank-toast-alert');
+    const btnResetLayout = document.getElementById('btn-reset-dock-layout');
+    const capsuleElNode = document.getElementById('yami-capsule');
+
+    function applyCapsuleFpsOnly(enabled) {
+      if (capsuleElNode) {
+        capsuleElNode.classList.toggle('fps-only', Boolean(enabled));
+      }
+    }
+
+    function openHomeSettingsDialog() {
+      const dlg = document.getElementById('yami-home-settings-dialog');
+      const chkFps = document.getElementById('chk-capsule-fps-only');
+      const chkErr = document.getElementById('chk-error-bubble-alert');
+      const chkJank = document.getElementById('chk-jank-toast-alert');
+      const cap = document.getElementById('yami-capsule');
+      if (dlg) {
+        if (chkFps && cap) {
+          chkFps.checked = cap.classList.contains('fps-only');
+        }
+        if (chkErr) {
+          chkErr.checked = localStorage.getItem('yami-perf-error-bubble-enabled') !== '0';
+        }
+        if (chkJank) {
+          chkJank.checked = localStorage.getItem('yami-perf-jank-toast-enabled') !== '0';
+        }
+        dlg.style.setProperty('display', 'flex', 'important');
+      }
+    }
+
+    function closeHomeSettingsDialog() {
+      const dlg = document.getElementById('yami-home-settings-dialog');
+      if (dlg) {
+        dlg.style.setProperty('display', 'none', 'important');
+      }
+    }
+
+    if (chkFpsOnly) {
+      chkFpsOnly.checked = capsuleElNode ? capsuleElNode.classList.contains('fps-only') : false;
+      chkFpsOnly.addEventListener('change', function() {
+        const enabled = chkFpsOnly.checked;
+        applyCapsuleFpsOnly(enabled);
+        try {
+          localStorage.setItem('yami-perf-capsule-fps-only', enabled ? '1' : '0');
+        } catch (e) {}
+        showToast(enabled ? '悬浮窗已缩小至仅显示 FPS' : '已恢复悬浮窗完整显示');
       });
     }
 
-    window.addEventListener('yami-audio-radar-trigger', (e) => {
+    if (chkErrorBubble) {
+      chkErrorBubble.checked = localStorage.getItem('yami-perf-error-bubble-enabled') !== '0';
+      chkErrorBubble.addEventListener('change', function() {
+        const enabled = chkErrorBubble.checked;
+        try {
+          localStorage.setItem('yami-perf-error-bubble-enabled', enabled ? '1' : '0');
+        } catch (e) {}
+        showToast(enabled ? '已开启控制台报错浮层弹窗' : '已开启报错静默模式 (仅记录至运行日志)');
+      });
+    }
+
+    if (chkJankToast) {
+      chkJankToast.checked = localStorage.getItem('yami-perf-jank-toast-enabled') !== '0';
+      chkJankToast.addEventListener('change', function() {
+        const enabled = chkJankToast.checked;
+        try {
+          localStorage.setItem('yami-perf-jank-toast-enabled', enabled ? '1' : '0');
+        } catch (e) {}
+        showToast(enabled ? '已开启掉帧视觉告警' : '已开启掉帧静默模式 (不弹提示条)');
+      });
+    }
+
+    if (btnResetLayout) {
+      btnResetLayout.addEventListener('click', function(e) {
+        e.stopPropagation();
+        try {
+          localStorage.removeItem('yami-perf-capsule-pos');
+          localStorage.removeItem('yami-perf-dock-pos');
+          localStorage.removeItem('yami-perf-dock-size');
+          localStorage.removeItem('yami-perf-dock-floating');
+        } catch (err) {}
+
+        const hudEl = document.getElementById('yami-perf-mini-hud');
+        if (hudEl) {
+          hudEl.style.removeProperty('left');
+          hudEl.style.removeProperty('top');
+          hudEl.style.removeProperty('bottom');
+          hudEl.style.setProperty('right', '10px', 'important');
+          hudEl.style.setProperty('top', '40px', 'important');
+        }
+
+        const dockEl = document.getElementById('yami-perf-dock');
+        if (dockEl) {
+          if (typeof applyFloatingState === 'function') {
+            applyFloatingState(false, false);
+          } else {
+            dockEl.classList.remove('floating');
+          }
+          dockEl.style.removeProperty('left');
+          dockEl.style.removeProperty('top');
+          dockEl.style.removeProperty('width');
+          dockEl.style.removeProperty('height');
+          dockEl.style.removeProperty('right');
+          dockEl.style.removeProperty('bottom');
+        }
+        showToast('已重置悬浮窗与大盘位置尺寸');
+      });
+    }
+
+    if (btnHomeSettings) {
+      btnHomeSettings.addEventListener('click', function(e) {
+        e.stopPropagation();
+        openHomeSettingsDialog();
+      });
+    }
+    if (btnCloseSettings) {
+      btnCloseSettings.addEventListener('click', function(e) {
+        e.stopPropagation();
+        closeHomeSettingsDialog();
+      });
+    }
+    if (settingsBackdrop) {
+      settingsBackdrop.addEventListener('click', function(e) {
+        e.stopPropagation();
+        closeHomeSettingsDialog();
+      });
+    }
+
+        window.addEventListener('yami-audio-radar-trigger', (e) => {
       const trigger = e.detail;
       if (trigger) {
         updateRadarQuickPill(trigger);
       }
     });
 
-    // 胶囊实时数据刷新与告警
+    // 胶囊实时数据刷新与告警 (遵循免打扰设置)
     window.addEventListener('yami-perf-jank', (e) => {
       const detail = e.detail || {};
-      badge.className = 'yami-perf-badge bad';
-      showToast(`掉帧告警: ${detail.compute}ms (${detail.culprit})`, 2500);
-      setTimeout(() => { badge.className = 'yami-perf-badge'; }, 2500);
+      const isJankAlertEnabled = localStorage.getItem('yami-perf-jank-toast-enabled') !== '0';
+      if (isJankAlertEnabled) {
+        badge.className = 'yami-perf-badge bad';
+        showToast(`掉帧告警: ${detail.compute}ms (${detail.culprit})`, 2500);
+        setTimeout(() => { badge.className = 'yami-perf-badge'; }, 2500);
+      }
       if (isDockOpen) refreshDockData();
     });
 
@@ -11003,15 +11335,7 @@
 
         const probe = window.__YAMI_PERF_PROBE__;
         if (probe && typeof probe.getLatestAudioTrigger === 'function') {
-          const radarPill = document.getElementById('yami-radar-quick-pill');
-          if (radarPill) {
-            const latest = probe.getLatestAudioTrigger(true);
-            if (latest && radarPill.__lastId !== latest.id) {
-              radarPill.__lastId = latest.id;
-              updateRadarQuickPill(latest);
-            }
           }
-        }
         if (!probe || !probe.state.samples.length) return;
         const last = probe.state.samples[probe.state.samples.length - 1];
         const fps = last.fps || 60;

@@ -327,8 +327,8 @@ console.log('########## 5. F8 极简试玩联动与 5967 编辑器桥断言 ####
 const hudOverlaySrc = readFileSync(new URL('../hud-overlay.js', import.meta.url), 'utf8');
 check('hud-overlay.js 包含 F8 快捷键监听', hudOverlaySrc.includes("key === 'F8'") || hudOverlaySrc.includes("code === 'F8'"));
 check('hud-overlay.js 包含 handleF8AudioLocate 函数', hudOverlaySrc.includes('handleF8AudioLocate'));
-check('hud-overlay.js 包含 yami-radar-quick-pill 极简胶囊', hudOverlaySrc.includes('id="yami-radar-quick-pill"'));
-check('hud-overlay.js 包含 yami-radar-pill-key 快捷键标识', hudOverlaySrc.includes('yami-radar-pill-key'));
+check('hud-overlay.js 彻底隐藏/移除多余常驻 yami-radar-quick-pill 悬浮窗', !hudOverlaySrc.includes('id="yami-radar-quick-pill"'));
+check('hud-overlay.js F8 触发后通过轻量级 Toast 提示定位结果', hudOverlaySrc.includes("showToast('已呼叫编辑器定位:"));
 check('hud-overlay.js 包含 updateRadarQuickPill 状态刷新函数', hudOverlaySrc.includes('updateRadarQuickPill'));
 
 check('probe-core.js 包含 getLatestAudioTrigger 函数', probeSrc.includes('getLatestAudioTrigger'));

@@ -7,7 +7,7 @@
 > - **第二层 · 记忆与经验**：项目经历了什么、踩过哪些坑、为什么这样设计——读它能少走弯路。
 > - **第三层 · 当前进度**：推进到哪里了、什么已完成、什么没做完、下一步做什么。
 >
-> **当前版本**：`v1.13.1`　**最近更新**：2026-10-12（快捷操作与区域工具版本发布）
+> **当前版本**：`v1.14.0`　**最近更新**：2026-10-12（快捷操作与区域工具版本发布）
 
 ---
 
@@ -19,7 +19,7 @@
 | :--- | :--- |
 | 名称 | DanJuan妙妙插件（DanJuan DevSuite） |
 | 形态 | Open Yami RPG Editor 的 Chrome MV3 扩展（非侵入式，不改游戏逻辑） |
-| 当前版本 | `v1.13.1`（单一事实源：`manifest.json` 的 `version`） |
+| 当前版本 | `v1.14.0`（单一事实源：`manifest.json` 的 `version`） |
 | 母仓库 | `yami-tools`，分支 `extension` |
 | 许可与分发 | 母仓库 + GitHub 远端（热更新源），插件目录单向镜像 |
 | 支持平台 | Windows（打包版引擎）与 Linux（源码构建版，本机为 Steam Deck / X11） |
@@ -1132,7 +1132,7 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
 
 # 第三层 · 当前进度（Where We Are）
 
-> 更新日期：2026-09-24 · 当前版本：`v1.13.1`
+> 更新日期：2026-09-24 · 当前版本：`v1.14.0`
 
 ## 3.1 能力清单与完成度
 
@@ -1842,4 +1842,67 @@ node tests/run-all.cjs                            # 全量套件（单个套件�
   - 全量 39 套回归测试 39/39 PASS；
   - 单向构建部署 MD5 100% 对齐。
 
+### 3.15 纯净画面优化与主页偏好设置：右上角悬浮窗精简 FPS 模式 (v1.13.1)
+- **需求动因**：
+  1. 用户指出右上角常驻的 `[F8] 音效雷达就绪` 悬浮窗遮挡画面且无意义，要求彻底移除并保持画面纯净，仅保留 F8 盲操；
+  2. 用户要求右上角性能迷你胶囊浮窗能够缩小到只显示 FPS（FPS Only），且该设置项应放置在主页界面右下角的“设置”按钮中。
+- **架构落地与实现**：
+  1. **彻底移除音效雷达常驻挂件**：
+     - 从 [hud-overlay.js](file:///d:/Documents/GitHub/yami-tools/hud-overlay.js) 和 [src/style.css](file:///d:/Documents/GitHub/yami-tools/src/style.css) 中彻底清除 `#yami-radar-quick-pill` DOM 模板骨架、相关 CSS 规则与定时器轮询读取；
+     - 纯快捷键体验：试玩中按下 `F8` 依然即时置顶编辑器并定位动作事件，辅以 2.5 秒自消轻量 Toast 提示，零常驻占用；
+     - 静态门禁与专项断言完全同步更新，69 项测试全绿。
+  2. **迷你胶囊精简模式 (仅显示 FPS)**：
+     - 胶囊模板新增 `.yami-capsule-extra` 容器类，包含两道竖线分隔符及 `#yami-ms` 与 `#yami-dc` 指标；
+     - 当胶囊添加 `.fps-only` 类时，隐藏所有 extra 节点并收缩 padding 至 3px 8px，胶囊宽度压缩一半以上，仅保留健康度状态灯和 FPS 数值（如 `[●] 60 FPS`），极度小巧且不妨碍内部数据指标赋值。
+  3. **主页界面右下角设置按钮与偏好设置弹层**：
+     - 在主页 `#page-home` 底部添加 `.yami-home-footer`，右下角安置 `#btn-home-settings` 设置按钮（内嵌 Remix Icon 官方 settings-4-line 矢量路径，工业暗黑设计风格）；
+     - 点击呼出 `#yami-home-settings-dialog` 偏好设置弹窗，内含“迷你悬浮窗缩小到只显示 FPS”开关项（复用工业级 Toggle 开关）；
+     - 切换开关即刻作用于胶囊，并持久化至 `localStorage.setItem('yami-perf-capsule-fps-only')`；
+     - 完善的关闭机制：支持点击右上角关闭、点击暗黑毛玻璃遮罩、按下全局 `ESC` 键优先关闭设置浮层，以及 `switchView` 切换主页时联动自动收起。
+- **全量测试与验证**：
+  - 新增专用单元测试 [tests/test-home-settings.mjs](file:///d:/Documents/GitHub/yami-tools/tests/test-home-settings.mjs)，**22 PASS / 0 FAIL**；
+  - 静态门禁 [tests/verify-perf-probe.mjs](file:///d:/Documents/GitHub/yami-tools/tests/verify-perf-probe.mjs) **30 PASS / 0 FAIL**，`id 引用完整` 校验 100% 通过；
+  - `build.cjs --deploy` 全部 51 项核心锚点全绿，生产镜像 MD5 100% 对齐。
+### 3.16 主页偏好设置面板扩充：报错浮层/掉帧告警免打扰与布局一键复位 (v1.13.1)
+- **需求动因**：用户要求在主页偏好设置面板中补充多项实用配置，丰富免打扰与窗口自愈能力。
+- **功能落地**：
+  1. **控制台报错浮层弹窗 (开关)**：
+     - 配置键名：`yami-perf-error-bubble-enabled`；
+     - 开启状态（默认）：未展开大盘时在右上角胶囊下方弹出红色报错气泡；
+     - 关闭状态：进入报错静默收集模式，不在游戏画面中弹出气泡，同源错误静默归档记录于后台运行日志。
+  2. **掉帧告警提示与震颤 (开关)**：
+     - 配置键名：`yami-perf-jank-toast-enabled`；
+     - 开启状态（默认）：严重卡顿或超过预算时触发胶囊抖动并弹出红色掉帧提示条；
+     - 关闭状态：进入掉帧免打扰模式，不弹 Toast 且胶囊不抖动，性能真凶指标仍静默记录至性能大盘与推流。
+  3. **重置悬浮窗与大盘位置尺寸 (一键复位)**：
+     - 纯工业级操作按钮 `#btn-reset-dock-layout`（杜绝原生 button，采用纯 div + role 规范）；
+     - 点击后一键清除 `yami-perf-capsule-pos`、`yami-perf-dock-pos`、`yami-perf-dock-size`、`yami-perf-dock-floating` 记忆；
+     - 将胶囊与大盘即刻安全复位至右上角默认停靠安全区并退出悬浮模式，辅以轻量 Toast 提醒。
+  4. **面板滚动体验**：
+     - 为 `.yami-settings-modal-body` 增加 `max-height: 420px` 与暗色微滚动条，防止低分辨率屏幕溢出。
+- **全量测试与验证**：
+  - [tests/test-home-settings.mjs](file:///d:/Documents/GitHub/yami-tools/tests/test-home-settings.mjs) 扩充至 **34 PASS / 0 FAIL**；
+  - 静态门禁 [tests/verify-perf-probe.mjs](file:///d:/Documents/GitHub/yami-tools/tests/verify-perf-probe.mjs) **30 PASS / 0 FAIL**，所有 ID 引用完整无断裂。
 
+### 3.17 悬浮窗与主页展开/收起联动动效打磨 (淡入左滑 + 反向淡出右滑 + 悬浮纯淡入淡出) (v1.13.1)
+- **痛点与需求**：
+  - 用户反馈原交互动效不够细腻：原先点击胶囊展开大盘时，胶囊瞬间突兀消失（直接 `display: none`），收起时胶囊瞬间蹦出且大盘还在滑出，缺乏相互配合；且悬浮模式下带有滑动位移，不够纯粹。
+  - 用户明确要求：
+    1. **展开时**：悬浮窗直接平滑淡出消失，主页从右侧直接淡入左滑进来；
+    2. **收起时**：反向动画，主页窗口淡出右滑出去，悬浮窗平滑淡入进来；
+    3. **悬浮模式下**：彻底不需要滑动动画，但淡入淡出动画都得有。
+- **架构落地与动画时序重构**：
+  1. **悬浮窗淡入淡出体系**：
+     - `#yami-perf-mini-hud` 增加平滑过渡曲线 `transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s`；
+     - 展开时添加 `.fade-out` 样式（`opacity: 0; transform: scale(0.92); pointer-events: none;`），140ms 动画平滑结束后执行 `hud.style.setProperty('display', 'none', 'important')`（保障门禁断言与 0 穿帮）；
+     - 收起时先恢复 `display`，初始维持淡出态，并在大盘滑出退场时（60ms 延时）移除 `.fade-out`，平滑淡入浮现，视线丝滑交接。
+  2. **侧栏停靠大盘进出场动效**：
+     - 进场态：`transform: translateX(0); opacity: 1;`，采用工业级平滑缓动 `cubic-bezier(0.16, 1, 0.3, 1)`，从右侧淡入左滑进来；
+     - 出场态：`transform: translateX(100%); opacity: 0;`，采用反向加速缓动 `cubic-bezier(0.4, 0, 1, 1)`，淡出右滑退出。
+  3. **自由悬浮模式原地纯淡入淡出**：
+     - 在 `.yami-perf-dock.floating` 与 `.yami-perf-dock.floating.show` 规则中强制设置 `transform: none !important`；
+     - 彻底消除一切横向与纵向位移滑动（去除了原先的 `translateY(8px)` 和 `translateX`），仅保留 `opacity` 与 `visibility` 原地纯淡入淡出过渡。
+- **验证与门禁**：
+  - 新增专用单元测试 [tests/test-dock-animation.mjs](file:///d:/Documents/GitHub/yami-tools/tests/test-dock-animation.mjs)，**17 PASS / 0 FAIL**；
+  - 纳入全量测试套件 [tests/run-all.cjs](file:///d:/Documents/GitHub/yami-tools/tests/run-all.cjs)（扩展为 41 套）；
+  - `build.cjs --deploy` 重新注入 CSS 并单向同步镜像，生产目录 MD5 100% 对齐。

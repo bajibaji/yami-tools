@@ -1,6 +1,6 @@
 # DanJuan妙妙插件 (Open Yami 开发者非侵入式辅助套件)
 
-> **版本**：`v1.13.1`
+> **版本**：`v1.14.0`
 > **分支**：`extension`（母仓库单一真实源 SSOT）  
 > **定位**：面向 Open Yami RPG Editor 编辑器的原生非侵入式辅助套件，包含**性能排查大盘（Profiler）**、**运行日志工作台（报错 / 事件流水 / 幽灵事件侦探）**、**发布前工程体检（Project Audit）**、**存档管理台（Save Lab）**、**场景实体检查台（Scene Inspector）**、**作弊与调试控制台（Cheats）**、**变量监视挂件（Pin）**以及微内核页面契约架构。
 
@@ -126,7 +126,7 @@
 ├── src/
 │   └── style.css       # 纯 CSS 样式源文件 (支持 IDE 语法高亮与 Emmet 补全)
 ├── build.cjs           # 原生零依赖自检构建脚本 (样式注入 / 51 项断言自检 / --deploy 镜像同步)
-├── tests/              # 回归套件 (总入口 run-all.cjs: 39 套; 浏览器 UI 验收另跑 test-editor-tools-ui.cjs)
+├── tests/              # 回归套件 (总入口 run-all.cjs: 40 套; 浏览器 UI 验收另跑 test-editor-tools-ui.cjs)
 ├── HANDOFF.md          # 交接文档·三层结构 (客观事实 / 记忆与经验 / 当前进度, SSOT)
 └── README.md           # 本说明文件
 ```
@@ -151,7 +151,7 @@
 - **本地修改与自检**：
   ```bash
   node build.cjs          # 执行语法校验、样式注入与 51 项核心锚点严苛自检
-  node tests/run-all.cjs  # 执行回归套件 (39 套: 含快捷操作、区域发布指令及原有模块)
+  node tests/run-all.cjs  # 执行回归套件 (40 套: 含快捷操作、区域发布指令及原有模块)
   node build.cjs --deploy # 自检 + 自动单向安全镜像至编辑器目录 + 输出 MD5 对齐报告
   node build.cjs --watch  # 推荐日常: 先部署一次, 之后源文件一保存就自动重建+部署
   ```

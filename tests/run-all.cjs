@@ -46,6 +46,8 @@ const SUITE = [
   ['test-update-recovery.cjs',  '更新失败自愈(bootstrap 把写坏的插件回退到旧版本)'],
   ['test-ai-host-port.cjs',   'AI Host 端口自适应(5968 被占自动换端口)'],
   ['test-audio-radar.mjs',    '音效雷达与触发点捕获(因果三主体+时间轴特征+音效对接卡)'],
+  ['test-home-settings.mjs',  '主页偏好设置与右上角悬浮窗 FPS 精简模式(开关+持久化+外观)'],
+  ['test-dock-animation.mjs', '悬浮窗与主页展开收起配合动效(淡入左滑+反向淡出右滑+悬浮原地纯淡入淡出)'],
   ['test-autoupdate.mjs',   '热更新端到端 (需联网)'],
 ];
 
