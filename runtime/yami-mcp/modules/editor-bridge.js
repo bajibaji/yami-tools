@@ -1,16 +1,19 @@
 'use strict'
 
 const http = require('http')
+const path = require('path')
 
 class EditorBridge {
   constructor(port = 0) {
     // 端口来源见 modules/bridge-port.js：环境变量 > 插件数据目录里的 editor-port > 5967 ——
     // 编辑器桥被别的程序占用时会自适应换端口，客户端必须读文件才知道真实端口
-    this.port = Number(process.env.YAMI_EDITOR_BRIDGE_PORT) || port || require('./bridge-port').editorPort()
+    this.fixedPort = Number(process.env.YAMI_EDITOR_BRIDGE_PORT) || port
+    this.port = this.fixedPort || require('./bridge-port').editorPort()
   }
 
   request(method, route, body = null, timeoutMs = 1800, token = '') {
     return new Promise((resolve) => {
+      this.port = this.fixedPort || require('./bridge-port').editorPort()
       const payload = body === null ? null : Buffer.from(JSON.stringify(body), 'utf8')
       const req = http.request({
         hostname: '127.0.0.1', port: this.port, path: route, method,
@@ -43,9 +46,13 @@ class EditorBridge {
     if (root) {
       const who = await this.whoami()
       if (who.ok && who.projectRoot) {
-        const normWho = String(who.projectRoot).replace(/\\/g, '/').toLowerCase()
-        const normExp = String(root).replace(/\\/g, '/').toLowerCase()
-        if (!normWho.includes(normExp) && !normExp.includes(normWho)) {
+        const normalize = value => {
+          const full = path.resolve(value).replace(/\\/g, '/')
+          return process.platform === 'win32' ? full.toLowerCase() : full
+        }
+        const normWho = normalize(who.projectRoot)
+        const normExp = normalize(root)
+        if (normWho !== normExp) {
           return { ok: false, error: `检测到另一个编辑器实例占用端口（目标工程: ${who.projectRoot}，当前工程: ${root}），已拒绝操作以防串工程` }
         }
       }

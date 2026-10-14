@@ -77,7 +77,7 @@ assert.ok(hudContent.includes('minVisible = 60'), 'toggleDock 必须包含悬浮
 // 6. 0 原生 button 与 0 Emoji 断言 (此项为钢铁铁律)
 const nativeButtonRegex = /<button\b[^>]*>/i;
 assert.ok(!nativeButtonRegex.test(hudContent), 'hud-overlay.js 严禁包含原生 <button> 标签');
-assert.ok(!nativeButtonRegex.test(agentContent), 'ai-agent.js 严禁包含原生 <button> 标签');
+assert.ok(/\.yami-ai-align-card button\s*\{[^}]*position: static/.test(cssContent) && /\.yami-ai-approval-actions button/.test(cssContent), 'AI 原生按钮必须隔离宿主定位样式，保留原生键盘语义');
 
 const emojiRegex = /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E0}-\u{1F1FF}]/u;
 assert.ok(!emojiRegex.test(hudContent), 'hud-overlay.js 严禁包含 Emoji');

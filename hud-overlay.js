@@ -5568,6 +5568,35 @@
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
       }
       .yami-ai-approval.show { display: block !important; }
+      .yami-ai-approval { max-height: 55vh !important; overflow: auto !important; flex-shrink: 0 !important; }
+      .yami-ai-frozen-target {
+        padding: 6px 12px !important;
+        color: #d1d5db !important;
+        font: 400 12px/1.5 sans-serif !important;
+        overflow-wrap: anywhere !important;
+        flex-shrink: 0 !important;
+      }
+      .yami-ai-frozen-target[hidden], #yami-ai-context-conflict[hidden] { display: none !important; }
+      #yami-ai-context-conflict { margin-block: 8px !important; color: #fde68a !important; font: 400 12px/1.5 sans-serif !important; overflow-wrap: anywhere !important; }
+      .yami-ai-compose-label { color: #d1d5db !important; font: 400 12px/1.5 sans-serif !important; }
+      .yami-ai-validation { color: #d1d5db !important; padding: 8px 0 !important; font: 400 12px/1.5 sans-serif !important; white-space: pre-wrap !important; overflow-wrap: anywhere !important; }
+      .yami-ai-align-card button { position: static !important; width: auto !important; height: auto !important; min-height: 32px !important; font: inherit !important; }
+      .yami-ai-align-card button:focus-visible { outline: 2px solid #e5e7eb !important; outline-offset: 2px !important; }
+      .yami-ai-approval-actions button { position: static !important; width: auto !important; height: auto !important; font-family: inherit !important; min-height: 32px !important; border: 1px solid transparent !important; }
+      .yami-ai-approval-diff button { position: static !important; width: auto !important; height: auto !important; min-height: 32px !important; }
+      .yami-ai-approval-actions button:focus-visible { outline: 2px solid #e5e7eb !important; outline-offset: 2px !important; }
+      #yami-perf-dock #page-ai button:focus-visible,
+      #yami-perf-dock #page-ai [role="button"]:focus-visible,
+      #yami-perf-dock #page-ai input:focus-visible,
+      #yami-perf-dock #page-ai textarea:focus-visible,
+      #yami-perf-dock #page-ai select:focus-visible {
+        outline: 2px solid #e5e7eb !important;
+        outline-offset: 2px !important;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #page-ai .yami-ai-status-pulse { animation: none !important; transition: none !important; }
+        #page-ai button { transition: none !important; }
+      }
       .yami-ai-approval-title {
         color: #fbbf24 !important;
         font-size: 13px !important;
@@ -5604,14 +5633,14 @@
       .yami-ai-diff-line {
         color: #9ca3af !important;
         font: 400 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
-        white-space: pre !important;
-        overflow-wrap: normal !important;
+        white-space: pre-wrap !important;
+        overflow-wrap: anywhere !important;
         user-select: text !important;
       }
       .yami-ai-diff-line.add { color: #6ee7b7 !important; background: rgba(16, 185, 129, 0.12) !important; }
       .yami-ai-diff-line.del { color: #fca5a5 !important; background: rgba(239, 68, 68, 0.12) !important; }
       .yami-ai-diff-line.hunk { color: #60a5fa !important; }
-      .yami-ai-approval-actions { display: flex !important; justify-content: flex-end !important; gap: 8px !important; margin-top: 8px !important; }
+      .yami-ai-approval-actions { display: flex !important; flex-wrap: wrap !important; justify-content: flex-end !important; gap: 8px !important; margin-top: 8px !important; }
 
       /* 工具执行卡片 (Tool Card) */
       .yami-ai-tool {
@@ -5775,6 +5804,7 @@
       .yami-ai-undo::-webkit-scrollbar-track,
       .yami-ai-thinking-body::-webkit-scrollbar-track,
       .yami-ai-approval-diff::-webkit-scrollbar-track,
+      .yami-ai-approval::-webkit-scrollbar-track,
       .yami-ai-system-body::-webkit-scrollbar-track,
       .yami-ai-queue::-webkit-scrollbar-track,
       .yami-ai-context-summary::-webkit-scrollbar-track,
@@ -5801,6 +5831,7 @@
       .yami-ai-undo::-webkit-scrollbar-thumb,
       .yami-ai-thinking-body::-webkit-scrollbar-thumb,
       .yami-ai-approval-diff::-webkit-scrollbar-thumb,
+      .yami-ai-approval::-webkit-scrollbar-thumb,
       .yami-ai-system-body::-webkit-scrollbar-thumb,
       .yami-ai-queue::-webkit-scrollbar-thumb,
       .yami-ai-context-summary::-webkit-scrollbar-thumb,
@@ -5825,6 +5856,7 @@
       .yami-ghost-list::-webkit-scrollbar-thumb:hover,
       .yami-ai-messages::-webkit-scrollbar-thumb:hover,
       .yami-ai-approval-diff::-webkit-scrollbar-thumb:hover,
+      .yami-ai-approval::-webkit-scrollbar-thumb:hover,
       .yami-ai-thinking-body::-webkit-scrollbar-thumb:hover,
       .yami-ai-system-body::-webkit-scrollbar-thumb:hover,
       .yami-ai-queue::-webkit-scrollbar-thumb:hover,
@@ -5847,6 +5879,7 @@
       .yami-ai-undo::-webkit-scrollbar-corner,
       .yami-ai-thinking-body::-webkit-scrollbar-corner,
       .yami-ai-approval-diff::-webkit-scrollbar-corner,
+      .yami-ai-approval::-webkit-scrollbar-corner,
       .yami-ai-context-summary::-webkit-scrollbar-corner,
       .dj-tools-log::-webkit-scrollbar-corner,
       #yami-ai-input::-webkit-scrollbar-corner {
@@ -5859,6 +5892,7 @@
       .yami-ai-undo::-webkit-scrollbar,
       .yami-ai-thinking-body::-webkit-scrollbar,
       .yami-ai-approval-diff::-webkit-scrollbar,
+      .yami-ai-approval::-webkit-scrollbar,
       .yami-ai-system-body::-webkit-scrollbar,
       .yami-ai-queue::-webkit-scrollbar,
       .yami-ai-context-summary::-webkit-scrollbar,
@@ -6947,7 +6981,7 @@
 
       <div class="yami-perf-dock-footer">
         <div style="color: #808080; display: flex; align-items: center; gap: 8px;">
-          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.14.0 (检查更新)</span>
+          <span id="yami-version-badge" style="color: #0080c0; cursor: pointer; text-decoration: underline;" title="点击检查 GitHub 最新版本">v1.15.0 (检查更新)</span>
           <span id="yami-local-install-link" style="color: #808080; cursor: pointer; text-decoration: underline;" title="网络不通时的手动通道: 下载整包解压后选那个文件夹 (可重装同版本修复)">本地安装</span>
           <span id="yami-ai-footer-cost" style="display: none !important;"></span>
         </div>
@@ -7309,7 +7343,7 @@
       const report = [
         '# Open Yami 游戏运行期错误诊断报告',
         '- **生成时间**: ' + now,
-        '- **插件版本**: v1.14.0 (DanJuan妙妙插件)',
+        '- **插件版本**: v1.15.0 (DanJuan妙妙插件)',
         '- **运行时状态**: FPS ' + fps + ' · DrawCall ' + dc,
         '- **异常总类数**: ' + errors.length + ' 项 (已按同源指纹智能聚合)',
         '',
@@ -10637,7 +10671,7 @@
     function refreshVersionBadge() {
       if (!versionBadge) return;
       const probe = window.__YAMI_PERF_PROBE__;
-      const cur = (probe && probe.version) ? probe.version : '1.14.0';
+      const cur = (probe && probe.version) ? probe.version : '1.15.0';
       versionBadge.textContent = 'v' + cur + ' (检查更新)';
     }
     refreshVersionBadge();
@@ -10703,7 +10737,7 @@
           setUpdateHint('更新源全部不可达, 可用「本地安装」离线升级', '#ff4040');
           showToast('检查更新失败: 网络连不上任何更新通道');
         } else {
-          showToast('当前已是最新版本 (v' + (probe.version || '1.14.0') + ')');
+          showToast('当前已是最新版本 (v' + (probe.version || '1.15.0') + ')');
           refreshVersionBadge();
         }
       });

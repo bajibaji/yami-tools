@@ -404,7 +404,8 @@ function checkMentionFiles() {
   assert.ok(/pathname === '\/files'/.test(host), '宿主必须有 /files 端点')
   assert.ok(/MENTION_SKIP_TYPES = new Set\(\['image', 'audio'\]\)/.test(host), '候选必须排除图片与音频（真工程里它们占 88%，会把目标淹掉）')
   assert.ok(/Date\.now\(\) - mentionCache\.at < 60000/.test(host), '/files 必须带缓存：@ 是打字触发的，每次按键扫盘会拖卡输入')
-  assert.ok(/用户消息里的 @相对路径/.test(host), '系统提示词必须说明 @路径 是用户点选的文件，否则模型只当它是普通文本')
+  const workflow = fs.readFileSync(path.join(ROOT, 'runtime/yami-mcp/modules/ai-workflow.js'), 'utf8')
+  assert.ok(/@路径或用户明确目标优先/.test(workflow) && /explicitTargets\(/.test(host), '@路径须由宿主定位并优先冻结为明确目标')
 
   // ③ 样式双落地（只改 src 不构建 = 编辑器里根本没有浮层样式）
   assert.ok(/\.yami-ai-mention-item/.test(styleCss) && /\.yami-ai-mention-item/.test(hud), '@ 浮层样式必须同时落在 src/style.css 与构建产物 hud-overlay.js')
@@ -511,7 +512,7 @@ function checkMentionFiles() {
   // 不对齐就整体错一位，一点「重发」就把对话截断到别处（2026-09-24 真机抓到，会丢对话）。
   // 晚一步对齐也没用：按钮的闭包在挂上那一刻就把号钉死了。
   assert.ok(/async function alignTurnSeq\(\)/.test(agent), '面板要有 alignTurnSeq（与宿主对齐轮次号）')
-  assert.ok(/async function runMessage\(text\)\s*\{[\s\S]{0,400}await alignTurnSeq\(\)[\s\S]{0,400}addMessage\('user'/.test(agent),
+  assert.ok(/async function runMessage\(text, captureId\)\s*\{[\s\S]{0,400}await alignTurnSeq\(\)[\s\S]{0,400}addMessage\('user'/.test(agent),
     'runMessage 必须在挂用户气泡之前先 alignTurnSeq —— 挂完再对齐，按钮上的轮次号已经钉死了')
   assert.ok(/userTurns:/.test(host), '宿主 /status 必须返回 userTurns（与回放、rewind 同一口径：压缩检查点不计）')
 

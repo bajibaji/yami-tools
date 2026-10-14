@@ -381,8 +381,22 @@ async function main() {
     const declared = (realManifest.content_scripts || []).flatMap(e => e.js || [])
       .concat((realManifest.web_accessible_resources || []).flatMap(e => e.resources || []));
     check('manifest 声明的每个文件都落盘了', declared.every(f => existsSync(path.join(realDst, f))), declared.join(','));
-    const realModules = readdirSync(new URL('../runtime/yami-mcp/modules/', import.meta.url)).filter(f => f.endsWith('.js'));
-    check('runtime 模块一个不少 (整包天然覆盖新增模块)', realModules.every(f => existsSync(path.join(realDst, 'runtime/yami-mcp/modules', f))), realModules.length + ' 个模块');
+    // 远端快照只能按自身源码依赖验收；未发布的本地新增模块不属于远端载荷。
+    const queue = ['ai-host.js', 'runtime/yami-mcp/server.js'];
+    const inspected = new Set();
+    const missing = [];
+    while (queue.length) {
+      const rel = queue.pop();
+      if (inspected.has(rel)) continue;
+      inspected.add(rel);
+      const full = path.join(realDst, rel);
+      if (!existsSync(full)) { missing.push(rel); continue; }
+      for (const hit of readText(full).matchAll(/require\(['"](\.[^'"]+)['"]\)/g)) {
+        const next = path.posix.normalize(path.posix.join(path.posix.dirname(rel), hit[1]));
+        queue.push(next.endsWith('.js') ? next : next + '.js');
+      }
+    }
+    check('远端载荷的全部运行时依赖均落盘', missing.length === 0, missing.join('、') || inspected.size + ' 个源码依赖');
     check('开发物料没有被塞进插件目录', !existsSync(path.join(realDst, 'tests')) && !existsSync(path.join(realDst, 'src')) && !existsSync(path.join(realDst, 'build.cjs')));
     check('更新前内容已备份可回滚', readText(path.join(realDst, '_backup/previous/manifest.json')) === snapshotManifest('1.0.0'));
   }

@@ -81,7 +81,7 @@ const model = http.createServer(async (req, res) => {
   const body = await readBody(req)
   const messages = body.messages || []
   const latestUserIndex = messages.findLastIndex(message => message.role === 'user')
-  const latestUser = messages[latestUserIndex]
+  const latestUser = messages[latestUserIndex]
   const hasToolAfterUser = latestUserIndex >= 0 && messages.slice(latestUserIndex + 1).some(message => message.role === 'tool')
   let message
   // 多轮思考场景：第一轮只有思考 + 只读工具调用（没有正文），第二轮再思考并给正文。
@@ -96,9 +96,11 @@ const model = http.createServer(async (req, res) => {
   } else if (latestUser && latestUser.content.includes('只读') && !hasToolAfterUser) {
     message = { role: 'assistant', content: '', tool_calls: [{ id: 'read-1', type: 'function', function: { name: 'list_scripts', arguments: '{}' } }] }
   } else if (latestUser && latestUser.content.includes('修改') && !hasToolAfterUser) {
+    message = { role: 'assistant', content: '先读取事件。', tool_calls: [{ id: 'read-write-1', type: 'function', function: { name: 'read_resource', arguments: JSON.stringify({ path: EVENT_REL }) } }] }
+  } else if (latestUser && latestUser.content.includes('修改') && messages.filter(m => m.role === 'tool').length === 1) {
     message = {
       role: 'assistant', content: '准备修改事件描述。',
-      tool_calls: [{ id: 'write-1', type: 'function', function: { name: 'patch_resource', arguments: JSON.stringify({ path: EVENT_REL, patch: { description: 'AI E2E preview only' } }) } }]
+      tool_calls: [{ id: 'write-1', type: 'function', function: { name: 'patch_resource', arguments: JSON.stringify({ path: EVENT_REL, patch: { description: 'AI E2E preview only' }, dryRun: false }) } }]
     }
   } else if (latestUser && latestUser.content.includes('搜一下') && !hasToolAfterUser) {
     // 检索类结果天然很长：用来验证「超长输出裁剪 + 落盘」这条路
@@ -227,12 +229,12 @@ async function main() {
 
     const preview = await request('/chat', 'POST', { sessionId: 'write', message: '修改事件描述' })
     assert.equal(preview.data.status, 'approval', JSON.stringify(preview.data))
-    assert.equal(preview.data.approval.tool, 'patch_resource')
+    assert.equal(preview.data.approval.tool, 'commit_change_set')
     assert.equal(preview.data.approval.target, EVENT_REL)
     assert.equal(fs.readFileSync(EVENT_PATH, 'utf8'), originalEvent, '预览阶段不得修改工程')
 
     const rejected = await request('/reject', 'POST', { sessionId: 'write' })
-    assert.equal(rejected.data.status, 'done', JSON.stringify(rejected.data))
+    assert.equal(rejected.data.status, 'rejected', JSON.stringify(rejected.data))
     assert.match(rejected.data.message, /取消/)
     assert.equal(fs.readFileSync(EVENT_PATH, 'utf8'), originalEvent, '取消后工程不得变化')
 
@@ -370,10 +372,9 @@ async function main() {
     assert.ok(/id="yami-ai-undo"/.test(agentSource), '必须有撤销面板容器')
     assert.ok(/renderUndoList/.test(agentSource), '前端必须能列出本对话改过的文件')
     assert.ok(/'\/backup-undo'/.test(agentSource), '前端必须能一键回退')
-    assert.ok(/id="yami-ai-grant"/.test(agentSource), '审批卡片必须有会话内授权勾选')
-    assert.ok(/grantForSession/.test(agentSource) && /grantForSession/.test(hostSource), '授权意愿必须传到宿主')
-    assert.ok(/'\/grants'/.test(agentSource) && /'\/grants'/.test(hostSource), '授权必须可查询与撤销')
-    assert.ok(/DELETE_TOOLS/.test(hostSource), '删除类操作必须排除在批量授权之外')
+    assert.ok(!/id="yami-ai-grant"/.test(agentSource), '不提供跨会话免确认授权')
+    assert.ok(/prepare_change_set/.test(hostSource) && /commit_change_set/.test(hostSource), '写入共用变更集通道')
+    assert.ok(/confirmFrozenTarget/.test(agentSource) && /confirmFrozenTarget/.test(hostSource), '目标变化必须重新确认')
     assert.ok(/declaredReadOnlyTools/.test(hostSource) && /readOnlyHint === true/.test(hostSource), '只读判定必须以 MCP 注册表的 readOnlyHint 为真源')
     const composeIndex = agentSource.indexOf('yami-ai-compose')
     const devbarIndex = agentSource.indexOf('yami-ai-devbar')
@@ -516,7 +517,7 @@ async function main() {
     assert.ok(/function spillFullOutput\(/.test(hostSource) && /__clip/.test(hostSource), '超长工具输出要落盘，并在事件里带"已截断 + 落在哪"')
     assert.ok(/truncationText\(info\)/.test(agentSource) && /truncated: true/.test(hostSource), '被截断就必须如实标注，不许让人以为看到的是完整输出')
     assert.ok(/if \(event\.type === 'system'\)/.test(agentSource) && /function pushSystemRow\(/.test(agentSource), '要有一行可折叠的「系统提示词」（模型这一轮实际看到的原文）')
-    assert.ok(/noteSystemSurface\(session, session\.messages, events\)/.test(hostSource) && /systemHashes/.test(hostSource), '系统提示词上屏要按文本指纹去重，文本没变不重复刷')
+    assert.ok(/noteSystemSurface\(session, session\.messages, events, envSummary\)/.test(hostSource) && /systemHashes/.test(hostSource), '系统提示词上屏须包含真实冻结上下文并按文本指纹去重')
     assert.ok(/queue: \[\]/.test(agentSource) && /function enqueueMessage\(/.test(agentSource) && /function flushQueue\(/.test(agentSource), '繁忙时打的话要进排队区、本轮结束后发出，不许再被吞掉')
     assert.ok(/sendMessage\(state\.busy && \(event\.ctrlKey \|\| event\.metaKey\) \? 'steer' : undefined\)/.test(agentSource), 'Enter 发送 + Ctrl/Cmd+Enter 是保留的引导快捷键（不占按钮）')
     // 用户裁决：输入区不放任何额外按钮，繁忙时的行为由设置决定（排队 / 打断）
@@ -530,13 +531,13 @@ async function main() {
     assert.ok(/undeliveredSteer/.test(hostSource) && /undeliveredSteer/.test(agentSource), '没赶上这一轮的引导要如实退回排队区')
     assert.ok(/function buildRail\(/.test(agentSource) && /activeTurnIndex/.test(agentSource), '轮次导航轨道要按阅读线高亮当前轮（判据来自渲染核心）')
     assert.ok(/const toolCards = new Map\(\)/.test(agentSource) && /key: String\(call && call\.id \|\| name\)/.test(hostSource), '工具卡片要按调用 id 匹配：只读批次并发跑，单槽变量会把结果写到别人的卡片上')
-    assert.ok(/async function runMessage\(text\)/.test(agentSource) && !/input\.value = next\.text/.test(agentSource), '排队接力不许动输入框：用户可能正在敲下一条')
+    assert.ok(/async function runMessage\(text, captureId\)/.test(agentSource) && /if \(input && !input\.value\) input\.value = next\.text/.test(agentSource), '排队失败恢复内容不覆盖输入草稿，目标快照随消息一起传递')
     // 跨 IIFE 调私有函数是运行时 ReferenceError（静态自检抓到过一次）：面板要用自己的 hudToast
     assert.ok(!/\bshowToast\(/.test(agentSource), 'ai-agent.js 不许直接调 hud-overlay 的 showToast（那是另一个 IIFE 的私有函数），要用自己的 hudToast')
     assert.ok(/function hudToast\(/.test(agentSource) && /getElementById\('yami-perf-toast'\)/.test(agentSource), '面板轻提示要复用 HUD 那颗 toast 节点（同款样式）')
     // 这一轮"盲区排查"修掉的各处，各钉一条断言
     assert.ok(/读不到那个路径/.test(hostSource), '落盘提示不许骗模型：MCP 只认工程内相对路径，绝对路径读不了')
-    assert.ok(/function resolvePendingCard\(/.test(agentSource) && /resolvePendingCard\(approve, /.test(agentSource), '审批有结论后要把那张卡片收尾，不能永远停在"等待你确认"')
+    assert.ok(/function resolvePendingCard\(/.test(agentSource) && /resolvePendingCard\(approve && result/.test(agentSource), '审批卡片仅按真实执行结果收尾')
     assert.ok(/takeUndeliveredSteer\(session\)[\s\S]{0,160}?error\.undeliveredSteer/.test(hostSource), '这一轮抛错时也要把没送出去的引导退回（铁律㊷）')
     assert.ok(/undeliveredSteer: error\.undeliveredSteer/.test(hostSource) && /err\.payload = data/.test(agentSource), '失败响应要带回退执，前端要能读到')
     assert.ok(/function isUnsafeSnapshotPath\(/.test(probeSource) && /isUnsafeSnapshotPath\(rel\)/.test(probeSource), '整包安装要挡住越出插件目录的路径（../ 与绝对路径）')
@@ -563,7 +564,7 @@ async function main() {
     // 停止必须真的"停得下来"：MCP 没有取消语义，裸 await 会让界面一直卡在 busy
     assert.ok(/function callToolWithCancel\(/.test(hostSource), '工具调用必须可取消（否则按下停止还要等工具跑完，期间新消息被 busy 顶回）')
     assert.ok(/const result = await callToolWithCancel\(client, name, args, cancelToken\)/.test(hostSource), '独占工具执行必须走可取消路径')
-    assert.ok(/events, cancelToken\)\]/.test(hostSource) && /item\.args, events, cancelToken\)/.test(hostSource), '只读批处理也要把取消令牌传下去')
+    assert.ok(/item\.args, events, cancelToken\)/.test(hostSource) && /Promise\.all\(batch\.map\(read\)\)/.test(hostSource), '只读批处理也要把取消令牌传下去')
     assert.ok(/function repeatHint\(/.test(hostSource) && /__hint/.test(hostSource), '同一工具反复调用时要给模型一句提示，帮它自己收敛')
     assert.ok(/if \(near\) body\.scrollTop = body\.scrollHeight/.test(agentSource), '展开模式下思考块自身要跟随到最新一行（它有 max-height:30vh 的滚动区，不会自己跟着长）')
     assert.ok(/let near = isNearBottom\(body\)/.test(agentSource), '贴底判定必须发生在写入之前（写完 scrollHeight 就变大，必然误判）')
@@ -575,7 +576,7 @@ async function main() {
     assert.ok(/function getEditorContext\(/.test(probeSource) && /formatEditorContextSummary\(/.test(probeSource), 'probe-core 必须提供 getEditorContext 与环境摘要生成')
     assert.ok(/req\.method === 'GET' && req\.url === '\/context'/.test(probeSource), '5967 编辑器桥必须暴露 /context 路由')
     assert.ok(/name: 'get_editor_context'/.test(mcpServerSource), 'MCP 必须注册 get_editor_context 工具')
-    assert.ok(/fetchEditorContextSummary/.test(hostSource) && /messagesForApi\(messages, envSummary\)/.test(hostSource), 'ai-host 必须在发请求前抓取环境快照并动态注入 system prompt')
+    assert.ok(/captureEditorContext/.test(hostSource) && /contextSnapshotText/.test(hostSource) && /messagesForApi\(messages, envSummary\)/.test(hostSource), '宿主先抓权威快照，再动态注入冻结目标')
     // 行为与字段真实性断言：拒绝死字段、恒空、恒假与越界
     assert.ok(/meta\.file\s*&&\s*\(meta\.file\.alias\s*\|\|\s*meta\.file\.name\)/.test(probeSource), '检视器对象名必须读取 Inspector.meta.file.alias，不能读不存在的 meta.name')
     assert.ok(/tgt\.class\s*\|\|\s*tgt\.type/.test(probeSource), '场景对象类别必须读取 Scene.target.class，不能恒为 object')
@@ -639,12 +640,8 @@ async function main() {
       'G-5：审批续跑的剩余调用必须带上取消令牌（漏传过 → 停止要等这批工具全跑完）')
     assert.ok(/callToolWithCancel\(await ensureMcp\(\), pending\.name, args, events\.cancelToken\)/.test(hostSource),
       'G-5：被批准的写盘也要走 callToolWithCancel（否则宿主继续干等、拿不到取消回执）')
-    assert.ok(/function grantKeyOf\(name, args, scope\)/.test(hostSource) && /\$\{name}::\*/.test(hostSource),
-      'G-6：授权键要支持「工具::*」这一档（无 path 的写盘工具以前永远拿不到授权）')
-    assert.ok(/session\.grants\.includes\(grantKeyOf\(name, args\)\) \|\| session\.grants\.includes/.test(hostSource),
-      'G-6：isGranted 要同时认「这一个文件」和「这类工具的所有文件」')
-    assert.ok(/body\.grantForTool === true/.test(hostSource) && /grantForTool/.test(agentSource),
-      'G-6：/approve 与面板要能把「这类工具的所有文件」这一档传下来')
+    assert.ok(!/function grantKeyOf\(/.test(hostSource) && !/grantSelectionHit/.test(hostSource), '删除旧的自动授权与工具全文件授权')
+    assert.ok(/summarizeChangeSet/.test(hostSource), '审批按整组精确差异，而非永久写盘授权')
     // 钉「这几个工具必须在 OTHER_MUTATIONS 里」，不钉数组的最后一项是谁 ——
     // 后来新增 finish_stuck_event / suspend_runtime_kind 时，原来那条匹配「结尾是 ui_steps]」的断言就误报了。
     const mutationSet = (hostSource.match(/const OTHER_MUTATIONS = new Set\(\[([^\]]*)\]\)/) || [])[1] || ''
@@ -672,8 +669,7 @@ async function main() {
     const decideBody = (agentSource.match(/async function decide\(approve\) \{[\s\S]*?\n  \}/) || [''])[0]
     assert.ok(decideBody && /flushQueue\(\)/.test(decideBody),
       'G-10(a)：decide 的 finally 也要 flushQueue（否则审批续跑后排队消息不接力）')
-    assert.ok(/head\.setAttribute\('aria-expanded'/.test(agentSource) && /role="alertdialog" aria-modal="true"/.test(agentSource),
-      'G-10(e)：折叠控件要有 aria-expanded、审批卡要有 aria-modal')
+    assert.ok(/head\.setAttribute\('aria-expanded'/.test(agentSource) && /role="region" aria-labelledby="yami-ai-approval-title"/.test(agentSource), '折叠控件有状态，非模态审批区不冒充阻塞对话框')
     assert.ok(!/与 busy 分开：审批时 busy 完全可能是 true/.test(agentSource),
       '过期注释必须清掉：审批等待期 busy 实为 false（renderApproval 与 setBusy(false) 之间没有 await）')
     // 对话导出：会话本来就完整躺在宿主硬盘上，面板手里只有最近 60 条 —— 排版必须在宿主侧

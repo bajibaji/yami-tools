@@ -1,9 +1,8 @@
 'use strict'
 /**
- * AI 助手「选中文件默认放行」回归测试（零依赖）
+ * AI 助手「选择不授权，整组确认」回归测试（零依赖）
  *
- * 规则（用户明确要求）：用户在编辑器里打开着的那个文件 = 我要改它 —— 直接改，不再逐条确认；
- * 打开之外的文件仍然要先弹确认卡。
+ * 打开和选择只是上下文，不能授予写入权限。全部草案准备好后一次确认。
  *
  * 本测试用真宿主 + 假模型 + 假编辑器桥（5967 同款 /context 路由）跑整条链路：
  *   1. 同一个回合里模型先改「选中的文件」，再改「另一个文件」；
@@ -94,9 +93,15 @@ const model = http.createServer((req, res) => {
     try { body = JSON.parse(raw || '{}') } catch { /* 忽略 */ }
     const messages = body.messages || []
     modelRequests.push(messages)
-    const sawToolResult = messages.some(message => message.role === 'tool')
-    if (asked || sawToolResult) {
-      return sse(res, [{ choices: [{ delta: { content: '两处都改好了。' } }] }])
+    const count = messages.filter(message => message.role === 'tool').length
+    if (!count) {
+      return sse(res, [{ choices: [{ delta: { tool_calls: [
+        toolCall(0, 'read_selected', 'read_resource', { path: SELECTED_REL }),
+        toolCall(1, 'read_other', 'read_resource', { path: OTHER_REL })
+      ] } }] }])
+    }
+    if (asked || count > 2) {
+      return sse(res, [{ choices: [{ delta: { content: '两处草案已准备，尚未写入。' } }] }])
     }
     asked = true
     sse(res, [
@@ -210,7 +215,7 @@ async function main() {
 
   console.log('')
   console.log('########## 1. 修选中的文件：不弹确认卡，直接落盘 ##########')
-  const events = await stream('/chat/stream', { sessionId: 'grant-1', message: '把这两个角色都改一下' })
+  const events = await stream('/chat/stream', { sessionId: 'grant-1', message: '把 @' + SELECTED_REL + ' 和 @' + OTHER_REL + ' 都改一下' })
   const result = events.find(event => event.type === 'result')
   if (process.env.YAMI_TEST_DEBUG === '1') {
     const types = events.map(event => event.type + (event.phase ? ':' + event.phase : ''))
@@ -221,27 +226,27 @@ async function main() {
     console.log('  [debug] stderr: ' + hostStderr.split('\n').filter(line => line.trim()).slice(-8).join(' | '))
   }
   const selectedAfter = fs.readFileSync(selectedAbs, 'utf8')
-  check('选中的文件当场就被改了（不需要点确认）', selectedAfter !== selectedBefore, '长度 ' + selectedBefore.length + ' → ' + selectedAfter.length)
-  check('选中的文件确实带上了这次改动', /__selection_grant_probe/.test(selectedAfter))
+  check('选中的文件在确认前零改动', selectedAfter === selectedBefore)
+  check('选择状态不授予隐式写盘权限', !/__selection_grant_probe/.test(selectedAfter))
   const selectedToolEvents = events.filter(event => event.type === 'tool' && event.key === 'call_selected')
-  check('选中文件的工具卡片是 done（不是等待确认）', selectedToolEvents.some(event => event.phase === 'done') && !selectedToolEvents.some(event => event.phase === 'approval'),
+  check('选中文件工具完成的是草案而不是写入', selectedToolEvents.some(event => event.phase === 'done' && event.info && event.info.staged),
     selectedToolEvents.map(event => event.phase).join(','))
-  check('面板如实说明「这是你打开着的文件，直接改」', events.some(event => event.type === 'notice' && /打开着的文件/.test(String(event.text || ''))))
+  check('不再出现选中默认放行的提示', !events.some(event => event.type === 'notice' && /打开着的文件/.test(String(event.text || ''))))
 
   console.log('')
   console.log('########## 2. 改别的文件：必须停下来等确认 ##########')
   check('另一个文件在审批之前一个字节都没动', fs.readFileSync(otherAbs, 'utf8') === otherBefore)
-  const otherApproval = events.find(event => event.type === 'tool' && event.phase === 'approval' && event.key === 'call_other')
-  check('另一个文件弹出了确认卡', !!otherApproval, otherApproval ? otherApproval.name : '没有 approval 事件')
+  check('只有一组包含两个文件的确认卡', !!(result && result.approval && result.approval.files.length === 2))
   check('整轮停在审批状态', !!(result && result.status === 'approval'), result && result.status)
   const approvalTarget = result && result.approval && result.approval.target
-  check('审批卡指向的是那个没打开的文件', String(approvalTarget || '').indexOf('怪物002') !== -1, String(approvalTarget || ''))
+  check('审批卡完整列出两个目标', String(approvalTarget || '').includes(SELECTED_REL) && String(approvalTarget || '').includes(OTHER_REL), String(approvalTarget || ''))
 
   console.log('')
   console.log('########## 3. 点「执行修改」之后才真正写盘 ##########')
   const approved = await json('/approve', 'POST', { sessionId: 'grant-1' })
   check('批准后写盘成功', approved && approved.ok === true, approved && approved.status)
   check('另一个文件这时才被改动', fs.readFileSync(otherAbs, 'utf8') !== otherBefore)
+  check('选中文件也只在批准后写入', /__selection_grant_probe/.test(fs.readFileSync(selectedAbs, 'utf8')))
   check('审批与预检确实走了真桥（不是静默跳过）', actionLog.filter(name => name === 'preflight').length >= 2, actionLog.join(','))
 
   console.log('')

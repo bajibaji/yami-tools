@@ -29,6 +29,7 @@ const { resolveInside, relativePath, sha256, writeAtomic, restoreBackup, listBac
 const { unifiedDiff } = require('./modules/diff')
 const { snapshotProject, diffSnapshot, buildChangelog } = require('./modules/changelog')
 const { normalizeTodos, summarizeTodos, validateTransition, renderTodos } = require('./modules/todos')
+const { ChangeSets, MUTATIONS } = require('./modules/change-set')
 
 const VERSION = '0.2.0'
 const PROTOCOL_VERSION = '2024-11-05'
@@ -53,6 +54,8 @@ function resolveRoot() {
 }
 
 const ROOT = resolveRoot()
+const changeSets = new ChangeSets(ROOT)
+for (const recovery of changeSets.recover()) if (!recovery.ok) process.stderr.write('[yami-mcp] 事务恢复需人工处理：' + JSON.stringify(recovery) + '\n')
 
 /**
  * 受限模式：由插件内置 Agent Host（ai-host.js）启动时置 1。
@@ -60,6 +63,7 @@ const ROOT = resolveRoot()
  * read_resource 的 forceFull 只留给外部 MCP 客户端人工使用。
  */
 const GUARDED = process.env.YAMI_MCP_GUARDED === '1'
+const REQUIRE_CHANGE_SET = process.env.YAMI_MCP_REQUIRE_CHANGE_SET === '1'
 
 /**
  * 操作风险分级：给审批卡片用。
@@ -77,6 +81,8 @@ function riskOf(tool) {
   if (MEDIUM_RISK_TOOLS.has(tool)) return 'medium'
   return 'low'
 }
+
+const cancelledChanges = new Set()
 
 /**
  * 二次确认令牌：高危操作的 dryRun 预览会发一个一次性令牌，
@@ -984,7 +990,7 @@ function validateResourceFile(relPath) {
     try {
       data = JSON.parse(fs.readFileSync(abs, 'utf8'))
     } catch (e) {
-      return { ok: issues.length === 0, type, guid, issues: [...issues, { severity: 'error', code: 'invalid-json', message: `JSON 解析失败: ${e.message}` }] }
+      return { ok: false, type, guid, issues: [...issues, { severity: 'error', code: 'invalid-json', message: `JSON 解析失败: ${e.message}` }] }
     }
     const required = REQUIRED_FIELDS[type] || []
     for (const f of required) {
@@ -1146,6 +1152,30 @@ function validateProject() {
 
 const tools = [
   {
+    name: 'prepare_change_set',
+    description: '宿主内部使用：准备整组精确差异，不写盘',
+    readOnlyHint: true,
+    inputSchema: { type: 'object', properties: { operations: { type: 'array', items: { type: 'object' } } }, required: ['operations'] }
+  },
+  {
+    name: 'commit_change_set',
+    description: '宿主内部使用：按一次性确认令牌提交已预览的变更集',
+    readOnlyHint: false,
+    inputSchema: { type: 'object', properties: { changeSetId: { type: 'string' }, confirmationToken: { type: 'string' } }, required: ['changeSetId', 'confirmationToken'] }
+  },
+  {
+    name: 'cancel_change_set',
+    description: '宿主内部使用：取消变更集，未完成提交将回滚',
+    readOnlyHint: false,
+    inputSchema: { type: 'object', properties: { changeSetId: { type: 'string' } }, required: ['changeSetId'] }
+  },
+  {
+    name: 'read_change_set',
+    description: '宿主内部使用：读取尚未写入的草案文件',
+    readOnlyHint: true,
+    inputSchema: { type: 'object', properties: { changeSetId: { type: 'string' }, path: { type: 'string' }, key: { type: 'string' } }, required: ['changeSetId', 'path'] }
+  },
+  {
     name: 'list_resources',
     description: '列出游戏工程的资源文件清单（规则二数据文件层），可按类型过滤；返回相对项目根的路径/类型/大小/GUID',
     readOnlyHint: true,
@@ -1295,6 +1325,7 @@ const tools = [
     inputSchema: {
       type: 'object',
       properties: {
+        presetId: { type: 'string', description: '可选：精确修改 UI 节点或场景实例的真实 presetId，只合并此节点的字段，不影响同名或兄弟节点' },
         path: { type: 'string', description: 'Assets 内 .event/.scene/.ui/.trigger/.actor/.skill/.item 等资源路径' },
         patch: { type: 'object', description: '要递归合并的字段' },
         expectedSha256: { type: 'string', description: '修改前文件 SHA-256' },
@@ -1688,6 +1719,7 @@ function mergePatch(target, patch) {
   if (!patch || typeof patch !== 'object') return target
   const result = Array.isArray(target) ? [...target] : { ...(target || {}) }
   for (const [key, value] of Object.entries(patch)) {
+    if (['__proto__', 'constructor', 'prototype'].includes(key)) throw new Error('补丁包含禁止的属性键：' + key)
     if (value === undefined) continue
     if (value && typeof value === 'object' && !Array.isArray(value) && result[key] && typeof result[key] === 'object' && !Array.isArray(result[key])) {
       result[key] = mergePatch(result[key], value)
@@ -1702,6 +1734,10 @@ function readText(rel) {
   const abs = resolveInside(ROOT, rel)
   if (!fs.existsSync(abs)) return null
   return fs.readFileSync(abs, 'utf8')
+}
+
+function previewWrites(args, writes) {
+  return args.__prepare ? { __writes: writes } : {}
 }
 
 function hasForbiddenPatchKey(value) {
@@ -1745,6 +1781,55 @@ async function notifyEditorReload(rel) {
 }
 
 async function callTool(name, args) {
+  args = args || {}
+  const sourceText = rel => args.__prepare && args.__beforeText !== undefined ? args.__beforeText : readText(rel)
+  if (name === 'prepare_change_set') return changeSets.prepare(args.operations, callTool)
+  if (name === 'read_change_set') {
+    const set = changeSets.pending.get(args.changeSetId)
+    if (!set) return { ok: false, error: '草案已失效，请重新预览' }
+    const rel = normalizeRelPath(args.path)
+    const file = set.files.find(item => item.path === rel)
+    if (!file) return { ok: true, notStaged: true }
+    if (args.fullDiff === true) return { ok: true, diff: unifiedDiff(file.before || '', file.after || '', { label: rel, maxLines: Number.MAX_SAFE_INTEGER }).text }
+    if (file.after === null) return { ok: false, staged: true, error: '草案中该文件将被删除：' + rel }
+    const script = /\.(ts|js)$/i.test(rel)
+    let content = script ? file.after : JSON.parse(file.after)
+    if (args.key !== undefined && !script) {
+      if (!(args.key in content)) return { ok: false, error: '草案中不存在 key：' + args.key }
+      content = content[args.key]
+    }
+    return { ok: true, staged: true, path: rel, content, sha256: sha256(file.after), originalSha256: file.before === null ? null : sha256(file.before), message: '草案版本，尚未写入' }
+  }
+  if (name === 'cancel_change_set') {
+    cancelledChanges.add(args.changeSetId)
+    changeSets.pending.delete(args.changeSetId)
+    return { ok: true, cancelled: true }
+  }
+  if (name === 'commit_change_set') {
+    const result = await changeSets.commit(args.changeSetId, args.confirmationToken, {
+      preflight: ensureEditorWritable,
+      baseline: () => validateProject().issues,
+      cancelled: () => cancelledChanges.has(args.changeSetId),
+      reload: notifyEditorReload,
+      validate: async (files, baseline) => {
+        const resources = files.filter(file => file.after !== null && DATA_TYPES.includes(TYPE_BY_EXT[path.extname(file.path).toLowerCase()]))
+        const checks = resources.map(file => validateResourceFile(file.path))
+        const invalid = checks.find(check => check.issues.some(issue => issue.severity === 'error'))
+        if (invalid) return { ok: false, resources: checks, error: '资源校验失败：' + JSON.stringify(invalid.issues) }
+        const project = validateProject()
+        const known = new Set((baseline || []).map(issue => JSON.stringify(issue)))
+        const introduced = project.issues.filter(issue => !known.has(JSON.stringify(issue)) && (issue.severity === 'error' || ['dangling-ref', 'dangling-prefab'].includes(issue.code)))
+        if (introduced.length) return { ok: false, resources: checks, project, error: '新增跨资源错误：' + JSON.stringify(introduced.slice(0, 5)) }
+        const scripts = files.some(file => /\.(ts|js)$/i.test(file.path))
+        const compile = scripts ? await runCompileCheck() : null
+        if (compile && compile.ok !== true && !compile.unavailable) return { ok: false, compile, resources: checks, project, error: '整组脚本编译未通过' }
+        return { ok: true, compile, compileSkipped: !!(compile && compile.unavailable), resources: checks, project, playtest: { performed: false } }
+      }
+    })
+    cancelledChanges.delete(args.changeSetId)
+    if (result.ok && result.files) for (const file of result.files) rememberWrite({ path: file.path, tool: file.tool, ok: true, compileOk: result.compile && !result.compile.unavailable ? result.compile.ok : undefined, rolledBack: false })
+    return result
+  }
   args = args || {}
   switch (name) {
     case 'list_scripts': {
@@ -1806,7 +1891,7 @@ async function callTool(name, args) {
       const guid = parseGuidFromName(base)
       if (!SCRIPT_TEMPLATES[args.type]) return { ok: false, error: `未知类型: ${args.type}（应为 ${Object.keys(SCRIPT_TEMPLATES).join('/')}）` }
       if (!guid || !isValidGuid(guid)) return { ok: false, error: `文件名需含合法 16 位 hex GUID（含 a-f）: ${base}` }
-      if (fs.existsSync(resolveInside(ROOT, rel))) return { ok: false, error: `脚本已存在，拒绝覆盖: ${rel}；修改请使用 write_script` }
+      if (sourceText(rel) !== null) return { ok: false, error: `脚本已存在，拒绝覆盖: ${rel}；修改请使用 write_script` }
       const built = buildScriptSource(args.type, args.className, args.nameZh, args.params, { author: args.author, link: args.link })
       const src = built.source
       const diffRes = unifiedDiff('', src, { label: rel })
@@ -1825,8 +1910,19 @@ async function callTool(name, args) {
         return { ok: false, dryRun: true, metaIssues, error: '生成的元数据不符合引擎规则（装上去参数不会出现），未写盘：' + metaErrors.map(item => (item.target ? item.target + '：' : '') + item.message).join('；') }
       }
       if (args.dryRun !== false) {
+        const writes = [{ path: rel, content: src }]
+        const table = args.type === 'plugin' ? 'plugins' : args.type === 'command' ? 'commands' : null
+        if (table && args.__prepare) {
+          const tableRel = `Data/${table}.json`
+          const raw = args.__related && args.__related[tableRel] !== undefined ? args.__related[tableRel] : readText(tableRel)
+          const registry = raw === null ? [] : JSON.parse(raw)
+          if (!Array.isArray(registry)) return { ok: false, error: tableRel + ' 不是数组结构' }
+          if (!registry.some(item => item && item.id === guid)) registry.push(args.type === 'plugin' ? { id: guid, enabled: true, parameters: {} } : { id: guid, enabled: true, alias: '', keywords: '' })
+          writes.push({ path: tableRel, content: JSON.stringify(registry, null, 2) + '\n' })
+        }
         return {
           ok: true, dryRun: true, message: '模板已生成（未写盘，dryRun）', script: src, ...preview, metaIssues,
+          ...previewWrites(args, writes),
           metaCheck: metaIssues.length ? '引擎规则体检有 ' + metaIssues.length + ' 条提醒（见 metaIssues）' : '元数据符合引擎规则'
         }
       }
@@ -1861,7 +1957,7 @@ async function callTool(name, args) {
     }
     case 'read_script': {
       const rel = normalizeRelPath(args.path)
-      if (!/\.(ts|js)$/i.test(rel) || !rel.startsWith('Assets/')) return { ok: false, error: '只允许读取 Assets 内的 .ts 或 .js 脚本' }
+      if (!/\.(ts|js)$/i.test(rel) || !/^(Assets|Script)\//.test(rel)) return { ok: false, error: '只允许读取 Assets/Script 内的 .ts 或 .js 脚本' }
       const text = readText(rel)
       if (text === null) return { ok: false, error: `脚本不存在: ${rel}` }
       const meta = parsePluginMeta(text)
@@ -1869,22 +1965,22 @@ async function callTool(name, args) {
     }
     case 'write_script': {
       const rel = normalizeRelPath(args.path)
-      if (!/\.(ts|js)$/i.test(rel) || !rel.startsWith('Assets/')) return { ok: false, error: '只允许写入 Assets 内的 .ts 或 .js 脚本' }
+      if (!/\.(ts|js)$/i.test(rel) || !/^(Assets|Script)\//.test(rel)) return { ok: false, error: '只允许写入 Assets/Script 内的 .ts 或 .js 脚本' }
       if (typeof args.content !== 'string') return { ok: false, error: 'content 必须是完整脚本字符串' }
-      const oldText = readText(rel)
+      const oldText = sourceText(rel)
       if (oldText === null) return { ok: false, error: `脚本不存在: ${rel}；新建脚本请使用 create_script` }
       if (args.expectedSha256 && sha256(oldText) !== args.expectedSha256) {
         return { ok: false, conflict: true, error: '脚本已被其他操作修改，expectedSha256 不匹配；请重新读取后再改' }
       }
       const nextMeta = parsePluginMeta(args.content)
-      if (!nextMeta.ok) return { ok: false, error: '脚本缺少合法 /* @plugin ... */ 元数据块，未写入' }
-      const metaIssues = validatePluginMeta(nextMeta, args.content)
+      if (!nextMeta.ok && rel.startsWith('Assets/')) return { ok: false, error: '脚本缺少合法 /* @plugin ... */ 元数据块，未写入' }
+      const metaIssues = nextMeta.ok ? validatePluginMeta(nextMeta, args.content) : []
       const metaErrors = metaIssues.filter(item => item.severity === 'error')
       if (metaErrors.length) {
         return { ok: false, metaIssues, error: '元数据不符合引擎规则（引擎会忽略或装不上），未写入：' + metaErrors.map(item => (item.target ? item.target + '：' : '') + item.message).join('；') }
       }
       const preview = { path: rel, oldSha256: sha256(oldText), newSha256: sha256(args.content), changedBytes: Buffer.byteLength(args.content) - Buffer.byteLength(oldText), meta: nextMeta }
-      if (args.dryRun !== false) return { ok: true, dryRun: true, ...preview, message: '脚本校验通过，未写盘' }
+      if (args.dryRun !== false) return { ok: true, dryRun: true, ...withDiff(preview, oldText, args.content, { label: rel }), ...previewWrites(args, [{ path: rel, content: args.content }]), message: '脚本校验通过，未写盘' }
       try {
         const writable = await ensureEditorWritable(rel)
         if (!writable.ok) return writable
@@ -1908,10 +2004,10 @@ async function callTool(name, args) {
     }
     case 'edit_script': {
       const rel = normalizeRelPath(args.path)
-      if (!/\.(ts|js)$/i.test(rel) || !rel.startsWith('Assets/')) return { ok: false, error: '只允许编辑 Assets 内的 .ts 或 .js 脚本' }
+      if (!/\.(ts|js)$/i.test(rel) || !/^(Assets|Script)\//.test(rel)) return { ok: false, error: '只允许编辑 Assets/Script 内的 .ts 或 .js 脚本' }
       if (typeof args.oldText !== 'string' || !args.oldText.length) return { ok: false, error: 'oldText 必须是非空字符串（要替换的原文片段）' }
       if (typeof args.newText !== 'string') return { ok: false, error: 'newText 必须是字符串；删除片段请传空字符串' }
-      const oldText = readText(rel)
+      const oldText = sourceText(rel)
       if (oldText === null) return { ok: false, error: `脚本不存在: ${rel}` }
       let target = args.oldText
       let firstHit = oldText.indexOf(target)
@@ -1960,8 +2056,8 @@ async function callTool(name, args) {
       }, oldText, nextText, { label: `精确修改 ${rel}（第 ${line} 行）` })
       // 片段替换不改元数据块，但仍校验一次：避免把 @plugin 块改坏却毫无提示
       const nextMeta = parsePluginMeta(nextText)
-      if (!nextMeta.ok) return { ok: false, ...preview, error: '替换后脚本的 /* @plugin ... */ 元数据块不合法，未写入' }
-      const metaIssues = validatePluginMeta(nextMeta, nextText)
+      if (!nextMeta.ok && rel.startsWith('Assets/')) return { ok: false, ...preview, error: '替换后脚本的 /* @plugin ... */ 元数据块不合法，未写入' }
+      const metaIssues = nextMeta.ok ? validatePluginMeta(nextMeta, nextText) : []
       const metaErrors = metaIssues.filter(item => item.severity === 'error')
       if (metaErrors.length) {
         return { ok: false, ...preview, metaIssues, error: '替换后元数据不符合引擎规则（引擎会忽略或装不上），未写入：' + metaErrors.map(item => (item.target ? item.target + '：' : '') + item.message).join('；') }
@@ -1971,6 +2067,7 @@ async function callTool(name, args) {
           ok: true,
           dryRun: true,
           ...preview,
+          ...previewWrites(args, [{ path: rel, content: nextText }]),
           // 注意：这里不能再写 `diff` 字段——那会覆盖 withDiff 生成的统一差异文本。
           // 片段级前后对照另起字段名，避免与审批卡片的差异预览打架（这个坑实测踩过）。
           fragmentDiff: { before: target.slice(0, 600), after: args.newText.slice(0, 600) },
@@ -2077,12 +2174,25 @@ async function callTool(name, args) {
       const rel = normalizeRelPath(args.path)
       if (!rel.startsWith('Assets/') || !DATA_TYPES.includes(TYPE_BY_EXT[path.extname(rel).toLowerCase()])) return { ok: false, error: '只允许补丁修改 Assets 内的 JSON 资源' }
       if (hasForbiddenPatchKey(args.patch)) return { ok: false, error: '禁止通过局部补丁修改场景压缩字段 terrains/code' }
-      const oldText = readText(rel)
+      const oldText = sourceText(rel)
       if (oldText === null) return { ok: false, error: `资源不存在: ${rel}` }
       if (args.expectedSha256 && sha256(oldText) !== args.expectedSha256) return { ok: false, conflict: true, error: '资源已被其他操作修改，expectedSha256 不匹配' }
       let current
       try { current = JSON.parse(oldText) } catch (e) { return { ok: false, error: `资源 JSON 解析失败: ${e.message}` } }
-      const next = mergePatch(current, args.patch)
+      let next
+      if (args.presetId) {
+        const matches = []
+        const visit = node => {
+          if (!node || typeof node !== 'object') return
+          if (node.presetId === args.presetId) matches.push(node)
+          for (const key of ['children', 'nodes', 'objects']) if (Array.isArray(node[key])) node[key].forEach(visit)
+        }
+        visit(current)
+        if (matches.length !== 1) return { ok: false, ambiguous: true, error: 'presetId 需唯一匹配一个节点，实际匹配 ' + matches.length + ' 个；请重新读取目标' }
+        if (args.patch && args.patch.presetId && args.patch.presetId !== args.presetId) return { ok: false, error: '禁止更换冻结节点的 presetId' }
+        Object.assign(matches[0], mergePatch(matches[0], args.patch))
+        next = current
+      } else next = mergePatch(current, args.patch)
       const nextText = JSON.stringify(next, null, 2) + '\n'
       const check = validateResourceFile(rel)
       if (!check.ok) return { ok: false, issues: check.issues, error: '原资源当前校验未通过，先修复原文件再打补丁' }
@@ -2091,7 +2201,7 @@ async function callTool(name, args) {
       for (const field of required) if (!(field in next)) nextIssues.push(`缺少必需字段: ${field}`)
       if (nextIssues.length) return { ok: false, error: nextIssues.join('；') }
       const preview = withDiff({ path: rel, oldSha256: sha256(oldText), newSha256: sha256(nextText), changedBytes: Buffer.byteLength(nextText) - Buffer.byteLength(oldText), preview: next }, oldText, nextText, { label: `修改资源 ${rel}` })
-      if (args.dryRun !== false) return { ok: true, dryRun: true, ...preview, message: '资源补丁校验通过，未写盘' }
+      if (args.dryRun !== false) return { ok: true, dryRun: true, ...preview, ...previewWrites(args, [{ path: rel, content: nextText }]), message: '资源补丁校验通过，未写盘' }
       try {
         const writable = await ensureEditorWritable(rel)
         if (!writable.ok) return writable
@@ -2176,7 +2286,7 @@ async function callTool(name, args) {
         message: previewMsg
       }
       if (args.dryRun !== false) {
-        return { ...previewResult, confirmationToken: issueConfirmationToken('delete_resource', rel, currentSha256) }
+        return { ...previewResult, ...previewWrites(args, [{ path: rel, content: null }]), confirmationToken: issueConfirmationToken('delete_resource', rel, currentSha256) }
       }
       const tokenCheck = takeConfirmationToken(args.confirmationToken, 'delete_resource', rel)
       if (!tokenCheck.ok) {
@@ -2459,12 +2569,12 @@ async function callTool(name, args) {
       const errors = issues.filter(i => i.severity === 'error')
       if (errors.length > 0) return { ok: false, issues: errors, dryRun: true, message: '校验未通过，未写入' }
       const text = JSON.stringify(args.content, null, 2) + '\n'
-      const oldText = readText(rel)
+      const oldText = sourceText(rel)
       const oldSha256 = oldText === null ? null : sha256(oldText)
       const diffRes = unifiedDiff(oldText || '', text, { label: rel })
       const diffStat = { added: diffRes.added, removed: diffRes.removed, truncated: diffRes.truncated }
       if (args.expectedSha256 && oldSha256 !== args.expectedSha256) return { ok: false, conflict: true, error: '资源已被其他操作修改，拒绝覆盖' }
-      if (args.dryRun !== false) return { ok: true, dryRun: true, message: '校验通过（未写盘，dryRun）', preview: text, diff: diffRes.text, diffStat, oldSha256, newSha256: sha256(text) }
+      if (args.dryRun !== false) return { ok: true, dryRun: true, path: rel, message: '校验通过（未写盘，dryRun）', preview: text, diff: diffRes.text, diffStat, oldSha256, newSha256: sha256(text), ...previewWrites(args, [{ path: rel, content: text }]) }
       try {
         const writable = await ensureEditorWritable(rel)
         if (!writable.ok) return writable
@@ -2753,7 +2863,6 @@ async function callTool(name, args) {
       const rel = normalizeRelPath(args.path)
       if (rel === 'Data/manifest.json') return { ok: false, error: 'Data/manifest.json 是引擎派生的资源索引，禁止回退（重新打开工程会自动重建）' }
       const abs = resolveInside(ROOT, rel)
-      if (!fs.existsSync(abs)) return { ok: false, error: `文件不存在: ${rel}` }
       const candidates = listBackups(ROOT, rel)
       if (!candidates.length) return { ok: false, error: `没有找到 ${rel} 的备份，无法回退` }
       // 不指定 backup 时回到**最早**一次（即 AI 动手之前的原始版本）
@@ -2762,10 +2871,10 @@ async function callTool(name, args) {
         : candidates[candidates.length - 1]
       if (!chosen) return { ok: false, error: '指定的备份不存在或不属于这个文件，请先用 list_backups 查看' }
 
-      const currentText = fs.readFileSync(abs, 'utf8')
+      const currentText = sourceText(rel)
       const backupAbs = resolveInside(ROOT, chosen.backup)
       const restoreText = fs.readFileSync(backupAbs, 'utf8')
-      const currentSha = sha256(currentText)
+      const currentSha = currentText === null ? null : sha256(currentText)
       const restoreSha = sha256(restoreText)
 
       if (args.expectedSha256 && currentSha !== args.expectedSha256) {
@@ -2791,11 +2900,12 @@ async function callTool(name, args) {
           dryRun: false,
           alreadyRestored: true,
           ...preview,
+          ...previewWrites(args, [{ path: rel, content: restoreText }]),
           message: `当前文件已是 ${chosen.savedAt} 的版本（内容一致，无需重复回退）`
         }
       }
 
-      if (args.dryRun !== false) return { ok: true, dryRun: true, ...preview, message: `将把 ${rel} 回退到 ${chosen.savedAt} 的版本，未写盘` }
+      if (args.dryRun !== false) return { ok: true, dryRun: true, ...preview, ...previewWrites(args, [{ path: rel, content: restoreText }]), message: `将把 ${rel} 回退到 ${chosen.savedAt} 的版本，未写盘` }
       try {
         const writable = await ensureEditorWritable(rel)
         if (!writable.ok) return writable
@@ -2908,7 +3018,7 @@ async function runCompileCheck() {
   }
 
   return {
-    ok: all.length === 0 && !first.spawnError,
+    ok: all.length === 0 && !first.spawnError && first.exitCode === 0,
     exitCode: first.exitCode,
     errorCount: all.length,
     compiler: compiler.command,
@@ -2920,6 +3030,7 @@ async function runCompileCheck() {
 
 const readline = require('readline')
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })
+let mutationQueue = Promise.resolve()
 
 function send(msg) {
   process.stdout.write(JSON.stringify(msg) + '\n')
@@ -2953,15 +3064,22 @@ rl.on('line', (line) => {
     return
   }
   if (msg.method === 'tools/call') {
-    const { name, arguments: args } = msg.params || {}
+    const { name, arguments: rawArgs } = msg.params || {}
+    const args = Object.fromEntries(Object.entries(rawArgs || {}).filter(([key]) => !key.startsWith('__')))
     const callStartedAt = Date.now()
-    Promise.resolve()
-      .then(() => callTool(name, args))
+    const execute = () => {
+      if (REQUIRE_CHANGE_SET && MUTATIONS.has(name) && args.dryRun === false) return { ok: false, confirmRequired: true, error: '内置助手写入必须使用已确认的变更集，拒绝绕过审批' }
+      return callTool(name, args)
+    }
+    const exclusive = MUTATIONS.has(name) || name === 'commit_change_set' || name === 'prepare_change_set'
+    const running = exclusive ? mutationQueue.then(execute) : Promise.resolve().then(execute)
+    if (exclusive) mutationQueue = running.catch(() => {})
+    running
       .then((result) => {
         // 这次调用里发生过编辑器热更新、而且是失败的 → 如实告诉模型：
         // 它（和用户）必须知道"编辑器内存还是旧的，保存会覆盖这次改动"，否则就是拿假成功骗人。
         const reload = lastReloadReport
-        if (reload && !reload.ok && reload.at >= callStartedAt && result && typeof result === 'object' && result.ok === true) {
+        if (reload && !reload.ok && reload.at >= callStartedAt && result && typeof result === 'object' && result.ok === true && !Array.isArray(result.editorReload)) {
           result.editorReload = { ok: false, path: reload.rel, error: reload.error }
           result.message = String(result.message || ('已写入 ' + reload.rel))
             + '。但编辑器内存没有刷新成功（' + reload.error + '）：请提醒用户在编辑器里按【刷新资源树】或重启工程，'

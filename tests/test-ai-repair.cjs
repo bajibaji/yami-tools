@@ -77,7 +77,12 @@ const model = http.createServer((req, res) => {
 
     const repairAsked = messages.some(message => message.role === 'user' && /编译检查|编译器原始输出/.test(String(message.content || '')))
     const userIndex = messages.map(m => m.role).lastIndexOf('user')
-    const hasToolAfterUser = userIndex >= 0 && messages.slice(userIndex + 1).some(m => m.role === 'tool')
+    const toolsAfterUser = userIndex >= 0 ? messages.slice(userIndex + 1).filter(m => m.role === 'tool') : []
+    const hasToolAfterUser = toolsAfterUser.length > 1
+    if (!toolsAfterUser.length) {
+      return sse(res, [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'read_' + modelRequests.length, type: 'function', function: { name: 'read_script', arguments: JSON.stringify({ path: SCRIPT_REL }) } }] } }] }])
+    }
+    if (hasToolAfterUser) return sse(res, [{ choices: [{ delta: { content: '草案准备完毕，等待确认。' } }] }])
 
     if (writeOnly && !hasToolAfterUser) {
       return toolTurn(res, { path: SCRIPT_REL, oldText: CODE_ANCHOR, newText: CODE_ANCHOR + '\n  // 撤销接口测试改动', dryRun: false }, '改一下。')
@@ -94,7 +99,7 @@ const model = http.createServer((req, res) => {
       if (modelMode === 'repair' && !repairedOnce) {
         // 按报错改对：把破坏编译的那行删掉
         repairedOnce = true
-        return toolTurn(res, { path: SCRIPT_REL, oldText: CODE_ANCHOR + '\nconst __dj_broken = = 1', newText: CODE_ANCHOR, dryRun: false }, '按报错把那行删掉。')
+        return toolTurn(res, { path: SCRIPT_REL, oldText: CODE_ANCHOR, newText: CODE_ANCHOR + '\n  // 修复后草案', dryRun: false }, '基于回滚后的真实文件重新准备。')
       }
       return sse(res, [{ choices: [{ delta: { content: '已按编译器报错改好，并确认编译通过。' } }] }])
     }
@@ -201,11 +206,14 @@ async function main() {
   await json('/project', 'POST', { projectRoot: PROJECT })
 
   console.log('\n########## 1. 编译失败 → 报错喂回模型 → 自动重修 ##########')
-  const events = await stream('/chat/stream', { sessionId: 'repair-1', message: '帮我改一下这个脚本' })
+  const events = await stream('/chat/stream', { sessionId: 'repair-1', message: '帮我改一下 @' + SCRIPT_REL })
   const firstResult = events.find(event => event.type === 'result')
   const stoppedForApproval = firstResult && firstResult.status === 'approval'
   check('自动模式下文件写依然先预览等确认（设计如此）', stoppedForApproval === true, firstResult && firstResult.status)
   // 用户点「执行修改」——这才是真正写盘并触发编译门禁的时刻
+  const repairedDraft = await json('/approve', 'POST', { sessionId: 'repair-1' })
+  check('编译失败回滚后只生成修复草案，仍需确认', repairedDraft.status === 'approval', repairedDraft.status)
+  check('等待修复确认时仍是原文件', fs.readFileSync(scriptAbs, 'utf8') === original)
   const approved = await json('/approve', 'POST', { sessionId: 'repair-1' })
   const result = approved
   check('批准后才真正写盘并进入编译闭环', approved.status === 'done' || approved.status === 'compile-failed', approved.status)
@@ -221,16 +229,18 @@ async function main() {
   check('修复指令要求最小片段替换', /edit_script/.test(repairText) && /不要整份重写/.test(repairText))
   check('修复指令说明工程已回滚', /已自动回滚/.test(repairText))
   check('报错定位到真代码行（文件:行号）', new RegExp(SCRIPT_REL.split('/').pop().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\(\\d+,\\d+\\)').test(repairText))
-  check('工程已回滚到修改前（未留半成品）', fs.readFileSync(scriptAbs, 'utf8') === original)
+  check('修复确认后文件无坏代码', !fs.readFileSync(scriptAbs, 'utf8').includes('__dj_broken'))
+  fs.writeFileSync(scriptAbs, original)
 
 
   console.log('\n########## 3. 撤销接口（宿主 /backups 与 /backup-undo） ##########')
   // 先做一次真写入，制造可回退版本
   writeOnly = true
   modelRequests.length = 0
-  const writeEvents = await stream('/chat/stream', { sessionId: 'undo-1', message: '改一下这个脚本' })
+  const writeEvents = await stream('/chat/stream', { sessionId: 'undo-1', message: '改一下 @' + SCRIPT_REL })
   const writeResult = writeEvents.find(event => event.type === 'result')
   check('写入流程完成', !!writeResult)
+  await json('/approve', 'POST', { sessionId: 'undo-1' })
 
   const backups = await json('/backups', 'POST', { sessionId: 'undo-1' })
   check('/backups 只列本对话改过的文件', backups.ok === true && Array.isArray(backups.files) && backups.files.some(f => f.path === SCRIPT_REL), JSON.stringify((backups.files || []).map(f => f.path)).slice(0, 90))
@@ -238,7 +248,7 @@ async function main() {
   check('列出可回退版本数与最早时间', !!fileEntry && fileEntry.backupCount >= 1 && !!fileEntry.oldest, fileEntry ? ('count=' + fileEntry.backupCount) : 'n/a')
 
   writeOnly = false
-  const undone = await json('/backup-undo', 'POST', { path: SCRIPT_REL })
+  const undone = await json('/backup-undo', 'POST', { sessionId: 'undo-1', path: SCRIPT_REL })
   check('/backup-undo 回退成功', undone.ok === true && !!undone.diff, String(undone.error || '').slice(0, 40))
   check('回退后内容回到最初', fs.readFileSync(scriptAbs, 'utf8') === original)
   check('回退返回差异统计', !!undone.diffStat && typeof undone.diffStat.added === 'number', JSON.stringify(undone.diffStat || {}))
@@ -249,7 +259,7 @@ async function main() {
   const prevBackupCount = fileAfter ? fileAfter.backupCount : 0
 
   // 再次回退：幂等拦截，不重复写盘，不新增冗余备份
-  const secondUndo = await json('/backup-undo', 'POST', { path: SCRIPT_REL })
+  const secondUndo = await json('/backup-undo', 'POST', { sessionId: 'undo-1', path: SCRIPT_REL })
   check('再次回退返回 alreadyRestored=true 幂等拦截', secondUndo.ok === true && secondUndo.alreadyRestored === true)
   const backupsAfterSecond = await json('/backups', 'POST', { sessionId: 'undo-1' })
   const fileAfterSecond = (backupsAfterSecond.files || []).find(f => f.path === SCRIPT_REL)
@@ -270,7 +280,7 @@ async function main() {
   check('超过修复上限后返回 compile-failed', !!stuckResult && stuckResult.status === 'compile-failed', stuckResult && stuckResult.status)
   check('失败文案里带最后一次报错', !!stuckResult && /error TS\d+/.test(String(stuckResult.message || '')))
   check('失败文案说明工程保持完好', !!stuckResult && /回滚/.test(String(stuckResult.message || '')))
-  check('未超过修复上限就停止（未无限重试）', modelRequests.length <= Number(process.env.YAMI_AI_REPAIR_LIMIT || 2) + 2, '模型请求数=' + modelRequests.length)
+  check('未超过修复上限就停止（未无限重试）', modelRequests.length <= (Number(process.env.YAMI_AI_REPAIR_LIMIT || 2) + 1) * 3, '模型请求数=' + modelRequests.length)
   check('工程仍未留下半成品', fs.readFileSync(scriptAbs, 'utf8') === original)
 
 
@@ -304,7 +314,7 @@ async function main() {
   const saTools = saRun.filter(event => event.type === 'tool')
   check('续跑的写入有 start 事件（卡片才画得出来）', saTools.some(event => event.phase === 'start'))
   check('续跑的写入有收尾事件（卡片不会永远停在"运行中"）', saTools.some(event => event.phase === 'done' || event.phase === 'fail'), JSON.stringify(saTools.map(event => event.phase)))
-  check('续跑有逐字正文（不是只落一个最终结果）', saRun.some(event => event.type === 'delta' && event.content))
+  check('续跑带真实验证结论而非模型宣称', saRun.some(event => event.type === 'result' && event.validation))
   check('续跑照常给出最终结果', saRun.some(event => event.type === 'result' && event.status !== 'approval'))
 
   // 取消走同一条通道
@@ -330,16 +340,15 @@ async function main() {
   check('勾选授权后本次写入执行', grantApprove.ok === true || grantApprove.status === 'done', String(grantApprove.status || grantApprove.error))
 
   const grants = await json('/grants', 'POST', { sessionId: 'grant-1' })
-  check('/grants 列出授权', grants.ok === true && (grants.grants || []).length === 1, JSON.stringify(grants.grants || []))
-  check('授权项带工具中文名与文件', (grants.grants || [])[0] && grants.grants[0].toolLabel === '精确改脚本' && !!grants.grants[0].path, JSON.stringify((grants.grants || [])[0] || {}).slice(0, 80))
+  check('旧的免确认意愿不创建跨会话授权', grants.ok === true && (grants.grants || []).length === 0)
 
   // 第二次：同一文件同一工具应免确认（不再停在 approval）
   const after = fs.readFileSync(scriptAbs, 'utf8')
   const grantSecond = await stream('/chat/stream', { sessionId: 'grant-1', message: '再改一次' })
   const grantSecondResult = grantSecond.find(event => event.type === 'result')
-  check('已授权文件不再逐条打断', !!grantSecondResult && grantSecondResult.status !== 'approval', grantSecondResult && grantSecondResult.status)
-  check('免打扰时工程确实被改了', fs.readFileSync(scriptAbs, 'utf8') !== after)
-  check('推送了"已授权"过程提示', grantSecond.some(event => event.type === 'notice' && /已授权/.test(String(event.text || ''))))
+  check('新一轮仍需整组确认', !!grantSecondResult && grantSecondResult.status === 'approval', grantSecondResult && grantSecondResult.status)
+  check('未批准时工程不再变化', fs.readFileSync(scriptAbs, 'utf8') === after)
+  check('不声称免确认授权', !grantSecond.some(event => event.type === 'notice' && /已授权/.test(String(event.text || ''))))
 
   // 撤销授权后应恢复逐条确认
   const revoke = await json('/grants', 'POST', { sessionId: 'grant-1', revoke: (grants.grants || [])[0] && grants.grants[0].key })

@@ -140,8 +140,8 @@ async function main() {
     const restore = await parse('edit_script', { path: SCRIPT_REL, oldText: UNIQUE + '-ai', newText: UNIQUE, dryRun: false })
     check('还原成功', restore.ok === true && (await parse('read_script', { path: SCRIPT_REL })).content === before)
 
-    const outside = await parse('edit_script', { path: 'Script/actor.ts', oldText: 'a', newText: 'b', dryRun: true })
-    check('拒绝越界路径（只能改 Assets 内脚本）', outside.ok === false && /Assets/.test(outside.error))
+    const outside = await parse('edit_script', { path: '../outside.ts', oldText: 'a', newText: 'b', dryRun: true })
+    check('拒绝越出工程路径', outside.ok === false && /越过/.test(outside.error))
 
     console.log('\n########## 3. diagnose_runtime（运行时诊断摘要） ##########')
     const diag = await parse('diagnose_runtime', {})

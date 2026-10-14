@@ -36,7 +36,7 @@ const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity 
 const received = []
 const TOOLS = [
   { name: 'slow_read', description: '测试用只读工具', readOnlyHint: true, inputSchema: { type: 'object', properties: { tag: { type: 'string' } } } },
-  { name: 'write_script', description: '测试用写盘工具', readOnlyHint: false, inputSchema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' }, dryRun: { type: 'boolean' }, expectedSha256: { type: 'string' } } } }
+  { name: 'editor_action', description: '测试用独占编辑器动作', readOnlyHint: false, inputSchema: { type: 'object', properties: { action: { type: 'string' } } } }
 ]
 rl.on('line', line => {
   let message
@@ -208,13 +208,13 @@ async function main() {
     console.log('\n########## 2. 只读 + 写盘混合：写盘独占 ##########')
     toolPlan = [
       { name: 'slow_read', args: { tag: 'x' } },
-      { name: 'write_script', args: { path: 'Assets/插件/全局插件/x.ts', content: '// x' } },
+      { name: 'editor_action', args: { action: 'save' } },
       { name: 'slow_read', args: { tag: 'y' } }
     ]
-    const mixed = await request('/chat/stream', 'POST', { sessionId: 'mixed-1', message: '边读边写' })
+    const mixed = await request('/chat/stream', 'POST', { sessionId: 'mixed-1', message: '边读边操作编辑器' })
     const mixedResult = mixed.find(event => event.type === 'result')
     check('写盘先弹审批（没被并发跳过）', !!mixedResult && mixedResult.status === 'approval', mixedResult && mixedResult.status)
-    check('审批卡片带预览差异', !!(mixedResult && mixedResult.approval && /@@/.test(String((mixedResult.approval.preview || {}).diff || ''))))
+    check('审批卡片指向编辑器动作', !!(mixedResult && mixedResult.approval && mixedResult.approval.tool === 'editor_action'))
     const mixedSession = JSON.parse(fs.readFileSync(path.join(sandbox, 'config', 'sessions', 'mixed-1.json'), 'utf8'))
     const doneTags = mixedSession.messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.content).tag)
     check('写盘之前那个只读调用已完成', JSON.stringify(doneTags) === JSON.stringify(['x']), JSON.stringify(doneTags))

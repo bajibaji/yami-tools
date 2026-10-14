@@ -385,7 +385,7 @@ class EventBuilder {
    * @param {string|number} [options.position='end'] 插入位置：'end' | 'start' | 索引数字
    * @param {boolean} [options.dryRun=true] 是否仅预览
    */
-  appendCommands({ path: relPath, commands, position = 'end', expectedSha256, dryRun = true }) {
+  appendCommands({ path: relPath, commands, position = 'end', expectedSha256, dryRun = true, __beforeText, __prepare = false }) {
     if (!relPath || typeof relPath !== 'string') {
       return { ok: false, error: '缺少 path 参数' }
     }
@@ -402,7 +402,7 @@ class EventBuilder {
     let eventData
     let originalText
     try {
-      originalText = fs.readFileSync(absPath, 'utf8')
+      originalText = __beforeText === undefined ? fs.readFileSync(absPath, 'utf8') : __beforeText
       if (expectedSha256 && sha256(originalText) !== expectedSha256) return { ok: false, conflict: true, error: '事件文件已被其他操作修改，请重新读取后再改' }
       eventData = JSON.parse(originalText)
     } catch (e) {
@@ -446,6 +446,7 @@ class EventBuilder {
         previewCommands: compiledCommands,
         diff: diffRes.text,
         diffStat,
+        ...(__prepare ? { __writes: [{ path: relPath, content: outputJson }] } : {}),
         message: `校验通过：成功装配 ${compiledCommands.length} 条指令（未落盘，dryRun）`
       }
     }

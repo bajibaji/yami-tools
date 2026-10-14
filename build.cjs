@@ -325,7 +325,12 @@ for (const [fname, fcontent] of artifactFiles) {
 }
 
 // 铁律②: 严禁原生 <button> 标签 (编辑器全局 button{position:absolute;width:88px;height:20px} 会打歪)
-const nativeBtnHits = (hudContent + '\n' + aiAgentContent + '\n' + fs.readFileSync(EDITOR_TOOLS_PATH, 'utf8')).match(/<button[\s>]/g) || [];
+const isolatedAiButtons = aiAgentContent.replace(/<button\b[^>]*class="yami-ai-(?:secondary|primary|align-opt-btn[^"\n]*|align-btn-cancel|align-btn-start)"[^>]*>/g, '');
+const nativeBtnHits = (hudContent + '\n' + isolatedAiButtons + '\n' + fs.readFileSync(EDITOR_TOOLS_PATH, 'utf8')).match(/<button[\s>]/g) || [];
+if (/<button[\s>]/.test(aiAgentContent) && (!/\.yami-ai-align-card button\s*\{[^}]*position: static/.test(styleCssContent) || !/\.yami-ai-approval-actions button/.test(styleCssContent))) {
+  console.error('[断言失败] AI 原生按钮必须隔离宿主按钮定位并保留可访问语义');
+  failedCount++;
+}
 if (nativeBtnHits.length > 0) {
   console.error(`❌ [断言失败] 检测到 ${nativeBtnHits.length} 处原生 <button> 标签，违反铁律②，请改用 <div role="button">！`);
   failedCount++;

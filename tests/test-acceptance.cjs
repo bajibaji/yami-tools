@@ -107,7 +107,7 @@ async function main() {
     // （直接抓模型请求体里实际带了哪些工具）。
     check('原始工具表保留 cdp_eval（供外部客户端/路线 B）', toolList.includes('cdp_eval'))
     const hiddenInHost = require('fs').readFileSync(path.join(ROOT, 'ai-host.js'), 'utf8')
-    check('宿主侧 cdp_eval 已隐藏', /HIDDEN_TOOLS = new Set\(\['cdp_eval'\]\)/.test(hiddenInHost))
+    check('宿主侧 cdp_eval 已隐藏', /HIDDEN_TOOLS = new Set\(\[[^\]]*'cdp_eval'/.test(hiddenInHost))
 
     console.log('\n########## B. 真实工作流串联（工程副本上执行） ##########')
     const baseline = await parse('project_changelog', { reset: true })

@@ -257,7 +257,7 @@ async function main() {
   console.log('\n########## 4. 上下文压缩 ##########')
   // 造一段很长的历史：连续多轮用户消息，触发预算压缩
   // 轮数跟着窗口走：20k 窗口的阈值是 16000，12 轮只推到 ~11.5k（实测），推不过去就不会触发压缩
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 35; i++) {
     await json('/chat', 'POST', { sessionId: 'compress-1', message: '第 ' + i + ' 轮：' + '填充内容'.repeat(200) })
   }
   const status = await json('/status?sessionId=compress-1')
@@ -276,7 +276,7 @@ async function main() {
   // 断"最后一轮原样保留"而不是某个中间轮号：中间轮还在不在，取决于这一轮触发过几次压缩
   // （阈值按 token 走，提示词一长触发点就前移），断言具体轮号会把测试变成提示词长度的函数。
   // 真正的契约是：最新消息绝不能被摘要掉。
-  check('最近消息被原样保留', compressFile.messages.some(message => message.role === 'user' && /第 19 轮/.test(message.content || '')))
+  check('最近消息被原样保留', compressFile.messages.some(message => message.role === 'user' && /第 34 轮/.test(message.content || '')))
 
   console.log('\n########## 5. 工具结果裁剪与工具事件 ##########')
   toolCallMode = 'list_scripts'
@@ -388,15 +388,15 @@ async function main() {
   // 上一轮把整个 ui_steps 并进 OTHER_MUTATIONS，副作用是"演给你看"也要弹确认卡 —— 用户要的"边做边演示"就没了。
   // 现在按步骤类型细分：focus/goto/wait 只是看，set/click 才是改。
   toolCallMode = 'ui_focus'
-  const demoEvents = await stream('/chat/stream', { sessionId: 'ui-demo-1', message: '演给我看' })
+  const demoEvents = await stream('/chat/stream', { sessionId: 'ui-demo-1', message: '演示给我看' })
   toolCallMode = 'none'
   check('纯演示（只有高亮）不再弹确认卡', !demoEvents.some(event => event.type === 'result' && event.status === 'approval'))
-  check('演示仍然真的走了一遍工具（跑不通也如实回报）', demoEvents.some(event => event.type === 'tool' && event.name === 'ui_steps'))
+  check('未读取真实控件清单时演示被拒绝', demoEvents.some(event => event.type === 'tool' && event.name === 'ui_steps' && event.phase === 'fail' && /dump_ui_hierarchy/.test(event.detail)))
   toolCallMode = 'ui_set'
-  const setEvents = await stream('/chat/stream', { sessionId: 'ui-demo-2', message: '改个属性给我看' })
+  const setEvents = await stream('/chat/stream', { sessionId: 'ui-demo-2', message: '改个属性并演示给我看' })
   toolCallMode = 'none'
-  check('真改控件的演示照旧先确认（set 仍要用户点「执行修改」）',
-    setEvents.some(event => event.type === 'result' && event.status === 'approval'))
+  check('真改控件不能跳过真实控件清单',
+    setEvents.some(event => event.type === 'tool' && event.phase === 'fail' && /dump_ui_hierarchy/.test(event.detail)))
 
   console.log('\n########## 12. 工具预算（换个关键词接着查也要停） ##########')
   // 实测踩过：模型换了 5 组关键词连着检索、宿主连提示 6 次它照旧往下查，最后 2 轮 37 次调用还没收尾。

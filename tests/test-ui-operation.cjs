@@ -830,6 +830,20 @@ async function main() {
     check('资源树多选时报出全部选中项，而不是只报第一个',
       sceneCtx.selectedCount === 2 && Array.isArray(sceneCtx.selectedFiles) && sceneCtx.selectedFiles.length === 2,
       JSON.stringify(sceneCtx.selectedFiles))
+    check('正在编辑场景和资源树选择是独立字段', sceneCtx.activeFile.path === sceneCtx.sceneFile.path && sceneCtx.activeFile.path !== sceneCtx.selectedFile.path)
+    check('结构化上下文声明版本和稳定 revision', sceneCtx.schemaVersion === 2 && Number.isInteger(sceneCtx.revision) && ctxBoot.probe.getEditorContext().revision === sceneCtx.revision)
+    const tabBoot = await bootProbe({ engine: false })
+    const tab = new tabBoot.El('tab-bar', 'title-tabBar')
+    tab.read = () => ({ type: 'ui', meta: { path: 'Assets/UI/test.abcdef1234567890.ui' } })
+    tabBoot.document.body.appendChild(tab)
+    const uiListNative = new tabBoot.El('node-list', 'ui-list')
+    let nativeNode = { class: 'text', name: '同名节点', presetId: 'abcdef1234567891' }
+    uiListNative.read = () => nativeNode
+    tabBoot.document.body.appendChild(uiListNative)
+    const nativeContext = tabBoot.probe.getEditorContext()
+    check('无引擎全局也能通过原生标签页和 UI 列表定位节点', nativeContext.activeFile && nativeContext.selectedObject && nativeContext.selectedObject.presetId === nativeNode.presetId)
+    nativeNode = { ...nativeNode, presetId: 'abcdef1234567892' }
+    check('切换同名不同节点会更新上下文 revision', tabBoot.probe.getEditorContext().revision > nativeContext.revision)
     const sceneCtxSummary = ctxBoot.sandbox.__YAMI_CTX_SUMMARY__()
     check('摘要里场景对象带上源文件路径（模型据此直接改那个文件）',
       /选中actor:「主角」 → Assets\/角色\//.test(sceneCtxSummary) && sceneCtxSummary.length <= 120, sceneCtxSummary)
@@ -990,7 +1004,7 @@ async function main() {
         pageContext: { page: 'playtest', summary: '试玩运行中 · 场景「BOSS战」' }
       })
       const playtestSystem = systemTextOf(captured[captured.length - 1] || {})
-      check('试玩窗口提问时，模型收到的一手环境写着"试玩运行中"', playtestSystem.indexOf('试玩运行中') >= 0)
+      check('桥不可用时前端摘要不被当作权威上下文', playtestSystem.indexOf('BOSS战') === -1)
       check('严禁把试玩窗口误标成"编辑器"', playtestSystem.indexOf('处于编辑器中') === -1)
 
       // C2：编辑器窗口提问 —— 用编辑器自己的视野
@@ -1000,42 +1014,39 @@ async function main() {
         pageContext: { page: 'editor', summary: '编辑器 · 页面「场景编辑」· 场景「新手村」' }
       })
       const editorSystem = systemTextOf(captured[captured.length - 1] || {})
-      check('编辑器窗口提问时，模型收到的是编辑器自己的视野', editorSystem.indexOf('新手村') >= 0 && editorSystem.indexOf('试玩运行中') === -1)
+      check('编辑器摘要不能凭空生成权威目标', editorSystem.indexOf('新手村') === -1)
 
       // C3：提示词协议真的到达模型（否则卡片和演示都是摆设）
       check('系统提示词里定义了 ui_steps 的用法', editorSystem.indexOf('ui_steps') >= 0)
       check('系统提示词里定义了对齐卡协议', editorSystem.indexOf('alignment-card') >= 0)
-      check('系统提示词要求开工前先对齐', editorSystem.indexOf('对齐卡') >= 0)
+      check('系统提示词要求目标歧义先对齐', editorSystem.indexOf('有歧义') >= 0)
       check('提示词里带上了界面演示的失败语义（如实说清第几步卡住）', editorSystem.indexOf('第几步卡住') >= 0)
 
       // C3b：模糊意图的落地规矩 —— 用户只说"这个/它/我选中的那个"时，模型必须指到环境里那个选中项。
       // 真机验证过（会话 session-mtz9o2oe）：他选中 329.落雷.skill 说"给我选中的技能…"，模型直接落到那个路径。
       // 这几条以前没有任何测试盯着 —— prompt 一改这条能力就会静默失效。
-      check('提示词规定"这个/它/我选中的那个"= 环境里那个选中项', editorSystem.indexOf('我选中的那个') >= 0)
+      check('提示词规定使用冻结目标', editorSystem.indexOf('frozenTarget') >= 0)
       check('提示词规定选中项就是这次要改的首要目标', editorSystem.indexOf('首要目标') >= 0)
-      check('提示词规定停留点上说得含糊就按它理解、别反问', editorSystem.indexOf('别反问') >= 0)
-      check('提示词规定区域级停留点信息不足该问就问', editorSystem.indexOf('信息不足') >= 0)
+      check('悬停不能当授权', editorSystem.indexOf('悬停都不是写入授权') >= 0)
+      check('区域级停留点不许猜', editorSystem.indexOf('区域级停留') >= 0 && editorSystem.indexOf('不得猜') >= 0)
       check('提示词规定场景对象给的是源文件、实例数据在场景文件里',
-        editorSystem.indexOf('源文件') >= 0 && editorSystem.indexOf('sceneFile') >= 0)
+        editorSystem.indexOf('场景实例') >= 0 && editorSystem.indexOf('源定义') >= 0)
       check('提示词规定资源树多选时不许默认只改一个', editorSystem.indexOf('selectedFiles') >= 0)
       check('提示词分清"选中（他点选的）"与"文件（打开着的）"',
-        editorSystem.indexOf('他点选的那个东西') >= 0 && editorSystem.indexOf('「文件」后面') >= 0)
+        editorSystem.indexOf('activeFile、selectedFiles、selectedObject、presence 各自独立') >= 0)
       // C3c：《02-Yami引擎机制》里几条最容易把 AI 带沟里的机制，必须进提示词
-      check('提示词写明起始场景由启动事件的 loadScene 决定（config.startPosition 只是默认值）',
-        editorSystem.indexOf('loadScene') >= 0 && editorSystem.indexOf('startPosition') >= 0)
+      check('引擎知识按需读取，不固定注入历史工程经验', editorSystem.indexOf('按需读入口索引') >= 0)
       // 属性键有两套口径（数据文件用 id、运行时 actor.attributes 用属性名）：提示词必须两套都讲清。
       // 只讲 id 会让 AI 写出 actor.attributes['<16位编号>'] —— 拿到 undefined 且不报错。
-      check('提示词写明属性键的两套口径、原生 Actor 没有 hp 字段',
-        editorSystem.indexOf('数据文件里') >= 0 && editorSystem.indexOf('属性名') >= 0
-        && editorSystem.indexOf('没有 hp 字段') >= 0 && editorSystem.indexOf('a5fd5e9f229abb2d') >= 0)
-      check('提示词警告注入参数已被求值、不要写 this.myActor()', editorSystem.indexOf('this.myActor()') >= 0)
-      check('提示词写明 UI 的 TextElement 要双冒号才会自动重绘', editorSystem.indexOf('<global::') >= 0)
-      check('提示词写明 Dist 是编译产物、不要手改', editorSystem.indexOf('Dist/ 是 tsc 的编译产物') >= 0)
+      check('属性参数通过工具查证，不写死工程 ID', editorSystem.indexOf('list_attributes') >= 0 && editorSystem.indexOf('a5fd5e9f229abb2d') === -1)
+      check('指令参数通过真实样例查证', editorSystem.indexOf('get_event_command_examples') >= 0)
+      check('单节点必须按 presetId 修改', editorSystem.indexOf('presetId 精确定位') >= 0)
+      check('禁止修改派生文件', editorSystem.indexOf('Data/manifest.json 或 Dist/') >= 0)
 
       // C4：内置模型**实际拿到**的工具表 —— 这才是"模型看不看得见"的唯一真源
       const lastReq = captured[captured.length - 1] || {}
       const modelToolNames = (lastReq.tools || []).map(t => (t.function && t.function.name) || t.name)
-      check('模型请求体里带上了 ui_steps（工具真的递到了模型手上）', modelToolNames.indexOf('ui_steps') >= 0, modelToolNames.length + ' 个工具')
+      check('未请求演示时不开放 ui_steps', modelToolNames.indexOf('ui_steps') === -1, modelToolNames.length + ' 个工具')
       check('模型请求体里没有 cdp_eval（宿主侧 HIDDEN_TOOLS 真的生效）', modelToolNames.indexOf('cdp_eval') === -1)
 
       // C5/C6：写盘节奏 —— 预览随便看，落盘才确认（用户实测踩到的就是这条）
@@ -1054,9 +1065,9 @@ async function main() {
       planRef.current = Object.assign({}, PREVIEW_TOOL, { args: Object.assign({}, PREVIEW_TOOL.args, { dryRun: false }) })
       const writeEvents = parseSse(await streamChat(AI_PORT, AGENT_TOKEN, { sessionId: 'ui-write', message: '正式写进去' }))
       const writeApprovals = writeEvents.filter(e => e.type === 'tool' && e.phase === 'approval')
-      check('dryRun:false 正式写入必须停在确认卡', writeApprovals.length === 1, 'approval 事件数=' + writeApprovals.length)
+      check('未读取目标时拒绝准备写入而不是偷偷执行', writeEvents.some(event => event.type === 'tool' && event.phase === 'fail' && /读取/.test(event.detail)), 'approval 事件数=' + writeApprovals.length)
       const writeResult = writeEvents.find(e => e.type === 'result')
-      check('待确认时本轮以 approval 收尾（绝不偷偷写盘）', !!(writeResult && writeResult.status === 'approval'), writeResult && writeResult.status)
+      check('被拒绝修改后工程保持不变', JSON.parse(fs.readFileSync(path.join(fixture, PREVIEW_TOOL.args.path), 'utf8')).commands.length === 0)
     }
 
     try { fs.rmSync(configDir, { recursive: true, force: true }) } catch (e) {}

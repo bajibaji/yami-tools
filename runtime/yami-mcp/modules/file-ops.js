@@ -33,7 +33,7 @@ function sha256(text) {
 function backupPath(root, absPath) {
   const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 17)
   const digest = sha256(absPath).slice(0, 10)
-  return path.join(root, '.yami-mcp-backups', `${stamp}-${digest}-${path.basename(absPath)}.bak`)
+  return path.join(root, '.yami-mcp-backups', `${stamp}-${digest}-${crypto.randomBytes(4).toString('hex')}-${path.basename(absPath)}.bak`)
 }
 
 /**
@@ -77,6 +77,10 @@ function readBackupMeta(backupFile) {
 function matchExistingStyle(absPath, text) {
   let before = null
   try { if (fs.existsSync(absPath)) before = fs.readFileSync(absPath, 'utf8') } catch { before = null }
+  return matchTextStyle(before, text)
+}
+
+function matchTextStyle(before, text) {
   if (before === null || before === '') return text
   const crlf = before.indexOf('\r\n') !== -1
   let out = text.replace(/\r\n/g, '\n')
@@ -113,18 +117,12 @@ function writeAtomic(root, relPath, text, options = {}) {
   }
 
   const tmpPath = `${absPath}.yami-tmp-${process.pid}-${Date.now()}`
-  const oldPath = `${absPath}.yami-old-${process.pid}-${Date.now()}`
   try {
     fs.writeFileSync(tmpPath, content, 'utf8')
-    if (fs.existsSync(absPath)) fs.renameSync(absPath, oldPath)
     fs.renameSync(tmpPath, absPath)
-    if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath)
     return { path: relativePath(root, relPath), bytes: Buffer.byteLength(content), backup: backupRelative, sha256: sha256(content) }
   } catch (error) {
     try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath) } catch {}
-    try {
-      if (fs.existsSync(oldPath) && !fs.existsSync(absPath)) fs.renameSync(oldPath, absPath)
-    } catch {}
     throw error
   }
 }
@@ -136,7 +134,7 @@ function restoreBackup(root, relPath, backup) {
   // 于是"编译失败自动回滚"静默失败（报"路径越过工程根目录"）。
   const raw = String(backup || '').replace(/\\/g, '/')
   const source = path.posix.isAbsolute(raw) || path.win32.isAbsolute(raw)
-    ? path.resolve(raw)
+    ? resolveInside(root, path.relative(path.resolve(root), path.resolve(raw)))
     : resolveInside(root, raw)
   if (!fs.existsSync(source)) throw new Error('备份文件不存在')
   fs.copyFileSync(source, target)
@@ -157,7 +155,7 @@ function listBackups(root, filterPath = '') {
     try { stat = fs.statSync(full) } catch { continue }
     if (!stat.isFile()) continue
     const meta = readBackupMeta(full)
-    const parsed = name.match(/^(\d{17})-([0-9a-f]{10})-(.+?)\.bak$/)
+    const parsed = name.match(/^(\d{17})-([0-9a-f]{10})-(?:[0-9a-f]{8}-)?(.+?)\.bak$/)
     const stamp = parsed ? parsed[1] : ''
     const savedAt = meta && meta.savedAt
       ? meta.savedAt
@@ -187,5 +185,5 @@ function listBackups(root, filterPath = '') {
 
 module.exports = {
   resolveInside, relativePath, sha256, writeAtomic, restoreBackup,
-  listBackups, readBackupMeta, writeBackupMeta, backupPath, BACKUP_DIR
+  listBackups, readBackupMeta, writeBackupMeta, backupPath, BACKUP_DIR, matchTextStyle
 }

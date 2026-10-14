@@ -9,6 +9,7 @@
 const fs = require('fs')
 const path = require('path')
 const { resolveInside, sha256, writeAtomic } = require('./file-ops')
+const { unifiedDiff } = require('./diff')
 
 /** Data/ 下实际存在的配置表名单 */
 const SUPPORTED_TABLES = [
@@ -31,6 +32,7 @@ function mergePatch(target, patch) {
   if (!patch || typeof patch !== 'object') return target
   const result = Array.isArray(target) ? [...target] : { ...target }
   for (const [key, val] of Object.entries(patch)) {
+    if (['__proto__', 'constructor', 'prototype'].includes(key)) throw new Error('补丁包含禁止的属性键：' + key)
     if (val === undefined) continue
     if (val !== null && typeof val === 'object' && !Array.isArray(val) && typeof result[key] === 'object' && !Array.isArray(result[key])) {
       result[key] = mergePatch(result[key], val)
@@ -160,7 +162,7 @@ class DatabaseManager {
    * @param {string} [options.parentId] 变量树专用：父节点 ID
    * @param {boolean} [options.dryRun=true] 是否仅预览
    */
-  upsertItem({ table, id, item, parentId, expectedSha256, dryRun = true }) {
+  upsertItem({ table, id, item, parentId, expectedSha256, dryRun = true, __beforeText, __prepare = false, __generatedId }) {
     if (!table || typeof table !== 'string') {
       return { ok: false, error: '缺少 table 参数' }
     }
@@ -182,7 +184,7 @@ class DatabaseManager {
     let rawData
     let originalText
     try {
-      originalText = fs.readFileSync(absPath, 'utf8')
+      originalText = __beforeText === undefined ? fs.readFileSync(absPath, 'utf8') : __beforeText
       if (expectedSha256 && sha256(originalText) !== expectedSha256) return { ok: false, conflict: true, error: '数据表已被其他操作修改，请重新读取后再改' }
       rawData = JSON.parse(originalText)
     } catch (e) {
@@ -191,6 +193,7 @@ class DatabaseManager {
 
     let action = 'updated'
     let targetId = id
+    const generateId = () => __prepare && /^[0-9a-f]{16}$/.test(__generatedId || '') ? __generatedId : this.generateGuid()
 
     if (cleanTable === 'config' && !id) {
       // config.json 是平铺配置，没有条目概念：把 item 的字段补丁到根对象上
@@ -198,7 +201,8 @@ class DatabaseManager {
       const next = mergePatch(rawData, item)
       const outputJson = JSON.stringify(next, null, 2) + '\n'
       if (dryRun !== false) {
-        return { ok: true, dryRun: true, action: 'patched', table: cleanTable, path: relPath, oldSha256: sha256(originalText), message: `校验通过：补丁 config 的 ${Object.keys(item).join('、')}（未落盘，dryRun）` }
+        const diff = unifiedDiff(originalText, outputJson, { label: relPath })
+        return { ok: true, dryRun: true, action: 'patched', table: cleanTable, path: relPath, oldSha256: sha256(originalText), newSha256: sha256(outputJson), diff: diff.text, diffStat: { added: diff.added, removed: diff.removed, truncated: diff.truncated }, ...(__prepare ? { __writes: [{ path: relPath, content: outputJson }] } : {}), message: `校验通过：补丁 config 的 ${Object.keys(item).join('、')}（未落盘，dryRun）` }
       }
       try {
         const written = writeAtomic(this.root, relPath, outputJson, { tool: 'upsert_database_item' })
@@ -221,7 +225,7 @@ class DatabaseManager {
           return { ok: false, error: `未在变量树中找到 ID 为 ${targetId} 的变量` }
         }
       } else {
-        targetId = this.generateGuid()
+        targetId = generateId()
         const newVar = {
           id: targetId,
           name: item.name || '新变量',
@@ -258,7 +262,7 @@ class DatabaseManager {
         list[foundIndex] = mergePatch(list[foundIndex], item)
         action = 'updated'
       } else {
-        if (!targetId) targetId = this.generateGuid()
+        if (!targetId) targetId = generateId()
         const newItem = {
           id: targetId,
           name: item.name || `新${cleanTable}`,
@@ -271,7 +275,7 @@ class DatabaseManager {
       const shape = TABLE_SHAPES[cleanTable] || {}
       if (shape.kind === 'tree') {
         // 树表（属性表/枚举表）：按 id 在 keys/strings 树里找，找到就合并，找不到才新建
-        if (!targetId) targetId = this.generateGuid()
+        if (!targetId) targetId = generateId()
         const found = findTreeEntry(rawData, targetId)
         if (found) {
           Object.assign(found, mergePatch(found, item))
@@ -303,6 +307,7 @@ class DatabaseManager {
     const outputJson = JSON.stringify(rawData, null, 2) + '\n'
 
     if (dryRun !== false) {
+      const diff = unifiedDiff(originalText, outputJson, { label: relPath })
       return {
         ok: true,
         dryRun: true,
@@ -311,6 +316,10 @@ class DatabaseManager {
         id: targetId,
         path: relPath,
         oldSha256: sha256(originalText),
+        newSha256: sha256(outputJson),
+        diff: diff.text,
+        diffStat: { added: diff.added, removed: diff.removed, truncated: diff.truncated },
+        ...(__prepare ? { __writes: [{ path: relPath, content: outputJson }] } : {}),
         message: `校验通过：${action === 'created' ? '新增' : '更新'} ${cleanTable} [${targetId}]（未落盘，dryRun）`,
         preview: outputJson.slice(0, 500) + (outputJson.length > 500 ? '\n... (省略后续内容)' : '')
       }

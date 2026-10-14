@@ -13,6 +13,9 @@ const messagePairs = require('./runtime/yami-mcp/modules/message-pairs')
 const contextMeter = require('./runtime/yami-mcp/modules/context-meter')
 const EditorBridge = require('./runtime/yami-mcp/modules/editor-bridge')
 const editorBridge = new EditorBridge()
+const workflow = require('./runtime/yami-mcp/modules/ai-workflow')
+const { checkedPath } = require('./runtime/yami-mcp/modules/change-set')
+const { resolveInside, sha256 } = require('./runtime/yami-mcp/modules/file-ops')
 
 const PORT = Number(process.env.YAMI_AI_PORT || 5968)
 const CONFIG_DIR = process.env.YAMI_AI_CONFIG_DIR || path.join(process.env.APPDATA || os.homedir(), 'DanJuanDevSuite')
@@ -32,6 +35,7 @@ const PARENT_PID = Number(process.env.YAMI_AI_PARENT_PID || 0)
 const CONFIG_PATH = path.join(CONFIG_DIR, 'ai-config.json')
 const MCP_PATH = path.join(__dirname, 'runtime', 'yami-mcp', 'server.js')
 const sessions = new Map()
+const queuedContexts = new Map()
 const seen = new Set()   // 已被模型返回并在上下文中回填过的 tool_call id，避免流式重放时重复回填
 let projectRoot = process.env.YAMI_PROJECT_ROOT || ''
 let mcp = null
@@ -50,7 +54,9 @@ const FILE_MUTATIONS = new Set([
 // 新增两个试玩侧动作同样要进来：结束卡住事件会真的结束用户正在跑的事件、suspend 会真的改
 // 引擎状态，confirm 模式下都必须先问（auto 模式照旧自动）。
 const OTHER_MUTATIONS = new Set(['click_element', 'trigger_playtest', 'editor_action', 'interact_editor', 'send_player_input', 'send_player_pointer', 'playtest_smoke', 'ui_steps', 'finish_stuck_event', 'suspend_runtime_kind'])
-const HIDDEN_TOOLS = new Set(['cdp_eval'])
+const HIDDEN_TOOLS = new Set(['cdp_eval', 'interact_editor', 'click_element', 'write_script', 'prepare_change_set', 'commit_change_set', 'cancel_change_set', 'read_change_set'])
+const UI_TOOLS = new Set(['ui_steps', 'dump_ui_hierarchy'])
+const RUNTIME_ACTIONS = new Set(['trigger_playtest', 'send_player_input', 'send_player_pointer', 'playtest_smoke', 'finish_stuck_event', 'suspend_runtime_kind'])
 // 只读工具：可并发执行（模型常在一条消息里同时读好几个文件）。
 // 写盘 / 编辑器动作 / 试玩输入一律独占执行并保持顺序；未列出的工具按独占处理（将来新增写工具不会被误并发）。
 // 由 MCP 注册表的 readOnlyHint 动态填充（启动时拉取一次），是并发的真源
@@ -144,10 +150,15 @@ function sessionPath(id) {
   return path.join(SESSION_DIR, safeSessionId(id) + '.json')
 }
 
+function isHumanMessage(message) {
+  return !!message && message.role === 'user' && !message.__hostNote && !isCheckpoint(message)
+}
+
 /** 精简会话结构用于落盘：丢掉函数引用等不可序列化字段 */
 function serializeSession(session) {
   return {
     id: session.id,
+    projectRoot,
     updatedAt: Date.now(),
     summary: session.summary || '',
     usage: session.usage || null,
@@ -155,6 +166,18 @@ function serializeSession(session) {
     // 真实用量锚点一并落盘：重启后刻度仍然贴近真实值，不必重新估一遍
     tokenAnchor: session.tokenAnchor || null,
     toolTally: session.toolTally || {},
+    contextSnapshot: session.contextSnapshot || null,
+    frozenTarget: session.frozenTarget || null,
+    requestText: session.requestText || '',
+    sourceWindow: session.sourceWindow || 'editor',
+    draft: session.draft || null,
+    changeSet: session.changeSet || null,
+    readFiles: session.readFiles || [],
+    readHashes: session.readHashes || {},
+    alignment: session.alignment || null,
+    committedFiles: session.committedFiles || [],
+    sessionBackups: session.sessionBackups || {},
+    lastCommit: session.lastCommit || null,
     messages: session.messages,
     pending: session.pending
       ? {
@@ -162,6 +185,13 @@ function serializeSession(session) {
           name: session.pending.name,
           args: session.pending.args,
           preview: session.pending.preview,
+          calls: session.pending.calls || null,
+          previews: session.pending.previews || null,
+          contextSnapshot: session.pending.contextSnapshot || null,
+          changeSet: session.pending.changeSet || null,
+          frozenTarget: session.pending.frozenTarget || null,
+          contextConflict: session.pending.contextConflict || null,
+          confirmedContextKey: session.pending.confirmedContextKey || '',
           remaining: session.pending.remaining || []
         }
       : null
@@ -172,7 +202,10 @@ function saveSession(session) {
   try {
     fs.mkdirSync(SESSION_DIR, { recursive: true })
     const data = serializeSession(session)
-    fs.writeFileSync(sessionPath(session.id), JSON.stringify(data), { encoding: 'utf8', mode: 0o600 })
+    const target = sessionPath(session.id)
+    const temporary = target + '.tmp'
+    fs.writeFileSync(temporary, JSON.stringify(data), { encoding: 'utf8', mode: 0o600 })
+    fs.renameSync(temporary, target)
   } catch (error) {
     process.stderr.write('[danjuan-ai] 会话保存失败: ' + error.message + '\n')
   }
@@ -182,6 +215,7 @@ function loadSessionFromDisk(id) {
   try {
     const data = JSON.parse(fs.readFileSync(sessionPath(id), 'utf8'))
     if (!data || !Array.isArray(data.messages)) return null
+    if (data.projectRoot && path.resolve(data.projectRoot).toLowerCase() !== path.resolve(projectRoot).toLowerCase()) return null
     return {
       id: safeSessionId(id),
       messages: data.messages,
@@ -191,6 +225,18 @@ function loadSessionFromDisk(id) {
       pending: data.pending || null,
       tokenAnchor: data.tokenAnchor || null,
       toolTally: data.toolTally || {},
+      contextSnapshot: data.contextSnapshot || null,
+      frozenTarget: data.frozenTarget || null,
+      requestText: data.requestText || '',
+      sourceWindow: data.sourceWindow || 'editor',
+      draft: data.draft || null,
+      changeSet: data.changeSet || null,
+      readFiles: data.readFiles || [],
+      readHashes: data.readHashes || {},
+      alignment: data.alignment || null,
+      committedFiles: data.committedFiles || [],
+      sessionBackups: data.sessionBackups || {},
+      lastCommit: data.lastCommit || null,
       seen: new Set(),
       busy: false
     }
@@ -212,7 +258,7 @@ function visibleMessages(session, limit = 4000) {
   return session.messages
     // 纯工具轮（有思考、没正文）也要回放：实时看到的是「思考① → 执行 → 思考② → …」，
     // 只回放带正文的那一条，用户切回旧会话就会以为"当时的思考和步骤都丢了"。
-    .filter(message => message.role === 'user'
+    .filter(message => (message.role === 'user' && !message.__hostNote)
       || (message.role === 'assistant' && (message.content || message.reasoning_content || (Array.isArray(message.tool_calls) && message.tool_calls.length))))
     .map(message => {
       if (isCheckpoint(message)) {
@@ -237,7 +283,7 @@ function visibleMessages(session, limit = 4000) {
 
 /** 会话标题：第一条"用户真说过的话"的前 40 字。历史列表与导出文件名共用同一口径 */
 function sessionTitleOf(list) {
-  const firstUser = (list || []).find(message => message && message.role === 'user' && !isCheckpoint(message))
+  const firstUser = (list || []).find(isHumanMessage)
   const text = String((firstUser && firstUser.content) || '新对话')
   return text.replace(/（请检查上一轮的实际进展[\s\S]*$/, '').replace(/\s+/g, ' ').slice(0, 40)
 }
@@ -258,7 +304,7 @@ function listSessions() {  try {
             // 上屏给人看的"几轮"= 用户自己说了几句。messageCount 是内部消息条数，
             // 里面混着 system 和每条工具结果 —— 拿它上屏就会出现"问一句显示 2 条、
             // 调几次工具变几十条"这种对不上的数字。
-            turns: list.filter(message => message.role === 'user').length,
+            turns: list.filter(isHumanMessage).length,
             messageCount: list.length
           }
         } catch {
@@ -289,6 +335,9 @@ const HOST_NOTE_PATTERNS = [
   /^【系统干预指引】/,
   /^（用户在你工作期间补充：/,
   /^（用户打断了这次操作/,
+  /^（宿主变更集真实结果：/,
+  /^（用户取消了变更集/,
+  /^（用户修订尚未写入的草案/,
   /^刚才的 \S+ 写入没有通过引擎的 TypeScript 编译检查/
 ]
 
@@ -307,7 +356,7 @@ function exportArgsHint(raw) {
 
 function sessionToMarkdown(session) {
   const list = Array.isArray(session.messages) ? session.messages : []
-  const turns = list.filter(message => message.role === 'user' && !isCheckpoint(message)).length
+  const turns = list.filter(isHumanMessage).length
   const toolResults = list.filter(message => message.role === 'tool').length
   const systems = list.filter(message => message.role === 'system').length
   const out = []
@@ -1013,7 +1062,7 @@ class McpClient {
     this.child = spawn(process.execPath, [MCP_PATH, '--root', this.root], {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', YAMI_PROJECT_ROOT: this.root, YAMI_MCP_GUARDED: '1' }
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', YAMI_PROJECT_ROOT: this.root, YAMI_MCP_GUARDED: '1', YAMI_MCP_REQUIRE_CHANGE_SET: '1' }
     })
     this.child.stdout.on('data', chunk => this.onData(chunk))
     this.child.stderr.on('data', chunk => process.stderr.write('[embedded-mcp] ' + chunk.toString()))
@@ -1101,8 +1150,15 @@ async function mentionFiles(force) {
   return { files, cached: false }
 }
 
-function modelTools(tools) {
-  return tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema || { type: 'object', properties: {} } } }))
+function modelTools(tools, session) {
+  const text = session && session.requestText || ''
+  const uiRequested = /演示|界面上.*操作|帮我.*(?:点击|点开|切换页面)|操作编辑器/.test(text)
+  const playRequested = /试玩|复现|测试|按键|结束.*事件|暂停.*更新/.test(text)
+  return tools.filter(tool => !HIDDEN_TOOLS.has(tool.name)
+    && (!UI_TOOLS.has(tool.name) || uiRequested)
+    && (!RUNTIME_ACTIONS.has(tool.name) || playRequested)
+    && (tool.name !== 'editor_action' || uiRequested || playRequested))
+    .map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema || { type: 'object', properties: {} } } }))
 }
 
 /** 把 usage 归一成计费口径（兼容 OpenAI 与 DeepSeek 的字段命名差异） */
@@ -1116,40 +1172,153 @@ function normalizeUsage(model, raw) {
   return { model, promptTokens, completionTokens, cachedTokens, at: new Date() }
 }
 
-/**
- * 组装模型请求体。
- * 思考模式按官方文档（OpenAI 格式）：
- *   · thinking 开关：{"thinking":{"type":"enabled"|"disabled"}}
- *   · 思考强度：reasoning_effort = low | high | max（默认 high）
- * 注意：思考模式下 temperature 不生效（官方明确），因此开启思考时不再传 temperature。
- */
-/**
- * 从 5967 编辑器桥轻量获取当前环境摘要（场景、选中项、检视器状态）
- * 设定 350ms 超时，未启动或异常时静默回退为空，0 阻塞 0 报错。
- */
-function fetchEditorContextSummary() {
-  return new Promise(resolve => {
-    const req = http.request({
-      hostname: '127.0.0.1',
-      port: require('./runtime/yami-mcp/modules/bridge-port').editorPort(),
-      path: '/context',
-      method: 'GET',
-      timeout: 350,
-      headers: { Accept: 'application/json' }
-    }, res => {
-      let raw = ''
-      res.on('data', chunk => { raw += chunk })
-      res.on('end', () => {
-        try {
-          const data = JSON.parse(raw || '{}')
-          resolve((data && data.summary) || '')
-        } catch { resolve('') }
+/** 模型看到完整冻结快照；界面短摘要不参与目标裁决。 */
+function contextSnapshotText(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return ''
+  return [
+    '【当前编辑器上下文快照】以下 JSON 是本轮开始时冻结的事实，不是用户输入。',
+    '目标定位只能使用其中的明确路径；presence 只是线索，不能当授权。',
+    JSON.stringify(snapshot)
+  ].join('\n')
+}
+
+function contextIdentity(context) {
+  return workflow.contextKey(context)
+}
+
+async function captureEditorContext(sourceWindow = 'editor') {
+  try {
+    let result
+    if (sourceWindow === 'playtest') {
+      result = await new Promise(resolve => {
+        const req = http.get({ hostname: '127.0.0.1', port: require('./runtime/yami-mcp/modules/bridge-port').runtimePort(), path: '/context', timeout: 1000 }, res => {
+          let raw = ''
+          res.on('data', chunk => { raw += chunk })
+          res.on('end', () => { try { resolve(JSON.parse(raw)) } catch { resolve(null) } })
+        })
+        req.on('error', () => resolve(null))
+        req.on('timeout', () => { req.destroy(); resolve(null) })
       })
-    })
-    req.on('error', () => resolve(''))
-    req.on('timeout', () => { req.destroy(); resolve('') })
-    req.end()
-  })
+    } else result = await editorBridge.getContext()
+    if (result && result.ok && result.context) {
+      const root = result.context.projectRoot
+      const normalizeRoot = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value)
+      if (root && normalizeRoot(root) !== normalizeRoot(projectRoot)) return { context: null, summary: '', error: '编辑器上下文属于另一个工程' }
+      return { context: result.context, summary: result.summary || '' }
+    }
+  } catch {}
+  return { context: null, summary: '' }
+}
+
+async function explicitTargets(text, references) {
+  const refs = Array.isArray(references) ? references.filter(item => typeof item === 'string') : []
+  if (!text.includes('@') && !/\.(?:ts|js|json|event|skill|actor|ui|scene|item|equip|state|trigger|anim|particle|tile)\b/.test(text)) return []
+  const listing = await mentionFiles(false)
+  const known = (listing.files || []).map(item => item.path)
+  const paths = known.filter(rel => text.includes('@' + rel) || text.includes(rel) || refs.includes(rel))
+  const direct = text.matchAll(/(?:@)?((?:Assets|Script|Data)\/[^\r\n]*?\.(?:ts|js|json|event|skill|actor|ui|scene|item|equip|state|trigger|anim|particle|tile))(?=$|\s|[，。；：、])/g)
+  for (const hit of direct) {
+    try {
+      const rel = checkedPath(projectRoot, hit[1])
+      if (fs.existsSync(path.join(projectRoot, rel))) paths.push(rel)
+    } catch {}
+  }
+  if (!paths.length) {
+    const matchingNames = known.filter(rel => text.includes(path.posix.basename(rel)) || text.includes(path.posix.basename(rel).replace(/\.[0-9a-f]{16}(?=\.)/i, '')))
+    if (matchingNames.length === 1) paths.push(matchingNames[0])
+    else if (matchingNames.length > 1) return { ambiguous: matchingNames }
+  }
+  return [...new Set(paths)]
+}
+
+async function approveChangeSet(session, body, events, rejected) {
+  const pending = session.pending
+  if (!pending || !pending.changeSet) throw new Error('变更草案已失效，请重新发送需求')
+  const client = await ensureMcp()
+  if (rejected) {
+    await client.call('cancel_change_set', { changeSetId: pending.changeSet.changeSetId })
+    session.pending = null
+    session.draft = []
+    session.changeSet = null
+    session.messages.push({ role: 'user', __hostNote: true, content: '（用户取消了变更集，所有草案均未写入）' })
+    saveSession(session)
+    return { ok: true, status: 'rejected', message: '已取消修改，工程文件未写入。' }
+  }
+  const live = await captureEditorContext(session.sourceWindow)
+  if (pending.contextSnapshot && !live.context) return { ok: true, status: 'approval', approval: summarizeChangeSet(pending), message: '无法重新获取目标环境，未写入。请恢复编辑器连接后重试。' }
+  if (live.context && live.context.hasPendingInput) throw new Error('检测到编辑器中有未失焦的输入，请先按回车提交输入后重新确认')
+  const changed = contextChanged(pending.contextSnapshot, live.context)
+  if (changed && pending.frozenTarget && pending.frozenTarget.source !== 'explicit') {
+    const key = contextIdentity(live.context)
+    if (!body.confirmFrozenTarget || pending.confirmedContextKey !== key) {
+      pending.confirmedContextKey = key
+      pending.contextConflict = { original: pending.frozenTarget, current: live.context, message: '界面目标已变化，仍将修改原目标。' }
+      saveSession(session)
+      return { ok: true, status: 'approval', approval: summarizeChangeSet(pending), message: '目标已变化，未写入。请确认仍修改原目标。' }
+    }
+  }
+  let changeSet = pending.changeSet
+  if (changeSet.expiresAt < Date.now() || body.repreview === true) {
+    const next = await client.call('prepare_change_set', { operations: session.draft || [] })
+    if (!next.ok) throw new Error(next.error || '重新预览失败')
+    pending.changeSet = next
+    saveSession(session)
+    return { ok: true, status: 'approval', approval: summarizeChangeSet(pending), message: '原确认已过期，已重新生成差异，请再次确认。' }
+  }
+  if (body.changeSetId && body.changeSetId !== changeSet.changeSetId) throw new Error('确认卡已更新，请核对最新草案')
+  if (events.onStatus) events.onStatus('正在提交并验证变更集')
+  if (events.onTool) events.onTool({ phase: 'start', key: changeSet.changeSetId, name: 'commit_change_set', label: '提交并验证变更集', target: changeSet.files.map(file => file.path).join('、') })
+  if (events.cancelToken) events.cancelToken.onCancel(() => { client.call('cancel_change_set', { changeSetId: changeSet.changeSetId }).catch(() => {}) })
+  // 写入取消必须等事务回滚完成；不能仅丢弃迟到结果，否则下一轮可能与旧写入竞争。
+  const result = await client.call('commit_change_set', { changeSetId: changeSet.changeSetId, confirmationToken: changeSet.confirmationToken })
+  if (result.confirmRequired) {
+    const next = await client.call('prepare_change_set', { operations: session.draft || [] })
+    if (!next.ok) throw new Error(next.error || '恢复草案失败，请重新发送需求')
+    pending.changeSet = next
+    session.changeSet = next
+    saveSession(session)
+    return { ok: true, status: 'approval', approval: summarizeChangeSet(pending), message: '宿主重启后原确认失效，已重新预览，请核对最新差异。' }
+  }
+  if (events.onTool) events.onTool({ phase: result.ok ? 'done' : 'fail', key: changeSet.changeSetId, name: 'commit_change_set', label: '提交并验证变更集', detail: result.error || result.message, info: { files: result.files && result.files.length || 0 } })
+  session.pending = null
+  session.changeSet = null
+  session.draft = []
+  session.lastCommit = result
+  if (result.ok && result.files) {
+    session.committedFiles = [...new Set((session.committedFiles || []).concat(result.files.map(file => file.path)))]
+    session.sessionBackups = session.sessionBackups || {}
+    for (const file of result.files) if (file.backup && !session.sessionBackups[file.path]) session.sessionBackups[file.path] = file.backup
+  }
+  session.messages.push({ role: 'user', __hostNote: true, content: '（宿主变更集真实结果：' + JSON.stringify(result) + '）' })
+  saveSession(session)
+  if (!result.ok) {
+    const failure = compileFailureOf('commit_change_set', result)
+    if (failure && result.rollback && result.rollback.ok && (session.repairs || 0) < MAX_REPAIR_ATTEMPTS && !(events.cancelToken && events.cancelToken.cancelled)) {
+      session.repairs = (session.repairs || 0) + 1
+      failure.rolledBack = true
+      session.messages.push(repairMessage(failure))
+      session.readFiles = []
+      session.readHashes = {}
+      saveSession(session)
+      if (events.onNotice) events.onNotice('整组编译失败，已回滚。正在准备修复草案，修复仍需确认。')
+      return runTurn(session, readStoredConfig(), events)
+    }
+    return { ...result, status: failure ? 'compile-failed' : result.rollback && result.rollback.ok ? 'rolled-back' : 'failed', changedFiles: 0, message: (result.rollback && result.rollback.ok ? '整组修改已回滚。' : '存在未恢复的文件，请检查恢复日志。') + (result.error || '变更集未完成') + (failure && failure.firstLine ? '\n' + failure.firstLine : ''), validation: result.validation }
+  }
+  if (/试玩|复现|冒烟/.test(session.requestText || '')) {
+    session.verifyingCommit = true
+    session.playtestValidation = null
+    session.messages.push({ role: 'user', __hostNote: true, content: '工程变更已按上述结果提交。现在只执行用户明确要求的试玩或复现验证，不再修改文件；未运行试玩必须说明未验证。' })
+    const verification = await runTurn(session, readStoredConfig(), events)
+    verification.validation = { ...result.validation, playtest: session.playtestValidation || { performed: false } }
+    return verification
+  }
+  return await attachChangelog(session, { ...result, status: 'done', message: result.message, validation: result.validation })
+}
+
+function contextChanged(before, after) {
+  if (!before || !after) return false
+  return contextIdentity(before) !== contextIdentity(after)
 }
 
 /**
@@ -1167,7 +1336,9 @@ function messagesForApi(messages, envSummary = '') {
       clean[key] = value
     }
     if (idx === 0 && clean.role === 'system' && envSummary) {
-      clean.content = clean.content + '\n\n' + envSummary
+      clean.content = workflow.SYSTEM_PROMPT + '\n\n' + envSummary
+    } else if (idx === 0 && clean.role === 'system') {
+      clean.content = workflow.SYSTEM_PROMPT
     }
     return clean
   })
@@ -1386,138 +1557,15 @@ function requestModelStream(config, apiKey, messages, tools, onDelta, cancelToke
   })
 }
 
-const SYSTEM_PROMPT = `你是 Open Yami RPG Editor 内置开发副驾。用简体中文回答，面向不懂代码的用户。
-你可以通过工具读取和操作当前工程。遵守以下规则：
-1. 修改前先读取目标和相关调用方，优先复用现有脚本、事件和引擎能力。
-2. 工程文件写入工具先预览；系统会统一处理确认和正式写入，不要绕过确认。
-3. TS 修改后调用 compile_check；资源修改后调用 validate_resource，跨资源改动后调用 validate_project。
-4. 不暴露 GUID 等内部细节，除非用户明确询问；结果用白话说明改了什么、验证是否通过。
-5. 不承诺没有验证的结果。遇到错误时说明恢复办法。不要请求或输出 API Key。
-
-【工作方式：先搜、再看、再改，省上下文】
-6. 找东西先 search_project（内容检索）或 list_scripts / list_resources，不要一上来整份读大文件。
-   只有命中之后才 read_script / read_resource 读那一个文件，read_resource 遇到大文件请用 key 参数读子节。
-   用户消息里的 @相对路径（如 @Assets/插件/全局插件/示例.abc.ts）是他在输入框里点选的文件，不是猜测：
-   直接按那个文件办事，不要再挑别的同名文件；他没点选时你不要自己造 @路径。
-7. 改脚本优先 edit_script 做**片段替换**，而不是 write_script 整份重写：
-   oldText 要带足够上下文保证在文件里唯一（不唯一会被拒绝并给出行号）；
-   先用 dryRun 预览，确认无误再正式写入。整份重写只在新建或大改结构时使用。
-
-【工程领域常识】
-8. 目录约定：脚本与资源在 Assets/ 下（.ts 插件脚本、.event 事件、.scene 场景、.ui 界面、.actor/.skill/.item 等资源），
-   Data/ 下是数据表（variables、teams、commands、plugins、attribute、enumeration…），Data/manifest.json 是资源索引（不要手改）。
-9. 资源文件名形如 名称.16位十六进制.ext，GUID 由文件名决定；改名/新建请用工具，不要手拼 GUID。
-10. 事件编排用 append_event_commands，指令用**编辑器里显示的中文名**即可（如 显示文本/显示选项/等待/设置数值/调用事件）；
-    注意别按直觉改名：引擎里「条件分支」是 switch（if 叫「如果」）、「设置文本」是改界面文字元素（写变量那条叫「设置字符串」）；
-    括号里的参数结构照 get_event_command_examples 抄 —— 若同时给中文名和引擎形状参数，只有引擎形状的键会被采用。
-    不确定指令有哪些参数时先 list_event_commands 或 get_event_command_examples，不要凭空猜参数名。
-11. 脚本写入会跑引擎原生 tsc，编译不过会自动回滚；所以修完脚本务必看 compile_check 的结论再说"改好了"。
-12. 用户反馈"游戏里不对/报错/卡住"时：先 diagnose_runtime 读运行时诊断（里面有可疑文件、行号、就地源码、卡住事件与白话归因），
-    按给的行号用 search_project + edit_script 定位修改，改完 compile_check，最后用 send_player_input 让试玩复现验证。
-13. 多步任务（要改多处、或要"检查并修复"这类复合需求）开工时，先用 todo_write 列一份白话待办清单（3~6 步），
-    每完成一步就更新一次状态；用户会在界面上看到进度。任务全部完成后把清单清掉或全部标为完成。
-14. 用户问"你刚才改了什么 / 改了哪些文件"时，或一次多文件改动收尾时：用 project_changelog 生成改动小结
-    （它按内容哈希对比基线，写了又改回去、写失败回滚的都不会被算成变更；还能带出编译与试玩结论）。
-15. 改完脚本或事件、想确认"真的还能玩"时：用 playtest_smoke 跑一遍（可传 "down,down,ok" 这类动作脚本）。
-    它会自动对比跑之前/之后的运行时诊断，直接告诉你有没有新报错、有没有事件卡住、性能是否恶化。
-    需要先在编辑器里启动试玩；如果没在试玩中，如实告诉用户"请先点试玩"，不要假装跑过。
-16. 用户说"改回去 / 撤销 / 恢复原样 / 刚才那个不要了"时：用 list_backups 找到要回退的文件与时间点，
-    再用 restore_backup 回退（不传 backup 即回到最早那次，也就是你动手之前）；回退前先 dryRun 让用户看到差异。
-    回退本身也会留一份安全备份，所以不必担心"退错了就回不去"。
-
-【界面演示：能在界面上做的，就让用户看着你做】
-17. 当用户要调的某个东西在编辑器界面上有对应控件（属性面板里的一格、某个按钮、某个工作页）时，
-    优先用 ui_steps 在界面上**演出来**，而不是闷头改文件：用户能看着你一步一步点，心里才有底。
-    steps 里每一步写清 kind（focus/set/click/goto/wait）、target（CSS 选择器，如 #fileItem-attack）、
-    不确定控件选择器时先用 dump_ui_hierarchy 拿到界面上真实存在的 id 与选择器，不要凭空猜（猜错会当场熔断）；
-    label（一句白话，会显示在高亮框旁边，别写代码术语）；
-    同一次需求里相关的几步填同一个 mergeGroup，演出会合并成一轮，不会一顿一顿。
-18. ui_steps 走的是引擎公开入口，等价于"用户自己点了那里"，不是鼠标模拟；
-    用户随时可以按停，所以每一步都要能独立看懂，做完了用一句白话交代刚才动了哪几步、结果如何。
-19. 不是所有活儿都能演：canvas 里的对象、脚本内容这类没有界面控件可圈的，就不要硬凑，
-    如实说一句"这个我只能在后台改"，然后照常走文件工具。
-20. ui_steps 是**唯一**会动用户界面的工具；不要用 interact_editor 去模拟鼠标点属性面板，那是兜底手段。
-21. 界面操作失败时（某一步找不到控件、或用户按了停）不要假装成功、也不要立刻重试同一批步骤：
-    如实说清是第几步卡住的、前面哪几步已经生效，再问用户要不要换个做法。
-
-【开工前先对齐：需求有影响做法的歧义就问，没有就别凑数】
-22. 如果用户的需求里存在**会改变你下一步怎么做**的关键歧义（比如"这个技能强一点"到底改哪一项、改成多少），
-    不要自己拍板开工，先在回复里给出一张对齐卡。对齐卡必须独占一段、前后不要夹别的内容，格式：
-    <alignment-card>{"summary":"我理解你要把木剑改强","questions":[{"title":"攻击力改成多少？","options":["25","40"]}],"defaults":["其余属性不动"]}</alignment-card>
-    面板会把它渲染成可点的选项卡，用户点「开工」之后你才会收到确认，那之前不要动手。
-23. 只问"答案会改变你下一步做法"的问题，数量不设上限但也不要凑数；需求已经明确时直接开工，不要为了显得严谨硬发一张卡。
-    给出 questions 时每个选项都要是具体可执行的取值，不要写"你决定"这种空转选项。
-
-【写盘节奏：预览随便看，落盘只确认一次】
-24. 写盘类工具（write_script / edit_script / append_event_commands / patch_resource / upsert_database_item /
-    delete_resource / restore_backup / write_resource / create_script）先用 dryRun:true 看一眼差异 ——
-    **dryRun:true 不会弹确认卡，直接就能拿到结果**；确认无误再传 dryRun:false 正式写入，那一步才会请用户点「执行修改」。
-25. 所以一次需求里能合并的改动就合并成一次正式写入，别一处一确认 ——
-    让用户点十次确认，他最后只会闭着眼睛点。预览可以看很多次，落盘只打扰他一次。
-
-【引擎接口不可用时如实说】
-26. 如果环境提示里出现「引擎接口未暴露」，说明这台编辑器的引擎没有打 window.YamiEngine 补丁（官方预编译版就是这样）：
-    界面演示、高亮、点击、读界面结构、改检视器属性 全都照常可用；
-    但 保存、撤销、重做、刷新资源树、启动试玩、文件预检 这几项用不了。
-    这种时候不要反复重试同一个动作，也不要承诺"我帮你保存好了 / 已启动试玩"，
-    如实说明这一项在当前引擎上用不了、需要引擎侧补丁，然后把能做的部分做完。
-
-27. 环境提示的「停在「攻击力」=25」= 用户此刻正停在那个控件上：他话说得含糊就按它理解，别反问"你指哪个"；
-    停在"场景视图"这类区域级说明信息不足，该问就问；他明确说了别处，以他说的为准。
-
-28. 环境提示里「选中「xxx」→ Assets/....」箭头后面那个路径 = **用户此刻在编辑器里打开着的那个工程文件**：
-    他说的"这个/它/我选中的那个"指的就是它，它也是你这次要改的**首要目标** —— 直接对这个路径动手，
-    不要按名字去工程里另找一个同名文件（同名资源很常见，找错就写到别处去了）。
-    为了把这件事做完而必须连带改别的文件时，先用一句白话说明"另外还要改 X"，再动它 —— 不要闷头写。
-
-29. 场景里选中的对象（环境提示「选中actor:「主角」 → Assets/角色/....actor」）箭头后面是它的**源文件**
-    （角色/动画/粒子/视差图的定义文件：属性、事件、图片都在那里）。要改的是它在**当前这一份场景里**的东西
-    （位置/缩放/朝向/图层）时，改的是环境提示里的场景文件（sceneFile 那个路径）—— 两层分不清就先问一句，
-    别默认挑一层动手。
-
-30. 环境提示写着「选中「A」等 3 个」= 他选了不止一个：别默认只改 A，用 get_editor_context 的 selectedFiles
-    看全部，先说清你打算改哪一个（他要全改时也要逐个说明改了什么）。
-
-31. 环境提示里「选中「背景」·文件「X.ui」 → Assets/…」这种形状，两个词分工不同：
-    「选中」后面 = 他刚在编辑器里点选的那个东西（界面树的节点、列表里的项、场景对象…）；
-    「文件」后面 = 编辑器里打开着的那个工程文件（只是"打开着"，不一定是他指的东西）。
-    他说"这个/它"时优先指**他点选的那个东西**；要改它，先在它所在的那个文件里按名字 / presetId 找到它，
-    别拿"打开着的文件"顶替他指的东西。
-
-32. 起始场景：引擎启动时**不会自动加载任何场景** —— 起始场景由全局启动事件里的 loadScene 指令决定，
-    Data/config.json 的 startPosition 只是那条指令的默认取值。用户说"改成从 X 场景开始"时，
-    去改那个启动事件里的指令；只改 config.json 不会生效（也别向他承诺改好了）。
-
-33. 属性有两套键，用错就是"改了没反应"，务必分清：
-    · **数据文件里**（.event / .ui / .actor / 指令参数 attributeId）引用属性用 **id**（16 位编号）：
-      本机实测 a5fd5e9f229abb2d=生命值、a8451228fe0c120a=最大生命值；角色文件里就是
-      {"key":"a5fd5e9f229abb2d","value":700} 这种形状。
-    · **脚本/插件里读运行时角色**用的是**属性名**：actor.attributes.health、actor.attributes['maxHealth']。
-      原因是引擎加载角色时做了转换（Templates/arpg-ts-chinese/Script/actor.ts:610 调
-      Attribute.loadEntries → variable.ts:263/266 写的是 map[attr.key]，只有该属性 key 为空才回落成 id）；
-      本机存档里实测键名就是 health / maxHealth / level / STR。写 actor.attributes['<16位编号>'] 拿到的是 undefined。
-    原生 Actor **没有 hp 字段**，战斗属性全在 actor.attributes 里。想知道 id 对应哪个属性名，去属性表按 id 查 key/name。
-
-34. 注入参数（@actor / @variable-getter / @trigger 这些）**在注入前已经被引擎求值**：
-    脚本里拿到的是对象或值本身、**不是函数** —— 不要写 this.myActor()（会直接报错）。
-
-35. 文本里的变量插值分三档，别混：事件指令文本用 <local:变量名> / <global:16位GUID>；
-    UI 的 TextElement 要**双冒号** <global::16位GUID> 才会"变量一变就自动重绘"；
-    本地化词条用 <ref:16位GUID>。
-
-36. Dist/ 是 tsc 的编译产物（Script/*.ts → Dist/Script/*.js，Assets/插件/**/*.ts → Dist/Assets/插件/**/*.js）：
-    永远改源文件，不要手改 Dist —— 下次编译就被覆盖，用户会以为"改了没生效"。`
-
-
-
 function sessionFor(id) {
   const key = safeSessionId(id)
   if (!sessions.has(key)) {
     const restored = loadSessionFromDisk(key)
-    sessions.set(key, restored || { id: key, messages: [{ role: 'system', content: SYSTEM_PROMPT }], pending: null, summary: '', grants: [], seen: new Set(), busy: false })
+    sessions.set(key, restored || { id: key, messages: [{ role: 'system', content: workflow.SYSTEM_PROMPT }], pending: null, summary: '', grants: [], contextSnapshot: null, seen: new Set(), busy: false })
   }
   const session = sessions.get(key)
   if (!session.seen) session.seen = new Set()
+  if (session.messages[0] && session.messages[0].role === 'system') session.messages[0].content = workflow.SYSTEM_PROMPT
   return session
 }
 
@@ -1653,41 +1701,6 @@ async function attachChangelog(session, result) {
   return result
 }
 
-/* ============================== 会话内批量授权 ============================== */
-// 动机：一件任务里同一个文件常要连着改好几次，每条都弹审批会把人磨烦；
-// 而"逐条确认"一旦变成走过场，反而更危险。做法是让用户**显式**授权：
-// 批准某次写盘时勾选"本次任务内该文件不再逐条确认"，之后只有这个文件免打扰。
-// 安全前提：写盘仍有备份与差异统计、收尾有改动小结、随时可一键撤销。
-const DELETE_TOOLS = new Set(['delete_resource'])
-
-/**
- * 授权键：`工具::文件` 表示"这一个文件"，`工具::*` 表示"这类工具的所有文件"。
- * 旧版对没有 path 参数的写盘工具（如 upsert_database_item）返回空串 → 永远拿不到授权、
- * 只能一个事务一个事务地勾；而且用户想要的中间档（"这轮里这类写盘别问了"）压根不存在。
- */
-function grantKeyOf(name, args, scope) {
-  const rel = String((args && args.path) || '')
-  if (scope === 'tool' || !rel) return `${name}::*`
-  return `${name}::${rel}`
-}
-
-function isGranted(session, name, args) {
-  if (!session.grants) return false
-  // 删除永远逐条确认：不可轻易撤销的动作不接受批量授权
-  if (DELETE_TOOLS.has(name)) return false
-  return session.grants.includes(grantKeyOf(name, args)) || session.grants.includes(`${name}::*`)
-}
-
-function addGrant(session, pending, scope) {
-  if (!pending) return null
-  if (DELETE_TOOLS.has(pending.name)) return null
-  const key = grantKeyOf(pending.name, pending.args, scope)
-  if (!key) return null
-  if (!Array.isArray(session.grants)) session.grants = []
-  if (!session.grants.includes(key)) session.grants.push(key)
-  return key
-}
-
 /**
  * 这次写盘动的是哪个工程文件：写盘类工具的 path，或 upsert_database_item 的 Data/<表>.json。
  * 同一条口径也用在 /backups 上（那儿原先自己拼了一遍），这里收成一处，免得两处对不上。
@@ -1700,39 +1713,6 @@ function fileTargetOf(name, args) {
     return 'Data/' + String(args.table).replace(/\.json$/i, '').toLowerCase() + '.json'
   }
   return ''
-}
-
-/** 编辑器里"当前打开着的那个文件"：只能问 5967 桥，拿不到就当没有 */
-async function selectedEditorFile() {
-  try {
-    const res = await editorBridge.getContext()
-    const selected = res && res.ok && res.context && res.context.selectedFile
-    return (selected && selected.path) ? String(selected.path).replace(/\\/g, '/') : ''
-  } catch (e) { return '' }
-}
-
-/**
- * 用户此刻在编辑器里打开着的那个文件（这一轮认定一次，之后不再重复问桥）。
- * 它代表"我要改这个"的意图：这一轮动它不再逐条确认，动别的文件照旧要先问。
- */
-async function noteEditorSelection(session) {
-  const selected = await selectedEditorFile()
-  session.editorSelection = selected || ''
-  return session.editorSelection
-}
-
-/** 写盘正好落在选中文件上时，把"这一个文件"加进授权表（每个工具一份键，删除类永远不加） */
-function grantSelectionHit(session, name, args, events) {
-  const selected = session && session.editorSelection
-  if (!selected) return false
-  if (fileTargetOf(name, args) !== selected) return false
-  if (isGranted(session, name, args)) return false
-  if (!addGrant(session, { name: name, args: args }, 'file')) return false
-  saveSession(session)
-  if (events && events.onNotice) {
-    events.onNotice(`「${selected}」是你此刻在编辑器里打开着的文件，这一步直接改它、不再逐条确认；打开之外的文件仍然会先问你。`)
-  }
-  return true
 }
 
 // ============================================================
@@ -1822,9 +1802,9 @@ function systemHashOf(text) {
 }
 
 /** 把"模型这一轮实际看到的 system 文本"如实上屏（文本变了才再上一行） */
-function noteSystemSurface(session, messages, events) {
+function noteSystemSurface(session, messages, events, envSummary = '') {
   if (!events || !events.onSystem) return
-  const text = systemTextOf(messages)
+  const text = systemTextOf(messagesForApi(messages, envSummary))
   if (!text) return
   const hash = systemHashOf(text)
   if (systemHashes.get(session.id) === hash) return
@@ -1872,20 +1852,23 @@ async function continueSession(session, config, events = {}) {
   const key = await getApiKey(config)
   if (!key && /api\.deepseek\.com/i.test(config.endpoint)) throw new Error('请先在设置中填写 DeepSeek API Key')
   // 工具 schema 整轮复用同一个数组实例：既省掉重复序列化，也让计量结果命中缓存
-  toolsForModel = modelTools(client.tools)
+  const turnTools = modelTools(client.tools, session)
+  session.allowedTools = turnTools.map(tool => tool.function.name)
+  toolsForModel = turnTools
   // 每次发请求前先体检历史：旧版本可能把坏序列写进过会话（上游会一路 400 到底）
   healSessionMessages(session, '发送前体检')
-  await compressContext(session, config, key, toolsForModel)
+  await compressContext(session, config, key, turnTools)
   // 打转保护：同一批工具调用（同名同参）连续重复时，模型已陷入循环，及时中断而不是撞步数上限
   let lastSignature = ''
   let repeats = 0
   let repairJustInjected = false
   let sequenceRetryUsed = false
   // 获取当前环境快照（优先采用当前窗口直发的一手快照，防止试玩被误报为编辑器；拿不到回退 5967 桥）
-  let envSummary = (events && events.envSummary) || ''
-  if (!envSummary) {
-    try { envSummary = await fetchEditorContextSummary() } catch {}
-  }
+  const contextSnapshot = session.contextSnapshot || null
+  let envSummary = contextSnapshot
+    ? contextSnapshotText({ ...contextSnapshot, frozenTarget: session.frozenTarget, sourceWindow: session.sourceWindow })
+    : ((events && events.envSummary) || '')
+  envSummary += '\n【本轮冻结目标】' + JSON.stringify(session.frozenTarget || {})
   // 工程文档入口跟着环境快照走同一条注入通道（它每轮都该在，但不参与顶栏那一行显示）
   const docHint = projectDocHint()
   if (docHint) envSummary = envSummary ? envSummary + '\n' + docHint : docHint
@@ -1903,14 +1886,14 @@ async function continueSession(session, config, events = {}) {
       saveSession(session)
       if (events.onSteer) for (const item of steers) events.onSteer({ phase: 'delivered', text: item.text })
     }
-    noteSystemSurface(session, session.messages, events)
+    noteSystemSurface(session, session.messages, events, envSummary)
     if (events.onStatus) events.onStatus(step === 0 ? '正在思考' : `继续处理（第 ${step + 1} 步）`)
     let assistant
     // 记下这次请求实际发出的消息条数：响应里的 prompt_tokens 就是这批消息（含 system 与工具
     // schema）的真实用量，存成锚点后，面板刻度与压缩判定都不用再靠纯估算
     const sentCount = session.messages.length
     try {
-      assistant = await requestModelStream(config, key, session.messages, toolsForModel, delta => {
+      assistant = await requestModelStream(config, key, session.messages, turnTools, delta => {
         if (events.onDelta) events.onDelta(delta)
       }, cancelToken, envSummary)
     } catch (error) {
@@ -1936,13 +1919,21 @@ async function continueSession(session, config, events = {}) {
       // 真实用量锚点：prompt_tokens 覆盖了 system、工具 schema 与刚发出的这批消息，
       // 之后的刻度就是「锚点 + 新增消息的估算」，不必自己实现分词器也不会累积误差
       if (Number.isInteger(assistant.__usage.promptTokens) && assistant.__usage.promptTokens > 0) {
-        session.tokenAnchor = { messageCount: sentCount, promptTokens: assistant.__usage.promptTokens, toolsTokens: contextMeter.estimateTools(toolsForModel) }
+        session.tokenAnchor = { messageCount: sentCount, promptTokens: assistant.__usage.promptTokens, toolsTokens: contextMeter.estimateTools(turnTools) }
       }
     }
     session.messages.push(assistant)
     saveSession(session)
     const calls = Array.isArray(assistant.tool_calls) ? assistant.tool_calls : []
-    if (!calls.length) return await attachChangelog(session, { ok: true, status: 'done', message: assistant.content || '任务已完成', usage: session.usage || null, usageText: pricing.describeUsage(session.usage) })
+    if (!calls.length) {
+      if (session.changeSet && session.changeSet.files && session.changeSet.files.length) {
+        session.pending = { name: 'commit_change_set', args: {}, changeSet: session.changeSet, contextSnapshot: session.contextSnapshot, frozenTarget: session.frozenTarget, contextConflict: session.draftContextConflict, remaining: [] }
+        saveSession(session)
+        return { ok: true, status: 'approval', message: '草案已准备，确认后才会写入。', approval: summarizeChangeSet(session.pending) }
+      }
+      if (session.mutationAttempted && !session.lastCommit) return { ok: false, status: 'no-changes', message: session.lastMutationError || '未产生可提交的修改，工程文件未写入。' }
+      return await attachChangelog(session, { ok: true, status: 'done', message: assistant.content || '任务已完成', usage: session.usage || null, usageText: pricing.describeUsage(session.usage) })
+    }
     const signature = calls
       .map(call => (call.function && call.function.name) + '(' + String(call.function && call.function.arguments || '') + ')')
       .join('|')
@@ -2066,6 +2057,10 @@ const TOOL_LABELS = {
 
 function toolLabel(name) {
   return TOOL_LABELS[name] || name
+}
+
+function playtestValidationOf(result) {
+  return { performed: !!(result && result.ok === true && result.running === true && result.verdict), ok: !!(result && result.verdict === 'ok'), verdict: result && result.verdict || null, message: result && (result.message || result.error) || '试玩未完成' }
 }
 
 /**
@@ -2193,6 +2188,57 @@ async function runReadOnly(client, call, name, args, events, cancelToken) {
   }
 }
 
+function summarizeChangeSet(pending) {
+  const set = pending.changeSet
+  return {
+    tool: 'commit_change_set',
+    changeSetId: set.changeSetId,
+    target: set.files.map(file => file.path).join('\n'),
+    summary: '提交 ' + set.files.length + ' 个文件的变更',
+    risk: set.risk,
+    frozenTarget: pending.frozenTarget,
+    contextConflict: pending.contextConflict || null,
+    files: set.files,
+    message: pending.contextConflict ? '目标环境已变化，请核对原目标后确认。' : '所有差异已冻结。失败将整组回滚。',
+    preview: {
+      diff: set.files.map(file => file.diff).join('\n\n'),
+      diffStat: set.files.reduce((sum, file) => ({ added: sum.added + file.diffStat.added, removed: sum.removed + file.diffStat.removed, truncated: sum.truncated || file.diffStat.truncated }), { added: 0, removed: 0, truncated: false })
+    }
+  }
+}
+
+async function stageMutation(session, client, call, name, args) {
+  const issue = workflow.checkTarget(session.frozenTarget, name, args)
+  if (issue) return { ok: false, alignmentRequired: !!(session.frozenTarget && session.frozenTarget.paths.length && !session.frozenTarget.paths.includes(workflow.mutationPath(name, args))), error: issue }
+  const rel = checkedPath(projectRoot, workflow.mutationPath(name, args))
+  const live = await captureEditorContext(session.sourceWindow)
+  session.draftContextConflict = contextChanged(session.contextSnapshot, live.context) && session.frozenTarget.source !== 'explicit'
+    ? { original: session.frozenTarget, current: live.context, message: '草案准备期间目标环境已变化，仍保留原目标。' }
+    : null
+  if (session.changeSet) {
+    for (const file of session.changeSet.files) {
+      const abs = resolveInside(projectRoot, checkedPath(projectRoot, file.path))
+      const currentHash = fs.existsSync(abs) ? sha256(fs.readFileSync(abs, 'utf8')) : null
+      if (currentHash !== file.oldSha256) return { ok: false, conflict: true, error: '已有草案的文件发生了外部修改，未追加改动。请重新读取并修订草案：' + file.path }
+    }
+  }
+  if (!['create_script'].includes(name) && fs.existsSync(path.join(projectRoot, rel)) && !(session.readFiles || []).includes(rel)) {
+    return { ok: false, error: '修改前必须 read_script/read_resource 读取此目标：' + rel }
+  }
+  if (!(session.draft || []).some(op => workflow.mutationPath(op.name, op.args) === rel) && session.readHashes && session.readHashes[rel]) {
+    const current = fs.readFileSync(resolveInside(projectRoot, rel), 'utf8')
+    if (sha256(current) !== session.readHashes[rel]) return { ok: false, conflict: true, error: '读取后目标文件已被修改，请重新读取再准备草案：' + rel }
+  }
+  const operations = (session.draft || []).concat({ name, args })
+  const preview = await client.call('prepare_change_set', { operations })
+  if (!preview || preview.ok !== true) return preview || { ok: false, error: '变更集预览失败' }
+  if (session.changeSet) await client.call('cancel_change_set', { changeSetId: session.changeSet.changeSetId })
+  session.draft = preview.operations || operations
+  session.changeSet = preview
+  saveSession(session)
+  return { ok: true, staged: true, dryRun: true, path: rel, files: preview.files, generatedId: preview.previews[preview.previews.length - 1] && preview.previews[preview.previews.length - 1].preview.id, message: '已加入草案，未写入。请准备其余相关改动；全部准备完后由用户一次确认。' }
+}
+
 async function processToolCalls(session, calls, config, assistantContent = '', events = {}, cancelToken = null) {
   const client = await ensureMcp()
   const results = []
@@ -2202,8 +2248,53 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
     const call = calls[index]
     const name = call.function && call.function.name
     const args = safeArgs(call.function && call.function.arguments)
+    if (!args || typeof args !== 'object' || Array.isArray(args) || HIDDEN_TOOLS.has(name) || !(session.allowedTools || []).includes(name)) {
+      const invalid = { ok: false, error: '工具未开放或参数不是有效对象：' + name }
+      session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(invalid, name) })
+      results.push({ name, result: invalid })
+      continue
+    }
+    if (FILE_MUTATIONS.has(name)) {
+      if (session.verifyingCommit) {
+        const result = { ok: false, error: '本阶段只验证已提交的改动，不能再次修改；请单独提出后续修改需求。' }
+        session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(result, name) })
+        results.push({ name, result })
+        continue
+      }
+      if (args.dryRun === false) session.mutationAttempted = true
+      if (events.onTool) events.onTool({ phase: 'start', key: call.id, name, label: toolLabel(name), target: workflow.mutationPath(name, args) })
+      const result = args.dryRun === false
+        ? await stageMutation(session, client, call, name, args)
+        : await callToolWithCancel(client, name, { ...args, dryRun: true }, cancelToken)
+      session.lastMutationError = result.ok === false ? result.error || result.message : ''
+      session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(result, name) })
+      repeatHint(session, name)
+      results.push({ name, result })
+      if (result.alignmentRequired && session.frozenTarget && !session.frozenTarget.needsAlignment) {
+        const extra = workflow.mutationPath(name, args)
+        session.alignment = {
+          id: crypto.randomBytes(12).toString('hex'), kind: 'scope', text: session.requestText,
+          context: session.contextSnapshot, target: session.frozenTarget,
+          proposed: [...new Set((session.frozenTarget.paths || []).concat(extra))]
+        }
+        appendUnexecutedToolResults(session, calls.slice(index + 1), '等待用户确认关联文件范围，未执行')
+        const card = { id: session.alignment.id, summary: '这项修改还需要关联文件：' + extra, questions: [{ title: '修改范围', options: ['包括关联文件', '只改原目标'] }], defaults: [] }
+        saveSession(session)
+        if (events.onAlign) events.onAlign(card)
+        return { approval: { ok: true, status: 'alignment', alignment: card, message: '等待修改范围确认，未写入。' }, results }
+      }
+      saveSession(session)
+      if (events.onTool) events.onTool({ phase: result.ok === false ? 'fail' : 'done', key: call.id, name, label: toolLabel(name), detail: result.error || result.message, info: { ...(toolInfoOf(result) || {}), staged: !!result.staged, preview: !result.staged } })
+      continue
+    }
     if ((name === 'todo_write' || name === 'project_changelog') && !args.sessionId) {
       args.sessionId = session.id
+    }
+    if (session.changeSet && RUNTIME_ACTIONS.has(name)) {
+      const result = { ok: false, error: '工程修改仍是未写入草案，试玩验证应在确认提交后执行。' }
+      session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(result, name) })
+      results.push({ name, result })
+      continue
     }
 
     // 连续的只读调用合并成一批并发执行：模型一次要读好几个文件时，省掉串行等待的时间。
@@ -2213,17 +2304,30 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
       let cursor = index + 1
       while (cursor < calls.length) {
         const nextName = calls[cursor].function && calls[cursor].function.name
-        if (isExclusiveCall(nextName)) break
+        if (isExclusiveCall(nextName) || !(session.allowedTools || []).includes(nextName)) break
         batch.push({ call: calls[cursor], name: nextName, args: safeArgs(calls[cursor].function && calls[cursor].function.arguments) })
         cursor++
       }
       index = cursor - 1
-      const batchResults = batch.length === 1
-        ? [await runReadOnly(client, batch[0].call, batch[0].name, batch[0].args, events, cancelToken)]
-        : await Promise.all(batch.map(item => runReadOnly(client, item.call, item.name, item.args, events, cancelToken)))
+      const read = async item => {
+        if (item.name === 'get_editor_context') return { ok: !!session.contextSnapshot, frozen: true, context: session.contextSnapshot, frozenTarget: session.frozenTarget, message: session.contextSnapshot ? '本轮冻结快照，不随指针改变' : '上下文不可用，请使用明确路径' }
+        if (session.changeSet && ['read_script', 'read_resource'].includes(item.name)) {
+          const draft = await client.call('read_change_set', { changeSetId: session.changeSet.changeSetId, path: item.args.path, key: item.args.key })
+          if (!draft.notStaged) return draft
+        }
+        return runReadOnly(client, item.call, item.name, item.args, events, cancelToken)
+      }
+      const batchResults = await Promise.all(batch.map(read))
       for (let position = 0; position < batch.length; position++) {
         const item = batch[position]
         const result = batchResults[position]
+        if (result && result.ok === true && ['read_script', 'read_resource'].includes(item.name) && item.args.path) {
+          const rel = String(item.args.path).replace(/\\/g, '/')
+          session.readFiles = [...new Set((session.readFiles || []).concat(rel))]
+          const hash = result.staged ? result.originalSha256 : result.sha256
+          session.readHashes = { ...(session.readHashes || {}), ...(hash ? { [rel]: hash } : {}) }
+        }
+        if (item.name === 'dump_ui_hierarchy' && result && result.ok === true) session.uiSnapshot = result
         const hint = repeatHint(session, item.name)
         const packed = withHint(result, hint)
         session.messages.push({ role: 'tool', tool_call_id: item.call.id, content: clipToolResult(packed, item.name) })
@@ -2245,18 +2349,23 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
     }
 
     if (events.onTool) events.onTool({ phase: 'start', key: String(call && call.id || name), name, label: toolLabel(name), target: String(args.path || args.table || args.action || args.key || '') })
-    const isFileMutation = FILE_MUTATIONS.has(name)
-    // dryRun 预览不落盘，本来就不该要用户确认：
-    //   · "先看一眼差异"是我们要鼓励的动作，每看一眼都弹一次确认，只会把用户训练成闭眼点确认；
-    //   · 真正写盘那一步（dryRun:false）照旧拦确认，安全性一点没少。
-    // 只认**显式** dryRun:true：模型不传这个参数时，我们无法保证这个工具一定不写。
-    const isPreviewOnly = !!(args && args.dryRun === true)
-    // P0-3: 写盘与界面改属性前，检查是否有未失焦/未提交的输入 (AutoReload 竞态防踩)。
-    // ui_steps 也是一次"改属性"，用户打了一半的字同样会被 AutoReload 冲掉，所以一并拦。
-    // 纯预览既不写盘也不碰控件，不拦。
-    // 纯演示（只有高亮/翻页/等待）不写任何东西，也不该被"未失焦输入"拦住
+    // 文件改动已走上方草案通道；这里只处理编辑器与试玩副作用。
     const uiDemoOnly = name === 'ui_steps' && !uiStepsMutating(args)
-    if ((isFileMutation && !isPreviewOnly) || (name === 'ui_steps' && !uiDemoOnly)) {
+    if (name === 'ui_steps') {
+      const elements = session.uiSnapshot && session.uiSnapshot.elements || []
+      const invalid = !session.uiSnapshot || (args.steps || []).some(step => {
+        if (!['focus', 'set', 'click'].includes(step.kind)) return false
+        return typeof step.target !== 'string' || !/^#[\w-]+$/.test(step.target) || !elements.some(element => element.id === step.target.slice(1))
+      })
+      if (invalid) {
+        const result = { ok: false, error: '先读取 dump_ui_hierarchy，只允许清单里的真实稳定控件 ID' }
+        session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(result, name) })
+        results.push({ name, result })
+        if (events.onTool) events.onTool({ phase: 'fail', key: call.id, name, label: toolLabel(name), detail: result.error })
+        continue
+      }
+    }
+    if (name === 'ui_steps' && !uiDemoOnly) {
       try {
         const ctxRes = await editorBridge.getContext()
         if (ctxRes && ctxRes.ok && ctxRes.context && ctxRes.context.hasPendingInput === true) {
@@ -2270,29 +2379,16 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
         }
       } catch (e) {}
     }
-    // 选中文件是用户"我要改这个"的意图：先按它放行，再照常判要不要确认
-    const grantedBySelection = isFileMutation && !isPreviewOnly && grantSelectionHit(session, name, args, events)
-    const granted = isFileMutation && isGranted(session, name, args)
-    const needsApproval = !granted && ((isFileMutation && !isPreviewOnly) || (OTHER_MUTATIONS.has(name) && !uiDemoOnly && config.approvalMode !== 'auto'))
-    // 选中放的行走上面那条（说的是"因为你在编辑器里开着它"）；这句只在勾选授权那条路上说
-    if (granted && !grantedBySelection && events.onNotice) {
-      events.onNotice(`已授权：${toolLabel(name)} · ${String(args.path || '') || '全部分支'}（本对话内不再逐条确认，跨重启仍有效；可用 /clear 或【撤销】面板清除）`)
-    }
+    const needsApproval = OTHER_MUTATIONS.has(name) && !uiDemoOnly
     if (needsApproval) {
-      const preview = isFileMutation ? await callToolWithCancel(client, name, { ...args, dryRun: true }, cancelToken) : null
-      if (preview && preview.ok === false) {
-        session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(preview, name) })
-        saveSession(session)
-        results.push({ name, result: preview })
-        if (events.onTool) events.onTool({ phase: 'fail', key: String(call && call.id || name), name, label: toolLabel(name), detail: preview.error || '预览失败', info: toolInfoOf(preview) })
-        continue
-      }
-      session.pending = { call, name, args, preview, remaining: calls.slice(index + 1) }
+      const preview = null
+      session.pending = { call, name, args, preview, contextSnapshot: session.contextSnapshot, frozenTarget: session.frozenTarget, remaining: calls.slice(index + 1) }
       saveSession(session)
       if (events.onTool) events.onTool({ phase: 'approval', key: String(call && call.id || name), name, label: toolLabel(name) })
       return { approval: { ok: true, status: 'approval', message: assistantContent || '这一步会修改工程或控制编辑器，请确认。', approval: summarizePending(name, args, preview) }, results }
     }
     const result = await callToolWithCancel(client, name, args, cancelToken)
+    if (name === 'playtest_smoke') session.playtestValidation = playtestValidationOf(result)
     const hint = repeatHint(session, name)
     const packedResult = withHint(result, hint)
     session.messages.push({ role: 'tool', tool_call_id: call.id, content: clipToolResult(packedResult, name) })
@@ -2319,35 +2415,60 @@ async function processToolCalls(session, calls, config, assistantContent = '', e
 
 async function handle(pathname, body, events = {}) {
   if (pathname === '/config') return await saveConfig(body)
+  if (pathname === '/capture') {
+    const sourceWindow = body.page === 'playtest' ? 'playtest' : 'editor'
+    const captured = await captureEditorContext(sourceWindow)
+    const id = crypto.randomBytes(16).toString('hex')
+    const now = Date.now()
+    for (const [key, entry] of queuedContexts) if (now - entry.at > 30 * 60 * 1000) queuedContexts.delete(key)
+    queuedContexts.set(id, { context: captured.context, sourceWindow, projectRoot, at: now })
+    return { ok: true, captureId: id }
+  }
+  if (pathname === '/draft-diff') {
+    const session = sessionFor(body.sessionId || 'default')
+    const set = session.pending && session.pending.changeSet
+    if (!set || body.changeSetId !== set.changeSetId) throw new Error('草案已更新，请查看最新确认卡')
+    return (await ensureMcp()).call('read_change_set', { changeSetId: set.changeSetId, path: body.path, fullDiff: true })
+  }
+  if (pathname === '/align') {
+    const session = sessionFor(body.sessionId || 'default')
+    if (session.busy) throw new Error('当前任务仍在运行，请等待')
+    const alignment = session.alignment
+    const answers = Array.isArray(body.answers) ? body.answers : []
+    if (!alignment || alignment.id !== body.alignmentId || !answers.length || answers.some(answer => typeof answer !== 'string')) throw new Error('目标确认已失效，请重新说明需求')
+    if (alignment.kind === 'scope' && !['包括关联文件', '只改原目标'].includes(answers[0])) throw new Error('修改范围选项无效')
+    if (alignment.kind === 'target' && answers.some(answer => !(alignment.options || []).includes(answer))) throw new Error('修改目标选项无效')
+    session.contextSnapshot = alignment.context
+    session.requestText = alignment.text + '\n用户确认：' + answers.join('；')
+    session.frozenTarget = alignment.kind === 'scope'
+      ? { ...alignment.target, paths: answers[0] === '包括关联文件' ? alignment.proposed : alignment.target.paths }
+      : workflow.resolveTarget(session.requestText, alignment.context, await explicitTargets(answers.join('\n'), []))
+    if (session.frozenTarget.needsAlignment) throw new Error(session.frozenTarget.reason)
+    session.alignment = null
+    session.messages.push({ role: 'user', content: '已确认目标或范围：' + answers.join('；') + '。请读取并准备完整草案。' })
+    saveSession(session)
+    session.busy = true
+    session.activeCancel = events.cancelToken || null
+    if (events.onContext) events.onContext({ context: session.contextSnapshot, frozenTarget: session.frozenTarget })
+    const running = runTurn(session, readStoredConfig(), events)
+    session.activeRun = running
+    try { return await running } finally { session.busy = false; session.activeRun = null; session.activeCancel = null; saveSession(session) }
+  }
   if (pathname === '/project') {
     if (!isProjectRoot(body.projectRoot)) throw new Error('没有找到有效的 Open Yami 工程目录')
     const next = path.resolve(body.projectRoot)
-    if (next !== projectRoot) { if (mcp) mcp.close(); mcp = null; projectRoot = next; sessions.clear() }
+    if (next !== projectRoot) {
+      if ([...sessions.values()].some(session => session.busy)) throw new Error('当前任务尚未结束，请先停止并等待回滚后再切换工程')
+      if (mcp) mcp.close(); mcp = null; projectRoot = next; sessions.clear()
+    }
     await ensureMcp()
     return { ok: true, projectRoot }
   }
   if (pathname === '/grants') {
     const session = sessionFor(body.sessionId || 'default')
-    const list = Array.isArray(session.grants) ? session.grants : []
-    if (body.revoke) {
-      session.grants = list.filter(key => key !== String(body.revoke))
-      saveSession(session)
-      return { ok: true, grants: session.grants, message: '已撤销该授权，之后会重新逐条确认' }
-    }
-    if (body.clear === true) {
-      session.grants = []
-      saveSession(session)
-      return { ok: true, grants: [], message: '已清空本次任务的全部授权' }
-    }
-    return {
-      ok: true,
-      grants: list.map(key => {
-        const [tool, path] = key.split('::')
-        // 工具::* = 这类工具的所有文件（G-6 的中间档）；path 置空 + allFiles 让面板显示「全部文件」
-        const allFiles = path === '*'
-        return { key, tool, toolLabel: toolLabel(tool), path: allFiles ? '' : path, allFiles }
-      })
-    }
+    session.grants = []
+    saveSession(session)
+    return { ok: true, grants: [], message: '旧免确认授权已清除，修改按本轮变更集确认' }
   }
   if (pathname === '/steer') {
     // 繁忙时的"引导"：把补充内容排进队列，由 Agent 循环在下一个步骤边界投递给模型。
@@ -2359,6 +2480,8 @@ async function handle(pathname, body, events = {}) {
     return { ok: true, busy: true, queued: queueSteer(session, text) }
   }
   if (pathname === '/ui-cancel') {
+    const session = sessions.get(safeSessionId(body.sessionId || 'default'))
+    if (session && session.activeCancel) session.activeCancel.cancel('用户停止')
     try {
       const stopped = await editorBridge.action('cancel', { reason: body && body.reason ? body.reason : '用户停止' })
       if (stopped && stopped.ok === false && stopped.error) return { ok: false, error: stopped.error }
@@ -2459,15 +2582,7 @@ async function handle(pathname, body, events = {}) {
     // 只列「本次对话里 AI 真正改过的文件」——用户要的是"我刚让它改的东西怎么退回去"，
     // 而不是工程里所有历史备份。
     const session = sessionFor(body.sessionId || 'default')
-    const touched = []
-    for (const message of session.messages) {
-      if (!Array.isArray(message.tool_calls)) continue
-      for (const call of message.tool_calls) {
-        const name = call.function && call.function.name
-        const filePath = fileTargetOf(name, safeArgs(call.function && call.function.arguments))
-        if (filePath && !touched.includes(filePath)) touched.push(filePath)
-      }
-    }
+    const touched = [...(session.committedFiles || [])]
     if (!touched.length) return { ok: true, files: [], hint: '本次对话还没有修改过任何工程文件' }
     const client = await ensureMcp()
     const files = []
@@ -2492,18 +2607,23 @@ async function handle(pathname, body, events = {}) {
     const rel = String(body.path || '').trim()
     if (!rel) throw new Error('请指定要回退的文件')
     const client = await ensureMcp()
-    const callArgs = { path: rel, dryRun: false }
-    if (body.backup) callArgs.backup = body.backup
-    const preview = await client.call('restore_backup', callArgs)
+    const session = sessionFor(body.sessionId || 'default')
+    if (session.busy) throw new Error('任务正在运行，请先停止并等待结束')
+    const callArgs = { path: rel, dryRun: true }
+    const backup = body.backup || (session.sessionBackups && session.sessionBackups[rel])
+    if (backup) callArgs.backup = backup
+    const prepared = await client.call('prepare_change_set', { operations: [{ name: 'restore_backup', args: callArgs }] })
+    if (!prepared.ok) return prepared
+    const preview = await client.call('commit_change_set', { changeSetId: prepared.changeSetId, confirmationToken: prepared.confirmationToken })
     if (preview && preview.ok === false) return preview
     return {
       ok: true,
       path: rel,
-      alreadyRestored: !!preview.alreadyRestored,
-      savedAt: preview.savedAt,
-      diff: preview.diff,
-      diffStat: preview.diffStat,
-      safetyBackup: preview.safetyBackup,
+      alreadyRestored: prepared.files.length === 0,
+      savedAt: prepared.previews[0] && prepared.previews[0].preview.savedAt,
+      diff: prepared.files[0] && prepared.files[0].diff,
+      diffStat: prepared.files[0] && prepared.files[0].diffStat,
+      safetyBackup: preview.files[0] && preview.files[0].backup,
       message: preview.message || `已把 ${rel} 退回 ${preview.savedAt} 的版本`
     }
   }
@@ -2520,7 +2640,7 @@ async function handle(pathname, body, events = {}) {
       ok: true,
       sessionId: id,
       messages: visibleMessages(restored),
-      pending: restored.pending ? summarizePending(restored.pending.name, restored.pending.args, restored.pending.preview) : null
+      pending: restored.pending ? (restored.pending.changeSet ? summarizeChangeSet(restored.pending) : summarizePending(restored.pending.name, restored.pending.args, restored.pending.preview)) : null
     }
   }
   if (pathname === '/session/delete') {
@@ -2539,7 +2659,7 @@ async function handle(pathname, body, events = {}) {
       for (const name of fs.readdirSync(SESSION_DIR).filter(item => item.endsWith('.json'))) {
         const restored = loadSessionFromDisk(name.replace(/\.json$/, ''))
         if (!restored) continue
-        const turns = (restored.messages || []).filter(message => message.role === 'user' && !isCheckpoint(message)).length
+        const turns = (restored.messages || []).filter(isHumanMessage).length
         if (!turns) continue   // 一句话没说的空会话不进导出稿
         items.push({ id: restored.id, title: sessionTitleOf(restored.messages), updatedAt: restored.updatedAt || 0, markdown: sessionToMarkdown(restored) })
       }
@@ -2561,7 +2681,7 @@ async function handle(pathname, body, events = {}) {
     const id = safeSessionId(body.sessionId)
     const session = sessions.get(id) || loadSessionFromDisk(id)
     if (!session) throw new Error('没有找到这个会话')
-    const turns = (session.messages || []).filter(message => message.role === 'user' && !isCheckpoint(message)).length
+    const turns = (session.messages || []).filter(isHumanMessage).length
     if (!turns) throw new Error('这段对话还没有内容')
     const markdown = sessionToMarkdown(session)
     return writeExport(exportFileName(sessionTitleOf(session.messages), '-' + stamp + '.md'), markdown, 1)
@@ -2583,7 +2703,7 @@ async function handle(pathname, body, events = {}) {
     for (let i = 0; i < session.messages.length; i++) {
       const message = session.messages[i]
       // 压缩检查点也是 role='user'，但它不是"用户说过的话"，不许占序号
-      if (message.role !== 'user' || isCheckpoint(message)) continue
+      if (!isHumanMessage(message)) continue
       seen++
       if (seen === wanted) { cut = i; break }
     }
@@ -2633,18 +2753,26 @@ async function handle(pathname, body, events = {}) {
       }
     }
     if (session.busy) throw new Error('上一条需求还在处理中，请稍候')
+    const continuingTarget = session.pending && session.pending.changeSet ? session.frozenTarget : null
+    const continuingContext = continuingTarget ? session.contextSnapshot : null
+    const continuingText = continuingTarget ? session.requestText : ''
     if (session.pending) {
       // 用户没理会挂起的那张确认卡，直接说了新需求：视为放弃那项修改。
       // （比硬拦"请先执行或取消"更好——窗口重开时确认卡未必还在，硬拦会把人锁死在原地）
       const abandoned = session.pending
       session.pending = null
-      appendUnexecutedToolResults(
-        session,
-        [abandoned.call].concat(abandoned.remaining || []),
-        '用户改说了别的需求，这项操作没有执行。如果这一步仍然是新需求的前置，请主动问用户要不要重做。'
-      )
-      if (events.onNotice) {
-        events.onNotice(`上一步「${toolLabel(abandoned.name)}」还等着你在卡片上点「执行修改」，你先说了新需求，我把它作废了（${String(abandoned.args && abandoned.args.path || '')}）。需要的话说一句"接着刚才那步做"，我重新来。`)
+      if (abandoned.changeSet) {
+        await (await ensureMcp()).call('cancel_change_set', { changeSetId: abandoned.changeSet.changeSetId })
+        session.messages.push({ role: 'user', content: '（用户修订尚未写入的草案；旧草案已撤回，请根据补充重新准备完整差异：' + JSON.stringify((session.draft || []).map(item => ({ name: item.name, path: workflow.mutationPath(item.name, item.args) }))) + '）' })
+        session.draft = []
+        session.changeSet = null
+      } else {
+        appendUnexecutedToolResults(
+          session,
+          [abandoned.call].concat(abandoned.remaining || []),
+          '用户改说了别的需求，这项操作没有执行。如果这一步仍然是新需求的前置，请主动问用户要不要重做。'
+        )
+        if (events.onNotice) events.onNotice('旧操作未执行。请根据新需求重新准备。')
       }
     }
     healSessionMessages(session, '发送前体检')
@@ -2655,22 +2783,54 @@ async function handle(pathname, body, events = {}) {
     }
     session.messages.push({ role: 'user', content: userText })
     session.busy = true
+    session.activeCancel = events.cancelToken || null
     session.repairs = 0     // 每条新需求重新给自动修复预算
     session.toolTally = {}  // 以及重新开始统计工具调用次数（重复提示按轮计）
     saveSession(session)
-    if (body.pageContext) {
-      const pc = body.pageContext
-      if (pc.page === 'playtest') {
-        events.envSummary = `【当前环境】当前处于试玩运行中：${pc.summary || '游戏正在运行'}`
-      } else if (pc.summary) {
-        events.envSummary = pc.summary.startsWith('【当前环境】') ? pc.summary : `【当前环境】${pc.summary}`
+    const running = (async () => {
+      session.sourceWindow = body.pageContext && body.pageContext.page === 'playtest' ? 'playtest' : 'editor'
+      let captured
+      if (body.captureId) {
+        const queued = queuedContexts.get(body.captureId)
+        queuedContexts.delete(body.captureId)
+        if (!queued || queued.projectRoot !== projectRoot) throw new Error('排队消息目标快照已失效，请重新发送需求')
+        session.sourceWindow = queued.sourceWindow
+        captured = { context: queued.context }
+      } else captured = await captureEditorContext(session.sourceWindow)
+      session.contextSnapshot = continuingContext || captured.context
+      session.requestText = continuingText ? continuingText + '\n用户补充：' + text : text
+      session.draft = []
+      session.changeSet = null
+      session.readFiles = []
+      session.readHashes = {}
+      session.mutationAttempted = false
+      session.lastMutationError = ''
+      session.lastCommit = null
+      session.verifyingCommit = false
+      const explicit = await explicitTargets(text, body.references)
+      const paths = Array.isArray(explicit) ? explicit : []
+      session.frozenTarget = continuingTarget && !paths.length
+        ? continuingTarget
+        : workflow.resolveTarget(session.requestText, captured.context, paths)
+      if (explicit.ambiguous) session.frozenTarget = { paths: [], source: 'ambiguous', needsAlignment: true, frozen: true, label: '同名目标待确认', reason: '存在多个同名文件，请选择完整路径。' }
+      const client = await ensureMcp()
+      if (client.tools.some(tool => tool.name === 'project_changelog')) await client.call('project_changelog', { sessionId: session.id, reset: true })
+      if (events.onContext) events.onContext({ context: session.contextSnapshot, frozenTarget: session.frozenTarget })
+      if (session.frozenTarget.needsAlignment) {
+        const object = captured.context && captured.context.selectedObject
+        const options = object && object.sourceFile && object.instanceFile
+          ? ['当前场景实例', '源文件定义']
+          : explicit.ambiguous ? explicit.ambiguous.map(rel => '@' + rel) : ((captured.context && captured.context.selectedFiles) || []).map(file => '@' + file.path)
+        session.alignment = { id: crypto.randomBytes(12).toString('hex'), kind: 'target', text: session.requestText, context: captured.context, target: session.frozenTarget, options }
+        const card = { id: session.alignment.id, summary: session.frozenTarget.reason, questions: options.length ? [{ title: '修改目标', options }] : [], defaults: [] }
+        const content = '<alignment-card>' + JSON.stringify(card) + '</alignment-card>'
+        session.messages.push({ role: 'assistant', content })
+        if (events.onDelta) events.onDelta({ content })
+        saveSession(session)
+        return { ok: true, status: 'alignment', alignment: card, message: session.frozenTarget.reason }
       }
-    } else if (body.envSummary && !events.envSummary) {
-      events.envSummary = String(body.envSummary).trim()
-    }
-    // 这一轮认定一次"用户在编辑器里打开着哪个文件"（选中即意图），动别的文件照旧要先问
-    await noteEditorSelection(session)
-    const running = runTurn(session, readStoredConfig(), events)
+      return runTurn(session, readStoredConfig(), events)
+    })()
     session.activeRun = running
     session.activeCancel = events.cancelToken || null
     trace('任务启动 session=' + session.id)
@@ -2692,15 +2852,20 @@ async function handle(pathname, body, events = {}) {
     try {
       const pending = session.pending
       const rejected = pathname === '/reject'
-      if (!rejected && FILE_MUTATIONS.has(pending.name)) {
-        try {
-          const ctxRes = await editorBridge.getContext()
-          if (ctxRes && ctxRes.ok && ctxRes.context && ctxRes.context.hasPendingInput === true) {
-            throw new Error('检测到编辑器中有未失焦的输入正在进行，为防修改被冲掉，请先敲击回车或点击空白处失焦后再确认执行')
-          }
-        } catch (e) {
-          if (e.message && e.message.includes('未失焦的输入')) throw e
-        }
+      if (pending.changeSet) {
+        session.activeCancel = events.cancelToken || null
+        const running = approveChangeSet(session, body, events, rejected)
+        session.activeRun = running
+        return await running
+      }
+      if (!rejected && (HIDDEN_TOOLS.has(pending.name) || FILE_MUTATIONS.has(pending.name))) {
+        session.pending = null
+        appendUnexecutedToolResults(session, [pending.call].concat(pending.remaining || []), '旧版操作确认已失效，请重新准备变更集')
+        return { ok: false, status: 'expired', message: '旧版确认已失效，未写入。请重新发送需求。' }
+      }
+      if (!rejected && pending.contextSnapshot) {
+        const live = await captureEditorContext(session.sourceWindow)
+        if (!live.context || contextChanged(pending.contextSnapshot, live.context)) throw new Error('操作目标已变化，未执行。请重新发送需求获取新预览')
       }
       session.pending = null
       let result
@@ -2708,19 +2873,12 @@ async function handle(pathname, body, events = {}) {
       let packedApproved = ''
       if (rejected) result = { ok: false, rejected: true, message: '用户取消了这项操作' }
       else {
-        const args = FILE_MUTATIONS.has(pending.name)
-          ? {
-              ...pending.args,
-              expectedSha256: pending.preview && pending.preview.oldSha256,
-              dryRun: false,
-              // 高危操作（删除等）必须带上预览时发的一次性确认令牌，只靠 force 不足以执行
-              ...(pending.preview && pending.preview.confirmationToken ? { confirmationToken: pending.preview.confirmationToken } : {})
-            }
-          : pending.args
+        const args = pending.args
         if (events.onTool) events.onTool({ phase: 'start', key: String(pending.call && pending.call.id || pending.name), name: pending.name, label: toolLabel(pending.name), target: String(pending.args.path || '') })
         // 与自动执行路径同源：等结果也要能被"停止"立刻放行，否则用户点了停止，
         // 界面显示已打断、宿主却还在这里干等到写盘返回（事件流也拿不到取消回执）。
         result = await callToolWithCancel(await ensureMcp(), pending.name, args, events.cancelToken)
+        if (pending.name === 'playtest_smoke') session.playtestValidation = playtestValidationOf(result)
         packedApproved = clipToolResult(result, pending.name)   // 顺带在原对象上盖"是否被裁剪"的章
         if (events.onTool) {
           const key = String(pending.call && pending.call.id || pending.name)
@@ -2728,44 +2886,15 @@ async function handle(pathname, body, events = {}) {
             ? { phase: 'fail', key, name: pending.name, label: toolLabel(pending.name), detail: (result && (result.error || result.message)) || '执行失败', info: toolInfoOf(result) }
             : { phase: 'done', key, name: pending.name, label: toolLabel(pending.name), info: toolInfoOf(result) })
         }
-        // 用户勾选「不再逐条确认」时才授予授权（删除类永不授权）。两档粒度（G-6）：
-        //   grantForSession = 只放行**这一个文件**（原有行为）；
-        //   grantForTool    = 放行**这类工具的所有文件**（跨 5 个文件的活不用停 5 次）。
-        if ((body.grantForSession === true || body.grantForTool === true) && result && result.ok !== false) {
-          const scope = body.grantForTool === true ? 'tool' : 'file'
-          const key = addGrant(session, pending, scope)
-          if (key && events.onNotice) {
-            const what = scope === 'tool'
-              ? toolLabel(pending.name) + ' 这类工具'
-              : toolLabel(pending.name) + ' · ' + String(pending.args.path || '')
-            events.onNotice(`已记住：${what} 在本对话内不再逐条确认（跨重启仍有效；可用 /clear 或【撤销】面板清除）`)
-          }
-        }
       }
       session.messages.push({ role: 'tool', tool_call_id: pending.call.id, content: packedApproved || clipToolResult(result, pending.name) })
       saveSession(session)
       const config = readStoredConfig()
 
-      // 用户确认的写入同样要过编译门禁；失败时把 tsc 报错喂回模型自动重修（与自动执行路径一致）
-      const failure = rejected ? null : compileFailureOf(pending.name, result)
       if (rejected) {
         // 用户明确取消：这一步与后面排队的调用都不再执行。剩余调用必须补上"未执行"应答——
         // 否则它们会继续弹确认卡（用户刚说了不要），历史里还会留下没人应答的调用。
         appendUnexecutedToolResults(session, pending.remaining || [], '用户取消了这项操作')
-      } else if (failure) {
-        if ((session.repairs || 0) >= MAX_REPAIR_ATTEMPTS) {
-          // 编译没过且修复预算用尽：本轮中止，队列里剩下的调用一律作废（补应答收尾）
-          appendUnexecutedToolResults(session, pending.remaining || [], '前一步编译未通过，本次已停止')
-          return await attachChangelog(session, {
-            ok: false,
-            status: 'compile-failed',
-            message: `脚本没能通过编译检查，已自动回滚、工程保持完好。最后一次报错：\n${failure.firstLine || failure.output.split('\n')[0] || '（无输出）'}`
-          })
-        }
-        session.repairs = (session.repairs || 0) + 1
-        session.messages.push(repairMessage(failure))
-        saveSession(session)
-        if (events.onNotice) events.onNotice(`编译没通过（${failure.errorCount} 处），已回滚并让 AI 自动重修（第 ${session.repairs}/${MAX_REPAIR_ATTEMPTS} 次）`)
       } else if (pending.remaining && pending.remaining.length) {
         // 第 6 个参数（cancelToken）以前漏传：processToolCalls 只认自己的形参、不读 events.cancelToken，
         // 于是审批续跑期间"停止"要等这批工具全跑完才生效。
@@ -2774,10 +2903,13 @@ async function handle(pathname, body, events = {}) {
       }
       const running = runTurn(session, config, events)
       session.activeRun = running
-      return await running
+      const final = await running
+      if (session.verifyingCommit && session.lastCommit) final.validation = { ...session.lastCommit.validation, playtest: session.playtestValidation || { performed: false } }
+      return final
     } finally {
       session.busy = false
       session.activeRun = null
+      session.activeCancel = null
       saveSession(session)
     }
   }
@@ -2788,7 +2920,12 @@ async function handle(pathname, body, events = {}) {
     // 老对话不见了"就是这个。要删某段历史请走 /session/delete（历史面板里的「删除」）。
     const id = safeSessionId(body.sessionId || 'default')
     const session = sessionFor(id)
-    session.messages = [{ role: 'system', content: SYSTEM_PROMPT }]
+    if (session.busy) throw new Error('任务仍在运行，请停止并等待回滚后再清空')
+    if (session.changeSet) await (await ensureMcp()).call('cancel_change_set', { changeSetId: session.changeSet.changeSetId })
+    session.changeSet = null
+    session.draft = []
+    session.alignment = null
+    session.messages = [{ role: 'system', content: workflow.SYSTEM_PROMPT }]
     session.summary = ''
     session.pending = null
     session.toolTally = {}
@@ -2834,7 +2971,9 @@ function startStream(res, req, pathname) {
     onNotice: text => send({ type: 'notice', text }),
     onPlan: (items, summary) => send({ type: 'plan', items, summary }),
     onSteer: info => send({ type: 'steer', ...info }),
-    onSystem: info => send({ type: 'system', ...info })
+    onSystem: info => send({ type: 'system', ...info }),
+    onContext: info => send({ type: 'context', ...info }),
+    onAlign: data => send({ type: 'align', data })
   }
 }
 
@@ -2856,13 +2995,15 @@ const server = http.createServer(async (req, res) => {
         mcpReady: !!mcp,
         config: publicConfig(),
         context: contextStatus(session),
+        busy: !!(session && session.busy),
+        lastCommit: session && session.lastCommit || null,
         grants: session && Array.isArray(session.grants) ? session.grants : [],
         // 这个会话里"用户真说过的话"有几条（压缩检查点不计，与回放/rewind 的口径一致）。
         // 面板靠它把自己的轮次号跟宿主对齐：重开面板时屏幕是空白的、不回放历史，
         // 面板计数从 0 起，而宿主这边可能已经攒了 N 条 —— 不对齐，「重发 / 重新生成」
         // 传过去的号就整体错一位，会截断到错误的轮次（2026-09-24 真机抓到，会丢对话）。
         userTurns: session && Array.isArray(session.messages)
-          ? session.messages.filter(m => m && m.role === 'user' && !isCheckpoint(m)).length
+          ? session.messages.filter(isHumanMessage).length
           : 0,
         usage: session ? (session.usage || null) : null,
         usageText: session ? pricing.describeUsage(session.usage) : '',
@@ -2880,7 +3021,7 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         sessionId: id,
         messages: visibleMessages(restored),
-        pending: restored.pending ? summarizePending(restored.pending.name, restored.pending.args, restored.pending.preview) : null
+        pending: restored.pending ? (restored.pending.changeSet ? summarizeChangeSet(restored.pending) : summarizePending(restored.pending.name, restored.pending.args, restored.pending.preview)) : null
       })
     }
     if (req.method !== 'POST') return sendJson(res, 404, { ok: false, error: 'Not found' })
@@ -2888,7 +3029,7 @@ const server = http.createServer(async (req, res) => {
     // 哪些路由跑 SSE：前端界面只认一条事件流 —— 审批之后的续跑跟正常一轮必须是同一条通道，
     // 否则确认之后那一段（工具卡片、思考、提示、正文）在界面上根本没有来源，只能靠一个最终结果
     // 一次性落下来：用户看到的就是"点了确认之后顺序乱了/中间没了"。
-    const STREAM_ROUTES = { '/chat/stream': '/chat', '/approve/stream': '/approve', '/reject/stream': '/reject' }
+    const STREAM_ROUTES = { '/chat/stream': '/chat', '/approve/stream': '/approve', '/reject/stream': '/reject', '/align/stream': '/align' }
     if (STREAM_ROUTES[pathname]) {
       const events = startStream(res, req, pathname)
       let finished = false
@@ -2951,6 +3092,7 @@ function tryListen(port, attempt) {
   }
   server.once('error', onError)
   server.listen(port, '127.0.0.1', () => {
+    port = server.address().port
     server.removeListener('error', onError)
     server.on('error', logOnly)   // 运行期错误只记日志，不让进程炸掉
     try {

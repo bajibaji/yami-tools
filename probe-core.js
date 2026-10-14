@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.14.0';
+  const PROBE_VERSION = '1.15.0';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -2096,6 +2096,8 @@
   // clickEl/…  = 右键"指着"的东西（引擎会给它描一圈高亮，明确表示"菜单作用在它身上"）
   const presence = { el: null, since: 0, focusEl: null, focusSince: 0, clickEl: null, clickSince: 0,
                      selEl: null, selSince: 0, seenSelected: null };
+  let contextRevision = 0;
+  let contextFingerprint = '';
 
   /**
    * 引擎自己的"选中态"就是用户看到的那圈高亮。
@@ -2116,6 +2118,10 @@
       if (!presence.seenSelected || !presence.seenSelected.has(el)) newest = el;
     }
     presence.seenSelected = set;
+    if (presence.selEl && !set.has(presence.selEl)) {
+      presence.selEl = null;
+      presence.selSince = 0;
+    }
     // 只在"换了个目标"时刷新时间戳：同一元素被反复判为新会让它的时间戳一直最新，
     // 把更新的悬停/焦点信号压住（实测踩过：点在检视器输入框上却仍报上一次选中的列表项）。
     if (newest && newest !== presence.selEl && !isOwnUi(newest)) {
@@ -2367,12 +2373,15 @@
           if (p.id) { where = String(p.id); break; }
         }
       } catch (e) {}
+      const targetRef = String((host && host.id) || where || label).trim();
       return {
         label: String(label).slice(0, 40),
         kind: String((host && host.tagName || tag0)).toLowerCase(),
         value: value,
         where: where,
+        targetRef: targetRef ? (String((host && host.tagName) || tag0).toLowerCase() + ':' + targetRef).slice(0, 100) : '',
         via: via,
+        confidence: via === 'selected' || via === 'rightclick' ? 'high' : via === 'focus' ? 'medium' : 'low',
         restingMs: heldMs > 0 ? heldMs : 0
       };
     } catch (e) { return null; }
@@ -2410,7 +2419,7 @@
       // 不定序的话就变成"谁先入队谁赢"，纯属运气。
       const viaRank = { rightclick: 0, selected: 1, focus: 2, hover: 3 };
       candidates.sort(function (a, b) {
-        return (b.since - a.since) || ((viaRank[a.via] || 9) - (viaRank[b.via] || 9));
+        return (b.since - a.since) || ((viaRank[a.via] ?? 9) - (viaRank[b.via] ?? 9));
       });
       // 两组分开问，顺序有意义：
       //   ① "他现在在哪儿"（指针停留 / 焦点 / 右键）—— 先精确到控件，认不出再退到区域级；
@@ -2432,13 +2441,14 @@
           if (c.needHold && (now - c.since) < PRESENCE_HOLD_MS) continue;
           const desc = describePresenceElement(c.el, c.via, now - c.since);
           if (desc) {
-            if (c.asSelected) desc.via = 'selected';
+            if (c.asSelected) { desc.via = 'selected'; desc.confidence = 'high'; }
             return desc;
           }
           if (vagueResult) continue;
           const region = describePresenceRegion(c.el);
           if (region) {
             region.via = c.asSelected ? 'selected' : c.via;
+            region.confidence = c.via === 'hover' ? 'low' : 'medium';
             region.restingMs = now - c.since;
             vagueResult = region;
           }
@@ -2499,6 +2509,7 @@
       const el = document.activeElement;
       if (!el) return false;
       const tag = el.tagName ? el.tagName.toLowerCase() : '';
+      if (isOwnUi(el)) return false;
       if (tag === 'input' || tag === 'textarea' || el.isContentEditable) {
         return true;
       }
@@ -2526,7 +2537,9 @@
           }
         }
       }
-      const layoutIdx = (typeof Layout !== 'undefined' && Layout && Layout.manager && Layout.manager.index) || '';
+      const tabBar = document.getElementById('title-tabBar');
+      const tab = tabBar && typeof tabBar.read === 'function' ? tabBar.read() : null;
+      const layoutIdx = (tab && tab.type) || (typeof Layout !== 'undefined' && Layout && Layout.manager && Layout.manager.index) || '';
       const PAGE_MAP = {
         home: '首页',
         directory: '资源管理器',
@@ -2550,15 +2563,23 @@
     const isPlaytest = !isEditorHostPage && typeof Game !== 'undefined' && typeof Game.update === 'function';
     const scope = getScope();
     const result = {
+      schemaVersion: 2,
+      contextRevision: 0,
+      capturedAt: Date.now(),
+      projectRoot: (engineApi().File && engineApi().File.root) || '',
       environment: isPlaytest ? 'playtest' : (isEditorHostPage ? 'editor' : 'unknown'),
       scene: currentSceneName(),
       playtest: isPlaytest,
+      activeFile: null,
       selectedFile: null,
+      selectedFiles: [],
+      selectedObject: null,
       sceneTarget: null,
       inspector: null,
       scope: scope,
       page: scope.name,
       engineAvailable: engineAvailable(),
+      capabilities: { filePreflight: engineAvailable(), fileReload: engineAvailable(), editorActions: engineAvailable(), uiSteps: isEditorHostPage, playtest: isPlaytest },
       hasPendingInput: hasPendingInput(),
       // 用户此刻停在哪：比"选了什么"更直接地表达他想要什么
       presence: getPresence()
@@ -2578,44 +2599,45 @@
             path: af.path || '',
             type: af.type || ''
           };
-        } else if (Array.isArray(fb.body.selections) && fb.body.selections.filter(isFileItem).length > 0) {
-          const first = fb.body.selections.filter(isFileItem)[0];
-          result.selectedFile = {
-            name: first.alias || first.name || '',
-            path: first.path || '',
-            type: first.type || ''
-          };
         }
       }
-      // 多选：只报第一个会让模型以为"他就选了这一个"（引擎 file-body-pane.ts:29 `selections: any[]`）
+      // 资源树选中项和当前打开文件是两种不同语义，必须分开提供。
+      // 多选不能只报第一个，否则模型会把"这几个"误读成"这个"。
       if (fb && fb.body) {
         try {
           const picked = (Array.isArray(fb.body.selections) ? fb.body.selections : []).filter(isFileItem);
-          if (picked.length > 1) {
-            result.selectedCount = picked.length;
-            result.selectedFiles = picked.slice(0, 8).map(function (f) {
-              return { name: (f && (f.alias || f.name)) || '', path: (f && f.path) || '' };
-            });
-          }
+          result.selectedCount = picked.length;
+          result.selectedFiles = picked.map(function (f) {
+            return {
+              name: (f && (f.alias || f.name)) || '',
+              path: (f && f.path) || '',
+              type: (f && f.type) || '',
+              targetRef: f && f.path ? 'file:' + String(f.path) : ''
+            };
+          });
+          // 兼容旧调用方：selectedFile 仍代表资源树首项，但不再冒充 activeFile。
+          if (!result.selectedFile && result.selectedFiles[0]) result.selectedFile = result.selectedFiles[0];
         } catch (e) {}
       }
       if (!result.selectedFile) {
         const selNode = document.querySelector('file-body-pane item.selected, file-browser [selected="true"], file-browser .selected');
         if (selNode) {
           const txt = (selNode.textContent || '').trim().replace(/\s+/g, ' ');
-          if (txt) result.selectedFile = { name: txt.slice(0, 60), path: '', type: '' };
+          if (txt) result.selectedFile = { name: txt.slice(0, 60), path: '', type: '', targetRef: '' };
         }
       }
 
       // 2. 检视器状态 (Inspector.meta 真实结构为 FileMeta: 文件别名在 meta.file.alias)
-      if (typeof Inspector !== 'undefined' && Inspector && Inspector.type) {
-        const meta = Inspector.meta;
+      const inspectorApi = (window.YamiEngine && window.YamiEngine.Inspector) || (typeof Inspector !== 'undefined' ? Inspector : null);
+      if (inspectorApi && inspectorApi.type) {
+        const meta = inspectorApi.meta;
         const metaName = meta
           ? (meta.file && (meta.file.alias || meta.file.name)) || meta.name || meta.alias || ''
           : '';
         result.inspector = {
-          type: String(Inspector.type || ''),
-          metaName: String(metaName)
+          type: String(inspectorApi.type || ''),
+          metaName: String(metaName),
+          file: meta && (meta.path || (meta.file && meta.file.path)) ? { path: meta.path || meta.file.path, name: metaName } : null
         };
       }
 
@@ -2624,7 +2646,8 @@
         const tgt = Scene.target;
         const item = {
           name: String(tgt.name || tgt.id || ''),
-          type: String(tgt.class || tgt.type || 'object')
+          type: String(tgt.class || tgt.type || 'object'),
+          targetRef: String(tgt.id || tgt.guid || tgt.name || '')
         };
         // 它的源文件：引擎自己就是这么认的（scene-utility.ts:6 Scene.getObjectFile ——
         // actor/animation 看 data.guid、particle 看 emitter.data.guid、parallax 看 image，
@@ -2633,6 +2656,7 @@
           const objFile = (typeof Scene.getObjectFile === 'function') ? Scene.getObjectFile(tgt) : null;
           if (objFile) {
             item.file = { name: objFile.alias || objFile.name || '', path: objFile.path || '', type: objFile.type || '' };
+            item.targetRef = 'scene-object:' + String(item.type) + ':' + String(item.targetRef);
           }
         } catch (e) {}
         result.sceneTarget = item;
@@ -2653,18 +2677,61 @@
         const pickMeta = function (win) {
           try { return (typeof win !== 'undefined' && win && win.meta) || null; } catch (e) { return null; }
         };
-        const editing = (page === 'ui' ? pickMeta(typeof UI !== 'undefined' ? UI : null) : (page === 'scene' ? pickMeta(typeof Scene !== 'undefined' ? Scene : null) : null))
-          || pickMeta(typeof UI !== 'undefined' ? UI : null) || pickMeta(typeof Scene !== 'undefined' ? Scene : null);
+        const tabBar = document.getElementById('title-tabBar');
+        const tab = tabBar && typeof tabBar.read === 'function' ? tabBar.read() : null;
+        const box = (typeof window !== 'undefined' && window.YamiEngine) || {};
+        const sceneApi = box.Scene || (typeof Scene !== 'undefined' ? Scene : null);
+        const uiApi = box.UI || (typeof UI !== 'undefined' ? UI : null);
+        const editing = (tab && tab.meta) || (page === 'ui' ? pickMeta(uiApi) : page === 'scene' ? pickMeta(sceneApi) : null);
         const editPath = (editing && (editing.path || (editing.file && editing.file.path))) || '';
         if (editPath) {
           result.editingFile = {
             name: (editing.file && (editing.file.alias || editing.file.name)) || String(editPath).split('/').pop() || '',
             path: String(editPath)
           };
+          result.activeFile = Object.assign({}, result.editingFile, { type: (tab && tab.type) || page });
+        }
+        if (!result.activeFile && result.inspector && result.inspector.file) result.activeFile = result.inspector.file;
+        const kind = (tab && tab.type) || page;
+        const list = document.getElementById(kind === 'ui' ? 'ui-list' : kind === 'scene' ? 'scene-list' : '');
+        const selected = (list && typeof list.read === 'function' && list.read())
+          || (kind === 'ui' ? uiApi && uiApi.target : kind === 'scene' ? sceneApi && sceneApi.target : null);
+        if (selected && result.activeFile) {
+          result.selectedObject = {
+            kind: kind === 'ui' ? 'ui-node' : 'scene-instance',
+            name: String(selected.name || ''),
+            type: String(selected.class || selected.type || ''),
+            presetId: String(selected.presetId || ''),
+            targetRef: kind + ':' + result.activeFile.path + ':' + String(selected.presetId || ''),
+            instanceFile: result.activeFile,
+            sourceFile: null
+          };
+          if (kind === 'scene' && sceneApi && typeof sceneApi.getObjectFile === 'function') {
+            const file = sceneApi.getObjectFile(selected);
+            if (file) result.selectedObject.sourceFile = { path: file.path || '', name: file.alias || file.name || '', type: file.type || '' };
+          }
+          if (kind === 'scene') result.sceneFile = result.activeFile;
         }
       } catch (e) {}
     } catch (e) {}
 
+    const identity = {
+      environment: result.environment,
+      page: result.page,
+      scene: result.scene,
+      activeFile: result.activeFile && result.activeFile.path,
+      selectedFiles: (result.selectedFiles || []).map(function (item) { return item.path; }),
+      selectedObject: result.selectedObject || result.sceneTarget,
+      sceneFile: result.sceneFile && result.sceneFile.path
+    };
+    let nextFingerprint = '';
+    try { nextFingerprint = JSON.stringify(identity); } catch (e) { nextFingerprint = String(Date.now()); }
+    if (nextFingerprint !== contextFingerprint) {
+      contextFingerprint = nextFingerprint;
+      contextRevision += 1;
+    }
+    result.contextRevision = contextRevision;
+    result.revision = contextRevision;
     return result;
   }
 
@@ -4882,8 +4949,8 @@
                   if (ctx && ctx.hasPendingInput) {
                     return { ok: false, dirty: true, hasPendingInput: true, path: rel, error: '编辑器中有未失焦的输入正在进行，请在编辑器中按回车或点击空白处失焦后再确认，以防修改被覆盖' };
                   }
-                  if (ctx && ctx.selectedFile && ctx.selectedFile.path) {
-                    const selPath = String(ctx.selectedFile.path).replace(/\\/g, '/').replace(/^\.\//, '');
+                  if (ctx && ctx.activeFile && ctx.activeFile.path) {
+                    const selPath = String(ctx.activeFile.path).replace(/\\/g, '/').replace(/^\.\//, '');
                     if (selPath === rel && (!Data || !Data.manifest)) {
                       return { ok: false, dirty: true, path: rel, error: `编辑器当前正打开着「${rel}」，且当前引擎版本无法侦测未保存状态。为防覆盖丢数据，请先保存编辑器或切换至其他文件后再确认` };
                     }
