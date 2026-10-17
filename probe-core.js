@@ -2,7 +2,7 @@
   'use strict';
   if (window.__YAMI_PERF_PROBE__) return;
 
-  const PROBE_VERSION = '1.15.0';
+  const PROBE_VERSION = '1.15.1';
   const BUDGET = 16.7;
   const MAX_SAMPLES = 12000;
   const BRIDGE_PORT = 5966;
@@ -3792,30 +3792,51 @@
     return { configured: false, code: 'missing', label: '[未接入] 音效', detected: [] };
   }
 
+  // 关键帧缩略图: 直接对 1080p 游戏画布 toDataURL 是同步 GPU 回读 (实测 12ms/次), 而音效雷达
+  // 默认开启、战斗里每秒有几十个不同目标触发, 于是每帧被叠进几百毫秒 → 整局掉到 3-6 FPS。
+  // 因此: 统一缩到 320x180 再编码 (实测 ~1ms/次), 并加全局节流 (1 秒内只抓一组关键帧);
+  // 节流期内的触发不抓图, 面板与内页本来就有「暂无关键帧」空态。
+  const KEYFRAME_INTERVAL_MS = 1000;
+  const KEYFRAME_W = 320;
+  const KEYFRAME_H = 180;
+  let keyframeCanvas = null;
+  let lastKeyframeAt = 0;
+
+  function grabKeyframeThumb(canvas) {
+    try {
+      if (!canvas) return '';
+      if (!keyframeCanvas) {
+        keyframeCanvas = document.createElement('canvas');
+        keyframeCanvas.width = KEYFRAME_W;
+        keyframeCanvas.height = KEYFRAME_H;
+      }
+      const ctx = keyframeCanvas.getContext('2d');
+      if (!ctx) return '';
+      ctx.drawImage(canvas, 0, 0, KEYFRAME_W, KEYFRAME_H);
+      const data = keyframeCanvas.toDataURL('image/jpeg', 0.55);
+      return data && data.length > 50 ? data : '';
+    } catch (e) { return ''; }
+  }
+
   function captureCanvasKeyframeBurst(entry) {
     try {
       if (typeof document === 'undefined') return;
+      // 只给面板真正会显示的条目抓图: 玩家聚焦模式下, 非玩家相关条目会被面板过滤掉, 抓了也没人看
+      if (audioRadarState.focusMode === 'player' && !entry.isPlayerRelated) return;
+      const nowMs = Date.now();
+      if (nowMs - lastKeyframeAt < KEYFRAME_INTERVAL_MS) return;
+      lastKeyframeAt = nowMs;
       const canvas = document.querySelector('canvas');
       if (!canvas || typeof canvas.toDataURL !== 'function') return;
-      try {
-        const f1 = canvas.toDataURL('image/jpeg', 0.5);
-        if (f1 && f1.length > 50) entry.keyframes.push({ time: 0, label: '起手', data: f1 });
-      } catch (e) {}
-
+      const f1 = grabKeyframeThumb(canvas);
+      if (f1) entry.keyframes.push({ time: 0, label: '起手', data: f1 });
       setTimeout(function () {
-        try {
-          if (!canvas || typeof canvas.toDataURL !== 'function') return;
-          const f2 = canvas.toDataURL('image/jpeg', 0.5);
-          if (f2 && f2.length > 50) entry.keyframes.push({ time: entry.timing.hitPointMs || 240, label: '接触', data: f2 });
-        } catch (e) {}
+        const f2 = grabKeyframeThumb(canvas);
+        if (f2) entry.keyframes.push({ time: entry.timing.hitPointMs || 240, label: '接触', data: f2 });
       }, 180);
-
       setTimeout(function () {
-        try {
-          if (!canvas || typeof canvas.toDataURL !== 'function') return;
-          const f3 = canvas.toDataURL('image/jpeg', 0.5);
-          if (f3 && f3.length > 50) entry.keyframes.push({ time: entry.timing.durationMs || 500, label: '收招', data: f3 });
-        } catch (e) {}
+        const f3 = grabKeyframeThumb(canvas);
+        if (f3) entry.keyframes.push({ time: entry.timing.durationMs || 500, label: '收招', data: f3 });
       }, 360);
     } catch (e) {}
   }
